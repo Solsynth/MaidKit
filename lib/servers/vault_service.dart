@@ -39,8 +39,8 @@ class VaultService {
       await _secureStorage.containsKey(key: _biometricKey);
 
   Future<void> create(String password) async {
-    if (password.length < 12) {
-      throw ArgumentError('Use a vault password with at least 12 characters.');
+    if (password.length < 8) {
+      throw ArgumentError('Use a vault password with at least 8 characters.');
     }
     final salt = _randomBytes(16);
     final wrappingKey = await _deriveKey(password, salt);
