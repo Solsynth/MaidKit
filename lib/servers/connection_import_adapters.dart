@@ -506,19 +506,62 @@ ServerCredential? _readKeyCredential(String path, String? baseDirectory) {
 /// Resolves a key path: `~/` expands to the home directory, relative paths
 /// resolve against [baseDirectory] (the folder of the imported file), and
 /// foreign Windows paths (e.g. `C:\...` on macOS) yield null.
+///
+/// Security: a third-party connection file is untrusted input, so a key path
+/// in it is constrained to stop a crafted file from silently exfiltrating
+/// arbitrary local files into the credential vault:
+/// - `~/` may only resolve inside `$HOME/.ssh` (the standard key location).
+///   Anything else under `~/` is rejected.
+/// - relative paths may not escape [baseDirectory] via `..`.
+/// A file the user deliberately placed next to the import, or their own
+/// `~/.ssh/*` key, is still imported; exotic paths are refused rather than
+/// silently copied.
 String? _resolvePath(String path, String? baseDirectory) {
-  var expanded = path.trim();
+  final expanded = path.trim();
+  if (expanded.isEmpty) return null;
   if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(expanded)) return null;
   if (expanded.startsWith('~/')) {
     final home = Platform.environment['HOME'];
     if (home == null) return null;
-    expanded = '$home/${expanded.substring(2)}';
-  } else if (!expanded.startsWith('/') &&
-      !expanded.startsWith('\\') &&
-      baseDirectory != null) {
-    expanded = '$baseDirectory/$expanded';
+    final candidate = '$home/${expanded.substring(2)}';
+    if (!_isWithinDirectory(candidate, '$home/.ssh')) return null;
+    return candidate;
   }
-  return expanded;
+  if (expanded.startsWith('/') || expanded.startsWith('\\')) {
+    // Absolute paths are only followed when they point at the user's own
+    // `~/.ssh` key directory, so a crafted file cannot name an arbitrary
+    // local file for silent exfiltration.
+    final home = Platform.environment['HOME'];
+    if (home == null) return null;
+    if (!_isWithinDirectory(expanded, '$home/.ssh')) return null;
+    return expanded;
+  }
+  if (baseDirectory == null) return null;
+  final candidate = '$baseDirectory/$expanded';
+  if (!_isWithinDirectory(candidate, baseDirectory)) return null;
+  return candidate;
+}
+
+/// True when [path] normalizes to a location inside [directory] with no `..`
+/// escape. A lexical check — sufficient to reject traversal in imported key
+/// paths, which are not expected to involve symlinks the importer controls.
+bool _isWithinDirectory(String path, String directory) {
+  String normalize(String p) {
+    final segments = <String>[];
+    for (final part in p.split(RegExp(r'[/\\]'))) {
+      if (part.isEmpty || part == '.') continue;
+      if (part == '..') {
+        if (segments.isNotEmpty) segments.removeLast();
+        continue;
+      }
+      segments.add(part);
+    }
+    return segments.join('/');
+  }
+  final normalized = normalize(path);
+  final base = normalize(directory);
+  if (base.isEmpty) return normalized.isNotEmpty;
+  return normalized == base || normalized.startsWith('$base/');
 }
 
 /// Decodes a FinalShell password. Tries the modern head-seeded scheme first,

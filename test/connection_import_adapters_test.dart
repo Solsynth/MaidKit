@@ -222,6 +222,41 @@ Host *.example.com
       expect(prod.credential!.privateKey, contains('PROD-KEY'));
     });
 
+    test('rejects key paths that escape the import directory via ..', () {
+      final directory = Directory.systemTemp.createTempSync(
+        'openssh_traversal_test',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      // A readable secret placed *outside* the import directory.
+      final outside = Directory('${directory.path}/../openssh_secret_neighbor')
+        ..createSync(recursive: true);
+      addTearDown(() => outside.deleteSync(recursive: true));
+      File('${outside.path}/id_rsa').writeAsStringSync('STOLEN-KEY\n');
+
+      const config = '''
+Host victim
+  HostName 10.0.0.6
+  User root
+  IdentityFile ../openssh_secret_neighbor/id_rsa
+''';
+      final connections = OpenSshConfigAdapter().parse(
+        config,
+        baseDirectory: directory.path,
+      );
+      expect(connections.single.credential, isNull);
+    });
+
+    test('rejects ~/ paths outside the .ssh directory', () {
+      const config = '''
+Host victim
+  HostName 10.0.0.7
+  User root
+  IdentityFile ~/notes/secret
+''';
+      final connections = OpenSshConfigAdapter().parse(config);
+      expect(connections.single.credential, isNull);
+    });
+
     test('falls back to the pattern as hostname', () {
       const config = 'Host mybox\n  User admin\n';
       final connections = OpenSshConfigAdapter().parse(config);

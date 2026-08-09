@@ -1178,9 +1178,10 @@ fi
         ),
         FirewallBackend.firewalld => await _execute(
           client,
-          rule.id.startsWith('service:')
-              ? '${prefix}sh -c "firewall-cmd --permanent --remove-service=${rule.id.substring('service:'.length)} && firewall-cmd --reload"'
-              : '${prefix}sh -c "firewall-cmd --permanent --remove-port=${rule.id} && firewall-cmd --reload"',
+          _firewalldDeleteCommand(
+            prefix: prefix,
+            ruleId: rule.id,
+          ),
           stdin: stdin,
         ),
         _ => throw StateError(
@@ -1877,6 +1878,41 @@ fi
       rawStatus: statusSource,
       error: result.exitCode != 0 && !active ? _commandError(result) : null,
     );
+  }
+
+  /// Builds the `firewall-cmd --remove-service`/`--remove-port` delete command.
+  ///
+  /// The rule id comes from parsing `firewall-cmd --list-all` output on a
+  /// remote host the app manages, so it must never be interpolated raw into a
+  /// shell string: a hostile or compromised host could return a port/service
+  /// token containing metacharacters and run arbitrary commands (as root when
+  /// the SSH user has sudo). The value is passed as `$1` (single-quoted, never
+  /// expanded) and additionally validated against a strict allow-list.
+  String _firewalldDeleteCommand({required String prefix, required String ruleId}) {
+    final isService = ruleId.startsWith('service:');
+    final value = isService ? ruleId.substring('service:'.length) : ruleId;
+    if (!_isValidFirewalldToken(value, allowServiceName: isService)) {
+      throw StateError('Refusing to delete a firewalld rule with an unsafe id: $ruleId');
+    }
+    final action = isService ? '--remove-service' : '--remove-port';
+    // `sh -c 'script' _ <value>` runs `script` with `$0=_` and `$1=<value>`.
+    // The script is single-quoted (literal), and the value is single-quoted as
+    // a separate argv element, so metacharacters in the value are never
+    // interpreted by the shell.
+    final script = "firewall-cmd --permanent $action=\"\$1\" && firewall-cmd --reload";
+    return "$prefix sh -c ${_shellSingleQuote(script)} _ ${_shellSingleQuote(value)}";
+  }
+
+  /// Strict allow-list for a firewalld port spec or service name parsed from a
+  /// remote host's `firewall-cmd` output. Service names are constrained to the
+  /// charset systemd/firewalld accept; port specs must be `NNNN[-NNNN]/proto`.
+  bool _isValidFirewalldToken(String value, {required bool allowServiceName}) {
+    final portSpec = RegExp(
+      r'^[0-9]{1,5}(-[0-9]{1,5})?/(tcp|udp|sctp|dccp)$',
+    ).hasMatch(value);
+    if (portSpec) return true;
+    if (!allowServiceName) return false;
+    return RegExp(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$').hasMatch(value);
   }
 
   FirewallStatus _parseFirewalldStatus(
@@ -2669,18 +2705,19 @@ fi
     String? sudoPassword,
     void Function(String chunk)? onOutput,
   }) async {
-    if (!_safeProjectName(name) || image.trim().isEmpty) {
+    final trimmedImage = image.trim();
+    if (!_safeProjectName(name) || !_safeImageRef(trimmedImage)) {
       throw ArgumentError('Container name and image are required.');
     }
     // Arguments are deliberately a terminal-like escape hatch. The image and
     // name remain validated, while advanced runtime flags stay available.
     final command =
         '${_scopePrefix(scope, sudoPassword)}${runtime.name} run -d '
-        '--name $name ${arguments.isEmpty ? '' : '$arguments '}$image';
+        '--name $name ${arguments.isEmpty ? '' : '$arguments '}$trimmedImage';
     await withClient(serverId, (client) async {
       onOutput?.call(
         '\$ ${runtime.name} run -d --name $name '
-        '${arguments.isEmpty ? '' : '$arguments '}$image\n',
+        '${arguments.isEmpty ? '' : '$arguments '}$trimmedImage\n',
       );
       final result = await _executeStreaming(
         client,
@@ -2694,6 +2731,16 @@ fi
 
   bool _safeContainerRef(String value) =>
       RegExp(r'^[A-Za-z0-9][A-Za-z0-9_.:-]*$').hasMatch(value);
+
+  /// Allow-list for an OCI image reference (`name`, `host/path:tag`,
+  /// `name@sha256:…`). Covers the full reference charset (components, `/`,
+  /// `:` for tags and ports, `@` for digests) while rejecting every shell
+  /// metacharacter so a crafted image value can never break out of the remote
+  /// command — important because root scope prepends `sudo`.
+  bool _safeImageRef(String value) {
+    if (value.isEmpty || value.length > 256) return false;
+    return RegExp(r'^[A-Za-z0-9._:@/-]+$').hasMatch(value);
+  }
 
   /// Full inspect payload for one container, including fields used to rebuild
   /// a `run` command.
