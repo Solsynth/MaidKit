@@ -130,6 +130,39 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
   ```powershell
   winget install NASM.NASM
   ```
+  In addition, a local Windows build needs a few more pieces:
+
+  - **Visual Studio 2022** with the *Desktop development with C++* workload
+    (provides the MSVC compiler and CMake that `flutter build windows` drives).
+    Install via Visual Studio Installer or:
+    ```powershell
+    winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    ```
+  - **Go 1.26** — the Tailscale integration is built from native source via a
+    native-assets hook during `flutter pub get`. The CI pins `go-version: "1.26"`.
+    ```powershell
+    winget install GoLang.Go
+    ```
+  - **WebView2 Runtime** — required by `desktop_webview_window`. It ships with
+    Windows 11 by default; on Windows 10 install the Evergreen bootstrapper from
+    [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
+  - **Cargokit patch.** Cargokit (used by the Rust native assets) cannot resolve
+    symlinks under the default `PUB_CACHE`, which lives in a hidden `AppData`
+    directory, and the Tailscale hook needs `GOCACHE` in its environment. CI
+    works around both by setting `PUB_CACHE` to a non-hidden path and running
+    the patch script after `flutter pub get`:
+    ```powershell
+    $env:PUB_CACHE = "$env:LOCALAPPDATA\pub-cache"
+    flutter pub get
+    powershell -ExecutionPolicy Bypass -File buildtools/fix-cargokit-windows.ps1
+    dart run build_runner --delete-conflicting-outputs
+    flutter build windows --release
+    ```
+    The release installer is then produced from `setup.iss` with Inno Setup,
+    passing the pubspec version and build number (as CI does):
+    ```powershell
+    iscc /DAppVersion=<x.y.z> /DBuildNumber=<n> setup.iss
+    ```
 - For Linux development, install additional dependencies:
   ```bash
   sudo apt-get update -y

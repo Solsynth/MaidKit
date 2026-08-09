@@ -125,6 +125,38 @@ MaidKit 是小羊在给服务器当女仆的时候（维护服务器）用到的
   ```powershell
   winget install NASM.NASM
   ```
+  此外，本地 Windows 构建还需要以下几项：
+
+  - **Visual Studio 2022**，勾选 *使用 C++ 的桌面开发* 工作负载
+    （提供 MSVC 编译器与 CMake，`flutter build windows` 会调用）。可通过
+    Visual Studio Installer 安装，或：
+    ```powershell
+    winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    ```
+  - **Go 1.26** —— Tailscale 集成在 `flutter pub get` 期间通过原生资源钩子
+    从源码构建。CI 固定 `go-version: "1.26"`。
+    ```powershell
+    winget install GoLang.Go
+    ```
+  - **WebView2 运行时** —— `desktop_webview_window` 所需。Windows 11 默认已
+    内置；Windows 10 需从[微软官网](https://developer.microsoft.com/microsoft-edge/webview2/)
+    安装 Evergreen 引导程序。
+  - **Cargokit 补丁。** Cargokit（Rust 原生资源所用）无法解析默认 `PUB_CACHE`
+    所在隐藏 `AppData` 目录下的符号链接，且 Tailscale 钩子环境需要 `GOCACHE`。
+    CI 的做法是把 `PUB_CACHE` 指到非隐藏路径，并在 `flutter pub get` 后运行
+    补丁脚本：
+    ```powershell
+    $env:PUB_CACHE = "$env:LOCALAPPDATA\pub-cache"
+    flutter pub get
+    powershell -ExecutionPolicy Bypass -File buildtools/fix-cargokit-windows.ps1
+    dart run build_runner --delete-conflicting-outputs
+    flutter build windows --release
+    ```
+    发布安装包随后用 Inno Setup 基于 `setup.iss` 生成，需传入 pubspec 中的
+    版本号与构建号（与 CI 一致）：
+    ```powershell
+    iscc /DAppVersion=<x.y.z> /DBuildNumber=<n> setup.iss
+    ```
 - Linux 开发需要安装额外依赖：
   ```bash
   sudo apt-get update -y
