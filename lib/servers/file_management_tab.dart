@@ -341,17 +341,20 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     );
     if (!mounted || selectedServerId == null) return;
     if (selectedServerId == -1) {
+      final previous = _leftSftpClient;
       setState(() {
         _leftServerId = null;
         _leftSftpClient = null;
         _selectedLocalPaths = {};
       });
+      _closeSftp(previous);
       await _refreshLocal();
       return;
     }
     final server = servers.firstWhere((item) => item.id == selectedServerId);
     final connected = await connectForStatistics(context, ref, server);
     if (!connected || !mounted) return;
+    final previous = _leftSftpClient;
     setState(() {
       _leftServerId = server.id;
       _leftSftpClient = null;
@@ -361,6 +364,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       _selectedLocalPaths = {};
       _localAnchorIndex = null;
     });
+    _closeSftp(previous);
     await _refreshLeftRemote();
   }
 
@@ -370,6 +374,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       transfer.controller.cancel();
     }
     _transferQueue.clear();
+    // Close the SFTP channels so opening/closing many file-management tabs does
+    // not leak one SSH channel per tab (and per left-pane server) until the
+    // whole session disconnects.
+    _closeSftp(_sftpClient);
+    _closeSftp(_leftSftpClient);
+    _sftpClient = null;
+    _leftSftpClient = null;
     _leftRemotePathController.dispose();
     _leftRemotePathFocusNode.dispose();
     _remotePathController.dispose();
@@ -383,6 +394,19 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     _leftSearchFocusNode.dispose();
     _rightSearchFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Closes a cached SFTP channel once its [Future] resolves, ignoring the
+  /// close races that happen when the underlying session is already gone.
+  void _closeSftp(Future<SftpClient>? pending) {
+    if (pending == null) return;
+    unawaited(
+      pending.then((client) {
+        try {
+          client.close();
+        } catch (_) {}
+      }),
+    );
   }
 
   Future<void> _refreshLocal() async {

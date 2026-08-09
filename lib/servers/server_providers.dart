@@ -991,23 +991,80 @@ final serversProvider = StreamProvider<List<Server>>((ref) {
   return stored.map((servers) => [local, ...servers]);
 });
 
-final serverMetricsRefreshSchedulerProvider =
-    Provider<ServerMetricsRefreshScheduler>((ref) {
-      final scheduler = ServerMetricsRefreshScheduler(
-        ref.watch(connectionManagerProvider),
+final serverMetricsRefreshSchedulerProvider = NotifierProvider<
+    ServerMetricsRefreshSchedulerNotifier, ServerMetricsRefreshScheduler>(
+  ServerMetricsRefreshSchedulerNotifier.new,
+);
+
+/// Owns one long-lived [ServerMetricsRefreshScheduler].
+///
+/// `sessionsProvider` emits on every latency/stats update (many times a
+/// second), and `refreshBasicServerInfo` itself causes another emit — so
+/// watching it (the previous implementation) rebuilt this provider on every
+/// tick, tearing down the scheduler and its `Timer.periodic` and recreating
+/// them, a self-feeding churn. Instead the scheduler is created once (only
+/// recreated when the connection manager itself changes), and every input
+/// update flows through `ref.listen` callbacks that call `update()` in place
+/// — `update()` keeps the running Timer when nothing relevant changed.
+class ServerMetricsRefreshSchedulerNotifier
+    extends Notifier<ServerMetricsRefreshScheduler> {
+  late ServerMetricsRefreshScheduler _scheduler;
+
+  Duration _interval = const Duration(seconds: 30);
+  List<Server> _servers = const [];
+  Iterable<SshSessionInfo> _sessions = const [];
+  int? _focusedServerId;
+
+  @override
+  ServerMetricsRefreshScheduler build() {
+    // The connection manager is the only input that warrants rebuilding the
+    // scheduler itself; it is effectively stable for the app's lifetime.
+    _scheduler =
+        ServerMetricsRefreshScheduler(ref.watch(connectionManagerProvider));
+    _interval = ref.read(serverMetricsRefreshIntervalProvider);
+    _focusedServerId = ref.read(focusedServerIdProvider);
+    _servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
+    _sessions =
+        ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[];
+    _apply();
+    ref.listen<Duration>(
+      serverMetricsRefreshIntervalProvider,
+      (_, value) {
+        _interval = value;
+        _apply();
+      },
+    );
+    ref.listen<int?>(
+      focusedServerIdProvider,
+      (_, value) {
+        _focusedServerId = value;
+        _apply();
+      },
+    );
+    ref.listen(
+      serversProvider,
+      (_, next) {
+        _servers = (next as AsyncValue<List<Server>>).asData?.value ??
+            const <Server>[];
+        _apply();
+      },
+    );
+    ref.listen(
+      sessionsProvider,
+      (_, next) {
+        _sessions = (next as AsyncValue<List<SshSessionInfo>>).asData?.value ??
+            const <SshSessionInfo>[];
+        _apply();
+      },
+    );
+    ref.onDispose(_scheduler.dispose);
+    return _scheduler;
+  }
+
+  void _apply() => _scheduler.update(
+        interval: _interval,
+        servers: _servers,
+        sessions: _sessions,
+        focusedServerId: _focusedServerId,
       );
-      final interval = ref.watch(serverMetricsRefreshIntervalProvider);
-      final focusedServerId = ref.watch(focusedServerIdProvider);
-      final servers =
-          ref.watch(serversProvider).asData?.value ?? const <Server>[];
-      final sessions =
-          ref.watch(sessionsProvider).asData?.value ?? const <SshSessionInfo>[];
-      scheduler.update(
-        interval: interval,
-        servers: servers,
-        sessions: sessions,
-        focusedServerId: focusedServerId,
-      );
-      ref.onDispose(scheduler.dispose);
-      return scheduler;
-    });
+}

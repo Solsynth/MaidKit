@@ -93,6 +93,20 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
   @override
   void dispose() {
     fileEditorCloseGuards.remove(widget.tab.id);
+    // Close the SFTP channel so opening/closing many editor tabs does not
+    // leak one SSH channel per tab until the whole session disconnects.
+    final pending = _sftpClient;
+    if (pending != null) {
+      unawaited(
+        pending.then((client) {
+          try {
+            client.close();
+          } catch (_) {
+            // The remote channel may already be closed; ignore close races.
+          }
+        }),
+      );
+    }
     if (_listening) {
       _controller.removeListener(_onControllerChanged);
     }
