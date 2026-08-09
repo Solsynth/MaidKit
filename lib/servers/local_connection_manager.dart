@@ -24,10 +24,11 @@ final bool localMachineSupported =
 class LocalMachineMetricsCollector {
   const LocalMachineMetricsCollector();
 
-  /// Returns null when the platform has no stats source (Windows today).
+  /// Returns null when the platform has no stats source.
   Future<ServerStats?> collect() async {
     if (Platform.isMacOS) return _collectMacos();
     if (Platform.isLinux) return _collectLinux();
+    if (Platform.isWindows) return _collectWindows();
     return null;
   }
 
@@ -36,6 +37,7 @@ class LocalMachineMetricsCollector {
   Future<ServerSystemInfo> systemInfo() async {
     if (Platform.isMacOS) return _systemInfoMacos();
     if (Platform.isLinux) return _systemInfoLinux();
+    if (Platform.isWindows) return _systemInfoWindows();
     return ServerSystemInfo(
       distribution:
           '${_osName(Platform.operatingSystem)} '
@@ -108,6 +110,67 @@ class LocalMachineMetricsCollector {
       uptime: uptimeSeconds == null
           ? null
           : Duration(seconds: uptimeSeconds.round()),
+    );
+  }
+
+  /// Collects metrics on Windows via a single PowerShell invocation that emits
+  /// `key=value` lines, parsed below. CIM classes are the cross-version source
+  /// available on Windows 10/11 with Windows PowerShell 5.1 (`powershell.exe`,
+  /// always present); missing perf counters degrade gracefully to null.
+  Future<ServerStats?> _collectWindows() async {
+    // One PowerShell invocation emitting `key=value` lines. `powershell.exe`
+    // (Windows PowerShell 5.1) is always present on Win10/11; missing perf
+    // counters degrade to null via -ErrorAction SilentlyContinue.
+    const script = r'''$os = Get-CimInstance Win32_OperatingSystem
+$sys = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction SilentlyContinue
+$disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'" -ErrorAction SilentlyContinue
+$pf = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue
+"cpuCount=$($env:NUMBER_OF_PROCESSORS)"
+"memTotalKb=$($os.TotalVisibleMemorySize)"
+"memFreeKb=$($os.FreePhysicalMemory)"
+"queueLen=$($sys.ProcessorQueueLength)"
+"diskBytes=$($disk.Size)"
+"diskFreeBytes=$($disk.FreeSpace)"
+"uptimeSecs=$([Math]::Floor(((Get-Date) - $os.LastBootUpTime).TotalSeconds))"
+if ($pf) { "swapTotalKb=$($pf.AllocatedBaseSize * 1024)"; "swapFreeKb=$((($pf.AllocatedBaseSize - $pf.CurrentUsage) * 1024))" }''';
+    final output = await _run('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      script,
+    ]);
+    if (output == null) return null;
+    int? intField(String key) {
+      final match = RegExp(
+        '^$key=(-?\\d+)',
+        multiLine: true,
+      ).firstMatch(output);
+      return match == null ? null : int.tryParse(match.group(1)!);
+    }
+    final diskBytes = intField('diskBytes');
+    final diskFreeBytes = intField('diskFreeBytes');
+    final uptimeSecs = intField('uptimeSecs');
+    final queueLen = intField('queueLen');
+    return ServerStats(
+      collectorId: 'local',
+      updatedAt: DateTime.now(),
+      // Windows has no native load average; the processor queue length is the
+      // nearest analog and is reported as the 1-minute load. 5/15 are null.
+      loadAverage: queueLen == null ? null : queueLen.toDouble(),
+      cpuCount: intField('cpuCount'),
+      memoryTotalKb: intField('memTotalKb'),
+      memoryAvailableKb: intField('memFreeKb'),
+      swapTotalKb: intField('swapTotalKb'),
+      swapFreeKb: intField('swapFreeKb'),
+      diskTotalKb: diskBytes == null ? null : diskBytes ~/ 1024,
+      diskAvailableKb: diskFreeBytes == null ? null : diskFreeBytes ~/ 1024,
+      uptime: uptimeSecs == null ? null : Duration(seconds: uptimeSecs),
+    );
+  }
+
+  Future<ServerSystemInfo> _systemInfoWindows() async {
+    return ServerSystemInfo(
+      distribution: 'Windows ${Platform.operatingSystemVersion}',
     );
   }
 
@@ -429,6 +492,14 @@ class LocalConnectionManager {
     final environment = Map<String, String>.of(Platform.environment)
       ..['TERM'] = 'xterm-256color';
     if (Platform.isWindows) {
+      // No PTY: `Process.start` gives cmd pipes, so the local terminal tab runs
+      // in line mode — no interactive prompt echo, no ANSI color from child
+      // programs that detect a non-tty, and resizes are not honored. Remote SSH
+      // terminals (the primary feature) are unaffected: they use the SSH
+      // channel as their PTY. A true interactive local terminal on Windows
+      // requires the ConPTY API (CreatePseudoConsole + pipe bridging + resize
+      // pump) via FFI, which is tracked as a follow-up needing a Windows
+      // build/test environment.
       return Process.start(
         'cmd.exe',
         const [],

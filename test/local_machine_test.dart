@@ -67,6 +67,27 @@ void main() {
   );
 
   test(
+    'collects real statistics and system info on Windows',
+    () async {
+      if (!Platform.isWindows) return;
+      const collector = LocalMachineMetricsCollector();
+
+      final stats = await collector.collect();
+
+      expect(stats, isNotNull);
+      expect(stats!.memoryTotalKb, isNotNull);
+      expect(stats.memoryAvailableKb, isNotNull);
+      expect(stats.cpuCount, isNotNull);
+      expect(stats.uptime, isNotNull);
+
+      final info = await collector.systemInfo();
+
+      expect(info.distribution, contains('Windows'));
+    },
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
+
+  test(
     'opens a local shell that echoes typed commands',
     () async {
       if (!localMachineSupported) return;
