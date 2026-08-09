@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
@@ -32,12 +33,14 @@ class LocalMcpServerState {
     required this.enabled,
     required this.port,
     required this.status,
+    required this.authToken,
     this.error,
   });
 
   final bool enabled;
   final int port;
   final LocalMcpServerStatus status;
+  final String authToken;
   final String? error;
 
   /// The MCP SSE endpoint other agents configure as their server URL.
@@ -47,22 +50,34 @@ class LocalMcpServerState {
     bool? enabled,
     int? port,
     LocalMcpServerStatus? status,
+    String? authToken,
     String? error,
   }) => LocalMcpServerState(
     enabled: enabled ?? this.enabled,
     port: port ?? this.port,
     status: status ?? this.status,
+    authToken: authToken ?? this.authToken,
     error: error ?? this.error,
   );
 }
 
 /// Persisted preference for the local MCP server. Plain app preferences, not
-/// vault data: the port and a boolean carry no secrets.
+/// vault data: the port and a boolean carry no secrets. The [authToken] is a
+/// per-install random bearer token (generated with a CSPRNG) that every
+/// request must present, so only agents the user configures with the token can
+/// reach the server — loopback binding alone would let any local process issue
+/// tool calls against every saved SSH server.
 class LocalMcpServerPreferences {
-  LocalMcpServerPreferences(this._preferences, this.enabled, this.port);
+  LocalMcpServerPreferences(
+    this._preferences,
+    this.enabled,
+    this.port,
+    this.authToken,
+  );
 
   static const _enabledKey = 'local_mcp_server_enabled';
   static const _portKey = 'local_mcp_server_port';
+  static const _tokenKey = 'local_mcp_server_token';
 
   /// Port picked to avoid common dev-server ranges.
   static const int defaultPort = 8746;
@@ -70,6 +85,7 @@ class LocalMcpServerPreferences {
   final SharedPreferencesAsync _preferences;
   final bool enabled;
   final int port;
+  final String authToken;
 
   static Future<LocalMcpServerPreferences> load({
     SharedPreferencesAsync? preferences,
@@ -77,7 +93,19 @@ class LocalMcpServerPreferences {
     final store = preferences ?? SharedPreferencesAsync();
     final enabled = await store.getBool(_enabledKey) ?? false;
     final port = await store.getInt(_portKey) ?? defaultPort;
-    return LocalMcpServerPreferences(store, enabled, port);
+    var token = await store.getString(_tokenKey);
+    if (token == null || token.isEmpty) {
+      token = _generateToken();
+      await store.setString(_tokenKey, token);
+    }
+    return LocalMcpServerPreferences(store, enabled, port, token);
+  }
+
+  /// 256-bit random bearer token, URL-safe, unpadded.
+  static String _generateToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64Url.encode(bytes).replaceAll('=', '');
   }
 
   Future<void> saveEnabled(bool value) =>
@@ -225,13 +253,17 @@ class LocalMcpProtocolHandler {
 /// /sse` opens a session event stream, `POST /message` delivers JSON-RPC
 /// requests whose replies come back over that stream. Bound to loopback only.
 class LocalMcpServer {
-  LocalMcpServer({required this.executor, required this.port});
+  LocalMcpServer({
+    required this.executor,
+    required this.port,
+    required this.authToken,
+  });
 
   final LocalMcpToolInvoker executor;
   final int port;
+  final String authToken;
 
   final _sessions = <String, _LocalMcpSession>{};
-  String? _latestSessionId;
   HttpServer? _server;
 
   bool get isRunning => _server != null;
@@ -239,6 +271,23 @@ class LocalMcpServer {
   /// The port actually bound. Differs from [port] when 0 was requested
   /// (ephemeral), which tests use.
   int get boundPort => _server?.port ?? port;
+
+  /// Constant-time comparison so a timing oracle cannot recover the token
+  /// byte-by-byte over the loopback socket.
+  static bool _constantTimeEquals(String a, String b) {
+    if (a.length != b.length) return false;
+    var result = 0;
+    for (var i = 0; i < a.length; i++) {
+      result |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return result == 0;
+  }
+
+  /// True when the request carries `Authorization: Bearer <authToken>`.
+  bool _isAuthorized(HttpRequest request) {
+    final header = request.headers.value('Authorization') ?? '';
+    return _constantTimeEquals(header, 'Bearer $authToken');
+  }
 
   Future<void> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
@@ -252,7 +301,6 @@ class LocalMcpServer {
   Future<void> stop() async {
     final sessions = _sessions.values.toList();
     _sessions.clear();
-    _latestSessionId = null;
     for (final session in sessions) {
       await session.close();
     }
@@ -280,11 +328,15 @@ class LocalMcpServer {
   }
 
   void _handleSse(HttpRequest request) {
+    if (!_isAuthorized(request)) {
+      request.response.statusCode = HttpStatus.unauthorized;
+      unawaited(request.response.close());
+      return;
+    }
     // Each session gets its own protocol handler so the caller identity from
     // its `initialize` handshake never mixes with another client's.
     final session = _LocalMcpSession(LocalMcpProtocolHandler(executor));
     _sessions[session.id] = session;
-    _latestSessionId = session.id;
     final response = request.response;
     response
       ..statusCode = HttpStatus.ok
@@ -309,10 +361,7 @@ class LocalMcpServer {
     unawaited(
       response.done
           .then((_) {
-            if (_sessions.remove(session.id) != null &&
-                session.id == _latestSessionId) {
-              _latestSessionId = null;
-            }
+            _sessions.remove(session.id);
             unawaited(session.close());
           })
           .catchError((_) {}),
@@ -320,6 +369,11 @@ class LocalMcpServer {
   }
 
   Future<void> _handleMessage(HttpRequest request) async {
+    if (!_isAuthorized(request)) {
+      request.response.statusCode = HttpStatus.unauthorized;
+      await request.response.close();
+      return;
+    }
     final session = _sessionFor(request);
     if (session == null) {
       request.response.statusCode = HttpStatus.notFound;
@@ -365,7 +419,7 @@ class LocalMcpServer {
   _LocalMcpSession? _sessionFor(HttpRequest request) {
     final header = request.headers.value('Mcp-Session-Id');
     final query = request.uri.queryParameters['sessionId'];
-    final id = header ?? query ?? _latestSessionId;
+    final id = header ?? query;
     if (id == null) return null;
     return _sessions[id];
   }
@@ -375,8 +429,9 @@ class _LocalMcpSession {
   _LocalMcpSession(this._handler) : id = _newSessionId();
 
   static String _newSessionId() {
-    final random = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-    return 'maidkit-$random';
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return 'maidkit-${base64Url.encode(bytes).replaceAll('=', '')}';
   }
 
   final String id;
@@ -1252,23 +1307,27 @@ class McpReviewModeNotifier extends AsyncNotifier<McpReviewMode> {
 
 class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
   LocalMcpServer? _server;
+  String? _authToken;
 
   @override
   Future<LocalMcpServerState> build() async {
     final settings = await LocalMcpServerPreferences.load();
     await _server?.stop();
+    _authToken = settings.authToken;
     _server = LocalMcpServer(
       executor: LocalMcpToolExecutor(ref),
       port: settings.port,
+      authToken: settings.authToken,
     );
     if (!settings.enabled) {
       return LocalMcpServerState(
         enabled: false,
         port: settings.port,
         status: LocalMcpServerStatus.stopped,
+        authToken: settings.authToken,
       );
     }
-    return _start(settings.port);
+    return _start(settings.port, settings.authToken);
   }
 
   Future<void> setEnabled(bool enabled) async {
@@ -1280,10 +1339,11 @@ class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
       await _server?.stop();
       state = AsyncData(
         (current ??
-                const LocalMcpServerState(
+                LocalMcpServerState(
                   enabled: false,
                   port: LocalMcpServerPreferences.defaultPort,
                   status: LocalMcpServerStatus.stopped,
+                  authToken: _authToken ?? '',
                 ))
             .copyWith(
               enabled: false,
@@ -1294,10 +1354,15 @@ class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
       return;
     }
     final port = current?.port ?? LocalMcpServerPreferences.defaultPort;
+    final token = current?.authToken ?? _authToken ?? '';
     // The port may have changed while disabled; bind what the state reports.
     await _server?.stop();
-    _server = LocalMcpServer(executor: LocalMcpToolExecutor(ref), port: port);
-    state = AsyncData(await _start(port));
+    _server = LocalMcpServer(
+      executor: LocalMcpToolExecutor(ref),
+      port: port,
+      authToken: token,
+    );
+    state = AsyncData(await _start(port, token));
   }
 
   Future<void> setPort(int port) async {
@@ -1311,28 +1376,36 @@ class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
           enabled: current?.enabled ?? false,
           port: port,
           status: LocalMcpServerStatus.stopped,
+          authToken: current?.authToken ?? _authToken ?? '',
         ),
       );
       return;
     }
+    final token = current.authToken;
     await _server?.stop();
-    _server = LocalMcpServer(executor: LocalMcpToolExecutor(ref), port: port);
-    state = AsyncData(await _start(port));
+    _server = LocalMcpServer(
+      executor: LocalMcpToolExecutor(ref),
+      port: port,
+      authToken: token,
+    );
+    state = AsyncData(await _start(port, token));
   }
 
-  Future<LocalMcpServerState> _start(int port) async {
+  Future<LocalMcpServerState> _start(int port, String authToken) async {
     try {
       await _server!.start();
       return LocalMcpServerState(
         enabled: true,
         port: port,
         status: LocalMcpServerStatus.running,
+        authToken: authToken,
       );
     } catch (error) {
       return LocalMcpServerState(
         enabled: true,
         port: port,
         status: LocalMcpServerStatus.failed,
+        authToken: authToken,
         error: '$error',
       );
     }

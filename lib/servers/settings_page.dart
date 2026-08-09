@@ -2475,6 +2475,13 @@ class _LocalMcpServerSectionState
     showSnackBar('settingsLocalMcpServerCopied'.tr());
   }
 
+  void _copyToken() {
+    final token = ref.read(localMcpServerProvider).value?.authToken;
+    if (token == null || token.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: token));
+    showSnackBar('settingsLocalMcpServerTokenCopied'.tr());
+  }
+
   Future<void> _applyPort(String value) async {
     final port = int.tryParse(value.trim());
     if (port == null || port < 1024 || port > 65535) {
@@ -2537,6 +2544,38 @@ class _LocalMcpServerSectionState
                       tooltip: 'settingsLocalMcpServerCopy'.tr(),
                       visualDensity: VisualDensity.compact,
                       onPressed: _copyUrl,
+                      icon: const Icon(Symbols.content_copy),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'settingsLocalMcpServerToken',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ).tr(),
+                const SizedBox(height: 4),
+                Text(
+                  'settingsLocalMcpServerTokenHint',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ).tr(),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Symbols.key, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SelectableText(
+                        state.authToken,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontFamily: 'IBM Plex Mono',
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'settingsLocalMcpServerTokenCopy'.tr(),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _copyToken,
                       icon: const Icon(Symbols.content_copy),
                     ),
                   ],
@@ -2633,7 +2672,10 @@ class _LocalMcpServerSectionState
                   child: SelectableText(
                     '"mcpServers": {\n'
                     '  "maidkit": {\n'
-                    '    "url": "${state.url}"\n'
+                    '    "url": "${state.url}",\n'
+                    '    "headers": {\n'
+                    '      "Authorization": "Bearer ${state.authToken}"\n'
+                    '    }\n'
                     '  }\n'
                     '}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(

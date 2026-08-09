@@ -260,14 +260,23 @@ void main() {
   group('LocalMcpServer HTTP+SSE transport', () {
     late LocalMcpServer server;
     late HttpClient http;
+    static const token = 'test-bearer-token';
 
     setUp(() async {
-      server = LocalMcpServer(executor: _FakeInvoker(), port: 0);
+      server = LocalMcpServer(
+        executor: _FakeInvoker(),
+        port: 0,
+        authToken: token,
+      );
       await server.start();
       addTearDown(server.stop);
       http = HttpClient();
       addTearDown(http.close);
     });
+
+    void authorize(HttpClientRequest request) {
+      request.headers.set('Authorization', 'Bearer $token');
+    }
 
     test('GET / reports the running server and its tools', () async {
       final request = await http.getUrl(
@@ -283,10 +292,28 @@ void main() {
       expect(body['tools'], contains('echo'));
     });
 
+    test('rejects /sse and /message without the bearer token', () async {
+      final sseRequest = await http.getUrl(
+        Uri.parse('http://127.0.0.1:${server.boundPort}/sse'),
+      );
+      final sseResponse = await sseRequest.close();
+      expect(sseResponse.statusCode, 401);
+      await sseResponse.drain<void>();
+
+      final messageRequest = await http.postUrl(
+        Uri.parse('http://127.0.0.1:${server.boundPort}/message'),
+      );
+      messageRequest.write('{}');
+      final messageResponse = await messageRequest.close();
+      expect(messageResponse.statusCode, 401);
+      await messageResponse.drain<void>();
+    });
+
     test('serves the MCP handshake and tools/list over SSE', () async {
       final sseRequest = await http.getUrl(
         Uri.parse('http://127.0.0.1:${server.boundPort}/sse'),
       );
+      authorize(sseRequest);
       final sseResponse = await sseRequest.close();
       expect(sseResponse.statusCode, 200);
       expect(sseResponse.headers.value('Mcp-Session-Id'), isNotNull);
@@ -306,6 +333,7 @@ void main() {
             'http://127.0.0.1:${server.boundPort}/message?sessionId=$sessionId',
           ),
         );
+        authorize(request);
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(message));
         final response = await request.close();
@@ -337,6 +365,7 @@ void main() {
       final request = await http.postUrl(
         Uri.parse('http://127.0.0.1:${server.boundPort}/message'),
       );
+      authorize(request);
       request.write('{}');
       final response = await request.close();
       expect(response.statusCode, 404);
