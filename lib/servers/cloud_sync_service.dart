@@ -235,6 +235,16 @@ class CloudSyncService {
   final Dio _dio;
 
   String get _configurationKey => 'maidkit_cloud_sync_$_vaultKey';
+
+  Future<void> relocateVault(String newVaultId) async {
+    final value = await _storage.read(key: _configurationKey);
+    if (value == null) return;
+    final newKey =
+        'maidkit_cloud_sync_${base64UrlEncode(utf8.encode(newVaultId))}';
+    await _storage.write(key: newKey, value: value);
+    await _storage.delete(key: _configurationKey);
+  }
+
   String _flywheelAppPath(String workspaceId) =>
       '/flywheel/workspaces/$workspaceId/apps/$appId';
 

@@ -138,8 +138,8 @@ const _activeVaultFilePreference = 'active_vault_file';
 const _vaultFilesPreference = 'vault_files';
 const _vaultLabelsPreference = 'vault_labels';
 
-/// Copies the pre-multi-vault app database into the managed vaults directory
-/// once, so the migrated vault behaves exactly like any other vault file.
+/// Moves the pre-multi-vault app database into a user-visible Documents
+/// location once, so existing data is also available to synchronization tools.
 ///
 /// The original database lived at the app default location under the fixed
 /// "maid_kit" vault id. Cloud sync, biometric and sync-passphrase keys are
@@ -157,7 +157,11 @@ Future<void> migrateLegacyVault({required String defaultName}) async {
   await database.close();
   if (hasVault.isEmpty) return;
 
-  final managedPath = await VaultFileStorage().importVault(legacy.path);
+  final managedPath = await VaultFileStorage().moveVault(
+    legacy.path,
+    directoryPath: documents.path,
+    name: defaultName,
+  );
 
   final storage = const FlutterSecureStorage();
   for (final prefix in [

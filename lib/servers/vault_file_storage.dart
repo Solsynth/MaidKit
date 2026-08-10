@@ -3,48 +3,100 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
-/// Owns vault database files after they have been selected by the user.
+/// Owns vault database files after they have been selected or created by the
+/// user.
 ///
-/// Keeping a private copy in the application support directory makes vaults
-/// work the same way on desktop and mobile, where picker paths are not
-/// durable, without placing app data in the user's Documents folder.
+/// New vaults created by the UI live in a user-selected folder instead of
+/// application support, so file synchronization tools can see the database.
 class VaultFileStorage {
   static const _directoryName = 'vaults';
   static const _extension = '.maidkit';
   final Uuid _uuid = const Uuid();
 
-  Future<String> createVaultPath({String? name}) async {
-    final directory = await _vaultDirectory();
+  /// Creates a new vault file in [directoryPath].
+  ///
+  /// The application-support fallback is retained only for callers that do
+  /// not have a user-selected directory yet (and for legacy migration). New
+  /// UI flows always pass an external directory so other applications can
+  /// sync the file.
+  Future<String> createVaultPath({String? name, String? directoryPath}) async {
+    final directory = directoryPath == null
+        ? await _vaultDirectory()
+        : await Directory(directoryPath).create(recursive: true);
     final stem = _safeStem(fileName(name ?? 'MaidKit vault'));
     return '${directory.path}/$stem-${_uuid.v4()}$_extension';
   }
 
+  /// Resolves a vault selected outside MaidKit without copying it.
+  ///
+  /// A selected vault remains in its original folder, which makes it
+  /// available to file synchronization tools such as Syncthing or iCloud
+  /// Drive. The caller is responsible for only opening trusted vault files.
   Future<String> importVault(String sourcePath) async {
     final source = File(sourcePath);
     if (!await source.exists()) {
       throw FileSystemException('Vault file was not found.', sourcePath);
     }
-    final directory = await _vaultDirectory();
-    if (isInDirectory(source.path, directory.path)) return source.path;
+    return source.absolute.path;
+  }
 
-    final name = _safeStem(fileName(source.path));
-    final target = File(
-      '${directory.path}/$name-${source.path.hashCode.abs()}$_extension',
+  /// Moves a vault into a user-selected folder and returns its new path.
+  ///
+  /// Copying the SQLite sidecars before deleting the source keeps this
+  /// operation valid across volumes. Callers should close the active database
+  /// before invoking this method.
+  Future<String> moveVault(
+    String sourcePath, {
+    required String directoryPath,
+    String? name,
+  }) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      throw FileSystemException('Vault file was not found.', sourcePath);
+    }
+    final target = await createVaultPath(
+      name: name ?? fileName(sourcePath),
+      directoryPath: directoryPath,
     );
-    if (!await target.exists()) await source.copy(target.path);
-    return target.path;
+    if (source.absolute.path == File(target).absolute.path) {
+      return source.absolute.path;
+    }
+    final targetFile = File(target);
+    await source.copy(targetFile.path);
+    for (final suffix in const ['-wal', '-shm']) {
+      final sidecar = File('${source.path}$suffix');
+      if (await sidecar.exists()) {
+        await sidecar.copy('${targetFile.path}$suffix');
+      }
+    }
+    await source.delete();
+    for (final suffix in const ['-wal', '-shm']) {
+      final sidecar = File('${source.path}$suffix');
+      if (await sidecar.exists()) await sidecar.delete();
+    }
+    return targetFile.absolute.path;
   }
 
   Future<void> deleteVault(String path) async {
-    final directory = await _vaultDirectory();
-    if (!isInDirectory(path, directory.path)) {
+    final file = File(path);
+    if (!_isVaultFile(path) || !await file.exists()) {
       throw FileSystemException(
-        'Only managed vault files can be deleted.',
+        'Only existing MaidKit vault files can be deleted.',
         path,
       );
     }
-    final file = File(path);
-    if (await file.exists()) await file.delete();
+    await file.delete();
+    for (final suffix in const ['-wal', '-shm']) {
+      final sidecar = File('$path$suffix');
+      if (await sidecar.exists()) await sidecar.delete();
+    }
+  }
+
+  bool _isVaultFile(String path) {
+    final lower = fileName(path).toLowerCase();
+    return lower.endsWith('.maidkit') ||
+        lower.endsWith('.sqlite') ||
+        lower.endsWith('.db');
   }
 
   Future<Directory> _vaultDirectory() async {

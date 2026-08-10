@@ -33,6 +33,41 @@ void main() {
       expect(path, endsWith('.maidkit'));
     });
   });
+  group('VaultFileStorage external paths', () {
+    test('keeps an imported vault in its selected folder', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'maidkit-external-vault-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final source = File('${root.path}/shared.sqlite');
+      await source.writeAsString('vault');
+
+      final resolved = await storage.importVault(source.path);
+
+      expect(resolved, source.absolute.path);
+      expect(await source.exists(), isTrue);
+    });
+
+    test('moves a vault and its SQLite sidecars to another folder', () async {
+      final root = await Directory.systemTemp.createTemp('maidkit-move-vault-');
+      final destination = await Directory('${root.path}/sync').create();
+      addTearDown(() => root.delete(recursive: true));
+      final source = File('${root.path}/old.sqlite');
+      await source.writeAsString('vault');
+      await File('${source.path}-wal').writeAsString('wal');
+      await File('${source.path}-shm').writeAsString('shm');
+
+      final moved = await storage.moveVault(
+        source.path,
+        directoryPath: destination.path,
+      );
+
+      expect(await source.exists(), isFalse);
+      expect(await File(moved).readAsString(), 'vault');
+      expect(await File('$moved-wal').readAsString(), 'wal');
+      expect(await File('$moved-shm').readAsString(), 'shm');
+    });
+  });
 
   group('VaultFileStorage.fileName', () {
     test('returns the basename for native Windows separators', () {

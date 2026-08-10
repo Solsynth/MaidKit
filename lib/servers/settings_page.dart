@@ -868,6 +868,7 @@ class SettingsPage extends ConsumerWidget {
                           onExport: activeVaultFile == path
                               ? () => _exportDatabase(context, ref)
                               : null,
+                          onMove: () => _moveVault(context, ref, path),
                           onRename: () => _renameVault(
                             context,
                             ref,
@@ -1326,10 +1327,12 @@ class SettingsPage extends ConsumerWidget {
 
     final vaultPassword = await _newVaultPasswordSheet(context);
     if (vaultPassword == null || !context.mounted) return;
+    final folder = await _chooseVaultFolder(context);
+    if (folder == null || !context.mounted) return;
 
     final vaultPath = await ref
         .read(vaultFileStorageProvider)
-        .createVaultPath(name: path);
+        .createVaultPath(name: path, directoryPath: folder);
 
     final database = AppDatabase(filePath: vaultPath);
     final vault = VaultService(database, vaultId: vaultPath);
@@ -1548,13 +1551,33 @@ class SettingsPage extends ConsumerWidget {
     }
   }
 
+  Future<String?> _chooseVaultFolder(
+    BuildContext context, {
+    String? initialDirectory,
+  }) async {
+    try {
+      return await FilePicker.getDirectoryPath(
+        dialogTitle: 'settingsVaultChooseFolder'.tr(),
+        initialDirectory: initialDirectory,
+      );
+    } catch (error) {
+      if (context.mounted) {
+        _showMessage('settingsBackupError'.tr(args: [error.toString()]));
+      }
+      return null;
+    }
+  }
+
   Future<void> _createLocalVault(BuildContext context, WidgetRef ref) async {
     final name = await _chooseVaultNameSheet(context);
     if (name == null || !context.mounted) return;
+    final folder = await _chooseVaultFolder(context);
+    if (folder == null || !context.mounted) return;
     final path = await ref
         .read(vaultFileStorageProvider)
-        .createVaultPath(name: name);
+        .createVaultPath(name: name, directoryPath: folder);
     try {
+      await ref.read(vaultLabelsProvider.notifier).rename(path, name);
       await ref.read(activeVaultFileProvider.notifier).select(path);
     } catch (error) {
       if (context.mounted) {
@@ -1582,6 +1605,45 @@ class SettingsPage extends ConsumerWidget {
     );
     if (name != null) {
       await ref.read(vaultLabelsProvider.notifier).rename(vaultId, name);
+    }
+  }
+
+  Future<void> _moveVault(
+    BuildContext context,
+    WidgetRef ref,
+    String vaultId,
+  ) async {
+    final folder = await _chooseVaultFolder(context);
+    if (folder == null || !context.mounted) return;
+    try {
+      final storage = ref.read(vaultFileStorageProvider);
+      final newPath = await storage.moveVault(
+        vaultId,
+        directoryPath: folder,
+        name: storage.fileName(vaultId),
+      );
+      await VaultService.relocateStoredKeys(
+        oldVaultId: vaultId,
+        newVaultId: newPath,
+      );
+      await ref
+          .read(cloudSyncServiceForVaultProvider(vaultId))
+          .relocateVault(newPath);
+      final label = ref.read(vaultLabelsProvider)[vaultId];
+      await ref.read(vaultFilesProvider.notifier).forget(vaultId);
+      await ref.read(vaultFilesProvider.notifier).remember(newPath);
+      await ref.read(vaultLabelsProvider.notifier).remove(vaultId);
+      if (label != null) {
+        await ref.read(vaultLabelsProvider.notifier).rename(newPath, label);
+      }
+      if (ref.read(activeVaultFileProvider) == vaultId) {
+        await ref.read(activeVaultFileProvider.notifier).select(newPath);
+      }
+      if (context.mounted) _showMessage('settingsVaultMoveComplete'.tr());
+    } catch (error) {
+      if (context.mounted) {
+        _showMessage('settingsBackupError'.tr(args: [error.toString()]));
+      }
     }
   }
 
@@ -1693,10 +1755,12 @@ class SettingsPage extends ConsumerWidget {
         initialValue: workspace.name,
       );
       if (name == null || !context.mounted) return;
+      final folder = await _chooseVaultFolder(context);
+      if (folder == null || !context.mounted) return;
 
       final path = await ref
           .read(vaultFileStorageProvider)
-          .createVaultPath(name: name);
+          .createVaultPath(name: name, directoryPath: folder);
       final sync = ref.read(cloudSyncServiceForVaultProvider(path));
       await sync.enable(workspace, existingBlob: blob);
       ref.invalidate(cloudSyncConfigurationForVaultProvider(path));
@@ -1833,7 +1897,7 @@ enum _ConnectionsExportFormat { jsonRedacted, jsonProtected, csv }
 
 enum _VaultOnboardingChoice { local, cloud }
 
-enum _VaultTileAction { changeCloudBinding, rename, delete }
+enum _VaultTileAction { changeCloudBinding, move, rename, delete }
 
 enum _SettingsTilePosition { only, first, middle, last }
 
@@ -2210,6 +2274,7 @@ class _VaultCloudBindingTile extends ConsumerWidget {
     this.onExport,
     this.onImport,
     this.onSync,
+    this.onMove,
     this.onRename,
     this.onDelete,
   });
@@ -2222,6 +2287,7 @@ class _VaultCloudBindingTile extends ConsumerWidget {
   final Future<void> Function()? onExport;
   final Future<void> Function()? onImport;
   final Future<void> Function()? onSync;
+  final Future<void> Function()? onMove;
   final Future<void> Function()? onRename;
   final Future<void> Function()? onDelete;
 
@@ -2255,7 +2321,7 @@ class _VaultCloudBindingTile extends ConsumerWidget {
             shape: RoundedRectangleBorder(borderRadius: tileBorderRadius),
             leading: const Icon(Symbols.lock),
             title: Text(title),
-            subtitle: Text('$workspace\n$syncStatus'),
+            subtitle: Text('$workspace\n$syncStatus\n$vaultId'),
             isThreeLine: true,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -2265,6 +2331,7 @@ class _VaultCloudBindingTile extends ConsumerWidget {
                     if (action == _VaultTileAction.changeCloudBinding) {
                       _bindWorkspace(context, ref);
                     }
+                    if (action == _VaultTileAction.move) onMove?.call();
                     if (action == _VaultTileAction.rename) onRename?.call();
                     if (action == _VaultTileAction.delete) onDelete?.call();
                   },
@@ -2273,6 +2340,11 @@ class _VaultCloudBindingTile extends ConsumerWidget {
                       value: _VaultTileAction.changeCloudBinding,
                       child: Text('settingsVaultChangeCloudBinding'.tr()),
                     ),
+                    if (onMove != null)
+                      PopupMenuItem(
+                        value: _VaultTileAction.move,
+                        child: Text('settingsVaultMove'.tr()),
+                      ),
                     if (onRename != null)
                       PopupMenuItem(
                         value: _VaultTileAction.rename,

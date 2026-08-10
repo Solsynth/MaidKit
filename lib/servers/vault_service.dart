@@ -34,6 +34,27 @@ class VaultService {
   static const _syncPassphraseKeyPrefix = 'maidkit_vault_sync_passphrase';
   static const _iterations = 310000;
   static final Map<String, String> _syncPassphrases = {};
+  static String _key(String prefix, String vaultId) =>
+      '${prefix}_${base64UrlEncode(utf8.encode(vaultId))}';
+
+  /// Moves vault-scoped keychain entries when a database file is relocated.
+  static Future<void> relocateStoredKeys({
+    required String oldVaultId,
+    required String newVaultId,
+    FlutterSecureStorage? secureStorage,
+  }) async {
+    final storage = secureStorage ?? const FlutterSecureStorage();
+    for (final prefix in [_biometricKeyPrefix, _syncPassphraseKeyPrefix]) {
+      final oldKey = _key(prefix, oldVaultId);
+      final newKey = _key(prefix, newVaultId);
+      final value = await storage.read(key: oldKey);
+      if (value != null) {
+        await storage.write(key: newKey, value: value);
+        await storage.delete(key: oldKey);
+      }
+    }
+  }
+
   final AppDatabase _database;
   final FlutterSecureStorage _secureStorage;
   final String _vaultId;
@@ -42,8 +63,7 @@ class VaultService {
   SecretKey? _dataKey;
 
   bool get isUnlocked => _dataKey != null;
-  String get _syncPassphraseKey =>
-      '${_syncPassphraseKeyPrefix}_${base64UrlEncode(utf8.encode(_vaultId))}';
+  String get _syncPassphraseKey => _key(_syncPassphraseKeyPrefix, _vaultId);
 
   Future<String?> syncPassphrase() async {
     final cached = _syncPassphrases[_vaultId];

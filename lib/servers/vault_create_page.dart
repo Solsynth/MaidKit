@@ -25,6 +25,7 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
   final _name = TextEditingController();
   final _password = TextEditingController();
   final _confirmation = TextEditingController();
+  String? _folderPath;
   bool _creatingLocal = false;
   bool _importMode = false;
   List<ImportCandidate>? _pendingCandidates;
@@ -196,6 +197,37 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
           decoration: InputDecoration(labelText: 'settingsVaultName'.tr()),
         ),
         const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _pickVaultFolder,
+          icon: const Icon(Symbols.folder_open),
+          label: Text(
+            _folderPath == null
+                ? 'vaultChooseFolder'.tr()
+                : 'vaultChangeFolder'.tr(),
+          ),
+        ),
+        if (_folderPath != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              _folderPath!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'vaultExternalStorageHint'.tr(),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         TextField(
           controller: _password,
           obscureText: true,
@@ -258,11 +290,33 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
     );
   }
 
+  Future<void> _pickVaultFolder() async {
+    if (_busy) return;
+    try {
+      final path = await FilePicker.getDirectoryPath(
+        dialogTitle: 'vaultChooseFolder'.tr(),
+        initialDirectory: _folderPath,
+      );
+      if (path != null && mounted) {
+        setState(() {
+          _folderPath = path;
+          _error = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = _friendlyError(error));
+    }
+  }
+
   Future<void> _createLocalVault() async {
     if (_busy) return;
     final name = _name.text.trim();
     if (name.isEmpty) {
       setState(() => _error = 'vaultNameRequired'.tr());
+      return;
+    }
+    if (_folderPath == null) {
+      setState(() => _error = 'vaultFolderRequired'.tr());
       return;
     }
     if (_password.text != _confirmation.text) {
@@ -277,7 +331,7 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
     try {
       final path = await ref
           .read(vaultFileStorageProvider)
-          .createVaultPath(name: name);
+          .createVaultPath(name: name, directoryPath: _folderPath);
       await ref.read(vaultLabelsProvider.notifier).rename(path, name);
       await ref.read(activeVaultFileProvider.notifier).select(path);
       await ref.read(vaultServiceProvider).create(_password.text);
@@ -371,6 +425,10 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
       setState(() => _error = 'vaultNameRequired'.tr());
       return;
     }
+    if (_folderPath == null) {
+      setState(() => _error = 'vaultFolderRequired'.tr());
+      return;
+    }
     if (_password.text != _confirmation.text) {
       setState(() => _error = 'vaultPasswordsDontMatch'.tr());
       return;
@@ -383,7 +441,7 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
     try {
       final path = await ref
           .read(vaultFileStorageProvider)
-          .createVaultPath(name: name);
+          .createVaultPath(name: name, directoryPath: _folderPath);
       await ref.read(vaultLabelsProvider.notifier).rename(path, name);
       await ref.read(activeVaultFileProvider.notifier).select(path);
       await ref.read(vaultServiceProvider).create(_password.text);
@@ -436,11 +494,16 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
       if (blob == null || !mounted) return;
       final name = await _chooseVaultName(initialValue: workspace.name);
       if (name == null || !mounted) return;
+      final folder = await FilePicker.getDirectoryPath(
+        dialogTitle: 'vaultChooseFolder'.tr(),
+        initialDirectory: _folderPath,
+      );
+      if (folder == null || !mounted) return;
+      _folderPath = folder;
 
       final path = await ref
           .read(vaultFileStorageProvider)
-          .createVaultPath(name: name);
-      await ref.read(vaultLabelsProvider.notifier).rename(path, name);
+          .createVaultPath(name: name, directoryPath: folder);
       final sync = ref.read(cloudSyncServiceForVaultProvider(path));
       await sync.enable(workspace, existingBlob: blob);
       ref.invalidate(cloudSyncConfigurationForVaultProvider(path));
