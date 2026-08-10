@@ -555,6 +555,19 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _removeTab(tabId);
   }
 
+  /// Sends a saved shell snippet to the terminal identified by [terminalId].
+  ///
+  /// The trailing newline makes the snippet execute immediately, while
+  /// preserving any leading whitespace and internal line breaks in the script.
+  void executeSnippet(String terminalId, ScriptSnippet snippet) {
+    final tab = state.tabs.where((tab) => tab.id == terminalId).firstOrNull;
+    if (tab is! TerminalTab) return;
+
+    final script = snippet.script.trimRight();
+    if (script.trim().isEmpty) return;
+    tab.terminal.sendInput('$script\n');
+  }
+
   /// Closes every tab in [paneId] and removes the pane from the layout.
   Future<void> closePane(String paneId) async {
     final pane = state.panes[paneId];

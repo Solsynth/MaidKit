@@ -1,4 +1,4 @@
-platform :osx, '10.15'
+platform :osx, '12.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -36,7 +36,30 @@ target 'Runner' do
 end
 
 post_install do |installer|
+  deployment_target = '12.0'
+  installer.pods_project.build_configurations.each do |config|
+    config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
+  end
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
+    end
   end
+
+  # The aggregate target owns the app's Runner project, which is not included
+  # in [installer.pods_project.targets]. Open it directly so the setting is
+  # persisted in Runner.xcodeproj as well as in the generated Pods project.
+  user_project = Xcodeproj::Project.open(
+    File.join(__dir__, 'Runner.xcodeproj'),
+  )
+  user_project.build_configurations.each do |config|
+    config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
+  end
+  user_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = deployment_target
+    end
+  end
+  user_project.save
 end

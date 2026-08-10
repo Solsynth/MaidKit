@@ -5,11 +5,13 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kMiddleMouseButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_connection_actions.dart';
 import 'server_detail_page.dart';
 import 'servers_page.dart';
@@ -873,22 +875,142 @@ class _SessionTabBody extends ConsumerWidget {
       return FileEditorTabView(key: key, tab: tab as FileEditorTab);
     }
     final terminalTab = tab as TerminalTab;
-    return ColoredBox(
-      color: ref.watch(transparentTerminalBackgroundProvider)
-          ? Colors.transparent
-          : const Color(0xFF111315),
-      child: ClipRect(
-        child: TerminalFindHost(
-          key: key,
-          adapter: terminalTab.terminal,
-          autofocus: autofocus,
-          transparentBackground: ref.watch(
-            transparentTerminalBackgroundProvider,
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.add, meta: true): () =>
+            _showTerminalSnippetPopover(
+              context,
+              ref,
+              terminalId: terminalTab.id,
+            ),
+        const SingleActivator(LogicalKeyboardKey.add, control: true): () =>
+            _showTerminalSnippetPopover(
+              context,
+              ref,
+              terminalId: terminalTab.id,
+            ),
+        const SingleActivator(
+          LogicalKeyboardKey.equal,
+          meta: true,
+          shift: true,
+        ): () => _showTerminalSnippetPopover(
+          context,
+          ref,
+          terminalId: terminalTab.id,
+        ),
+        const SingleActivator(
+          LogicalKeyboardKey.equal,
+          control: true,
+          shift: true,
+        ): () => _showTerminalSnippetPopover(
+          context,
+          ref,
+          terminalId: terminalTab.id,
+        ),
+      },
+      child: ColoredBox(
+        color: ref.watch(transparentTerminalBackgroundProvider)
+            ? Colors.transparent
+            : const Color(0xFF111315),
+        child: ClipRect(
+          child: TerminalFindHost(
+            key: key,
+            adapter: terminalTab.terminal,
+            autofocus: autofocus,
+            transparentBackground: ref.watch(
+              transparentTerminalBackgroundProvider,
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+Future<void> _showTerminalSnippetPopover(
+  BuildContext context,
+  WidgetRef ref, {
+  required String terminalId,
+}) async {
+  final snippets = await ref.read(snippetRepositoryProvider).all();
+  if (!context.mounted || snippets.isEmpty) {
+    if (context.mounted && snippets.isEmpty) {
+      await showMenu<void>(
+        context: context,
+        position: _terminalSnippetMenuPosition(context),
+        items: [
+          PopupMenuItem<void>(
+            enabled: false,
+            child: Text('snippetsEmpty'.tr()),
+          ),
+        ],
+      );
+    }
+    return;
+  }
+
+  final selected = await showMenu<ScriptSnippet>(
+    context: context,
+    position: _terminalSnippetMenuPosition(context),
+    constraints: const BoxConstraints(maxWidth: 380, maxHeight: 420),
+    items: [
+      PopupMenuItem<ScriptSnippet>(
+        enabled: false,
+        child: Text(
+          'snippetsRun'.tr(),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+      ),
+      for (final snippet in snippets)
+        PopupMenuItem<ScriptSnippet>(
+          value: snippet,
+          height: 64,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            leading: const Icon(Symbols.code),
+            title: Text(
+              snippet.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              snippet.script.replaceAll('\n', ' '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+    ],
+  );
+  if (selected != null && context.mounted) {
+    ref
+        .read(terminalTabsProvider.notifier)
+        .executeSnippet(terminalId, selected);
+  }
+}
+
+RelativeRect _terminalSnippetMenuPosition(BuildContext context) {
+  final overlay = Overlay.of(context).context.findRenderObject();
+  final target = context.findRenderObject();
+  if (overlay is! RenderBox || target is! RenderBox) {
+    return const RelativeRect.fromLTRB(16, 16, 16, 16);
+  }
+
+  final topLeft = target.localToGlobal(Offset.zero, ancestor: overlay);
+  final size = target.size;
+  final menuWidth = 380.0;
+  final left = (topLeft.dx + size.width - menuWidth).clamp(
+    8.0,
+    overlay.size.width - 8.0,
+  );
+  final top = (topLeft.dy + 12).clamp(8.0, overlay.size.height - 8.0);
+  return RelativeRect.fromLTRB(
+    left,
+    top,
+    overlay.size.width - left,
+    overlay.size.height - top,
+  );
 }
 
 IconData _tabIcon(SessionTab tab) => switch (tab.type) {
