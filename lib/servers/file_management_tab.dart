@@ -166,7 +166,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   var _draggingFiles = false;
   _FileSide? _dropTargetSide;
   Future<SftpClient>? _sftpClient;
+  SSHClient? _sftpOwner;
   Future<SftpClient>? _leftSftpClient;
+  SSHClient? _leftSftpOwner;
+  final _otherSftpClients = <int, Future<SftpClient>>{};
+  final _otherSftpOwners = <int, SSHClient>{};
   int? _leftServerId;
   var _leftRemotePath = '.';
   List<SftpName> _leftRemoteEntries = const [];
@@ -263,14 +267,60 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     return server?.connectionType == ServerConnectionType.local.name;
   }
 
+  Future<void> _closeSftp(Future<SftpClient>? future) async {
+    if (future == null) return;
+    try {
+      final sftp = await future;
+      await sftp.close();
+    } catch (_) {}
+  }
+
+  void _releaseLeftSftp() {
+    final previous = _leftSftpClient;
+    _leftSftpClient = null;
+    _leftSftpOwner = null;
+    if (previous != null) unawaited(_closeSftp(previous));
+  }
+
+  Future<void> _closeSftpSessions() async {
+    final sessions = <Future<SftpClient>>[];
+    final sftp = _sftpClient;
+    final leftSftp = _leftSftpClient;
+    if (sftp != null) sessions.add(sftp);
+    if (leftSftp != null) sessions.add(leftSftp);
+    sessions.addAll(_otherSftpClients.values);
+    _sftpClient = null;
+    _sftpOwner = null;
+    _leftSftpClient = null;
+    _leftSftpOwner = null;
+    _otherSftpClients.clear();
+    _otherSftpOwners.clear();
+    await Future.wait(sessions.map(_closeSftp));
+  }
+
   Future<SftpClient> _leftSftp() {
     final serverId = _leftServerId;
     if (serverId == null) {
       throw StateError('Choose a server for the left pane.');
     }
-    return _leftSftpClient ??= ref
-        .read(connectionManagerProvider)
-        .withClient(serverId, (client) => client.sftp());
+    final manager = ref.read(connectionManagerProvider);
+    final owner = manager.clientFor(serverId);
+    if (owner == null) {
+      final previous = _leftSftpClient;
+      _leftSftpClient = null;
+      _leftSftpOwner = null;
+      if (previous != null) unawaited(_closeSftp(previous));
+      throw const ServerConnectionRequiredException();
+    }
+    final cached = _leftSftpClient;
+    if (cached != null && identical(_leftSftpOwner, owner)) {
+      return cached;
+    }
+    if (cached != null) unawaited(_closeSftp(cached));
+    final next = owner.sftp();
+    _leftSftpClient = next;
+    _leftSftpOwner = owner;
+    return next;
   }
 
   Future<void> _refreshLeftRemote() async {
@@ -341,9 +391,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     );
     if (!mounted || selectedServerId == null) return;
     if (selectedServerId == -1) {
+      _releaseLeftSftp();
       setState(() {
         _leftServerId = null;
-        _leftSftpClient = null;
         _selectedLocalPaths = {};
       });
       await _refreshLocal();
@@ -352,9 +402,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final server = servers.firstWhere((item) => item.id == selectedServerId);
     final connected = await connectForStatistics(context, ref, server);
     if (!connected || !mounted) return;
+    _releaseLeftSftp();
     setState(() {
       _leftServerId = server.id;
-      _leftSftpClient = null;
       _leftRemotePath = '.';
       _leftRemotePathController.text = _leftRemotePath;
       _leftRemoteEntries = const [];
@@ -370,6 +420,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       transfer.controller.cancel();
     }
     _transferQueue.clear();
+    unawaited(_closeSftpSessions());
     _leftRemotePathController.dispose();
     _leftRemotePathFocusNode.dispose();
     _remotePathController.dispose();
@@ -1361,14 +1412,28 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     );
   }
 
-  Future<SftpClient> _sftpForServer(int serverId) =>
-      serverId == widget.tab.serverId
-      ? _sftp()
-      : serverId == _leftServerId
-      ? _leftSftp()
-      : ref
-            .read(connectionManagerProvider)
-            .withClient(serverId, (client) => client.sftp());
+  Future<SftpClient> _sftpForServer(int serverId) {
+    if (serverId == widget.tab.serverId) return _sftp();
+    if (serverId == _leftServerId) return _leftSftp();
+
+    final manager = ref.read(connectionManagerProvider);
+    final owner = manager.clientFor(serverId);
+    if (owner == null) {
+      final previous = _otherSftpClients.remove(serverId);
+      _otherSftpOwners.remove(serverId);
+      if (previous != null) unawaited(_closeSftp(previous));
+      throw const ServerConnectionRequiredException();
+    }
+    final cached = _otherSftpClients[serverId];
+    if (cached != null && identical(_otherSftpOwners[serverId], owner)) {
+      return cached;
+    }
+    if (cached != null) unawaited(_closeSftp(cached));
+    final next = owner.sftp();
+    _otherSftpClients[serverId] = next;
+    _otherSftpOwners[serverId] = owner;
+    return next;
+  }
 
   Future<void> _streamRemoteFile(
     SftpClient source,
@@ -1380,27 +1445,30 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     int transferredBytes = 0,
   }) async {
     final input = await source.open(sourcePath, mode: SftpFileOpenMode.read);
-    final output = await destination.open(
-      targetPath,
-      mode:
-          SftpFileOpenMode.write |
-          SftpFileOpenMode.create |
-          SftpFileOpenMode.truncate,
-    );
     try {
-      var fileOffset = 0;
-      await for (final chunk in input.read(
-        chunkSize: 64 * 1024,
-        maxPendingRequests: 4,
-      )) {
-        await controller.waitIfPaused();
-        await output.writeBytes(chunk, offset: fileOffset);
-        fileOffset += chunk.length;
-        reportProgress(transferredBytes + fileOffset);
+      final output = await destination.open(
+        targetPath,
+        mode:
+            SftpFileOpenMode.write |
+            SftpFileOpenMode.create |
+            SftpFileOpenMode.truncate,
+      );
+      try {
+        var fileOffset = 0;
+        await for (final chunk in input.read(
+          chunkSize: 64 * 1024,
+          maxPendingRequests: 4,
+        )) {
+          await controller.waitIfPaused();
+          await output.writeBytes(chunk, offset: fileOffset);
+          fileOffset += chunk.length;
+          reportProgress(transferredBytes + fileOffset);
+        }
+      } finally {
+        await output.close();
       }
     } finally {
       await input.close();
-      await output.close();
     }
   }
 
@@ -2011,24 +2079,27 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           remotePath,
           mode: SftpFileOpenMode.read,
         );
-        final sink = destination.openWrite();
-        var transferredBytes = 0;
         try {
-          await for (final chunk in remoteFile.read(
-            length: totalBytes,
-            chunkSize: 64 * 1024,
-            maxPendingRequests: 4,
-          )) {
-            await controller.waitIfPaused();
-            sink.add(chunk);
-            transferredBytes += chunk.length;
-            reportProgress(transferredBytes);
-            if (transferredBytes % (1024 * 1024) < chunk.length) {
-              await sink.flush();
+          final sink = destination.openWrite();
+          try {
+            var transferredBytes = 0;
+            await for (final chunk in remoteFile.read(
+              length: totalBytes,
+              chunkSize: 64 * 1024,
+              maxPendingRequests: 4,
+            )) {
+              await controller.waitIfPaused();
+              sink.add(chunk);
+              transferredBytes += chunk.length;
+              reportProgress(transferredBytes);
+              if (transferredBytes % (1024 * 1024) < chunk.length) {
+                await sink.flush();
+              }
             }
+          } finally {
+            await sink.close();
           }
         } finally {
-          await sink.close();
           await remoteFile.close();
           if (controller.isCancelled) {
             try {
@@ -2065,23 +2136,26 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           remotePath,
           mode: SftpFileOpenMode.read,
         );
-        final sink = temporaryFile.openWrite();
-        var transferredBytes = 0;
         try {
-          await for (final chunk in remoteFile.read(
-            chunkSize: 64 * 1024,
-            maxPendingRequests: 4,
-          )) {
-            await controller.waitIfPaused();
-            sink.add(chunk);
-            transferredBytes += chunk.length;
-            reportProgress(transferredBytes);
-            if (transferredBytes % (1024 * 1024) < chunk.length) {
-              await sink.flush();
+          final sink = temporaryFile.openWrite();
+          try {
+            var transferredBytes = 0;
+            await for (final chunk in remoteFile.read(
+              chunkSize: 64 * 1024,
+              maxPendingRequests: 4,
+            )) {
+              await controller.waitIfPaused();
+              sink.add(chunk);
+              transferredBytes += chunk.length;
+              reportProgress(transferredBytes);
+              if (transferredBytes % (1024 * 1024) < chunk.length) {
+                await sink.flush();
+              }
             }
+          } finally {
+            await sink.close();
           }
         } finally {
-          await sink.close();
           await remoteFile.close();
         }
         controller.throwIfCancelled();
@@ -2216,20 +2290,23 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           childRemote,
           mode: SftpFileOpenMode.read,
         );
-        final sink = File(childLocal).openWrite();
         try {
-          await for (final chunk in remoteFile.read(
-            length: entry.attr.size,
-            chunkSize: 64 * 1024,
-            maxPendingRequests: 4,
-          )) {
-            await controller?.waitIfPaused();
-            sink.add(chunk);
-            transferredBytes += chunk.length;
-            reportProgress?.call(transferredBytes);
+          final sink = File(childLocal).openWrite();
+          try {
+            await for (final chunk in remoteFile.read(
+              length: entry.attr.size,
+              chunkSize: 64 * 1024,
+              maxPendingRequests: 4,
+            )) {
+              await controller?.waitIfPaused();
+              sink.add(chunk);
+              transferredBytes += chunk.length;
+              reportProgress?.call(transferredBytes);
+            }
+          } finally {
+            await sink.close();
           }
         } finally {
-          await sink.close();
           await remoteFile.close();
         }
       }
@@ -2493,9 +2570,24 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     }
   }
 
-  Future<SftpClient> _sftp() => _sftpClient ??= ref
-      .read(connectionManagerProvider)
-      .withClient(widget.tab.serverId, (client) => client.sftp());
+  Future<SftpClient> _sftp() {
+    final manager = ref.read(connectionManagerProvider);
+    final owner = manager.clientFor(widget.tab.serverId);
+    if (owner == null) {
+      final previous = _sftpClient;
+      _sftpClient = null;
+      _sftpOwner = null;
+      if (previous != null) unawaited(_closeSftp(previous));
+      throw const ServerConnectionRequiredException();
+    }
+    final cached = _sftpClient;
+    if (cached != null && identical(_sftpOwner, owner)) return cached;
+    if (cached != null) unawaited(_closeSftp(cached));
+    final next = owner.sftp();
+    _sftpClient = next;
+    _sftpOwner = owner;
+    return next;
+  }
 
   Future<void> _editLocal(File file) async {
     final server = _serverForTab();
