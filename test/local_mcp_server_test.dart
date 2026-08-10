@@ -312,7 +312,7 @@ void main() {
   group('LocalMcpServer HTTP+SSE transport', () {
     late LocalMcpServer server;
     late HttpClient http;
-    static const token = 'test-bearer-token';
+    const token = 'test-bearer-token';
 
     setUp(() async {
       server = LocalMcpServer(
