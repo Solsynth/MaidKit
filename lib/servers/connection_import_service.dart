@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:maid_kit/data/local/app_database.dart';
 
@@ -265,6 +266,39 @@ class ConnectionImportService {
           existing: _findExisting(existing, connection),
         ),
     ];
+  }
+
+  /// The default OpenSSH client config path for the current platform:
+  /// `~/.ssh/config` on macOS/Linux and `%USERPROFILE%\.ssh\config` on
+  /// Windows. Returns an empty string when the home directory is not set.
+  static String defaultOpenSshConfigPath() {
+    final home = Platform.isWindows
+        ? Platform.environment['USERPROFILE']
+        : Platform.environment['HOME'];
+    if (home == null || home.isEmpty) return '';
+    return p.join(home, '.ssh', 'config');
+  }
+
+  /// Reads the user's default `~/.ssh/config` and returns candidates for the
+  /// import preview, so hosts already set up with key auth can be added in
+  /// one step instead of by hand. The config's `.ssh` directory is passed as
+  /// [baseDirectory] so `IdentityFile` paths resolve there (the
+  /// [OpenSshConfigAdapter] confines them to `~/.ssh`).
+  ///
+  /// Throws [FileSystemException] when no config exists at the default
+  /// location and [FormatException] when the file has no recognizable
+  /// `Host` blocks.
+  Future<List<ImportCandidate>> previewDefaultOpenSshConfig() async {
+    final path = defaultOpenSshConfigPath();
+    if (path.isEmpty) {
+      throw const FileSystemException('HOME or USERPROFILE is not set.');
+    }
+    final file = File(path);
+    if (!await file.exists()) {
+      throw FileSystemException('No OpenSSH config at', path);
+    }
+    final content = await file.readAsString();
+    return previewThirdParty(content, baseDirectory: file.parent.path);
   }
 
   /// Creates the selected candidates inside one transaction.

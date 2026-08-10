@@ -928,6 +928,21 @@ class SettingsPage extends ConsumerWidget {
                       contentPadding: _sectionTilePadding,
                       shape: RoundedRectangleBorder(
                         borderRadius: _sectionTileBorderRadius(
+                          _SettingsTilePosition.middle,
+                        ),
+                      ),
+                      leading: const Icon(Symbols.computer),
+                      title: const Text('settingsConnectionsScanLocal').tr(),
+                      subtitle: const Text(
+                        'settingsConnectionsScanLocalHint',
+                      ).tr(),
+                      trailing: const Icon(Symbols.chevron_right),
+                      onTap: () => _importFromLocalSshConfig(context, ref),
+                    ),
+                    ListTile(
+                      contentPadding: _sectionTilePadding,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: _sectionTileBorderRadius(
                           _SettingsTilePosition.last,
                         ),
                       ),
@@ -1529,6 +1544,68 @@ class SettingsPage extends ConsumerWidget {
       useRootNavigator: true,
       builder: (sheetContext) =>
           ConnectionImportPreviewSheet(candidates: preview.candidates),
+    );
+    if (selected == null || selected.isEmpty || !context.mounted) return;
+
+    try {
+      final result = await service.import(selected);
+      if (context.mounted) {
+        _showMessage(
+          'settingsConnectionsImportSuccess'.tr(args: ['${result.created}']),
+        );
+      }
+    } on Exception catch (error) {
+      if (context.mounted) {
+        _showMessage(
+          'settingsConnectionsImportError'.tr(args: [error.toString()]),
+        );
+      }
+    }
+  }
+
+  Future<void> _importFromLocalSshConfig(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final service = ConnectionImportService(
+      ref.read(databaseProvider),
+      ref.read(vaultServiceProvider),
+    );
+    final List<ImportCandidate> candidates;
+    try {
+      candidates = await service.previewDefaultOpenSshConfig();
+    } on FileSystemException {
+      if (context.mounted) {
+        _showMessage('settingsConnectionsScanLocalNotFound'.tr());
+      }
+      return;
+    } on FormatException {
+      if (context.mounted) {
+        _showMessage('settingsConnectionsScanLocalEmpty'.tr());
+      }
+      return;
+    } on Exception catch (error) {
+      if (context.mounted) {
+        _showMessage(
+          'settingsConnectionsImportError'.tr(args: [error.toString()]),
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+    if (candidates.isEmpty) {
+      _showMessage('settingsConnectionsScanLocalEmpty'.tr());
+      return;
+    }
+
+    final selected = await showModalBottomSheet<List<ImportCandidate>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      useRootNavigator: true,
+      builder: (sheetContext) =>
+          ConnectionImportPreviewSheet(candidates: candidates),
     );
     if (selected == null || selected.isEmpty || !context.mounted) return;
 
