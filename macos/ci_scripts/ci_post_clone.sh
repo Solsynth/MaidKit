@@ -11,7 +11,12 @@ echo "=== Installing Flutter SDK ==="
 git clone https://github.com/flutter/flutter.git --depth 1 -b stable "$HOME/flutter"
 export PATH="$PATH:$HOME/flutter/bin"
 
-# Pre-cache macOS artifacts and fetch dependencies.
+echo "=== Installing Go ==="
+# tailscale's native-assets hook compiles its embedded runtime during the Xcode
+# archive and requires Go 1.26+ (or Go 1.25+ with automatic toolchain setup).
+HOMEBREW_NO_AUTO_UPDATE=1 brew install go
+
+# Pre-cache macOS artifacts and fetch dependencies
 flutter precache --macos
 flutter pub get
 
