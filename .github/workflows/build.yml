@@ -164,7 +164,9 @@ jobs:
 
   upload-to-s3:
     needs: [build-windows, build-linux, build-android]
-    if: always()
+    # Only the upstream release repo has the R2/S3 secrets; on forks the
+    # upload steps have no credentials and would fail the whole run.
+    if: always() && github.repository == 'Solsynth/MaidKit'
     runs-on: ubuntu-latest
     steps:
       - if: needs.build-windows.result == 'success'
