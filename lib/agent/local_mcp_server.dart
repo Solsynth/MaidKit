@@ -7,6 +7,7 @@ import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -61,12 +62,30 @@ class LocalMcpServerState {
   );
 }
 
-/// Persisted preference for the local MCP server. Plain app preferences, not
-/// vault data: the port and a boolean carry no secrets. The [authToken] is a
-/// per-install random bearer token (generated with a CSPRNG) that every
-/// request must present, so only agents the user configures with the token can
-/// reach the server — loopback binding alone would let any local process issue
-/// tool calls against every saved SSH server.
+abstract interface class LocalMcpTokenStorage {
+  Future<String?> read();
+
+  Future<void> write(String token);
+}
+
+/// Keychain/credential-manager backed storage for the local MCP bearer token.
+class SecureLocalMcpTokenStorage implements LocalMcpTokenStorage {
+  SecureLocalMcpTokenStorage({FlutterSecureStorage? storage})
+    : _storage = storage ?? const FlutterSecureStorage();
+
+  static const _key = 'maidkit_local_mcp_server_token';
+  final FlutterSecureStorage _storage;
+
+  @override
+  Future<String?> read() => _storage.read(key: _key);
+
+  @override
+  Future<void> write(String token) => _storage.write(key: _key, value: token);
+}
+
+/// Persisted preference for the local MCP server. The non-secret enabled and
+/// port settings live in ordinary preferences; [authToken] is kept in the OS
+/// secure credential store because it grants access to saved SSH servers.
 class LocalMcpServerPreferences {
   LocalMcpServerPreferences(
     this._preferences,
@@ -77,6 +96,7 @@ class LocalMcpServerPreferences {
 
   static const _enabledKey = 'local_mcp_server_enabled';
   static const _portKey = 'local_mcp_server_port';
+  // Legacy SharedPreferences key, retained only for one-time migration.
   static const _tokenKey = 'local_mcp_server_token';
 
   /// Port picked to avoid common dev-server ranges.
@@ -89,15 +109,21 @@ class LocalMcpServerPreferences {
 
   static Future<LocalMcpServerPreferences> load({
     SharedPreferencesAsync? preferences,
+    LocalMcpTokenStorage? tokenStorage,
   }) async {
     final store = preferences ?? SharedPreferencesAsync();
+    final secureTokens = tokenStorage ?? SecureLocalMcpTokenStorage();
     final enabled = await store.getBool(_enabledKey) ?? false;
     final port = await store.getInt(_portKey) ?? defaultPort;
-    var token = await store.getString(_tokenKey);
+    var token = await secureTokens.read();
+    final legacyToken = await store.getString(_tokenKey);
     if (token == null || token.isEmpty) {
-      token = _generateToken();
-      await store.setString(_tokenKey, token);
+      token = legacyToken == null || legacyToken.isEmpty
+          ? _generateToken()
+          : legacyToken;
+      await secureTokens.write(token);
     }
+    if (legacyToken != null) await store.remove(_tokenKey);
     return LocalMcpServerPreferences(store, enabled, port, token);
   }
 

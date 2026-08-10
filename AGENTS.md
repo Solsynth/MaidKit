@@ -1,6 +1,6 @@
 # MaidKit contributor guidance
 
-Read `docs/architecture.md` before making structural changes.
+Read `docs/ARCHITECTURE.md` before making structural changes.
 
 ## Tech stack rules
 

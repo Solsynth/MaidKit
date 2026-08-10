@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/agent/local_mcp_server.dart';
 import 'package:maid_kit/agent/mcp_client.dart' show mcpProtocolVersion;
@@ -50,6 +51,16 @@ class _FakeInvoker implements LocalMcpToolInvoker {
   }
 }
 
+class _MemoryMcpTokenStorage implements LocalMcpTokenStorage {
+  String? token;
+
+  @override
+  Future<String?> read() async => token;
+
+  @override
+  Future<void> write(String token) async => this.token = token;
+}
+
 Map<String, dynamic> _request(Object? id, String method, [Object? params]) => {
   'jsonrpc': '2.0',
   'id': ?id,
@@ -58,6 +69,47 @@ Map<String, dynamic> _request(Object? id, String method, [Object? params]) => {
 };
 
 void main() {
+  group('LocalMcpServerPreferences', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('stores newly generated bearer tokens in secure storage', () async {
+      final tokens = _MemoryMcpTokenStorage();
+      final preferences = SharedPreferencesAsync();
+
+      final settings = await LocalMcpServerPreferences.load(
+        preferences: preferences,
+        tokenStorage: tokens,
+      );
+
+      expect(settings.authToken, isNotEmpty);
+      expect(tokens.token, settings.authToken);
+      expect(
+        await preferences.getString('local_mcp_server_token'),
+        isNull,
+      );
+    });
+
+    test('migrates and removes a legacy plaintext bearer token', () async {
+      SharedPreferences.setMockInitialValues({
+        'local_mcp_server_token': 'legacy-token',
+      });
+      final tokens = _MemoryMcpTokenStorage();
+      final preferences = SharedPreferencesAsync();
+
+      final settings = await LocalMcpServerPreferences.load(
+        preferences: preferences,
+        tokenStorage: tokens,
+      );
+
+      expect(settings.authToken, 'legacy-token');
+      expect(tokens.token, 'legacy-token');
+      expect(
+        await preferences.getString('local_mcp_server_token'),
+        isNull,
+      );
+    });
+  });
+
   group('LocalMcpProtocolHandler', () {
     late _FakeInvoker invoker;
     late LocalMcpProtocolHandler handler;

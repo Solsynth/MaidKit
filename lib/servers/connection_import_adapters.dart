@@ -69,9 +69,9 @@ ConnectionImportAdapter? detectThirdPartyAdapter(String content) {
   return null;
 }
 
-/// OpenSSH `~/.ssh/config`-style files: `Host` blocks with indented options.
-/// Wildcard patterns are skipped; `IdentityFile` contents are imported when
-/// the file is readable.
+/// OpenSSH `~/.ssh/config`-style files: concrete `Host` aliases become import
+/// candidates, while global and wildcard blocks provide inherited defaults.
+/// `IdentityFile` contents are imported when the file is readable.
 class OpenSshConfigAdapter implements ConnectionImportAdapter {
   @override
   String get name => 'OpenSSH config';
@@ -81,45 +81,24 @@ class OpenSshConfigAdapter implements ConnectionImportAdapter {
     for (final line in content.split('\n')) {
       final trimmed = line.trimLeft();
       if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
-      return RegExp(r'^host\s+\S', caseSensitive: false).hasMatch(trimmed);
+      if (RegExp(r'^host\s+\S', caseSensitive: false).hasMatch(trimmed)) {
+        return true;
+      }
     }
     return false;
   }
 
   @override
   List<ImportedConnection> parse(String content, {String? baseDirectory}) {
-    final connections = <ImportedConnection>[];
-    var patterns = <String>[];
-    var hostName = '';
-    var user = '';
-    var port = 22;
-    var identityFile = '';
+    final blocks = <_OpenSshBlock>[];
+    final aliases = <String>[];
+    var patterns = <String>['*'];
+    var options = <String, String>{};
 
     void flush() {
-      final usable = patterns
-          .where((pattern) => !pattern.contains('*') && !pattern.contains('?'))
-          .toList();
-      if (usable.isNotEmpty) {
-        final host = hostName.isEmpty ? usable.first : hostName;
-        connections.add(
-          ImportedConnection(
-            name: usable.first,
-            host: host,
-            port: port,
-            username: user,
-            credential: identityFile.isEmpty
-                ? _readDefaultKeyCredential()
-                : _readKeyCredential(identityFile, baseDirectory),
-            connectionType: ServerConnectionType.ssh,
-            source: name,
-          ),
-        );
+      if (options.isNotEmpty) {
+        blocks.add(_OpenSshBlock(List.of(patterns), Map.of(options)));
       }
-      patterns = const [];
-      hostName = '';
-      user = '';
-      port = 22;
-      identityFile = '';
     }
 
     for (final rawLine in content.split('\n')) {
@@ -132,21 +111,98 @@ class OpenSshConfigAdapter implements ConnectionImportAdapter {
       if (key == 'host') {
         flush();
         patterns = value.split(RegExp(r'\s+'));
-      } else if (patterns.isEmpty) {
-        continue; // Global options (HostKeyAlgorithms, ...) are ignored.
-      } else if (key == 'hostname') {
-        hostName = value;
-      } else if (key == 'user') {
-        user = value;
-      } else if (key == 'port') {
-        port = int.tryParse(value) ?? 22;
-      } else if (key == 'identityfile' && identityFile.isEmpty) {
-        identityFile = value;
+        options = {};
+        final usable = patterns.where(
+          (pattern) =>
+              !pattern.startsWith('!') &&
+              !pattern.contains('*') &&
+              !pattern.contains('?'),
+        );
+        if (usable.isNotEmpty) aliases.add(usable.first);
+      } else if (const {
+        'hostname',
+        'user',
+        'port',
+        'identityfile',
+      }.contains(key)) {
+        // ssh_config uses the first value obtained for these options.
+        options.putIfAbsent(key, () => value);
       }
     }
     flush();
-    return connections;
+
+    return [
+      for (final alias in aliases)
+        _openSshConnectionFor(
+          alias,
+          blocks,
+          baseDirectory: baseDirectory,
+          source: name,
+        ),
+    ];
   }
+}
+
+class _OpenSshBlock {
+  const _OpenSshBlock(this.patterns, this.options);
+
+  final List<String> patterns;
+  final Map<String, String> options;
+}
+
+ImportedConnection _openSshConnectionFor(
+  String alias,
+  List<_OpenSshBlock> blocks, {
+  required String source,
+  String? baseDirectory,
+}) {
+  final resolved = <String, String>{};
+  for (final block in blocks) {
+    if (!_openSshPatternsMatch(block.patterns, alias)) continue;
+    for (final entry in block.options.entries) {
+      resolved.putIfAbsent(entry.key, () => entry.value);
+    }
+  }
+  final hostName = resolved['hostname'] ?? alias;
+  final identityFile = resolved['identityfile'] ?? '';
+  return ImportedConnection(
+    name: alias,
+    host: hostName,
+    port: int.tryParse(resolved['port'] ?? '') ?? 22,
+    username: resolved['user'] ?? '',
+    credential: identityFile.isEmpty
+        ? _readDefaultKeyCredential()
+        : _readKeyCredential(identityFile, baseDirectory),
+    connectionType: ServerConnectionType.ssh,
+    source: source,
+  );
+}
+
+bool _openSshPatternsMatch(List<String> patterns, String alias) {
+  var matched = false;
+  for (final pattern in patterns) {
+    final negated = pattern.startsWith('!');
+    final value = negated ? pattern.substring(1) : pattern;
+    if (value.isEmpty || !_openSshGlobMatches(value, alias)) continue;
+    if (negated) return false;
+    matched = true;
+  }
+  return matched;
+}
+
+bool _openSshGlobMatches(String pattern, String value) {
+  final expression = StringBuffer('^');
+  for (final character in pattern.split('')) {
+    expression.write(
+      switch (character) {
+        '*' => '.*',
+        '?' => '.',
+        _ => RegExp.escape(character),
+      },
+    );
+  }
+  expression.write(r'$');
+  return RegExp(expression.toString(), caseSensitive: false).hasMatch(value);
 }
 
 /// FinalShell connection JSON files (`*_connect_config.json`, one host per
@@ -535,17 +591,21 @@ const List<String> _defaultKeyFiles = [
   'id_dsa',
 ];
 
-/// Reads the first existing OpenSSH default key in `~/.ssh` into a
-/// credential, or null when none is readable. Used when an imported `Host`
-/// block omits `IdentityFile`, matching `ssh`'s default-key behavior.
+/// Reads the OpenSSH default key when exactly one candidate exists. When the
+/// user has multiple default identities, choosing one would not match
+/// OpenSSH's behavior (it tries all of them), while MaidKit stores one
+/// credential per server; leave it unassigned for explicit user selection.
 ServerCredential? _readDefaultKeyCredential() {
   final home = _homeDir();
   if (home == null) return null;
+  ServerCredential? result;
   for (final name in _defaultKeyFiles) {
-    final cred = _readKeyFile('$home/.ssh/$name');
-    if (cred != null) return cred;
+    final cred = _readKeyCredential('~/.ssh/$name', null);
+    if (cred == null) continue;
+    if (result != null) return null;
+    result = cred;
   }
-  return null;
+  return result;
 }
 
 /// Resolves a key path: `~/` expands to the home directory, relative paths
@@ -569,8 +629,7 @@ String? _resolvePath(String path, String? baseDirectory) {
   if (expanded.startsWith('~/')) {
     if (sshDir == null) return null;
     final candidate = '$home/${expanded.substring(2)}';
-    if (!_isWithinDirectory(candidate, sshDir)) return null;
-    return candidate;
+    return _canonicalPathWithin(candidate, sshDir);
   }
   if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(expanded)) {
     // Drive-letter paths are native on Windows (e.g. the user's own
@@ -578,26 +637,35 @@ String? _resolvePath(String path, String? baseDirectory) {
     // referencing a Windows path) and ignored. On Windows the key must
     // still live under the user's own `.ssh`.
     if (!Platform.isWindows || sshDir == null) return null;
-    if (!_isWithinDirectory(expanded, sshDir)) return null;
-    return expanded;
+    return _canonicalPathWithin(expanded, sshDir);
   }
   if (expanded.startsWith('/') || expanded.startsWith('\\')) {
     // Absolute paths are only followed when they point at the user's own
     // `~/.ssh` key directory, so a crafted file cannot name an arbitrary
     // local file for silent exfiltration.
     if (sshDir == null) return null;
-    if (!_isWithinDirectory(expanded, sshDir)) return null;
-    return expanded;
+    return _canonicalPathWithin(expanded, sshDir);
   }
   if (baseDirectory == null) return null;
   final candidate = '$baseDirectory/$expanded';
-  if (!_isWithinDirectory(candidate, baseDirectory)) return null;
-  return candidate;
+  return _canonicalPathWithin(candidate, baseDirectory);
 }
 
-/// True when [path] normalizes to a location inside [directory] with no `..`
-/// escape. A lexical check — sufficient to reject traversal in imported key
-/// paths, which are not expected to involve symlinks the importer controls.
+/// Resolves symlinks in both the candidate and boundary before checking
+/// containment. This prevents an import file from naming an in-boundary link
+/// whose target is an arbitrary file elsewhere on the machine.
+String? _canonicalPathWithin(String candidate, String boundary) {
+  try {
+    final resolvedCandidate = File(candidate).resolveSymbolicLinksSync();
+    final resolvedBoundary = Directory(boundary).resolveSymbolicLinksSync();
+    if (!_isWithinDirectory(resolvedCandidate, resolvedBoundary)) return null;
+    return resolvedCandidate;
+  } on FileSystemException {
+    return null;
+  }
+}
+
+/// True when canonical [path] is located inside canonical [directory].
 bool _isWithinDirectory(String path, String directory) {
   String normalize(String p) {
     final segments = <String>[];
@@ -611,8 +679,12 @@ bool _isWithinDirectory(String path, String directory) {
     }
     return segments.join('/');
   }
-  final normalized = normalize(path);
-  final base = normalize(directory);
+  var normalized = normalize(path);
+  var base = normalize(directory);
+  if (Platform.isWindows) {
+    normalized = normalized.toLowerCase();
+    base = base.toLowerCase();
+  }
   if (base.isEmpty) return normalized.isNotEmpty;
   return normalized == base || normalized.startsWith('$base/');
 }

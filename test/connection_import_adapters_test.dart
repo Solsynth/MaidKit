@@ -177,6 +177,39 @@ void main() {
   });
 
   group('OpenSshConfigAdapter', () {
+    test('detects configs with global directives before Host blocks', () {
+      const config = '''
+AddKeysToAgent yes
+ServerAliveInterval 30
+
+Host production
+  HostName production.internal
+''';
+
+      expect(OpenSshConfigAdapter().supports(config), isTrue);
+      expect(detectThirdPartyAdapter(config), isA<OpenSshConfigAdapter>());
+    });
+
+    test('applies global and wildcard defaults to concrete hosts', () {
+      const config = '''
+User global-user
+
+Host production
+  HostName production.internal
+
+Host *
+  Port 2200
+  User fallback-user
+''';
+
+      final connection = OpenSshConfigAdapter().parse(config).single;
+
+      expect(connection.name, 'production');
+      expect(connection.host, 'production.internal');
+      expect(connection.username, 'global-user');
+      expect(connection.port, 2200);
+    });
+
     test('parses host blocks, skips wildcards, reads relative keys', () {
       final directory = Directory.systemTemp.createTempSync(
         'openssh_adapter_test',
@@ -256,6 +289,34 @@ Host victim
       final connections = OpenSshConfigAdapter().parse(config);
       expect(connections.single.credential, isNull);
     });
+
+    test(
+      'rejects a relative key symlink that escapes the import directory',
+      () {
+        if (Platform.isWindows) return;
+        final directory = Directory.systemTemp.createTempSync(
+          'openssh_symlink_test',
+        );
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final outside = File('${directory.path}_outside_key')
+          ..writeAsStringSync('OUTSIDE-KEY\n');
+        addTearDown(() {
+          if (outside.existsSync()) outside.deleteSync();
+        });
+        Link('${directory.path}/linked_key').createSync(outside.path);
+
+        const config = '''
+Host victim
+  IdentityFile linked_key
+''';
+        final connections = OpenSshConfigAdapter().parse(
+          config,
+          baseDirectory: directory.path,
+        );
+
+        expect(connections.single.credential, isNull);
+      },
+    );
 
     test('falls back to the pattern as hostname', () {
       const config = 'Host mybox\n  User admin\n';
