@@ -58,4 +58,4 @@ export 'src/widgets/terminal_controller.dart' show TerminalController;
 export 'src/widgets/terminal_scope.dart' show TerminalScope;
 export 'src/widgets/terminal_scroll_controller.dart'
     show TerminalScrollController, TerminalScrollPosition;
-export 'src/widgets/terminal_view.dart' show TerminalView;
+export 'src/widgets/terminal_view.dart' show TerminalView, TerminalViewState;

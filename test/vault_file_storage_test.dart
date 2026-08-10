@@ -67,6 +67,30 @@ void main() {
       expect(await File('$moved-wal').readAsString(), 'wal');
       expect(await File('$moved-shm').readAsString(), 'shm');
     });
+    test('classifies application-support vaults as internal', () async {
+      final support = await Directory.systemTemp.createTemp(
+        'maidkit-vault-location-',
+      );
+      final previous = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _FakePathProvider(support);
+      addTearDown(() async {
+        PathProviderPlatform.instance = previous;
+        await support.delete(recursive: true);
+      });
+
+      expect(
+        await storage.isExternalPath(
+          '${support.path}${Platform.pathSeparator}vaults/internal.maidkit',
+        ),
+        isFalse,
+      );
+      expect(
+        await storage.isExternalPath(
+          '${support.path}${Platform.pathSeparator}Sync/external.maidkit',
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('VaultFileStorage.fileName', () {

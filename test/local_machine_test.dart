@@ -218,6 +218,8 @@ class _RecordingAdapter implements TerminalSessionAdapter {
 
   @override
   void hideKeyboard() {}
+  @override
+  Rect? get cursorGlobalRect => null;
 
   @override
   Widget buildView({
@@ -225,6 +227,7 @@ class _RecordingAdapter implements TerminalSessionAdapter {
     bool readOnly = false,
     bool showCursor = true,
     bool? transparentBackground,
+    FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox.shrink();
 
   @override

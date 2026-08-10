@@ -875,83 +875,71 @@ class _SessionTabBody extends ConsumerWidget {
       return FileEditorTabView(key: key, tab: tab as FileEditorTab);
     }
     final terminalTab = tab as TerminalTab;
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.add, meta: true): () =>
-            _showTerminalSnippetPopover(
-              context,
-              ref,
-              terminalId: terminalTab.id,
-            ),
-        const SingleActivator(LogicalKeyboardKey.add, control: true): () =>
-            _showTerminalSnippetPopover(
-              context,
-              ref,
-              terminalId: terminalTab.id,
-            ),
-        const SingleActivator(
-          LogicalKeyboardKey.equal,
-          meta: true,
-          shift: true,
-        ): () => _showTerminalSnippetPopover(
-          context,
-          ref,
-          terminalId: terminalTab.id,
-        ),
-        const SingleActivator(
-          LogicalKeyboardKey.equal,
-          control: true,
-          shift: true,
-        ): () => _showTerminalSnippetPopover(
-          context,
-          ref,
-          terminalId: terminalTab.id,
-        ),
-      },
-      child: ColoredBox(
-        color: ref.watch(transparentTerminalBackgroundProvider)
-            ? Colors.transparent
-            : const Color(0xFF111315),
-        child: ClipRect(
-          child: TerminalFindHost(
-            key: key,
-            adapter: terminalTab.terminal,
-            autofocus: autofocus,
-            transparentBackground: ref.watch(
-              transparentTerminalBackgroundProvider,
-            ),
+    return ColoredBox(
+      color: ref.watch(transparentTerminalBackgroundProvider)
+          ? Colors.transparent
+          : const Color(0xFF111315),
+      child: ClipRect(
+        child: TerminalFindHost(
+          key: key,
+          adapter: terminalTab.terminal,
+          autofocus: autofocus,
+          transparentBackground: ref.watch(
+            transparentTerminalBackgroundProvider,
           ),
+          onKeyEvent: (_, event) {
+            if (!_isTerminalSnippetShortcut(event)) {
+              return KeyEventResult.ignored;
+            }
+            unawaited(
+              _showTerminalSnippetPopover(
+                context,
+                ref,
+                terminalId: terminalTab.id,
+                anchorRect: terminalTab.terminal.cursorGlobalRect,
+              ),
+            );
+            return KeyEventResult.handled;
+          },
         ),
       ),
     );
   }
 }
 
+bool _isTerminalSnippetShortcut(KeyEvent event) {
+  if (event is! KeyDownEvent) return false;
+  final keyboard = HardwareKeyboard.instance;
+  final command = keyboard.isMetaPressed || keyboard.isControlPressed;
+  final plus =
+      event.logicalKey == LogicalKeyboardKey.add ||
+      event.logicalKey == LogicalKeyboardKey.equal;
+  return command && plus;
+}
+
 Future<void> _showTerminalSnippetPopover(
   BuildContext context,
   WidgetRef ref, {
   required String terminalId,
+  Rect? anchorRect,
 }) async {
   final snippets = await ref.read(snippetRepositoryProvider).all();
-  if (!context.mounted || snippets.isEmpty) {
-    if (context.mounted && snippets.isEmpty) {
-      await showMenu<void>(
-        context: context,
-        position: _terminalSnippetMenuPosition(context),
-        items: [
-          PopupMenuItem<void>(
-            enabled: false,
-            child: Text('snippetsEmpty'.tr()),
-          ),
-        ],
-      );
-    }
+  if (!context.mounted) return;
+
+  if (snippets.isEmpty) {
+    await showMenu<void>(
+      context: context,
+      position: _terminalSnippetMenuPosition(context, anchorRect),
+      items: [
+        PopupMenuItem<void>(enabled: false, child: Text('snippetsEmpty'.tr())),
+      ],
+    );
     return;
   }
 
   final selected = await showMenu<ScriptSnippet>(
     context: context,
-    position: _terminalSnippetMenuPosition(context),
+    position: _terminalSnippetMenuPosition(context, anchorRect),
     constraints: const BoxConstraints(maxWidth: 380, maxHeight: 420),
     items: [
       PopupMenuItem<ScriptSnippet>(
@@ -990,26 +978,52 @@ Future<void> _showTerminalSnippetPopover(
   }
 }
 
-RelativeRect _terminalSnippetMenuPosition(BuildContext context) {
+RelativeRect _terminalSnippetMenuPosition(
+  BuildContext context,
+  Rect? anchorRect,
+) {
   final overlay = Overlay.of(context).context.findRenderObject();
-  final target = context.findRenderObject();
-  if (overlay is! RenderBox || target is! RenderBox) {
+  if (overlay is! RenderBox) {
     return const RelativeRect.fromLTRB(16, 16, 16, 16);
   }
 
-  final topLeft = target.localToGlobal(Offset.zero, ancestor: overlay);
-  final size = target.size;
-  final menuWidth = 380.0;
-  final left = (topLeft.dx + size.width - menuWidth).clamp(
-    8.0,
-    overlay.size.width - 8.0,
-  );
-  final top = (topLeft.dy + 12).clamp(8.0, overlay.size.height - 8.0);
+  final target = anchorRect;
+  if (target != null) {
+    final topLeft = overlay.globalToLocal(target.topLeft);
+    final bottomRight = overlay.globalToLocal(target.bottomRight);
+    return _relativeMenuPosition(
+      Rect.fromPoints(topLeft, bottomRight),
+      overlay.size,
+    );
+  }
+
+  final renderTarget = context.findRenderObject();
+  if (renderTarget is! RenderBox) {
+    return const RelativeRect.fromLTRB(16, 16, 16, 16);
+  }
+  final topLeft = renderTarget.localToGlobal(Offset.zero, ancestor: overlay);
+  return _relativeMenuPosition(topLeft & renderTarget.size, overlay.size);
+}
+
+RelativeRect _relativeMenuPosition(Rect anchor, Size overlaySize) {
+  const menuWidth = 380.0;
+  const menuHeight = 420.0;
+  final maxLeft = overlaySize.width > menuWidth + 16
+      ? overlaySize.width - menuWidth - 8
+      : 8.0;
+  final maxTop = overlaySize.height > menuHeight + 16
+      ? overlaySize.height - menuHeight - 8
+      : 8.0;
+  final left = anchor.left.clamp(8.0, maxLeft);
+  var top = anchor.bottom + 8;
+  if (top > maxTop) {
+    top = (anchor.top - menuHeight - 8).clamp(8.0, maxTop);
+  }
   return RelativeRect.fromLTRB(
     left,
     top,
-    overlay.size.width - left,
-    overlay.size.height - top,
+    overlaySize.width - left,
+    overlaySize.height - top,
   );
 }
 

@@ -59,6 +59,9 @@ abstract class TerminalController extends ChangeNotifier
   /// Scrollback is only available on the primary screen.
   TerminalScreen get activeScreen;
 
+  /// Current cursor position in the active viewport.
+  Position get cursorPosition;
+
   /// Current terminal configuration.
   TerminalConfig get config;
 

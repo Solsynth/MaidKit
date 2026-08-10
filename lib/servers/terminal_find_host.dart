@@ -5,7 +5,8 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'terminal_session_adapter.dart';
 
-/// Wraps a [TerminalSessionAdapter] view with Cmd/Ctrl+F find UI.
+/// Wraps a [TerminalSessionAdapter] view with Cmd/Ctrl+F find UI and
+/// terminal-level shortcut handling.
 class TerminalFindHost extends StatefulWidget {
   const TerminalFindHost({
     super.key,
@@ -14,6 +15,7 @@ class TerminalFindHost extends StatefulWidget {
     this.readOnly = false,
     this.showCursor = true,
     this.transparentBackground,
+    this.onKeyEvent,
   });
 
   final TerminalSessionAdapter adapter;
@@ -21,6 +23,7 @@ class TerminalFindHost extends StatefulWidget {
   final bool readOnly;
   final bool showCursor;
   final bool? transparentBackground;
+  final FocusOnKeyEventCallback? onKeyEvent;
 
   @override
   State<TerminalFindHost> createState() => _TerminalFindHostState();
@@ -192,6 +195,7 @@ class _TerminalFindHostState extends State<TerminalFindHost> {
                 readOnly: widget.readOnly,
                 showCursor: widget.showCursor,
                 transparentBackground: widget.transparentBackground,
+                onKeyEvent: widget.onKeyEvent,
               ),
             ),
           ],

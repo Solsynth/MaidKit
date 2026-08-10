@@ -93,6 +93,11 @@ class TerminalControllerImpl extends TerminalController
 
   @override
   TerminalScreen get activeScreen => terminal.activeScreen;
+  @override
+  Position get cursorPosition {
+    _renderState.update(terminal);
+    return _renderState.cursor.position;
+  }
 
   @override
   set brightness(Brightness value) {

@@ -273,6 +273,44 @@ void main() {
     expect(resizes, isNotEmpty);
     expect(resizes.last.columns, greaterThan(0));
     expect(resizes.last.rows, greaterThan(0));
+    expect(adapter.cursorGlobalRect, isNotNull);
+  });
+
+  testWidgets('terminal key callback preempts shell input shortcuts', (
+    tester,
+  ) async {
+    final adapter = GhosttyTerminalSessionAdapter();
+    var shortcutCalls = 0;
+    addTearDown(adapter.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 800,
+          height: 600,
+          child: adapter.buildView(
+            autofocus: true,
+            onKeyEvent: (_, event) {
+              if (event is! KeyDownEvent ||
+                  event.logicalKey != LogicalKeyboardKey.equal) {
+                return KeyEventResult.ignored;
+              }
+              shortcutCalls++;
+              return KeyEventResult.handled;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byType(flterm.TerminalView));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.equal);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.equal);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+
+    expect(shortcutCalls, 1);
   });
 
   testWidgets('read-only ghostty view copies the selection with Cmd+C', (
@@ -499,6 +537,7 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
     bool readOnly = false,
     bool showCursor = true,
     bool? transparentBackground,
+    FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox();
 
   @override
@@ -533,4 +572,6 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
 
   @override
   void hideKeyboard() {}
+  @override
+  Rect? get cursorGlobalRect => null;
 }

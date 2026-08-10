@@ -1327,12 +1327,10 @@ class SettingsPage extends ConsumerWidget {
 
     final vaultPassword = await _newVaultPasswordSheet(context);
     if (vaultPassword == null || !context.mounted) return;
-    final folder = await _chooseVaultFolder(context);
-    if (folder == null || !context.mounted) return;
 
     final vaultPath = await ref
         .read(vaultFileStorageProvider)
-        .createVaultPath(name: path, directoryPath: folder);
+        .createVaultPath(name: path);
 
     final database = AppDatabase(filePath: vaultPath);
     final vault = VaultService(database, vaultId: vaultPath);
@@ -1571,6 +1569,22 @@ class SettingsPage extends ConsumerWidget {
   Future<void> _createLocalVault(BuildContext context, WidgetRef ref) async {
     final name = await _chooseVaultNameSheet(context);
     if (name == null || !context.mounted) return;
+    final path = await ref
+        .read(vaultFileStorageProvider)
+        .createVaultPath(name: name);
+    try {
+      await ref.read(vaultLabelsProvider.notifier).rename(path, name);
+      await ref.read(activeVaultFileProvider.notifier).select(path);
+    } catch (error) {
+      if (context.mounted) {
+        _showMessage('settingsBackupError'.tr(args: [error.toString()]));
+      }
+    }
+  }
+
+  Future<void> _createExternalVault(BuildContext context, WidgetRef ref) async {
+    final name = await _chooseVaultNameSheet(context);
+    if (name == null || !context.mounted) return;
     final folder = await _chooseVaultFolder(context);
     if (folder == null || !context.mounted) return;
     final path = await ref
@@ -1700,7 +1714,7 @@ class SettingsPage extends ConsumerWidget {
       useRootNavigator: true,
       builder: (sheetContext) => SheetScaffold(
         titleText: 'settingsVaultCreate'.tr(),
-        heightFactor: 0.46,
+        heightFactor: 0.58,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           children: [
@@ -1710,6 +1724,14 @@ class SettingsPage extends ConsumerWidget {
               subtitle: const Text('settingsVaultCreateLocalHint').tr(),
               onTap: () =>
                   Navigator.of(sheetContext).pop(_VaultOnboardingChoice.local),
+            ),
+            ListTile(
+              leading: const Icon(Symbols.folder_open),
+              title: const Text('settingsVaultCreateExternal').tr(),
+              subtitle: const Text('settingsVaultCreateExternalHint').tr(),
+              onTap: () => Navigator.of(
+                sheetContext,
+              ).pop(_VaultOnboardingChoice.external),
             ),
             ListTile(
               leading: const Icon(Symbols.cloud_download),
@@ -1734,6 +1756,8 @@ class SettingsPage extends ConsumerWidget {
     );
     if (choice == _VaultOnboardingChoice.local && context.mounted) {
       await _createLocalVault(context, ref);
+    } else if (choice == _VaultOnboardingChoice.external && context.mounted) {
+      await _createExternalVault(context, ref);
     } else if (choice == _VaultOnboardingChoice.cloud && context.mounted) {
       await _downloadCloudVault(context, ref);
     }
@@ -1895,7 +1919,7 @@ enum _ImportDestination { newVault, replaceCurrent }
 
 enum _ConnectionsExportFormat { jsonRedacted, jsonProtected, csv }
 
-enum _VaultOnboardingChoice { local, cloud }
+enum _VaultOnboardingChoice { local, external, cloud }
 
 enum _VaultTileAction { changeCloudBinding, move, rename, delete }
 
@@ -2294,6 +2318,8 @@ class _VaultCloudBindingTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final binding = ref.watch(cloudSyncConfigurationForVaultProvider(vaultId));
+    final external =
+        ref.watch(vaultExternalPathProvider(vaultId)).asData?.value ?? false;
     final configuration = binding.asData?.value;
     final workspace = configuration == null
         ? 'settingsVaultWorkspaceUnbound'.tr()
@@ -2321,8 +2347,12 @@ class _VaultCloudBindingTile extends ConsumerWidget {
             shape: RoundedRectangleBorder(borderRadius: tileBorderRadius),
             leading: const Icon(Symbols.lock),
             title: Text(title),
-            subtitle: Text('$workspace\n$syncStatus\n$vaultId'),
-            isThreeLine: true,
+            subtitle: Text(
+              external
+                  ? '$workspace\n$syncStatus\n$vaultId'
+                  : '$workspace\n$syncStatus',
+            ),
+            isThreeLine: external,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

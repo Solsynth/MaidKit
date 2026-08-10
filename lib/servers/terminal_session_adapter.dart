@@ -52,18 +52,21 @@ abstract interface class TerminalSessionAdapter {
   /// Hides the platform software keyboard without dropping terminal focus.
   void hideKeyboard();
 
+  /// Current cursor cell in global coordinates, when the renderer is mounted.
+  Rect? get cursorGlobalRect;
+
   /// Builds this adapter's terminal renderer.
   ///
   /// [readOnly] disables keyboard input when the surface is used for log
   /// playback rather than an interactive shell.
   /// [showCursor] hides the caret (useful for static log playback).
   /// [transparentBackground] overrides the adapter's initial background
-  /// preference when a live terminal appearance setting changes.
   Widget buildView({
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
     bool? transparentBackground,
+    FocusOnKeyEventCallback? onKeyEvent,
   });
 
   /// Finds all matches for [query] in the terminal buffer. Returns the count.
@@ -333,6 +336,9 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   }
 
   @override
+  Rect? get cursorGlobalRect => _terminalViewKey.currentState?.globalCursorRect;
+
+  @override
   int find(String query, {bool caseSensitive = false}) {
     findClear();
     if (_disposed || query.isEmpty) return 0;
@@ -464,6 +470,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     bool readOnly = false,
     bool showCursor = true,
     bool? transparentBackground,
+    FocusOnKeyEventCallback? onKeyEvent,
   }) {
     final theme = _xtermThemeFor(colorScheme, showCursor: showCursor);
     return KeyedSubtree(
@@ -487,7 +494,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         // skips both CustomTextEdit and CustomKeyboardListener, leaving no
         // Focus node for Cmd/Ctrl+C after selecting log text.
         hardwareKeyboardOnly: false,
-        onKeyEvent: readOnly ? _handleReadOnlyKeyEvent : null,
+        onKeyEvent: onKeyEvent ?? (readOnly ? _handleReadOnlyKeyEvent : null),
         alwaysShowCursor: false,
         backgroundOpacity: (transparentBackground ?? this.transparentBackground)
             ? 0

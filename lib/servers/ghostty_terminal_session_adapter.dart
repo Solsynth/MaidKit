@@ -63,6 +63,7 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
   final bool transparentBackground;
   final String fontFamily;
   final flterm.TerminalController _controller;
+  final _terminalViewKey = GlobalKey<flterm.TerminalViewState>();
   final flterm.TerminalScrollController _scrollController =
       flterm.TerminalScrollController();
   final _outgoingBytes = StreamController<Uint8List>.broadcast();
@@ -118,6 +119,9 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
     if (!_disposed) _controller.hideKeyboard();
   }
 
+  @override
+  Rect? get cursorGlobalRect => _terminalViewKey.currentState?.globalCursorRect;
+
   /// Exposes flterm's key encoder for the adapter integration tests and for
   /// callers that need to send a non-text terminal key programmatically.
   void sendKey(flterm.Key key) {
@@ -147,16 +151,19 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
     bool readOnly = false,
     bool showCursor = true,
     bool? transparentBackground,
+    FocusOnKeyEventCallback? onKeyEvent,
   }) {
     if (!showCursor) {
       _controller.modeSet(flterm.TerminalMode.cursorVisible(), value: false);
     }
 
     Widget terminal = flterm.TerminalView(
+      key: _terminalViewKey,
       controller: _controller,
       scrollController: _scrollController,
       autofocus: autofocus && !readOnly,
       showKeyboard: !readOnly,
+      onKeyEvent: onKeyEvent,
       theme: flterm.TerminalTheme(
         palette: flterm.ColorPalette(
           ansiColors: colorScheme.ansiColors,

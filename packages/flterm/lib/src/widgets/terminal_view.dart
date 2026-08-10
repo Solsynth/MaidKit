@@ -88,11 +88,13 @@ class TerminalView extends StatefulWidget {
   /// Created internally when null.
   final TerminalScrollController? scrollController;
 
-  /// Shortcut bindings merged over platform defaults.
   ///
   /// Defaults: Cmd+C/V/A/K on macOS, Ctrl+Shift+C/V/A/K on Linux,
   /// Ctrl+C/V/A/K on Windows.
   final Map<ShortcutActivator, Intent>? shortcuts;
+
+  /// Callback checked before terminal shortcuts and input handling.
+  final FocusOnKeyEventCallback? onKeyEvent;
 
   /// Raw TTF/OTF font file bytes for exact metric extraction.
   ///
@@ -113,6 +115,7 @@ class TerminalView extends StatefulWidget {
     this.fontData,
     this.focusNode,
     this.shortcuts,
+    this.onKeyEvent,
     this.scrollPhysics,
     this.scrollController,
     this.autofocus = false,
@@ -124,10 +127,10 @@ class TerminalView extends StatefulWidget {
   });
 
   @override
-  State<TerminalView> createState() => _TerminalViewState();
+  State<TerminalView> createState() => TerminalViewState();
 }
 
-class _TerminalViewState extends State<TerminalView> {
+class TerminalViewState extends State<TerminalView> {
   late FocusNode _focusNode;
   late TerminalTheme _theme;
   late CellMetrics _metrics;
@@ -146,6 +149,16 @@ class _TerminalViewState extends State<TerminalView> {
   var _devicePixelRatio = 1.0;
   Timer? _blinkTimer;
   var _blinkVisible = true;
+
+  /// Global rectangle occupied by the active terminal cursor cell.
+  Rect? get globalCursorRect {
+    final renderObject = _rendererKey.currentContext?.findRenderObject();
+    if (renderObject is! TerminalRenderBox) return null;
+    final caret = renderObject.textInputCaretRect;
+    final topLeft = renderObject.localToGlobal(caret.topLeft);
+    final bottomRight = renderObject.localToGlobal(caret.bottomRight);
+    return Rect.fromPoints(topLeft, bottomRight);
+  }
 
   TerminalController get _controller => widget.controller;
 
@@ -356,6 +369,10 @@ class _TerminalViewState extends State<TerminalView> {
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    final override = widget.onKeyEvent?.call(node, event);
+    if (override != null && override != KeyEventResult.ignored) {
+      return override;
+    }
     _updateTextInputGeometry();
     final result = _binding.handleKeyEvent(event);
 

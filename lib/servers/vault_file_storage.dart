@@ -6,8 +6,8 @@ import 'package:uuid/uuid.dart';
 /// Owns vault database files after they have been selected or created by the
 /// user.
 ///
-/// New vaults created by the UI live in a user-selected folder instead of
-/// application support, so file synchronization tools can see the database.
+/// Internal vaults use application support. External managed vaults remain in
+/// the user-selected folder so file synchronization tools can see the file.
 class VaultFileStorage {
   static const _directoryName = 'vaults';
   static const _extension = '.maidkit';
@@ -15,10 +15,8 @@ class VaultFileStorage {
 
   /// Creates a new vault file in [directoryPath].
   ///
-  /// The application-support fallback is retained only for callers that do
-  /// not have a user-selected directory yet (and for legacy migration). New
-  /// UI flows always pass an external directory so other applications can
-  /// sync the file.
+  /// A null [directoryPath] uses MaidKit's private application-support
+  /// storage. External managed vault flows pass the user's selected folder.
   Future<String> createVaultPath({String? name, String? directoryPath}) async {
     final directory = directoryPath == null
         ? await _vaultDirectory()
@@ -102,6 +100,11 @@ class VaultFileStorage {
   Future<Directory> _vaultDirectory() async {
     final support = await getApplicationSupportDirectory();
     return Directory('${support.path}/$_directoryName').create(recursive: true);
+  }
+
+  Future<bool> isExternalPath(String path) async {
+    final support = await getApplicationSupportDirectory();
+    return !isInDirectory(path, '${support.path}/$_directoryName');
   }
 
   /// The final path segment, tolerating both '/' and '\' separators.

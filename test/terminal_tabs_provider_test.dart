@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -83,6 +82,8 @@ class _RecordingTerminalAdapter implements TerminalSessionAdapter {
 
   @override
   void hideKeyboard() {}
+  @override
+  Rect? get cursorGlobalRect => null;
 
   @override
   Widget buildView({
@@ -90,6 +91,7 @@ class _RecordingTerminalAdapter implements TerminalSessionAdapter {
     bool readOnly = false,
     bool showCursor = true,
     bool? transparentBackground,
+    FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox.shrink();
 
   @override

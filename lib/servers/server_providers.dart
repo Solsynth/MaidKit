@@ -310,6 +310,12 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
 final vaultFilesProvider = NotifierProvider<VaultFilesNotifier, List<String>>(
   VaultFilesNotifier.new,
 );
+final vaultExternalPathProvider = FutureProvider.family<bool, String>((
+  ref,
+  path,
+) {
+  return ref.read(vaultFileStorageProvider).isExternalPath(path);
+});
 
 class VaultFilesNotifier extends Notifier<List<String>> {
   @override
