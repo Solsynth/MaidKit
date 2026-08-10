@@ -107,7 +107,9 @@ class OpenSshConfigAdapter implements ConnectionImportAdapter {
             host: host,
             port: port,
             username: user,
-            credential: _readKeyCredential(identityFile, baseDirectory),
+            credential: identityFile.isEmpty
+                ? _readDefaultKeyCredential()
+                : _readKeyCredential(identityFile, baseDirectory),
             connectionType: ServerConnectionType.ssh,
             source: name,
           ),
@@ -488,19 +490,62 @@ class PuTTYAdapter implements ConnectionImportAdapter {
 // Shared helpers.
 // ---------------------------------------------------------------------------
 
-/// Reads a private-key file into a credential, or null when the path is
-/// empty, points at a file outside this machine, or is unreadable.
-ServerCredential? _readKeyCredential(String path, String? baseDirectory) {
-  if (path.isEmpty) return null;
-  final resolved = _resolvePath(path, baseDirectory);
-  if (resolved == null) return null;
+/// The user's home directory: `USERPROFILE` on Windows, `HOME` elsewhere.
+/// Falls back to `HOMEDRIVE`+`HOMEPATH` on Windows when `USERPROFILE` is
+/// unset. Returns null when nothing usable is set.
+String? _homeDir() {
+  if (Platform.isWindows) {
+    final profile = Platform.environment['USERPROFILE'];
+    if (profile != null && profile.isNotEmpty) return profile;
+    final drive = Platform.environment['HOMEDRIVE'];
+    final path = Platform.environment['HOMEPATH'];
+    if (drive != null && path != null) return '$drive$path';
+  }
+  final home = Platform.environment['HOME'];
+  return (home != null && home.isNotEmpty) ? home : null;
+}
+
+/// Reads a resolved private-key file into a credential, or null when it is
+/// unreadable or empty.
+ServerCredential? _readKeyFile(String? resolvedPath) {
+  if (resolvedPath == null) return null;
   try {
-    final content = File(resolved).readAsStringSync();
+    final content = File(resolvedPath).readAsStringSync();
     if (content.trim().isEmpty) return null;
     return ServerCredential.privateKey(privateKey: content);
   } catch (_) {
     return null;
   }
+}
+
+/// Reads a private-key file named by [path] (resolved against
+/// [baseDirectory]) into a credential, or null when the path is empty,
+/// points at a file outside this machine, or is unreadable.
+ServerCredential? _readKeyCredential(String path, String? baseDirectory) {
+  if (path.isEmpty) return null;
+  return _readKeyFile(_resolvePath(path, baseDirectory));
+}
+
+/// The OpenSSH default key files, tried in order when a `Host` block has no
+/// explicit `IdentityFile` — mirrors what `ssh` does automatically.
+const List<String> _defaultKeyFiles = [
+  'id_ed25519',
+  'id_ecdsa',
+  'id_rsa',
+  'id_dsa',
+];
+
+/// Reads the first existing OpenSSH default key in `~/.ssh` into a
+/// credential, or null when none is readable. Used when an imported `Host`
+/// block omits `IdentityFile`, matching `ssh`'s default-key behavior.
+ServerCredential? _readDefaultKeyCredential() {
+  final home = _homeDir();
+  if (home == null) return null;
+  for (final name in _defaultKeyFiles) {
+    final cred = _readKeyFile('$home/.ssh/$name');
+    if (cred != null) return cred;
+  }
+  return null;
 }
 
 /// Resolves a key path: `~/` expands to the home directory, relative paths
@@ -519,21 +564,29 @@ ServerCredential? _readKeyCredential(String path, String? baseDirectory) {
 String? _resolvePath(String path, String? baseDirectory) {
   final expanded = path.trim();
   if (expanded.isEmpty) return null;
-  if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(expanded)) return null;
+  final home = _homeDir();
+  final sshDir = home == null ? null : '$home/.ssh';
   if (expanded.startsWith('~/')) {
-    final home = Platform.environment['HOME'];
-    if (home == null) return null;
+    if (sshDir == null) return null;
     final candidate = '$home/${expanded.substring(2)}';
-    if (!_isWithinDirectory(candidate, '$home/.ssh')) return null;
+    if (!_isWithinDirectory(candidate, sshDir)) return null;
     return candidate;
+  }
+  if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(expanded)) {
+    // Drive-letter paths are native on Windows (e.g. the user's own
+    // `C:\Users\me\.ssh\id_rsa`); elsewhere they are foreign (a macOS import
+    // referencing a Windows path) and ignored. On Windows the key must
+    // still live under the user's own `.ssh`.
+    if (!Platform.isWindows || sshDir == null) return null;
+    if (!_isWithinDirectory(expanded, sshDir)) return null;
+    return expanded;
   }
   if (expanded.startsWith('/') || expanded.startsWith('\\')) {
     // Absolute paths are only followed when they point at the user's own
     // `~/.ssh` key directory, so a crafted file cannot name an arbitrary
     // local file for silent exfiltration.
-    final home = Platform.environment['HOME'];
-    if (home == null) return null;
-    if (!_isWithinDirectory(expanded, '$home/.ssh')) return null;
+    if (sshDir == null) return null;
+    if (!_isWithinDirectory(expanded, sshDir)) return null;
     return expanded;
   }
   if (baseDirectory == null) return null;
