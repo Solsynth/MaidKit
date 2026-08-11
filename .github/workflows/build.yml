@@ -166,9 +166,24 @@ jobs:
   # DISTRIBUTION_PRODUCT_ID, plus secret DISTRIBUTION_UPLOAD_KEY.
   upload-to-distribution:
     needs: [build-windows, build-linux, build-android]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve distribution version
+        id: distribution_version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/* ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="$(git tag --sort=-creatordate | sed -n '1p')"
+          fi
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - if: needs.build-windows.result == 'success'
         name: Download Windows installer artifact
         uses: actions/download-artifact@v4
@@ -205,7 +220,7 @@ jobs:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
           api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
-          version: ${{ github.ref_name }}
+          version: ${{ steps.distribution_version.outputs.version }}
           file: ./artifacts/build-output-windows-installer.zip
           platform: windows
           architecture: amd64
@@ -218,7 +233,7 @@ jobs:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
           api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
-          version: ${{ github.ref_name }}
+          version: ${{ steps.distribution_version.outputs.version }}
           file: ./artifacts/build-output-linux-appimage.zip
           platform: linux
           architecture: amd64
@@ -231,7 +246,7 @@ jobs:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
           api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
-          version: ${{ github.ref_name }}
+          version: ${{ steps.distribution_version.outputs.version }}
           file: ./artifacts/android/app-arm64-v8a-release.apk
           platform: android
           architecture: arm64
@@ -244,7 +259,7 @@ jobs:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
           api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
-          version: ${{ github.ref_name }}
+          version: ${{ steps.distribution_version.outputs.version }}
           file: ./artifacts/android/app-armeabi-v7a-release.apk
           platform: android
           architecture: armeabi-v7a
@@ -257,7 +272,7 @@ jobs:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
           api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
-          version: ${{ github.ref_name }}
+          version: ${{ steps.distribution_version.outputs.version }}
           file: ./artifacts/android/app-x86_64-release.apk
           platform: android
           architecture: x86_64
