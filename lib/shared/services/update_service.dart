@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -19,21 +20,55 @@ import 'package:path_provider/path_provider.dart';
 import 'package:process_run/process_run.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Data model for a GitHub release we care about
-class GithubReleaseInfo {
+/// Data model for a Solsynth Express release we care about.
+class DistributionReleaseInfo {
   final String tagName;
   final String name;
   final String body;
-  final String htmlUrl;
+  final String? htmlUrl;
   final DateTime createdAt;
+  final List<DistributionArtifact> artifacts;
 
-  const GithubReleaseInfo({
+  const DistributionReleaseInfo({
     required this.tagName,
     required this.name,
     required this.body,
     required this.htmlUrl,
     required this.createdAt,
+    required this.artifacts,
   });
+
+  DistributionArtifact? artifactFor(String platform, String architecture) {
+    for (final artifact in artifacts) {
+      if (artifact.platform == platform &&
+          artifact.architecture == architecture &&
+          artifact.downloadUrl.isNotEmpty) {
+        return artifact;
+      }
+    }
+    return null;
+  }
+}
+
+class DistributionArtifact {
+  final String platform;
+  final String architecture;
+  final String fileName;
+  final String downloadUrl;
+
+  const DistributionArtifact({
+    required this.platform,
+    required this.architecture,
+    required this.fileName,
+    required this.downloadUrl,
+  });
+}
+
+class _UpdateTarget {
+  final String platform;
+  final String architecture;
+
+  const _UpdateTarget(this.platform, this.architecture);
 }
 
 /// Parses version and build number from "x.y.z+build"
@@ -122,30 +157,41 @@ Future<void> _cleanupDirectory(String? dirPath) async {
 }
 
 class UpdateService {
-  UpdateService({Dio? dio})
-    : _dio =
-          dio ??
-          Dio(
-            BaseOptions(
-              headers: {
-                'Accept': 'application/vnd.github+json',
-                'User-Agent': 'maidkit-update-checker',
-              },
-              connectTimeout: const Duration(seconds: 10),
-              receiveTimeout: const Duration(seconds: 15),
-            ),
-          );
+  static const _configuredDistributionApiBaseUrl = String.fromEnvironment(
+    'DISTRIBUTION_API_BASE_URL',
+  );
+  static const _configuredDistributionProductId = String.fromEnvironment(
+    'DISTRIBUTION_PRODUCT_ID',
+  );
+
+  UpdateService({
+    Dio? dio,
+    String? distributionApiBaseUrl,
+    String? distributionProductId,
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               headers: const {
+                 'Accept': 'application/json',
+                 'User-Agent': 'maidkit-update-checker',
+               },
+               connectTimeout: Duration(seconds: 10),
+               receiveTimeout: Duration(seconds: 15),
+             ),
+           ),
+       _distributionApiBaseUrl =
+           distributionApiBaseUrl ?? _configuredDistributionApiBaseUrl,
+       _distributionProductId =
+           distributionProductId ?? _configuredDistributionProductId;
 
   final Dio _dio;
+  final String _distributionApiBaseUrl;
+  final String _distributionProductId;
 
-  static const _releasesLatestApi =
-      'https://api.github.com/repos/Solsynth/MaidKit/releases/latest';
-
-  static const _downloadBaseUrl = 'https://fs.solsynth.dev/d/public/r2/maidkit';
-
-  /// Checks GitHub for the latest release and compares it against the current
-  /// app version. If an update is available, shows a bottom sheet with the
-  /// changelog and an action to open the release page.
+  /// Checks Solsynth Express for a newer release matching this device.
+  /// Solsynth Express selects the compatible published artifact and returns
+  /// its direct or signed download URL.
   Future<void> checkForUpdates(BuildContext context) async {
     if (!kEnableBuiltInUpdate) {
       Logger.root.info(
@@ -153,38 +199,35 @@ class UpdateService {
       );
       return;
     }
-    Logger.root.info('[Update] Checking for updates...');
+    Logger.root.info('[Update] Checking Solsynth Express for updates...');
     try {
-      final release = await fetchLatestRelease();
+      final release = await _fetchUpdateRelease();
       if (release == null) {
         Logger.root.info(
-          '[Update] No latest release found or could not fetch.',
+          '[Update] No newer Solsynth Express release found or could not fetch.',
         );
         return;
       }
       Logger.root.info('[Update] Fetched latest release: ${release.tagName}');
 
       final info = await PackageInfo.fromPlatform();
-      final localVersionStr = '${info.version}+${info.buildNumber}';
+      final localVersionStr = info.version;
       Logger.root.info('[Update] Local app version: $localVersionStr');
 
       final latest = _ParsedVersion.tryParse(release.tagName);
       final local = _ParsedVersion.tryParse(localVersionStr);
-
       if (latest == null || local == null) {
         Logger.root.info(
           '[Update] Failed to parse versions. Latest: ${release.tagName}, '
           'Local: $localVersionStr',
         );
-        // If parsing fails, do nothing silently
         return;
       }
       Logger.root.info(
         '[Update] Parsed versions. Latest: $latest, Local: $local',
       );
 
-      final needsUpdate = latest.compareTo(local) > 0;
-      if (!needsUpdate) {
+      if (latest.compareTo(local) <= 0) {
         Logger.root.info('[Update] App is up to date. No update needed.');
         return;
       }
@@ -199,17 +242,13 @@ class UpdateService {
         return;
       }
 
-      // Delay to ensure UI is ready (if called at startup)
-      await Future.delayed(const Duration(milliseconds: 100));
-
+      await Future<void>.delayed(const Duration(milliseconds: 100));
       if (context.mounted) {
         await showUpdateSheet(context, release);
         Logger.root.info('[Update] Update sheet shown.');
       }
     } catch (e) {
       Logger.root.severe('[Update] Error checking for updates: $e');
-      // Ignore errors (network, api, etc.)
-      return;
     }
   }
 
@@ -217,63 +256,97 @@ class UpdateService {
   /// Useful for the About page or testing.
   Future<void> showUpdateSheet(
     BuildContext context,
-    GithubReleaseInfo release,
+    DistributionReleaseInfo release,
   ) async {
     if (!context.mounted) return;
+
+    final target = await _updateTarget();
+    if (!context.mounted) return;
+    final artifact = target == null
+        ? null
+        : release.artifactFor(target.platform, target.architecture);
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useRootNavigator: true,
-      builder: (ctx) {
-        String? androidUpdateUrl;
-        String? windowsUpdateUrl;
-        String? linuxUpdateUrl;
-        if (Platform.isAndroid) {
-          androidUpdateUrl = getAndroidDownloadUrl('arm64');
-        }
-        if (Platform.isWindows) {
-          windowsUpdateUrl = getWindowsDownloadUrl();
-        }
-        if (Platform.isLinux) {
-          linuxUpdateUrl = getLinuxDownloadUrl();
-        }
-        return _UpdateSheet(
-          release: release,
-          onOpen: () async {
-            final uri = Uri.parse(release.htmlUrl);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-            }
-          },
-          androidUpdateUrl: androidUpdateUrl,
-          windowsUpdateUrl: windowsUpdateUrl,
-          linuxUpdateUrl: linuxUpdateUrl,
-        );
-      },
+      builder: (ctx) => _UpdateSheet(
+        release: release,
+        onOpen: release.htmlUrl == null
+            ? null
+            : () async {
+                final uri = Uri.parse(release.htmlUrl!);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              },
+        androidUpdateUrl: Platform.isAndroid ? artifact?.downloadUrl : null,
+        windowsUpdateUrl: Platform.isWindows ? artifact?.downloadUrl : null,
+        linuxUpdateUrl: Platform.isLinux ? artifact?.downloadUrl : null,
+      ),
     );
   }
 
-  static const _androidFileNames = (
-    arm64: 'app-arm64-v8a-release.apk',
-    armeabi: 'app-armeabi-v7a-release.apk',
-    x86_64: 'app-x86_64-release.apk',
-  );
-
-  static const _windowsFileName = 'build-output-windows-installer.zip';
-  static const _linuxFileName = 'build-output-linux-appimage.zip';
-
-  String getAndroidDownloadUrl(String arch) {
-    final fileName = switch (arch) {
-      'arm64' => _androidFileNames.arm64,
-      'armeabi' => _androidFileNames.armeabi,
-      'x86_64' => _androidFileNames.x86_64,
-      _ => _androidFileNames.arm64,
-    };
-    return '$_downloadBaseUrl/$fileName';
+  String _currentPlatform() {
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isWindows) return 'windows';
+    if (Platform.isLinux) return 'linux';
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isIOS) return 'ios';
+    return '';
   }
 
-  String getWindowsDownloadUrl() => '$_downloadBaseUrl/$_windowsFileName';
-  String getLinuxDownloadUrl() => '$_downloadBaseUrl/$_linuxFileName';
+  Future<String> _currentArchitecture() async {
+    if (Platform.isAndroid) {
+      final info = await DeviceInfoPlugin().androidInfo;
+      for (final abi in info.supportedAbis) {
+        switch (abi) {
+          case 'arm64-v8a':
+            return 'arm64';
+          case 'armeabi-v7a':
+            return 'armeabi-v7a';
+          case 'x86_64':
+            return 'x86_64';
+          case 'x86':
+            return 'x86';
+        }
+      }
+    }
+    if (Platform.isWindows) {
+      final architecture =
+          Platform.environment['PROCESSOR_ARCHITEW6432'] ??
+          Platform.environment['PROCESSOR_ARCHITECTURE'];
+      if (architecture != null) {
+        return switch (architecture.toUpperCase()) {
+          'AMD64' || 'X86_64' => 'amd64',
+          'ARM64' => 'arm64',
+          _ => architecture.toLowerCase(),
+        };
+      }
+    }
+    if (Platform.isLinux) return 'amd64';
+    if (Platform.isMacOS) return 'arm64';
+    if (Platform.isIOS) return 'arm64';
+    return '';
+  }
+
+  Uri _updateUri({
+    required String currentVersion,
+    required String platform,
+    required String architecture,
+  }) {
+    final baseUrl = _distributionApiBaseUrl.replaceFirst(RegExp(r'/+$'), '');
+    return Uri.parse(
+      '$baseUrl/products/${Uri.encodeComponent(_distributionProductId)}/update',
+    ).replace(
+      queryParameters: {
+        'current_version': currentVersion,
+        'channel': 'stable',
+        'os': platform,
+        'architecture': architecture,
+      },
+    );
+  }
 
   bool _isAndroidUpdateApk(String fileName) {
     return fileName.startsWith('maidkit-update-') && fileName.endsWith('.apk');
@@ -333,7 +406,7 @@ class UpdateService {
     AzhonAppUpdate.listener((ResultModel result) {
       if (result.type == ResultType.done) {
         unawaited(() async {
-          await Future.delayed(const Duration(seconds: 10));
+          await Future<void>.delayed(const Duration(seconds: 10));
           await _cleanupFile(result.apk);
         }());
       }
@@ -348,7 +421,7 @@ class UpdateService {
     }
   }
 
-  /// Performs automatic Windows update: download, extract, and install
+  /// Performs automatic Windows update: download, extract, and install.
   Future<void> performAutomaticWindowsUpdate(
     BuildContext context,
     String url,
@@ -361,14 +434,13 @@ class UpdateService {
       builder: (context) => _WindowsUpdateDialog(
         updateUrl: url,
         onComplete: () {
-          // Close the update sheet
           Navigator.of(context).pop();
         },
       ),
     );
   }
 
-  /// Performs automatic Linux update: download and install AppImage
+  /// Performs automatic Linux update: download and install AppImage.
   Future<void> performAutomaticLinuxUpdate(
     BuildContext context,
     String url,
@@ -387,45 +459,134 @@ class UpdateService {
     );
   }
 
-  /// Fetch the latest release info from GitHub.
-  /// Public so other screens (e.g., About) can manually trigger update checks.
-  Future<GithubReleaseInfo?> fetchLatestRelease() async {
-    Logger.root.info(
-      '[Update] Fetching latest release from GitHub API: $_releasesLatestApi',
+  /// Fetches the newest compatible published release from Solsynth Express.
+  /// This powers the settings and onboarding release information views.
+  Future<DistributionReleaseInfo?> fetchLatestRelease() async {
+    final target = await _updateTarget();
+    if (target == null) return null;
+
+    final baseUrl = _distributionApiBaseUrl.replaceFirst(RegExp(r'/+$'), '');
+    final uri =
+        Uri.parse(
+          '$baseUrl/products/${Uri.encodeComponent(_distributionProductId)}/releases',
+        ).replace(
+          queryParameters: {
+            'channel': 'stable',
+            'platform': target.platform,
+            'architecture': target.architecture,
+            'limit': '1',
+          },
+        );
+    Logger.root.info('[Update] Fetching release from Solsynth Express: $uri');
+
+    final resp = await _dio.getUri(uri);
+    if (resp.statusCode != 200 || resp.data is! Map) {
+      Logger.root.severe(
+        '[Update] Failed to fetch release. Status code: ${resp.statusCode}',
+      );
+      return null;
+    }
+
+    final data = Map<String, dynamic>.from(resp.data as Map);
+    final releases = data['data'];
+    if (releases is! List || releases.isEmpty || releases.first is! Map) {
+      Logger.root.info('[Update] No published release is available.');
+      return null;
+    }
+    return _parseRelease(Map<String, dynamic>.from(releases.first as Map));
+  }
+
+  Future<DistributionReleaseInfo?> _fetchUpdateRelease() async {
+    final target = await _updateTarget();
+    if (target == null) return null;
+
+    final info = await PackageInfo.fromPlatform();
+    final uri = _updateUri(
+      currentVersion: info.version,
+      platform: target.platform,
+      architecture: target.architecture,
     );
-    final resp = await _dio.get(_releasesLatestApi);
-    if (resp.statusCode != 200) {
-      Logger.root.severe(
-        '[Update] Failed to fetch latest release. Status code: '
-        '${resp.statusCode}',
-      );
-      return null;
-    }
-    final data = resp.data as Map<String, dynamic>;
-    Logger.root.info('[Update] Successfully fetched release data.');
+    Logger.root.info('[Update] Checking Solsynth Express: $uri');
 
-    final tagName = (data['tag_name'] ?? '').toString();
-    final name = (data['name'] ?? tagName).toString();
-    final body = (data['body'] ?? '').toString();
-    final htmlUrl = (data['html_url'] ?? '').toString();
-    final createdAtStr = (data['created_at'] ?? '').toString();
-    final createdAt = DateTime.tryParse(createdAtStr) ?? DateTime.now();
-
-    if (tagName.isEmpty || htmlUrl.isEmpty) {
+    final resp = await _dio.getUri(uri);
+    if (resp.statusCode != 200 || resp.data is! Map) {
       Logger.root.severe(
-        '[Update] Missing tag_name or html_url in release data. TagName: '
-        '"$tagName", HtmlUrl: "$htmlUrl"',
+        '[Update] Failed to check for updates. Status code: ${resp.statusCode}',
       );
       return null;
     }
 
-    Logger.root.info('[Update] Returning GithubReleaseInfo for tag: $tagName');
-    return GithubReleaseInfo(
-      tagName: tagName,
-      name: name,
-      body: body,
-      htmlUrl: htmlUrl,
-      createdAt: createdAt,
+    final data = Map<String, dynamic>.from(resp.data as Map);
+    if (data['update_available'] != true || data['release'] is! Map) {
+      Logger.root.info('[Update] No compatible update is available.');
+      return null;
+    }
+    return _parseRelease(Map<String, dynamic>.from(data['release'] as Map));
+  }
+
+  Future<_UpdateTarget?> _updateTarget() async {
+    if (_distributionApiBaseUrl.trim().isEmpty ||
+        _distributionProductId.trim().isEmpty) {
+      Logger.root.warning(
+        '[Update] Solsynth Express update configuration is missing.',
+      );
+      return null;
+    }
+
+    final platform = _currentPlatform();
+    final architecture = await _currentArchitecture();
+    if (platform.isEmpty || architecture.isEmpty) {
+      Logger.root.warning(
+        '[Update] Unsupported update target: '
+        'platform=$platform architecture=$architecture',
+      );
+      return null;
+    }
+    return _UpdateTarget(platform, architecture);
+  }
+
+  DistributionReleaseInfo? _parseRelease(Map<String, dynamic> releaseData) {
+    final version = (releaseData['version'] ?? '').toString();
+    final artifacts = <DistributionArtifact>[];
+    final artifactData = releaseData['artifacts'];
+    if (artifactData is List) {
+      for (final rawArtifact in artifactData) {
+        if (rawArtifact is! Map) continue;
+        final artifact = Map<String, dynamic>.from(rawArtifact);
+        final downloadUrl = (artifact['download_url'] ?? '').toString();
+        if (downloadUrl.isEmpty) continue;
+        artifacts.add(
+          DistributionArtifact(
+            platform: (artifact['platform'] ?? '').toString(),
+            architecture: (artifact['architecture'] ?? '').toString(),
+            fileName: (artifact['file_name'] ?? '').toString(),
+            downloadUrl: downloadUrl,
+          ),
+        );
+      }
+    }
+
+    if (version.isEmpty || artifacts.isEmpty) {
+      Logger.root.warning(
+        '[Update] Solsynth Express returned an incomplete release.',
+      );
+      return null;
+    }
+
+    final publishedAt =
+        DateTime.tryParse((releaseData['published_at'] ?? '').toString()) ??
+        DateTime.now();
+    Logger.root.info('[Update] Returning Solsynth Express release: $version');
+    return DistributionReleaseInfo(
+      tagName: version,
+      name: (releaseData['title'] ?? version).toString(),
+      body: (releaseData['release_notes'] ?? releaseData['description'] ?? '')
+          .toString(),
+      htmlUrl: (releaseData['html_url'] ?? '').toString().isEmpty
+          ? null
+          : releaseData['html_url'].toString(),
+      createdAt: publishedAt,
+      artifacts: artifacts,
     );
   }
 }
@@ -958,7 +1119,7 @@ class _ChangelogBody extends StatelessWidget {
 class _UpdateSheet extends StatefulWidget {
   const _UpdateSheet({
     required this.release,
-    required this.onOpen,
+    this.onOpen,
     this.androidUpdateUrl,
     this.windowsUpdateUrl,
     this.linuxUpdateUrl,
@@ -967,8 +1128,8 @@ class _UpdateSheet extends StatefulWidget {
   final String? androidUpdateUrl;
   final String? windowsUpdateUrl;
   final String? linuxUpdateUrl;
-  final GithubReleaseInfo release;
-  final VoidCallback onOpen;
+  final DistributionReleaseInfo release;
+  final VoidCallback? onOpen;
 
   @override
   State<_UpdateSheet> createState() => _UpdateSheetState();
@@ -1032,7 +1193,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                             widget.androidUpdateUrl!,
                             apkName:
                                 'maidkit-update-${widget.release.tagName}.apk',
-                            fallbackUrl: widget.release.htmlUrl,
+                            fallbackUrl: widget.androidUpdateUrl!,
                           );
                         },
                         icon: const Icon(Symbols.update),
@@ -1069,13 +1230,14 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                         label: Text('installUpdate'.tr()),
                       ),
                     ),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: widget.onOpen,
-                      icon: const Icon(Icons.open_in_new),
-                      label: Text('openReleasePage'.tr()),
+                  if (widget.onOpen != null)
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: widget.onOpen,
+                        icon: const Icon(Icons.open_in_new),
+                        label: Text('openReleasePage'.tr()),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

@@ -39,6 +39,7 @@ dependencies:
   dartssh2: ^2.22.5
   dio: ^5.11.0
   desktop_drop: ^0.7.1
+  device_info_plus: ^11.5.0
   desktop_webview_window: ^0.3.0
   drift: ^2.34.3
   drift_flutter: ^0.3.1

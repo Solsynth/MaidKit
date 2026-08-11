@@ -39,45 +39,80 @@ UpdateService _serviceWith(int statusCode, String body) {
   return UpdateService(
     dio: Dio(BaseOptions(validateStatus: (_) => true))
       ..httpClientAdapter = _FakeAdapter(statusCode, body),
+    distributionApiBaseUrl: 'https://distribution.example/api',
+    distributionProductId: 'product-id',
   );
 }
 
 void main() {
   group('fetchLatestRelease', () {
-    test('parses a full release payload', () async {
+    test(
+      'parses a Solsynth Express release and compatible artifacts',
+      () async {
+        final release = await _serviceWith(
+          200,
+          jsonEncode({
+            'data': [
+              {
+                'version': '1.1.0',
+                'title': 'MaidKit 1.1.0',
+                'release_notes': '## Changelog\n- Fixed things',
+                'published_at': '2026-08-01T12:00:00Z',
+                'artifacts': [
+                  {
+                    'platform': 'linux',
+                    'architecture': 'amd64',
+                    'file_name': 'maidkit-linux.zip',
+                    'download_url': 'https://cdn.example/linux.zip',
+                  },
+                  {
+                    'platform': 'macos',
+                    'architecture': 'arm64',
+                    'file_name': 'maidkit-macos.zip',
+                    'download_url': 'https://cdn.example/macos.zip',
+                  },
+                ],
+              },
+            ],
+          }),
+        ).fetchLatestRelease();
+
+        expect(release, isNotNull);
+        expect(release!.tagName, '1.1.0');
+        expect(release.name, 'MaidKit 1.1.0');
+        expect(release.body, '## Changelog\n- Fixed things');
+        expect(release.htmlUrl, isNull);
+        expect(release.createdAt, DateTime.utc(2026, 8, 1, 12));
+        expect(
+          release.artifactFor('macos', 'arm64')?.downloadUrl,
+          'https://cdn.example/macos.zip',
+        );
+        expect(release.artifactFor('windows', 'amd64'), isNull);
+      },
+    );
+
+    test('falls back to version when title is absent', () async {
       final release = await _serviceWith(
         200,
         jsonEncode({
-          'tag_name': '1.1.0+4',
-          'name': 'MaidKit 1.1.0',
-          'body': '## Changelog\n- Fixed things',
-          'html_url': 'https://github.com/Solsynth/MaidKit/releases/tag/v1.1.0',
-          'created_at': '2026-08-01T12:00:00Z',
-        }),
-      ).fetchLatestRelease();
-
-      expect(release, isNotNull);
-      expect(release!.tagName, '1.1.0+4');
-      expect(release.name, 'MaidKit 1.1.0');
-      expect(release.body, '## Changelog\n- Fixed things');
-      expect(
-        release.htmlUrl,
-        'https://github.com/Solsynth/MaidKit/releases/tag/v1.1.0',
-      );
-      expect(release.createdAt, DateTime.utc(2026, 8, 1, 12));
-    });
-
-    test('falls back to tag name when name is absent', () async {
-      final release = await _serviceWith(
-        200,
-        jsonEncode({
-          'tag_name': '1.0.1',
-          'html_url': 'https://github.com/Solsynth/MaidKit/releases/tag/1.0.1',
+          'data': [
+            {
+              'version': '1.0.1',
+              'artifacts': [
+                {
+                  'platform': 'macos',
+                  'architecture': 'arm64',
+                  'download_url': 'https://cdn.example/macos.zip',
+                },
+              ],
+            },
+          ],
         }),
       ).fetchLatestRelease();
 
       expect(release, isNotNull);
       expect(release!.name, '1.0.1');
+      expect(release.body, isEmpty);
     });
 
     test('returns null on non-200 responses', () async {
@@ -89,64 +124,65 @@ void main() {
       expect(release, isNull);
     });
 
-    test('returns null when tag_name or html_url is missing', () async {
-      final missingTag = await _serviceWith(
+    test('returns null when the response has no usable release', () async {
+      final missingVersion = await _serviceWith(
         200,
         jsonEncode({
-          'html_url': 'https://github.com/Solsynth/MaidKit/releases/tag/1.0.1',
+          'data': [
+            {
+              'artifacts': [
+                {
+                  'platform': 'macos',
+                  'architecture': 'arm64',
+                  'download_url': 'https://cdn.example/macos.zip',
+                },
+              ],
+            },
+          ],
         }),
       ).fetchLatestRelease();
-      expect(missingTag, isNull);
+      expect(missingVersion, isNull);
 
-      final missingUrl = await _serviceWith(
+      final missingArtifact = await _serviceWith(
         200,
-        jsonEncode({'tag_name': '1.0.1'}),
+        jsonEncode({
+          'data': [
+            {'version': '1.0.1', 'artifacts': []},
+          ],
+        }),
       ).fetchLatestRelease();
-      expect(missingUrl, isNull);
+      expect(missingArtifact, isNull);
     });
 
-    test('queries the Solsynth/MaidKit latest-release endpoint', () async {
-      final adapter = _FakeAdapter(200, jsonEncode({'tag_name': '1.0.1'}));
+    test('queries the Solsynth Express release listing endpoint', () async {
+      final adapter = _FakeAdapter(
+        200,
+        jsonEncode({
+          'data': [
+            {
+              'version': '1.0.1',
+              'artifacts': [
+                {
+                  'platform': 'macos',
+                  'architecture': 'arm64',
+                  'download_url': 'https://cdn.example/macos.zip',
+                },
+              ],
+            },
+          ],
+        }),
+      );
       await UpdateService(
         dio: Dio(BaseOptions(validateStatus: (_) => true))
           ..httpClientAdapter = adapter,
+        distributionApiBaseUrl: 'https://distribution.example/api/',
+        distributionProductId: 'product-id',
       ).fetchLatestRelease();
 
       expect(
         adapter.requests.single.uri.toString(),
-        'https://api.github.com/repos/Solsynth/MaidKit/releases/latest',
-      );
-    });
-  });
-
-  group('download urls', () {
-    const base = 'https://fs.solsynth.dev/d/public/r2/maidkit';
-
-    test('resolves android split-abi apks', () {
-      final service = UpdateService();
-      expect(
-        service.getAndroidDownloadUrl('arm64'),
-        '$base/app-arm64-v8a-release.apk',
-      );
-      expect(
-        service.getAndroidDownloadUrl('armeabi'),
-        '$base/app-armeabi-v7a-release.apk',
-      );
-      expect(
-        service.getAndroidDownloadUrl('x86_64'),
-        '$base/app-x86_64-release.apk',
-      );
-    });
-
-    test('resolves windows installer and linux appimage zips', () {
-      final service = UpdateService();
-      expect(
-        service.getWindowsDownloadUrl(),
-        '$base/build-output-windows-installer.zip',
-      );
-      expect(
-        service.getLinuxDownloadUrl(),
-        '$base/build-output-linux-appimage.zip',
+        'https://distribution.example/api/products/product-id/releases'
+        '?channel=stable&platform=macos&architecture=arm64&limit=1',
       );
     });
   });

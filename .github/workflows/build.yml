@@ -44,7 +44,7 @@ jobs:
       - name: Patch cargokit + tailscale for Windows build
         run: powershell -ExecutionPolicy Bypass -File buildtools/fix-cargokit-windows.ps1
       - run: dart run build_runner build --delete-conflicting-outputs
-      - run: flutter build windows --release --verbose
+      - run: flutter build windows --release --verbose --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Extract Version
         id: extract_version
         run: |
@@ -99,7 +99,7 @@ jobs:
           sudo apt-get install -y libcurl4-openssl-dev
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
-      - run: flutter build linux --release --no-tree-shake-icons
+      - run: flutter build linux --release --no-tree-shake-icons --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Archive production artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -155,16 +155,18 @@ jobs:
           } > android/key.properties
       - run: flutter pub get
       - run: dart run build_runner build --delete-conflicting-outputs
-      - run: flutter build apk --release --split-per-abi
+      - run: flutter build apk --release --split-per-abi --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Archive Android artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-output-android
           path: build/app/outputs/flutter-apk/app-*-release.apk
 
-  upload-to-s3:
+  # Configure repository variables DISTRIBUTION_API_BASE_URL and
+  # DISTRIBUTION_PRODUCT_ID, plus secret DISTRIBUTION_UPLOAD_KEY.
+  upload-to-distribution:
     needs: [build-windows, build-linux, build-android]
-    if: always()
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - if: needs.build-windows.result == 'success'
@@ -180,7 +182,7 @@ jobs:
           name: build-output-linux-appimage
           path: ./artifacts/linux
       - if: needs.build-android.result == 'success'
-        name: Download Android artifact
+        name: Download Android artifacts
         uses: actions/download-artifact@v4
         with:
           name: build-output-android
@@ -195,38 +197,68 @@ jobs:
         run: |
           cd ./artifacts/linux
           zip -r ../build-output-linux-appimage.zip .
-      - if: needs.build-android.result == 'success'
-        name: Prepare Android APKs for upload
-        run: |
-          mkdir -p ./artifacts/android-r2
-          find ./artifacts/android -type f -name 'app-*-release.apk' -exec cp {} ./artifacts/android-r2/ \;
       - if: needs.build-windows.result == 'success'
-        name: Upload Windows installer to R2
-        uses: ryand56/r2-upload-action@latest
+        name: Upload Windows installer to Solsynth Express
+        id: upload_windows
+        uses: Solsynth/SolsynthExpressUpload@v1
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.S3_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.S3_BUCKET_NAME }}
-          source-dir: ./artifacts/build-output-windows-installer.zip
-          destination-dir: maidkit
+          api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
+          product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
+          api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
+          version: ${{ github.ref_name }}
+          file: ./artifacts/build-output-windows-installer.zip
+          platform: windows
+          architecture: amd64
+          mime-type: application/zip
       - if: needs.build-linux.result == 'success'
-        name: Upload Linux to R2
-        uses: ryand56/r2-upload-action@latest
+        name: Upload Linux AppImage to Solsynth Express
+        id: upload_linux
+        uses: Solsynth/SolsynthExpressUpload@v1
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.S3_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.S3_BUCKET_NAME }}
-          source-dir: ./artifacts/build-output-linux-appimage.zip
-          destination-dir: maidkit
+          api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
+          product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
+          api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
+          version: ${{ github.ref_name }}
+          file: ./artifacts/build-output-linux-appimage.zip
+          platform: linux
+          architecture: amd64
+          mime-type: application/zip
       - if: needs.build-android.result == 'success'
-        name: Upload Android split APKs to R2
-        uses: ryand56/r2-upload-action@latest
+        name: Upload Android arm64 artifact to Solsynth Express
+        id: upload_android_arm64
+        uses: Solsynth/SolsynthExpressUpload@v1
         with:
-          r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-          r2-access-key-id: ${{ secrets.S3_ACCESS_KEY_ID }}
-          r2-secret-access-key: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          r2-bucket: ${{ secrets.S3_BUCKET_NAME }}
-          source-dir: ./artifacts/android-r2
-          destination-dir: maidkit
+          api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
+          product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
+          api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
+          version: ${{ github.ref_name }}
+          file: ./artifacts/android/app-arm64-v8a-release.apk
+          platform: android
+          architecture: arm64
+          mime-type: application/vnd.android.package-archive
+      - if: needs.build-android.result == 'success'
+        name: Upload Android armeabi-v7a artifact to Solsynth Express
+        id: upload_android_armeabi
+        uses: Solsynth/SolsynthExpressUpload@v1
+        with:
+          api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
+          product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
+          api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
+          version: ${{ github.ref_name }}
+          file: ./artifacts/android/app-armeabi-v7a-release.apk
+          platform: android
+          architecture: armeabi-v7a
+          mime-type: application/vnd.android.package-archive
+      - if: needs.build-android.result == 'success'
+        name: Upload Android x86_64 artifact to Solsynth Express
+        id: upload_android_x86_64
+        uses: Solsynth/SolsynthExpressUpload@v1
+        with:
+          api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
+          product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
+          api-key: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
+          version: ${{ github.ref_name }}
+          file: ./artifacts/android/app-x86_64-release.apk
+          platform: android
+          architecture: x86_64
+          mime-type: application/vnd.android.package-archive
