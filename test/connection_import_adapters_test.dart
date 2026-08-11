@@ -222,6 +222,66 @@ Host *.example.com
       expect(prod.credential!.privateKey, contains('PROD-KEY'));
     });
 
+    test('inherits wildcard defaults and imports tokenized identity files', () {
+      final directory = Directory.systemTemp.createTempSync(
+        'openssh_defaults_test',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final keyDirectory = Directory('${directory.path}/keys')..createSync();
+      File('${keyDirectory.path}/prod_key').writeAsStringSync('DEFAULT-KEY\n');
+
+      const config = '''
+Host *
+  IdentityFile keys/%h_key
+
+Host prod
+  HostName prod.internal
+  User deploy
+''';
+      final connections = OpenSshConfigAdapter().parse(
+        config,
+        baseDirectory: directory.path,
+      );
+
+      expect(connections, hasLength(1));
+      expect(connections.single.name, 'prod');
+      expect(connections.single.host, 'prod.internal');
+      expect(connections.single.username, 'deploy');
+      expect(
+        connections.single.credential!.privateKey,
+        contains('DEFAULT-KEY'),
+      );
+    });
+
+    test('loads concrete hosts from included config files', () {
+      final directory = Directory.systemTemp.createTempSync(
+        'openssh_include_test',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final includeDirectory = Directory('${directory.path}/config.d')
+        ..createSync();
+      File('${includeDirectory.path}/work').writeAsStringSync('''
+Host work
+  HostName work.internal
+  User builder
+''');
+
+      const config = '''
+Include config.d/*
+Host *
+  ServerAliveInterval 30
+''';
+      final connections = OpenSshConfigAdapter().parse(
+        config,
+        baseDirectory: directory.path,
+      );
+
+      expect(connections, hasLength(1));
+      expect(connections.single.name, 'work');
+      expect(connections.single.host, 'work.internal');
+      expect(connections.single.username, 'builder');
+    });
+
     test('falls back to the pattern as hostname', () {
       const config = 'Host mybox\n  User admin\n';
       final connections = OpenSshConfigAdapter().parse(config);
@@ -383,6 +443,12 @@ Windows Registry Editor Version 5.00
         isA<PuTTYAdapter>(),
       );
       expect(detectThirdPartyAdapter('random text'), isNull);
+      expect(
+        detectThirdPartyAdapter(
+          'Include ~/.ssh/config.d/*\nHost *\n  IdentityFile ~/.ssh/id_ed25519\n',
+        ),
+        isA<OpenSshConfigAdapter>(),
+      );
     });
   });
 
