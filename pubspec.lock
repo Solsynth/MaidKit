@@ -472,10 +472,11 @@ packages:
   flutter_app_update:
     dependency: "direct main"
     description:
-      name: flutter_app_update
-      sha256: "336a87c9b8f5c2f040ac314939f61a567e812a3ec3c066d8c99a524d95171d81"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/flutter_app_update"
+      ref: HEAD
+      resolved-ref: e764cd474d0688358f67386fed47babaaa209987
+      url: "https://src.solsynth.dev/SoSYS/Solian.git"
+    source: git
     version: "3.2.4"
   flutter_code_editor:
     dependency: "direct main"
