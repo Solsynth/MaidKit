@@ -220,7 +220,7 @@ jobs:
       - if: needs.build-windows.result == 'success'
         name: Upload Windows installer to Solsynth Express
         id: upload_windows
-        uses: Solsynth/SolsynthExpressUpload@c3a57aa
+        uses: Solsynth/SolsynthExpressUpload@v2
         with:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
@@ -234,7 +234,7 @@ jobs:
       - if: needs.build-linux.result == 'success'
         name: Upload Linux AppImage to Solsynth Express
         id: upload_linux
-        uses: Solsynth/SolsynthExpressUpload@c3a57aa
+        uses: Solsynth/SolsynthExpressUpload@v2
         with:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
@@ -248,7 +248,7 @@ jobs:
       - if: needs.build-android.result == 'success'
         name: Upload Android arm64 artifact to Solsynth Express
         id: upload_android_arm64
-        uses: Solsynth/SolsynthExpressUpload@c3a57aa
+        uses: Solsynth/SolsynthExpressUpload@v2
         with:
           api-base-url: ${{ vars.DISTRIBUTION_API_BASE_URL }}
           product-id: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
