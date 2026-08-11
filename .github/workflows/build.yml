@@ -168,6 +168,11 @@ jobs:
     needs: [build-windows, build-linux, build-android]
     if: always()
     runs-on: ubuntu-latest
+    env:
+      # SolsynthExpressUpload@v1 reads hyphenated inputs using underscores.
+      INPUT_API_BASE_URL: ${{ vars.DISTRIBUTION_API_BASE_URL }}
+      INPUT_PRODUCT_ID: ${{ vars.DISTRIBUTION_PRODUCT_ID }}
+      INPUT_API_KEY: ${{ secrets.DISTRIBUTION_UPLOAD_KEY }}
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
