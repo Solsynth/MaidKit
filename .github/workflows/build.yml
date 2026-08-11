@@ -230,6 +230,7 @@ jobs:
           platform: windows
           architecture: amd64
           mime-type: application/zip
+          channel: stable
       - if: needs.build-linux.result == 'success'
         name: Upload Linux AppImage to Solsynth Express
         id: upload_linux
@@ -243,6 +244,7 @@ jobs:
           platform: linux
           architecture: amd64
           mime-type: application/zip
+          channel: stable
       - if: needs.build-android.result == 'success'
         name: Upload Android arm64 artifact to Solsynth Express
         id: upload_android_arm64
@@ -256,6 +258,7 @@ jobs:
           platform: android
           architecture: arm64
           mime-type: application/vnd.android.package-archive
+          channel: stable
       - if: needs.build-android.result == 'success'
         name: Upload Android armeabi-v7a artifact to Solsynth Express
         id: upload_android_armeabi
@@ -269,6 +272,7 @@ jobs:
           platform: android
           architecture: armeabi-v7a
           mime-type: application/vnd.android.package-archive
+          channel: stable
       - if: needs.build-android.result == 'success'
         name: Upload Android x86_64 artifact to Solsynth Express
         id: upload_android_x86_64
@@ -282,6 +286,7 @@ jobs:
           platform: android
           architecture: x86_64
           mime-type: application/vnd.android.package-archive
+          channel: stable
 
 
   upload-to-s3:
