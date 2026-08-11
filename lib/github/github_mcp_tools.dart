@@ -1,7 +1,6 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'github_api.dart';
-import 'github_models.dart';
 import 'github_providers.dart';
 
 /// Read-only GitHub tools served to agents through the local MCP server.

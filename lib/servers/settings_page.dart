@@ -1645,7 +1645,11 @@ class SettingsPage extends ConsumerWidget {
           .relocateVault(newPath);
       final label = ref.read(vaultLabelsProvider)[vaultId];
       await ref.read(vaultFilesProvider.notifier).forget(vaultId);
-      await ref.read(vaultFilesProvider.notifier).remember(newPath);
+      final newPathIsExternal =
+          Platform.isMacOS && await storage.isExternalPath(newPath);
+      if (!newPathIsExternal) {
+        await ref.read(vaultFilesProvider.notifier).remember(newPath);
+      }
       await ref.read(vaultLabelsProvider.notifier).remove(vaultId);
       if (label != null) {
         await ref.read(vaultLabelsProvider.notifier).rename(newPath, label);

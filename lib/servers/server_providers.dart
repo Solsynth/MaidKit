@@ -279,9 +279,12 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
     final path = preferences.getString(_activeVaultFilePreference);
     if (path != null && path.isNotEmpty) {
       try {
-        final managedPath = await ref
-            .read(vaultFileStorageProvider)
-            .importVault(path);
+        final storage = ref.read(vaultFileStorageProvider);
+        final managedPath = await storage.importVault(path);
+        if (Platform.isMacOS && await storage.isExternalPath(managedPath)) {
+          await preferences.remove(_activeVaultFilePreference);
+          return;
+        }
         await ref.read(vaultFilesProvider.notifier).remember(managedPath);
         state = managedPath;
         await preferences.setString(_activeVaultFilePreference, managedPath);
@@ -292,15 +295,21 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
   }
 
   Future<void> select(String? path) async {
+    var persistSelection = path == null || !Platform.isMacOS;
     if (path != null) {
-      await ref.read(vaultFilesProvider.notifier).remember(path);
+      final storage = ref.read(vaultFileStorageProvider);
+      final isExternal = Platform.isMacOS && await storage.isExternalPath(path);
+      persistSelection = !isExternal;
+      if (persistSelection) {
+        await ref.read(vaultFilesProvider.notifier).remember(path);
+      }
     }
     state = path;
     final preferences = await SharedPreferences.getInstance();
-    if (path == null) {
-      await preferences.remove(_activeVaultFilePreference);
+    if (persistSelection) {
+      await preferences.setString(_activeVaultFilePreference, path!);
     } else {
-      await preferences.setString(_activeVaultFilePreference, path);
+      await preferences.remove(_activeVaultFilePreference);
     }
   }
 }
@@ -328,14 +337,16 @@ class VaultFilesNotifier extends Notifier<List<String>> {
     final preferences = await SharedPreferences.getInstance();
     final stored = preferences.getStringList(_vaultFilesPreference) ?? const [];
     final managedPaths = <String>[];
+    final storage = ref.read(vaultFileStorageProvider);
     for (final path in stored) {
       try {
-        final managedPath = await ref
-            .read(vaultFileStorageProvider)
-            .importVault(path);
+        final managedPath = await storage.importVault(path);
+        if (Platform.isMacOS && await storage.isExternalPath(managedPath)) {
+          continue;
+        }
         if (!managedPaths.contains(managedPath)) managedPaths.add(managedPath);
       } on FileSystemException {
-        // Missing external files from older versions are no longer selectable.
+        // Missing vault files from older versions are no longer selectable.
       }
     }
     state = [
@@ -513,9 +524,16 @@ final vaultServiceProvider = Provider<VaultService>((ref) {
   );
 });
 
+final vaultOpenTimeoutProvider = Provider<Duration>(
+  (ref) => const Duration(seconds: 15),
+);
+
 final vaultExistsProvider = FutureProvider<bool>((ref) {
-  return ref.watch(vaultServiceProvider).hasVault();
-});
+  return ref
+      .watch(vaultServiceProvider)
+      .hasVault()
+      .timeout(ref.watch(vaultOpenTimeoutProvider));
+}, retry: (_, _) => null);
 
 final biometricUnlockEnabledProvider = FutureProvider<bool>((ref) {
   return ref.watch(vaultServiceProvider).isBiometricUnlockEnabled();

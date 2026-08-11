@@ -524,16 +524,10 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
       if (blob == null || !mounted) return;
       final name = await _chooseVaultName(initialValue: workspace.name);
       if (name == null || !mounted) return;
-      final folder = await FilePicker.getDirectoryPath(
-        dialogTitle: 'vaultChooseFolder'.tr(),
-        initialDirectory: _folderPath,
-      );
-      if (folder == null || !mounted) return;
-      _folderPath = folder;
 
       final path = await ref
           .read(vaultFileStorageProvider)
-          .createVaultPath(name: name, directoryPath: folder);
+          .createVaultPath(name: name);
       final sync = ref.read(cloudSyncServiceForVaultProvider(path));
       await sync.enable(workspace, existingBlob: blob);
       ref.invalidate(cloudSyncConfigurationForVaultProvider(path));

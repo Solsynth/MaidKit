@@ -107,7 +107,7 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
 
   /// Sets the element at the specified [index] in the list. Throws if the
   /// index is out of bounds.
-  operator []=(int index, T value) {
+  void operator []=(int index, T value) {
     RangeError.checkValueInInterval(index, 0, length - 1, 'index');
     _adoptChild(index, value);
   }

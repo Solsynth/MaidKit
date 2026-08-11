@@ -88,6 +88,9 @@ class _VaultGateState extends ConsumerState<VaultGate>
     RegExp(r'^(Bad state|ArgumentError): '),
     '',
   );
+  void _retryVaultOpen() {
+    ref.invalidate(vaultExistsProvider);
+  }
 
   Future<void> _submit(bool exists) async {
     if (_busy) return;
@@ -254,7 +257,17 @@ class _VaultGateState extends ConsumerState<VaultGate>
                 ),
                 error: (error, _) => Scaffold(
                   body: Center(
-                    child: Text('vaultOpenError'.tr(args: [error.toString()])),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('vaultOpenError'.tr(args: [error.toString()])),
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: _retryVaultOpen,
+                          child: Text('commonRetry'.tr()),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 data: (hasVault) => Scaffold(
