@@ -557,15 +557,20 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
 
   /// Sends a saved shell snippet to the terminal identified by [terminalId].
   ///
-  /// The trailing newline makes the snippet execute immediately, while
-  /// preserving any leading whitespace and internal line breaks in the script.
+  /// The script is passed as one quoted argument to the current shell. This
+  /// keeps every line in the shell parser instead of allowing later lines to
+  /// become stdin for the first command.
   void executeSnippet(String terminalId, ScriptSnippet snippet) {
     final tab = state.tabs.where((tab) => tab.id == terminalId).firstOrNull;
     if (tab is! TerminalTab) return;
 
-    final script = snippet.script.trimRight();
+    final script = snippet.script
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .trimRight();
     if (script.trim().isEmpty) return;
-    tab.terminal.sendInput('$script\n');
+    final quotedScript = "'${script.replaceAll("'", "'\\''")}'";
+    tab.terminal.sendInput('eval $quotedScript\n');
   }
 
   /// Closes every tab in [paneId] and removes the pane from the layout.

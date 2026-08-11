@@ -45,7 +45,7 @@ void main() {
       ),
     );
 
-    expect(adapter.inputs, ['  echo start\n./deploy.sh\n']);
+    expect(adapter.inputs, ["eval '  echo start\n./deploy.sh'\n"]);
   });
 }
 
