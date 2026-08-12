@@ -62,6 +62,7 @@ class ServerDraft {
     this.collectStats = true,
     this.collectSystemInfo = true,
     this.proxy,
+    this.jumpHostServerId,
     this.environment = const {},
     this.initialSnippets = const [],
     this.tags = const [],
@@ -81,9 +82,15 @@ class ServerDraft {
   final bool collectStats;
   final bool collectSystemInfo;
 
-  /// Optional per-server proxy. During an edit, a null [ServerProxy.password]
-  /// keeps the stored proxy password unchanged.
+  /// Optional per-server HTTP CONNECT / SOCKS5 proxy. During an edit, a null
+  /// [ServerProxy.password] keeps the stored proxy password unchanged.
   final ServerProxy? proxy;
+
+  /// Another saved SSH server used as the first hop to reach this server.
+  ///
+  /// The referenced server may itself use a jump host, allowing chains such
+  /// as A -> B -> C. Credentials are always taken from the referenced server.
+  final int? jumpHostServerId;
 
   /// Environment variables exported into terminals opened on this server.
   final Map<String, String> environment;
@@ -259,6 +266,17 @@ class ServerConnectionRequiredException implements Exception {
 
   @override
   String toString() => 'Connect to this server before running an operation.';
+}
+
+/// Raised when a configured jump host is not connected yet.
+class JumpHostConnectionRequiredException implements Exception {
+  const JumpHostConnectionRequiredException(this.jumpHostServerId);
+
+  final int jumpHostServerId;
+
+  @override
+  String toString() =>
+      'Connect to jump host $jumpHostServerId before connecting this server.';
 }
 
 class ServerGpuStats {

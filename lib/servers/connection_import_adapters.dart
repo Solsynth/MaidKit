@@ -18,6 +18,8 @@ class ImportedConnection {
     required this.connectionType,
     this.credential,
     this.proxy,
+    this.sourceSyncId,
+    this.jumpHostSyncId,
     this.environment = const {},
     this.tags = const [],
     this.serialConfig,
@@ -29,6 +31,7 @@ class ImportedConnection {
   final int port;
   final String username;
   final ServerConnectionType connectionType;
+  final String? sourceSyncId;
 
   /// Null when the source was redacted or the secret could not be decrypted;
   /// the user assigns a credential after import.
@@ -36,6 +39,10 @@ class ImportedConnection {
 
   /// Proxy with password already decrypted from the secrets block.
   final ServerProxy? proxy;
+
+  /// Sync id of another exported server used as this connection's jump host.
+  final String? jumpHostSyncId;
+
   final Map<String, String> environment;
   final List<String> tags;
   final SerialConfig? serialConfig;

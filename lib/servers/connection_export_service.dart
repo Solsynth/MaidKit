@@ -51,10 +51,11 @@ class ConnectionExportService {
     final credentialsById = {
       for (final credential in credentials) credential.id: credential,
     };
+    final serversById = {for (final server in servers) server.id: server};
 
     final serverRecords = <Map<String, Object?>>[
       for (final server in servers)
-        _redactedServerRecord(server, credentialsById),
+        _redactedServerRecord(server, credentialsById, serversById),
     ];
     final credentialRecords = <Map<String, Object?>>[
       for (final credential in credentials)
@@ -131,7 +132,11 @@ class ConnectionExportService {
   Map<String, Object?> _redactedServerRecord(
     Server server,
     Map<int, SavedCredential> credentialsById,
+    Map<int, Server> serversById,
   ) {
+    final jumpHost = server.jumpHostServerId == null
+        ? null
+        : serversById[server.jumpHostServerId!];
     final record = <String, Object?>{
       'name': server.name,
       'host': server.host,
@@ -140,6 +145,8 @@ class ConnectionExportService {
       'authType': credentialsById[server.credentialId]?.credentialType,
       'tags': decodeStringList(server.tags),
       'connectionType': server.connectionType,
+      'syncId': server.syncId,
+      'jumpHostSyncId': jumpHost?.syncId,
       'proxy': ?_redactedProxy(server),
     };
     final serialConfig = server.serialConfig;

@@ -90,15 +90,20 @@ class ServerAssetsSection extends ConsumerWidget {
   }
 
   Future<void> _add(BuildContext context, WidgetRef ref) async {
-    final credentials = await ref.read(serverRepositoryProvider).credentials();
+    final repository = ref.read(serverRepositoryProvider);
+    final credentials = await repository.credentials();
     final snippets = await ref.read(snippetRepositoryProvider).all();
+    final servers = await repository.all();
     if (!context.mounted) return;
     final draft = await showModalBottomSheet<ServerDraft>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) =>
-          ServerEditorDialog(credentials: credentials, snippets: snippets),
+      builder: (_) => ServerEditorDialog(
+        credentials: credentials,
+        snippets: snippets,
+        servers: servers,
+      ),
     );
     if (draft == null) return;
     try {
@@ -114,8 +119,10 @@ class ServerAssetsSection extends ConsumerWidget {
       final credential = server.credentialId == null
           ? null
           : await repository.credentialFor(server);
+      final proxy = await repository.proxyFor(server);
       final credentials = await repository.credentials();
       final snippets = await ref.read(snippetRepositoryProvider).all();
+      final servers = await repository.all();
       if (!context.mounted) return;
       final draft = await showModalBottomSheet<ServerDraft>(
         context: context,
@@ -124,6 +131,8 @@ class ServerAssetsSection extends ConsumerWidget {
         builder: (_) => ServerEditorDialog(
           credentials: credentials,
           snippets: snippets,
+          servers: servers,
+          serverId: server.id,
           initial: ServerDraft(
             name: server.name,
             host: server.host,
@@ -133,6 +142,8 @@ class ServerAssetsSection extends ConsumerWidget {
             credentialId: server.credentialId,
             collectStats: server.collectStats,
             collectSystemInfo: server.collectSystemInfo,
+            proxy: proxy,
+            jumpHostServerId: server.jumpHostServerId,
             environment: decodeEnvironmentMap(server.environment),
             initialSnippets: decodeSnippetIdList(server.initialSnippets),
             tags: decodeStringList(server.tags),

@@ -42,6 +42,10 @@ class SshConnectionManager {
   /// Terminal shells keep their own clients so reconnecting statistics never
   /// interrupts an interactive session.
   final _sessions = <int, SSHClient>{};
+
+  /// Immediate jump-host relationships for retained SSH sessions. Keeping
+  /// these relationships lets a disconnected parent tear down its children.
+  final _sessionJumpHosts = <int, int?>{};
   final _terminals = <String, _TerminalConnection>{};
 
   /// Non-interactive SSH commands do not source the user's shell profile.
@@ -258,6 +262,7 @@ class SshConnectionManager {
     );
     _terminals[terminalId] = _TerminalConnection(
       serverId: server.id,
+      jumpHostServerId: server.jumpHostServerId,
       client: client,
       shell: shell,
       binding: binding,
@@ -3573,6 +3578,7 @@ uname -r
         proxy: proxy,
       );
       _sessions[server.id] = client;
+      _sessionJumpHosts[server.id] = server.jumpHostServerId;
       _set(_states[server.id]!.copyWith(status: SessionStatus.connected));
       // Establish the first latency sample before this connection is allowed
       // to yield to another startup/reconnect attempt. Otherwise the next
@@ -3591,8 +3597,11 @@ uname -r
         client.done.whenComplete(() {
           if (!identical(_sessions[server.id], client)) return;
           _sessions.remove(server.id);
-          unawaited(_stopPortForwardsFor(server.id));
+          _sessionJumpHosts.remove(server.id);
+          unawaited(_closeDependentSessions(server.id));
           unawaited(_closeTerminalsFor(server.id));
+          unawaited(_closeTerminalsForJumpHost(server.id));
+          unawaited(_stopPortForwardsFor(server.id));
           final state = _states[server.id];
           if (state != null && state.status == SessionStatus.connected) {
             _set(state.copyWith(status: SessionStatus.closed));
@@ -3628,8 +3637,11 @@ uname -r
   }
 
   Future<void> disconnect(int serverId) async {
+    await _closeDependentSessions(serverId);
     await _stopPortForwardsFor(serverId);
+    await _closeTerminalsForJumpHost(serverId);
     final client = _sessions.remove(serverId);
+    _sessionJumpHosts.remove(serverId);
     client?.close();
     final state = _states[serverId];
     if (state != null) _set(state.copyWith(status: SessionStatus.closed));
@@ -3644,14 +3656,24 @@ uname -r
     for (final terminalId in _terminals.keys.toList()) {
       await closeTerminal(terminalId);
     }
-    for (final client in _sessions.values) {
-      client.close();
+    for (final serverId in _sessions.keys.toList()) {
+      await disconnect(serverId);
     }
     for (final id in _portForwards.keys.toList()) {
       await stopPortForward(id);
     }
     await _controller.close();
     await _portForwardController.close();
+  }
+
+  Future<void> _closeDependentSessions(int serverId) async {
+    final dependentIds = _sessionJumpHosts.entries
+        .where((entry) => entry.value == serverId)
+        .map((entry) => entry.key)
+        .toList();
+    for (final dependentId in dependentIds) {
+      await disconnect(dependentId);
+    }
   }
 
   Future<void> _stopPortForwardsFor(int serverId) async {
@@ -3667,6 +3689,16 @@ uname -r
   Future<void> _closeTerminalsFor(int serverId) async {
     final terminalIds = _terminals.entries
         .where((entry) => entry.value.serverId == serverId)
+        .map((entry) => entry.key)
+        .toList();
+    for (final terminalId in terminalIds) {
+      await closeTerminal(terminalId);
+    }
+  }
+
+  Future<void> _closeTerminalsForJumpHost(int serverId) async {
+    final terminalIds = _terminals.entries
+        .where((entry) => entry.value.jumpHostServerId == serverId)
         .map((entry) => entry.key)
         .toList();
     for (final terminalId in terminalIds) {
@@ -3708,7 +3740,9 @@ uname -r
     final identities = credential.type == CredentialType.privateKey
         ? SSHKeyPair.fromPem(credential.privateKey!, credential.keyPassphrase)
         : null;
-    final socket = isTailnetAddress(server.host) && tailscaleSupported
+    final socket = server.jumpHostServerId != null
+        ? await _socketThroughJumpHost(server)
+        : isTailnetAddress(server.host) && tailscaleSupported
         ? await TailscaleSshSocket.connect(server.host, server.port)
         : await _LowLatencySshSocket.connect(
             server.host,
@@ -3752,6 +3786,15 @@ uname -r
     );
     await client.authenticated;
     return client;
+  }
+
+  Future<SSHSocket> _socketThroughJumpHost(Server server) async {
+    final jumpHostServerId = server.jumpHostServerId!;
+    final jumpClient = clientFor(jumpHostServerId);
+    if (jumpClient == null) {
+      throw JumpHostConnectionRequiredException(jumpHostServerId);
+    }
+    return jumpClient.forwardLocal(server.host, server.port);
   }
 }
 
@@ -3815,12 +3858,14 @@ class TerminalSessionHandle {
 class _TerminalConnection {
   const _TerminalConnection({
     required this.serverId,
+    required this.jumpHostServerId,
     required this.client,
     required this.shell,
     required this.binding,
   });
 
   final int serverId;
+  final int? jumpHostServerId;
   final SSHClient client;
   final SSHSession shell;
   final TerminalSessionBinding binding;

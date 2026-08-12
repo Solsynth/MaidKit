@@ -31,6 +31,9 @@ class Servers extends Table {
   TextColumn get proxyUsername => text().nullable()();
   TextColumn get encryptedProxyPassword => text().nullable()();
   TextColumn get proxyPasswordNonce => text().nullable()();
+  // Optional SSH jump host. The referenced server may itself have a jump
+  // host, allowing chained routes.
+  IntColumn get jumpHostServerId => integer().nullable()();
   // Per-server configuration, JSON-encoded. Environment is a map of variable
   // names to values, initialSnippets is a list of ScriptSnippets ids that run
   // on terminal open, and tags is a list of free-form labels.
@@ -257,7 +260,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 23;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -474,6 +477,15 @@ class AppDatabase extends _$AppDatabase {
         await customStatement(
           'UPDATE servers SET sort_order = id WHERE sort_order IS NULL',
         );
+      }
+      if (from < 24) {
+        final hasJumpHostServerId = await customSelect(
+          "SELECT 1 FROM pragma_table_info('servers') "
+          "WHERE name = 'jump_host_server_id'",
+        ).get();
+        if (hasJumpHostServerId.isEmpty) {
+          await m.addColumn(servers, servers.jumpHostServerId);
+        }
       }
     },
   );

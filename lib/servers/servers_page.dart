@@ -28,15 +28,20 @@ class ServerDashboardTab extends ConsumerWidget {
   const ServerDashboardTab({super.key});
 
   Future<void> _add(BuildContext context, WidgetRef ref) async {
-    final credentials = await ref.read(serverRepositoryProvider).credentials();
+    final repository = ref.read(serverRepositoryProvider);
+    final credentials = await repository.credentials();
     final snippets = await ref.read(snippetRepositoryProvider).all();
+    final servers = await repository.all();
     if (!context.mounted) return;
     final draft = await showModalBottomSheet<ServerDraft>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (_) =>
-          ServerEditorDialog(credentials: credentials, snippets: snippets),
+      builder: (_) => ServerEditorDialog(
+        credentials: credentials,
+        snippets: snippets,
+        servers: servers,
+      ),
     );
     if (draft == null || !context.mounted) return;
     try {
@@ -86,8 +91,10 @@ class ServerDashboardTab extends ConsumerWidget {
       final credential = server.credentialId == null
           ? null
           : await repository.credentialFor(server);
+      final proxy = await repository.proxyFor(server);
       final credentials = await repository.credentials();
       final snippets = await ref.read(snippetRepositoryProvider).all();
+      final servers = await repository.all();
       if (!context.mounted) return;
       final draft = await showModalBottomSheet<ServerDraft>(
         context: context,
@@ -96,6 +103,8 @@ class ServerDashboardTab extends ConsumerWidget {
         builder: (_) => ServerEditorDialog(
           credentials: credentials,
           snippets: snippets,
+          servers: servers,
+          serverId: server.id,
           initial: ServerDraft(
             name: server.name,
             host: server.host,
@@ -105,6 +114,8 @@ class ServerDashboardTab extends ConsumerWidget {
             credentialId: server.credentialId,
             collectStats: server.collectStats,
             collectSystemInfo: server.collectSystemInfo,
+            proxy: proxy,
+            jumpHostServerId: server.jumpHostServerId,
             environment: decodeEnvironmentMap(server.environment),
             initialSnippets: decodeSnippetIdList(server.initialSnippets),
             tags: decodeStringList(server.tags),
@@ -117,7 +128,7 @@ class ServerDashboardTab extends ConsumerWidget {
         ),
       );
       if (draft != null) {
-        await ref.read(serverRepositoryProvider).update(server, draft);
+        await repository.update(server, draft);
       }
     } catch (error) {
       if (context.mounted) {
@@ -1614,12 +1625,16 @@ class ServerEditorDialog extends ConsumerStatefulWidget {
   const ServerEditorDialog({
     super.key,
     required this.credentials,
+    this.servers = const [],
+    this.serverId,
     this.initial,
     this.snippets = const [],
   });
 
   final ServerDraft? initial;
+  final int? serverId;
   final List<SavedCredential> credentials;
+  final List<Server> servers;
 
   /// Saved snippets offered as initial-snippet choices for this server.
   final List<ScriptSnippet> snippets;
@@ -1660,6 +1675,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   );
   final _proxyUsername = TextEditingController();
   final _proxyPassword = TextEditingController();
+  int? _jumpHostServerId;
 
   // Per-server environment variables, initial snippets, and tags.
   final _envRows =
@@ -1685,6 +1701,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       _secret.text = credential.password ?? credential.privateKey ?? '';
       _passphrase.text = credential.keyPassphrase ?? '';
     }
+    _jumpHostServerId = initial.jumpHostServerId;
     _collectStats = initial.collectStats;
     _collectSystemInfo = initial.collectSystemInfo;
     _connectionType = initial.connectionType;
@@ -1888,8 +1905,32 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         : 'serverPortInvalid'.tr();
   }
 
+  bool _hasJumpHostCycle() {
+    if (_jumpHostServerId == null) return false;
+    if (_connectionType != ServerConnectionType.ssh) return true;
+    var current = _jumpHostServerId;
+    final visited = <int>{};
+    while (current != null) {
+      if (!visited.add(current) || current == widget.serverId) return true;
+      current = widget.servers
+          .where((server) => server.id == current)
+          .firstOrNull
+          ?.jumpHostServerId;
+    }
+    return false;
+  }
+
   void _save() {
     if (!_form.currentState!.validate()) return;
+    if (_hasJumpHostCycle()) {
+      showStyledSnackBar(
+        message: 'serverJumpHostCycle'.tr(),
+        title: 'serverJumpHostLabel'.tr(),
+        icon: Symbols.account_tree,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
     // The device picker is a DropdownMenu, which is not a FormField, so the
     // empty-device check must run outside the form validator.
     if (_connectionType == ServerConnectionType.serial &&
@@ -1916,6 +1957,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         name: _name.text,
         host: _host.text,
         port: int.parse(_port.text),
+        jumpHostServerId: _jumpHostServerId,
         username: _user.text,
         credential: credential,
         credentialId: _useNewCredential ? null : _credentialId,
@@ -2126,6 +2168,59 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                       ),
                     ),
                   ],
+                ],
+                if (_connectionType == ServerConnectionType.ssh) ...[
+                  ExpansionTile(
+                    initiallyExpanded: _jumpHostServerId != null,
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: const EdgeInsets.only(bottom: 8),
+                    title: Text('serverJumpHostLabel'.tr()),
+                    subtitle: Text(
+                      _jumpHostServerId == null
+                          ? 'serverJumpHostNone'.tr()
+                          : widget.servers
+                                    .where(
+                                      (server) =>
+                                          server.id == _jumpHostServerId,
+                                    )
+                                    .firstOrNull
+                                    ?.name ??
+                                'serverJumpHostMissing'.tr(),
+                    ),
+                    children: [
+                      DropdownButtonFormField<int?>(
+                        initialValue: _jumpHostServerId,
+                        decoration: InputDecoration(
+                          labelText: 'serverJumpHostLabel'.tr(),
+                          helperText: 'serverJumpHostHint'.tr(),
+                        ),
+                        items: [
+                          DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('serverJumpHostNone'.tr()),
+                          ),
+                          if (_jumpHostServerId != null &&
+                              !widget.servers.any(
+                                (server) => server.id == _jumpHostServerId,
+                              ))
+                            DropdownMenuItem<int?>(
+                              value: _jumpHostServerId,
+                              child: Text('serverJumpHostMissing'.tr()),
+                            ),
+                          for (final candidate in widget.servers)
+                            if (candidate.id != widget.serverId &&
+                                candidate.connectionType ==
+                                    ServerConnectionType.ssh.name)
+                              DropdownMenuItem<int?>(
+                                value: candidate.id,
+                                child: Text(candidate.name),
+                              ),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => _jumpHostServerId = value),
+                      ),
+                    ],
+                  ),
                 ],
                 ExpansionTile(
                   initiallyExpanded: false,

@@ -71,6 +71,43 @@ void main() {
       expect(decodeStringList(server.tags), ['prod', 'eu-west']);
     });
 
+    test('create and update persist chained jump hosts', () async {
+      final jumpHost = await repository.create(
+        const ServerDraft(
+          name: 'bastion',
+          host: '10.0.0.10',
+          port: 22,
+          username: 'root',
+        ),
+      );
+      final target = await repository.create(
+        ServerDraft(
+          name: 'internal',
+          host: '10.0.0.20',
+          port: 22,
+          username: 'root',
+          jumpHostServerId: jumpHost.id,
+        ),
+      );
+
+      expect(target.jumpHostServerId, jumpHost.id);
+      await repository.update(
+        target,
+        const ServerDraft(
+          name: 'internal',
+          host: '10.0.0.20',
+          port: 22,
+          username: 'root',
+        ),
+      );
+      expect(
+        (await repository.all())
+            .singleWhere((server) => server.id == target.id)
+            .jumpHostServerId,
+        isNull,
+      );
+    });
+
     test('update replaces the stored configuration', () async {
       final credentialId = await insertCredential();
       final server = await repository.create(

@@ -44,31 +44,13 @@ Future<bool> connectForStatistics(
   WidgetRef ref,
   Server server,
 ) async {
-  HostKeyPrompt? approvedHostKey;
   try {
-    final credential = await ref
-        .read(serverRepositoryProvider)
-        .credentialFor(server);
-    final proxy = await ref.read(serverRepositoryProvider).proxyFor(server);
-    await ref
-        .read(connectionManagerProvider)
-        .connect(
-          server,
-          credential,
-          (prompt) async {
-            final approved = await _approveHostKey(context, prompt);
-            if (approved) approvedHostKey = prompt;
-            return approved;
-          },
-          knownHostKeyFingerprint: server.hostKeyFingerprint,
-          proxy: proxy,
-        );
-    await ref.read(serverRepositoryProvider).markConnected(server.id);
-    if (approvedHostKey != null) {
-      await ref
-          .read(serverRepositoryProvider)
-          .rememberHostKey(server.id, approvedHostKey!);
-    }
+    final repository = ref.read(serverRepositoryProvider);
+    final servers = await repository.all();
+    if (!context.mounted) return false;
+    await _ensureJumpHostsConnected(context, ref, server, servers, <int>{});
+    if (!context.mounted) return false;
+    await _connectSingleServer(context, ref, server);
   } catch (error) {
     if (context.mounted) {
       showStyledSnackBar(
@@ -82,6 +64,85 @@ Future<bool> connectForStatistics(
   }
 
   return true;
+}
+
+Future<void> _ensureJumpHostsConnected(
+  BuildContext context,
+  WidgetRef ref,
+  Server server,
+  List<Server> servers,
+  Set<int> visiting, {
+  VoidCallback? onHostKeyPrompt,
+}) async {
+  if (ref.read(connectionManagerProvider).clientFor(server.id) != null) {
+    return;
+  }
+  final jumpHostServerId = server.jumpHostServerId;
+  if (jumpHostServerId == null) return;
+  if (!visiting.add(server.id)) {
+    throw StateError('Jump-host cycle detected at ${server.name}.');
+  }
+  final jumpHost = servers
+      .where((candidate) => candidate.id == jumpHostServerId)
+      .firstOrNull;
+  if (jumpHost == null) {
+    throw StateError(
+      'Jump host $jumpHostServerId for ${server.name} no longer exists.',
+    );
+  }
+  if (jumpHost.connectionType != ServerConnectionType.ssh.name) {
+    throw StateError('Jump host ${jumpHost.name} is not an SSH server.');
+  }
+  await _ensureJumpHostsConnected(
+    context,
+    ref,
+    jumpHost,
+    servers,
+    visiting,
+    onHostKeyPrompt: onHostKeyPrompt,
+  );
+  if (!context.mounted) throw StateError('The connection request was closed.');
+  if (ref.read(connectionManagerProvider).clientFor(jumpHost.id) == null) {
+    await _connectSingleServer(
+      context,
+      ref,
+      jumpHost,
+      onHostKeyPrompt: onHostKeyPrompt,
+    );
+  }
+  visiting.remove(server.id);
+}
+
+Future<void> _connectSingleServer(
+  BuildContext context,
+  WidgetRef ref,
+  Server server, {
+  VoidCallback? onHostKeyPrompt,
+}) async {
+  HostKeyPrompt? approvedHostKey;
+  final repository = ref.read(serverRepositoryProvider);
+  final credential = await repository.credentialFor(server);
+  final proxy = await repository.proxyFor(server);
+  if (!context.mounted) throw StateError('The connection request was closed.');
+  await ref
+      .read(connectionManagerProvider)
+      .connect(
+        server,
+        credential,
+        (prompt) async {
+          onHostKeyPrompt?.call();
+          if (!context.mounted) return false;
+          final approved = await _approveHostKey(context, prompt);
+          if (approved) approvedHostKey = prompt;
+          return approved;
+        },
+        knownHostKeyFingerprint: server.hostKeyFingerprint,
+        proxy: proxy,
+      );
+  await repository.markConnected(server.id);
+  if (approvedHostKey != null) {
+    await repository.rememberHostKey(server.id, approvedHostKey!);
+  }
 }
 
 Future<bool> shouldReconnectAndRetry(
@@ -109,10 +170,21 @@ Future<bool> openTerminalSession(
     message: 'serverOpeningTerminal'.tr(args: [server.name]),
   );
   try {
-    final credential = await ref
-        .read(serverRepositoryProvider)
-        .credentialFor(server);
-    final proxy = await ref.read(serverRepositoryProvider).proxyFor(server);
+    final repository = ref.read(serverRepositoryProvider);
+    final servers = await repository.all();
+    if (!context.mounted) return false;
+    await _ensureJumpHostsConnected(
+      context,
+      ref,
+      server,
+      servers,
+      <int>{},
+      onHostKeyPrompt: loading.dismiss,
+    );
+    if (!context.mounted) return false;
+    final credential = await repository.credentialFor(server);
+    final proxy = await repository.proxyFor(server);
+    if (!context.mounted) return false;
     await ref
         .read(terminalTabsProvider.notifier)
         .open(
@@ -122,6 +194,7 @@ Future<bool> openTerminalSession(
             // A host-key prompt must remain interactive, so release the blocking
             // loading overlay before presenting it.
             loading.dismiss();
+            if (!context.mounted) return false;
             final approved = await _approveHostKey(context, prompt);
             if (approved) approvedHostKey = prompt;
             return approved;

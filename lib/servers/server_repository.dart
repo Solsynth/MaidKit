@@ -57,13 +57,13 @@ class ServerRepository {
               updatedAt: Value(now),
               credentialId: Value(credentialId),
               collectStats: Value(draft.collectStats),
-              collectSystemInfo: Value(draft.collectSystemInfo),
               proxyType: Value(draft.proxy?.type.name),
               proxyHost: Value(draft.proxy?.host),
               proxyPort: Value(draft.proxy?.port),
               proxyUsername: Value(draft.proxy?.username),
               encryptedProxyPassword: Value(proxyPassword?.bytes),
               proxyPasswordNonce: Value(proxyPassword?.nonce),
+              jumpHostServerId: Value(draft.jumpHostServerId),
               environment: Value(encodeEnvironmentMap(draft.environment)),
               initialSnippets: Value(
                 encodeSnippetIdList(draft.initialSnippets),
@@ -121,6 +121,7 @@ class ServerRepository {
             : proxyPassword == null
             ? const Value.absent()
             : Value(proxyPassword.nonce),
+        jumpHostServerId: Value(draft.jumpHostServerId),
         environment: Value(encodeEnvironmentMap(draft.environment)),
         initialSnippets: Value(encodeSnippetIdList(draft.initialSnippets)),
         tags: Value(encodeStringList(draft.tags)),
@@ -130,6 +131,16 @@ class ServerRepository {
       ),
     );
   }
+
+  Future<void> setJumpHostServerId(int serverId, int? jumpHostServerId) =>
+      (_database.update(
+        _database.servers,
+      )..where((table) => table.id.equals(serverId))).write(
+        ServersCompanion(
+          jumpHostServerId: Value(jumpHostServerId),
+          updatedAt: Value(DateTime.now().toUtc()),
+        ),
+      );
 
   Future<ServerCredential> credentialFor(Server server) async {
     final credential = await credentialRecordFor(server);

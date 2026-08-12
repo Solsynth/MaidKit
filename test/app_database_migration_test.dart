@@ -22,7 +22,7 @@ void main() {
 
   group('AppDatabase migrations', () {
     test(
-      'schema 22 database that already has sort_order migrates to 23',
+      'schema 22 database that already has sort_order migrates to 24',
       () async {
         final directory = Directory.systemTemp.createTempSync('migration_test');
         final path = '${directory.path}/stale.sqlite';
@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 23 migration, which must
-        // not fail with a duplicate column error.
+        // Opening the database again runs the 22 -> 24 migrations, which
+        // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 23);
+        expect(version.read<int>('user_version'), 24);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -64,31 +64,34 @@ void main() {
       },
     );
 
-    test('schema 22 without sort_order adds the column on upgrade', () async {
-      final directory = Directory.systemTemp.createTempSync('migration_test');
-      final path = '${directory.path}/clean.sqlite';
+    test(
+      'schema 22 without sort_order adds the column and jump host',
+      () async {
+        final directory = Directory.systemTemp.createTempSync('migration_test');
+        final path = '${directory.path}/clean.sqlite';
 
-      final seeded = AppDatabase(filePath: path);
-      await seeded.customStatement(
-        'ALTER TABLE servers DROP COLUMN sort_order',
-      );
-      await seeded.customStatement('PRAGMA user_version = 22');
-      await seeded.close();
+        final seeded = AppDatabase(filePath: path);
+        await seeded.customStatement(
+          'ALTER TABLE servers DROP COLUMN sort_order',
+        );
+        await seeded.customStatement('PRAGMA user_version = 22');
+        await seeded.close();
 
-      final database = AppDatabase(filePath: path);
-      final version = await database
-          .customSelect('PRAGMA user_version')
-          .getSingle();
-      expect(version.read<int>('user_version'), 23);
+        final database = AppDatabase(filePath: path);
+        final version = await database
+            .customSelect('PRAGMA user_version')
+            .getSingle();
+        expect(version.read<int>('user_version'), 24);
 
-      final column = await database
-          .customSelect(
-            "SELECT name FROM pragma_table_info('servers') "
-            "WHERE name = 'sort_order'",
-          )
-          .get();
-      expect(column, isNotEmpty);
-      await database.close();
-    });
+        final column = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('servers') "
+              "WHERE name = 'sort_order'",
+            )
+            .get();
+        expect(column, isNotEmpty);
+        await database.close();
+      },
+    );
   });
 }

@@ -272,9 +272,10 @@ class ConnectionImportService {
     final repository = ServerRepository(_database, _vault);
     var created = 0;
     await _database.transaction(() async {
+      final createdServers = <(ImportedConnection, Server)>[];
       for (final candidate in selected) {
         final connection = candidate.connection;
-        await repository.create(
+        final server = await repository.create(
           ServerDraft(
             name: connection.name,
             host: connection.host,
@@ -291,7 +292,20 @@ class ConnectionImportService {
             serialConfig: connection.serialConfig,
           ),
         );
+        createdServers.add((connection, server));
         created += 1;
+      }
+      final serversBySourceSyncId = {
+        for (final entry in createdServers)
+          if (entry.$1.sourceSyncId != null) entry.$1.sourceSyncId!: entry.$2,
+      };
+      for (final entry in createdServers) {
+        final sourceJumpId = entry.$1.jumpHostSyncId;
+        final jumpHost = sourceJumpId == null
+            ? null
+            : serversBySourceSyncId[sourceJumpId];
+        if (sourceJumpId != null && jumpHost == null) continue;
+        await repository.setJumpHostServerId(entry.$2.id, jumpHost?.id);
       }
     });
     return ConnectionImportResult(created: created);
@@ -427,8 +441,10 @@ class ConnectionImportService {
       port: raw['port'] is int ? raw['port'] as int : 22,
       username: _stringField(raw, 'username'),
       connectionType: connectionType,
+      sourceSyncId: raw['syncId'] as String?,
       credential: credential,
       proxy: proxy,
+      jumpHostSyncId: raw['jumpHostSyncId'] as String?,
       environment: environment,
       tags: rawTags is List
           ? [

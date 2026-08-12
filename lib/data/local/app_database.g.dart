@@ -276,6 +276,17 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _jumpHostServerIdMeta = const VerificationMeta(
+    'jumpHostServerId',
+  );
+  @override
+  late final GeneratedColumn<int> jumpHostServerId = GeneratedColumn<int>(
+    'jump_host_server_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _environmentMeta = const VerificationMeta(
     'environment',
   );
@@ -367,6 +378,7 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     proxyUsername,
     encryptedProxyPassword,
     proxyPasswordNonce,
+    jumpHostServerId,
     environment,
     initialSnippets,
     tags,
@@ -569,6 +581,15 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         ),
       );
     }
+    if (data.containsKey('jump_host_server_id')) {
+      context.handle(
+        _jumpHostServerIdMeta,
+        jumpHostServerId.isAcceptableOrUnknown(
+          data['jump_host_server_id']!,
+          _jumpHostServerIdMeta,
+        ),
+      );
+    }
     if (data.containsKey('environment')) {
       context.handle(
         _environmentMeta,
@@ -722,6 +743,10 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         DriftSqlType.string,
         data['${effectivePrefix}proxy_password_nonce'],
       ),
+      jumpHostServerId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}jump_host_server_id'],
+      ),
       environment: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}environment'],
@@ -780,6 +805,7 @@ class Server extends DataClass implements Insertable<Server> {
   final String? proxyUsername;
   final String? encryptedProxyPassword;
   final String? proxyPasswordNonce;
+  final int? jumpHostServerId;
   final String? environment;
   final String? initialSnippets;
   final String? tags;
@@ -811,6 +837,7 @@ class Server extends DataClass implements Insertable<Server> {
     this.proxyUsername,
     this.encryptedProxyPassword,
     this.proxyPasswordNonce,
+    this.jumpHostServerId,
     this.environment,
     this.initialSnippets,
     this.tags,
@@ -880,6 +907,9 @@ class Server extends DataClass implements Insertable<Server> {
     }
     if (!nullToAbsent || proxyPasswordNonce != null) {
       map['proxy_password_nonce'] = Variable<String>(proxyPasswordNonce);
+    }
+    if (!nullToAbsent || jumpHostServerId != null) {
+      map['jump_host_server_id'] = Variable<int>(jumpHostServerId);
     }
     if (!nullToAbsent || environment != null) {
       map['environment'] = Variable<String>(environment);
@@ -960,6 +990,9 @@ class Server extends DataClass implements Insertable<Server> {
       proxyPasswordNonce: proxyPasswordNonce == null && nullToAbsent
           ? const Value.absent()
           : Value(proxyPasswordNonce),
+      jumpHostServerId: jumpHostServerId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(jumpHostServerId),
       environment: environment == null && nullToAbsent
           ? const Value.absent()
           : Value(environment),
@@ -1015,6 +1048,7 @@ class Server extends DataClass implements Insertable<Server> {
       proxyPasswordNonce: serializer.fromJson<String?>(
         json['proxyPasswordNonce'],
       ),
+      jumpHostServerId: serializer.fromJson<int?>(json['jumpHostServerId']),
       environment: serializer.fromJson<String?>(json['environment']),
       initialSnippets: serializer.fromJson<String?>(json['initialSnippets']),
       tags: serializer.fromJson<String?>(json['tags']),
@@ -1053,6 +1087,7 @@ class Server extends DataClass implements Insertable<Server> {
         encryptedProxyPassword,
       ),
       'proxyPasswordNonce': serializer.toJson<String?>(proxyPasswordNonce),
+      'jumpHostServerId': serializer.toJson<int?>(jumpHostServerId),
       'environment': serializer.toJson<String?>(environment),
       'initialSnippets': serializer.toJson<String?>(initialSnippets),
       'tags': serializer.toJson<String?>(tags),
@@ -1087,6 +1122,7 @@ class Server extends DataClass implements Insertable<Server> {
     Value<String?> proxyUsername = const Value.absent(),
     Value<String?> encryptedProxyPassword = const Value.absent(),
     Value<String?> proxyPasswordNonce = const Value.absent(),
+    Value<int?> jumpHostServerId = const Value.absent(),
     Value<String?> environment = const Value.absent(),
     Value<String?> initialSnippets = const Value.absent(),
     Value<String?> tags = const Value.absent(),
@@ -1136,6 +1172,9 @@ class Server extends DataClass implements Insertable<Server> {
     proxyPasswordNonce: proxyPasswordNonce.present
         ? proxyPasswordNonce.value
         : this.proxyPasswordNonce,
+    jumpHostServerId: jumpHostServerId.present
+        ? jumpHostServerId.value
+        : this.jumpHostServerId,
     environment: environment.present ? environment.value : this.environment,
     initialSnippets: initialSnippets.present
         ? initialSnippets.value
@@ -1195,6 +1234,9 @@ class Server extends DataClass implements Insertable<Server> {
       proxyPasswordNonce: data.proxyPasswordNonce.present
           ? data.proxyPasswordNonce.value
           : this.proxyPasswordNonce,
+      jumpHostServerId: data.jumpHostServerId.present
+          ? data.jumpHostServerId.value
+          : this.jumpHostServerId,
       environment: data.environment.present
           ? data.environment.value
           : this.environment,
@@ -1239,6 +1281,7 @@ class Server extends DataClass implements Insertable<Server> {
           ..write('proxyUsername: $proxyUsername, ')
           ..write('encryptedProxyPassword: $encryptedProxyPassword, ')
           ..write('proxyPasswordNonce: $proxyPasswordNonce, ')
+          ..write('jumpHostServerId: $jumpHostServerId, ')
           ..write('environment: $environment, ')
           ..write('initialSnippets: $initialSnippets, ')
           ..write('tags: $tags, ')
@@ -1275,6 +1318,7 @@ class Server extends DataClass implements Insertable<Server> {
     proxyUsername,
     encryptedProxyPassword,
     proxyPasswordNonce,
+    jumpHostServerId,
     environment,
     initialSnippets,
     tags,
@@ -1310,6 +1354,7 @@ class Server extends DataClass implements Insertable<Server> {
           other.proxyUsername == this.proxyUsername &&
           other.encryptedProxyPassword == this.encryptedProxyPassword &&
           other.proxyPasswordNonce == this.proxyPasswordNonce &&
+          other.jumpHostServerId == this.jumpHostServerId &&
           other.environment == this.environment &&
           other.initialSnippets == this.initialSnippets &&
           other.tags == this.tags &&
@@ -1343,6 +1388,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
   final Value<String?> proxyUsername;
   final Value<String?> encryptedProxyPassword;
   final Value<String?> proxyPasswordNonce;
+  final Value<int?> jumpHostServerId;
   final Value<String?> environment;
   final Value<String?> initialSnippets;
   final Value<String?> tags;
@@ -1374,6 +1420,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.proxyUsername = const Value.absent(),
     this.encryptedProxyPassword = const Value.absent(),
     this.proxyPasswordNonce = const Value.absent(),
+    this.jumpHostServerId = const Value.absent(),
     this.environment = const Value.absent(),
     this.initialSnippets = const Value.absent(),
     this.tags = const Value.absent(),
@@ -1406,6 +1453,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.proxyUsername = const Value.absent(),
     this.encryptedProxyPassword = const Value.absent(),
     this.proxyPasswordNonce = const Value.absent(),
+    this.jumpHostServerId = const Value.absent(),
     this.environment = const Value.absent(),
     this.initialSnippets = const Value.absent(),
     this.tags = const Value.absent(),
@@ -1440,6 +1488,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Expression<String>? proxyUsername,
     Expression<String>? encryptedProxyPassword,
     Expression<String>? proxyPasswordNonce,
+    Expression<int>? jumpHostServerId,
     Expression<String>? environment,
     Expression<String>? initialSnippets,
     Expression<String>? tags,
@@ -1476,6 +1525,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
         'encrypted_proxy_password': encryptedProxyPassword,
       if (proxyPasswordNonce != null)
         'proxy_password_nonce': proxyPasswordNonce,
+      if (jumpHostServerId != null) 'jump_host_server_id': jumpHostServerId,
       if (environment != null) 'environment': environment,
       if (initialSnippets != null) 'initial_snippets': initialSnippets,
       if (tags != null) 'tags': tags,
@@ -1510,6 +1560,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Value<String?>? proxyUsername,
     Value<String?>? encryptedProxyPassword,
     Value<String?>? proxyPasswordNonce,
+    Value<int?>? jumpHostServerId,
     Value<String?>? environment,
     Value<String?>? initialSnippets,
     Value<String?>? tags,
@@ -1543,6 +1594,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
       encryptedProxyPassword:
           encryptedProxyPassword ?? this.encryptedProxyPassword,
       proxyPasswordNonce: proxyPasswordNonce ?? this.proxyPasswordNonce,
+      jumpHostServerId: jumpHostServerId ?? this.jumpHostServerId,
       environment: environment ?? this.environment,
       initialSnippets: initialSnippets ?? this.initialSnippets,
       tags: tags ?? this.tags,
@@ -1629,6 +1681,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
     if (proxyPasswordNonce.present) {
       map['proxy_password_nonce'] = Variable<String>(proxyPasswordNonce.value);
     }
+    if (jumpHostServerId.present) {
+      map['jump_host_server_id'] = Variable<int>(jumpHostServerId.value);
+    }
     if (environment.present) {
       map['environment'] = Variable<String>(environment.value);
     }
@@ -1677,6 +1732,7 @@ class ServersCompanion extends UpdateCompanion<Server> {
           ..write('proxyUsername: $proxyUsername, ')
           ..write('encryptedProxyPassword: $encryptedProxyPassword, ')
           ..write('proxyPasswordNonce: $proxyPasswordNonce, ')
+          ..write('jumpHostServerId: $jumpHostServerId, ')
           ..write('environment: $environment, ')
           ..write('initialSnippets: $initialSnippets, ')
           ..write('tags: $tags, ')
@@ -7957,6 +8013,7 @@ typedef $$ServersTableCreateCompanionBuilder =
       Value<String?> proxyUsername,
       Value<String?> encryptedProxyPassword,
       Value<String?> proxyPasswordNonce,
+      Value<int?> jumpHostServerId,
       Value<String?> environment,
       Value<String?> initialSnippets,
       Value<String?> tags,
@@ -7990,6 +8047,7 @@ typedef $$ServersTableUpdateCompanionBuilder =
       Value<String?> proxyUsername,
       Value<String?> encryptedProxyPassword,
       Value<String?> proxyPasswordNonce,
+      Value<int?> jumpHostServerId,
       Value<String?> environment,
       Value<String?> initialSnippets,
       Value<String?> tags,
@@ -8124,6 +8182,11 @@ class $$ServersTableFilterComposer
 
   ColumnFilters<String> get proxyPasswordNonce => $composableBuilder(
     column: $table.proxyPasswordNonce,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get jumpHostServerId => $composableBuilder(
+    column: $table.jumpHostServerId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -8287,6 +8350,11 @@ class $$ServersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get jumpHostServerId => $composableBuilder(
+    column: $table.jumpHostServerId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get environment => $composableBuilder(
     column: $table.environment,
     builder: (column) => ColumnOrderings(column),
@@ -8423,6 +8491,11 @@ class $$ServersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get jumpHostServerId => $composableBuilder(
+    column: $table.jumpHostServerId,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get environment => $composableBuilder(
     column: $table.environment,
     builder: (column) => column,
@@ -8502,6 +8575,7 @@ class $$ServersTableTableManager
                 Value<String?> proxyUsername = const Value.absent(),
                 Value<String?> encryptedProxyPassword = const Value.absent(),
                 Value<String?> proxyPasswordNonce = const Value.absent(),
+                Value<int?> jumpHostServerId = const Value.absent(),
                 Value<String?> environment = const Value.absent(),
                 Value<String?> initialSnippets = const Value.absent(),
                 Value<String?> tags = const Value.absent(),
@@ -8533,6 +8607,7 @@ class $$ServersTableTableManager
                 proxyUsername: proxyUsername,
                 encryptedProxyPassword: encryptedProxyPassword,
                 proxyPasswordNonce: proxyPasswordNonce,
+                jumpHostServerId: jumpHostServerId,
                 environment: environment,
                 initialSnippets: initialSnippets,
                 tags: tags,
@@ -8566,6 +8641,7 @@ class $$ServersTableTableManager
                 Value<String?> proxyUsername = const Value.absent(),
                 Value<String?> encryptedProxyPassword = const Value.absent(),
                 Value<String?> proxyPasswordNonce = const Value.absent(),
+                Value<int?> jumpHostServerId = const Value.absent(),
                 Value<String?> environment = const Value.absent(),
                 Value<String?> initialSnippets = const Value.absent(),
                 Value<String?> tags = const Value.absent(),
@@ -8597,6 +8673,7 @@ class $$ServersTableTableManager
                 proxyUsername: proxyUsername,
                 encryptedProxyPassword: encryptedProxyPassword,
                 proxyPasswordNonce: proxyPasswordNonce,
+                jumpHostServerId: jumpHostServerId,
                 environment: environment,
                 initialSnippets: initialSnippets,
                 tags: tags,
