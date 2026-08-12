@@ -138,8 +138,11 @@ const _activeVaultFilePreference = 'active_vault_file';
 const _vaultFilesPreference = 'vault_files';
 const _vaultLabelsPreference = 'vault_labels';
 
-/// Moves the pre-multi-vault app database into a user-visible Documents
-/// location once, so existing data is also available to synchronization tools.
+/// Moves the pre-multi-vault app database into a managed vault location once.
+/// Platforms that support external vaults use the user-visible Documents
+/// location so existing data is also available to synchronization tools;
+/// restricted platforms keep the migrated vault in private application-support
+/// storage.
 ///
 /// The original database lived at the app default location under the fixed
 /// "maid_kit" vault id. Cloud sync, biometric and sync-passphrase keys are
@@ -159,7 +162,7 @@ Future<void> migrateLegacyVault({required String defaultName}) async {
 
   final managedPath = await VaultFileStorage().moveVault(
     legacy.path,
-    directoryPath: documents.path,
+    directoryPath: externalVaultsSupported ? documents.path : null,
     name: defaultName,
   );
 
@@ -281,10 +284,6 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
       try {
         final storage = ref.read(vaultFileStorageProvider);
         final managedPath = await storage.importVault(path);
-        if (Platform.isMacOS && await storage.isExternalPath(managedPath)) {
-          await preferences.remove(_activeVaultFilePreference);
-          return;
-        }
         await ref.read(vaultFilesProvider.notifier).remember(managedPath);
         state = managedPath;
         await preferences.setString(_activeVaultFilePreference, managedPath);
@@ -295,21 +294,22 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
   }
 
   Future<void> select(String? path) async {
-    var persistSelection = path == null || !Platform.isMacOS;
     if (path != null) {
       final storage = ref.read(vaultFileStorageProvider);
-      final isExternal = Platform.isMacOS && await storage.isExternalPath(path);
-      persistSelection = !isExternal;
-      if (persistSelection) {
-        await ref.read(vaultFilesProvider.notifier).remember(path);
+      if (!externalVaultsSupported && await storage.isExternalPath(path)) {
+        throw FileSystemException(
+          'External managed vaults are not supported on this platform.',
+          path,
+        );
       }
+      await ref.read(vaultFilesProvider.notifier).remember(path);
     }
     state = path;
     final preferences = await SharedPreferences.getInstance();
-    if (persistSelection) {
-      await preferences.setString(_activeVaultFilePreference, path!);
-    } else {
+    if (path == null) {
       await preferences.remove(_activeVaultFilePreference);
+    } else {
+      await preferences.setString(_activeVaultFilePreference, path);
     }
   }
 }
@@ -341,12 +341,9 @@ class VaultFilesNotifier extends Notifier<List<String>> {
     for (final path in stored) {
       try {
         final managedPath = await storage.importVault(path);
-        if (Platform.isMacOS && await storage.isExternalPath(managedPath)) {
-          continue;
-        }
         if (!managedPaths.contains(managedPath)) managedPaths.add(managedPath);
       } on FileSystemException {
-        // Missing vault files from older versions are no longer selectable.
+        // Missing or unsupported vault files are no longer selectable.
       }
     }
     state = [

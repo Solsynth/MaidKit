@@ -13,6 +13,7 @@ import 'server_providers.dart';
 import 'cloud_sync_service.dart';
 import 'database_backup_service.dart';
 import 'vault_create_page.dart';
+import 'vault_file_storage.dart';
 
 class VaultGate extends ConsumerStatefulWidget {
   const VaultGate({super.key, required this.child});
@@ -169,7 +170,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
   }
 
   Future<void> _openVaultFile() async {
-    if (_busy) return;
+    if (_busy || !externalVaultsSupported) return;
     final selection = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['sqlite', 'db', 'maidkit'],
@@ -459,15 +460,18 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                                 ),
                                         ),
                                         const SizedBox(height: 8),
-                                        OutlinedButton.icon(
-                                          onPressed: _busy
-                                              ? null
-                                              : _openVaultFile,
-                                          icon: const Icon(Symbols.folder_open),
-                                          label: Text(
-                                            'vaultOpenFileAction'.tr(),
+                                        if (externalVaultsSupported)
+                                          OutlinedButton.icon(
+                                            onPressed: _busy
+                                                ? null
+                                                : _openVaultFile,
+                                            icon: const Icon(
+                                              Symbols.folder_open,
+                                            ),
+                                            label: Text(
+                                              'vaultOpenFileAction'.tr(),
+                                            ),
                                           ),
-                                        ),
                                       ],
                                     ),
                                   ),

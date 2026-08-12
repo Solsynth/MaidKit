@@ -9,6 +9,7 @@ import 'cloud_sync_service.dart';
 import 'connection_import_service.dart';
 import 'connection_import_sheet.dart';
 import 'server_providers.dart';
+import 'vault_file_storage.dart';
 
 /// Full-screen vault onboarding reached from the locked vault gate.
 ///
@@ -112,19 +113,21 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
                         _error = null;
                       }),
               ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Symbols.folder_open),
-                title: Text('vaultCreateExternalAction'.tr()),
-                subtitle: Text('vaultCreateExternalHint'.tr()),
-                onTap: _busy
-                    ? null
-                    : () => setState(() {
-                        _creatingLocal = true;
-                        _externalStorage = true;
-                        _error = null;
-                      }),
-              ),
+              if (externalVaultsSupported) ...[
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Symbols.folder_open),
+                  title: Text('vaultCreateExternalAction'.tr()),
+                  subtitle: Text('vaultCreateExternalHint'.tr()),
+                  onTap: _busy
+                      ? null
+                      : () => setState(() {
+                          _creatingLocal = true;
+                          _externalStorage = true;
+                          _error = null;
+                        }),
+                ),
+              ],
               const Divider(height: 1),
               ListTile(
                 leading: const Icon(Symbols.dns),
@@ -318,7 +321,7 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
   }
 
   Future<void> _pickVaultFolder() async {
-    if (_busy) return;
+    if (_busy || !externalVaultsSupported) return;
     try {
       final path = await FilePicker.getDirectoryPath(
         dialogTitle: 'vaultChooseFolder'.tr(),

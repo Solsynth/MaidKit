@@ -3,11 +3,17 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+/// Whether user-selected external vault locations can be retained.
+bool get externalVaultsSupported =>
+    !Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS;
+
 /// Owns vault database files after they have been selected or created by the
 /// user.
 ///
 /// Internal vaults use application support. External managed vaults remain in
 /// the user-selected folder so file synchronization tools can see the file.
+/// The user-selected folder is unavailable to the managed vault flow on iOS,
+/// macOS, and Android because the required file permission is not retained.
 class VaultFileStorage {
   static const _directoryName = 'vaults';
   static const _extension = '.maidkit';
@@ -18,6 +24,12 @@ class VaultFileStorage {
   /// A null [directoryPath] uses MaidKit's private application-support
   /// storage. External managed vault flows pass the user's selected folder.
   Future<String> createVaultPath({String? name, String? directoryPath}) async {
+    if (directoryPath != null && !externalVaultsSupported) {
+      throw FileSystemException(
+        'External managed vaults are not supported on this platform.',
+        directoryPath,
+      );
+    }
     final directory = directoryPath == null
         ? await _vaultDirectory()
         : await Directory(directoryPath).create(recursive: true);
@@ -35,17 +47,25 @@ class VaultFileStorage {
     if (!await source.exists()) {
       throw FileSystemException('Vault file was not found.', sourcePath);
     }
-    return source.absolute.path;
+    final path = source.absolute.path;
+    if (!externalVaultsSupported && await isExternalPath(path)) {
+      throw FileSystemException(
+        'External managed vaults are not supported on this platform.',
+        sourcePath,
+      );
+    }
+    return path;
   }
 
-  /// Moves a vault into a user-selected folder and returns its new path.
+  /// Moves a vault into [directoryPath], or private application-support
+  /// storage when no directory is provided, and returns its new path.
   ///
   /// Copying the SQLite sidecars before deleting the source keeps this
   /// operation valid across volumes. Callers should close the active database
   /// before invoking this method.
   Future<String> moveVault(
     String sourcePath, {
-    required String directoryPath,
+    String? directoryPath,
     String? name,
   }) async {
     final source = File(sourcePath);

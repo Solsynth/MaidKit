@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/vault_file_storage.dart';
 import 'package:maid_kit/servers/vault_service.dart';
 
 class _HangingVaultService extends VaultService {
@@ -71,21 +72,29 @@ void main() {
       expect(container.read(vaultExistsProvider), isA<AsyncError<bool>>());
     },
   );
-  test('macOS external vault selection is session-only', () async {
-    if (!Platform.isMacOS) return;
+  test(
+    'external vault selection is disabled on restricted platforms',
+    () async {
+      if (externalVaultsSupported) return;
 
-    final directory = await Directory.systemTemp.createTemp('vault_gate_test');
-    final path = '${directory.path}/external.maidkit';
-    await File(path).writeAsBytes(const <int>[]);
-    addTearDown(() => directory.delete(recursive: true));
+      final directory = await Directory.systemTemp.createTemp(
+        'vault_gate_test',
+      );
+      final path = '${directory.path}/external.maidkit';
+      await File(path).writeAsBytes(const <int>[]);
+      addTearDown(() => directory.delete(recursive: true));
 
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    await container.read(activeVaultFileProvider.notifier).select(path);
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
 
-    final preferences = await SharedPreferences.getInstance();
-    expect(container.read(activeVaultFileProvider), path);
-    expect(preferences.getString('active_vault_file'), isNull);
-    expect(preferences.getStringList('vault_files'), isNull);
-  });
+      await expectLater(
+        container.read(activeVaultFileProvider.notifier).select(path),
+        throwsA(isA<FileSystemException>()),
+      );
+      final preferences = await SharedPreferences.getInstance();
+      expect(container.read(activeVaultFileProvider), isNull);
+      expect(preferences.getString('active_vault_file'), isNull);
+      expect(preferences.getStringList('vault_files'), isNull);
+    },
+  );
 }

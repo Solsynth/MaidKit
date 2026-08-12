@@ -6,6 +6,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:maid_kit/servers/vault_file_storage.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final storage = VaultFileStorage();
 
   group('VaultFileStorage.createVaultPath', () {
@@ -34,21 +35,36 @@ void main() {
     });
   });
   group('VaultFileStorage external paths', () {
-    test('keeps an imported vault in its selected folder', () async {
+    test('imports vaults only when external storage is supported', () async {
       final root = await Directory.systemTemp.createTemp(
         'maidkit-external-vault-',
       );
       addTearDown(() => root.delete(recursive: true));
       final source = File('${root.path}/shared.sqlite');
       await source.writeAsString('vault');
+      final support = await Directory.systemTemp.createTemp(
+        'maidkit-vault-support-',
+      );
+      final previous = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _FakePathProvider(support);
+      addTearDown(() async {
+        PathProviderPlatform.instance = previous;
+        await support.delete(recursive: true);
+      });
 
-      final resolved = await storage.importVault(source.path);
-
-      expect(resolved, source.absolute.path);
-      expect(await source.exists(), isTrue);
+      if (externalVaultsSupported) {
+        final resolved = await storage.importVault(source.path);
+        expect(resolved, source.absolute.path);
+        expect(await source.exists(), isTrue);
+      } else {
+        await expectLater(
+          storage.importVault(source.path),
+          throwsA(isA<FileSystemException>()),
+        );
+      }
     });
 
-    test('moves a vault and its SQLite sidecars to another folder', () async {
+    test('moves vaults only when external storage is supported', () async {
       final root = await Directory.systemTemp.createTemp('maidkit-move-vault-');
       final destination = await Directory('${root.path}/sync').create();
       addTearDown(() => root.delete(recursive: true));
@@ -57,6 +73,13 @@ void main() {
       await File('${source.path}-wal').writeAsString('wal');
       await File('${source.path}-shm').writeAsString('shm');
 
+      if (!externalVaultsSupported) {
+        await expectLater(
+          storage.moveVault(source.path, directoryPath: destination.path),
+          throwsA(isA<FileSystemException>()),
+        );
+        return;
+      }
       final moved = await storage.moveVault(
         source.path,
         directoryPath: destination.path,

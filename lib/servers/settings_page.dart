@@ -35,6 +35,7 @@ import 'tailscale_settings_section.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
 import 'vault_service.dart';
+import 'vault_file_storage.dart';
 
 @RoutePage()
 class SettingsPage extends ConsumerWidget {
@@ -868,7 +869,9 @@ class SettingsPage extends ConsumerWidget {
                           onExport: activeVaultFile == path
                               ? () => _exportDatabase(context, ref)
                               : null,
-                          onMove: () => _moveVault(context, ref, path),
+                          onMove: externalVaultsSupported
+                              ? () => _moveVault(context, ref, path)
+                              : null,
                           onRename: () => _renameVault(
                             context,
                             ref,
@@ -1583,6 +1586,7 @@ class SettingsPage extends ConsumerWidget {
   }
 
   Future<void> _createExternalVault(BuildContext context, WidgetRef ref) async {
+    if (!externalVaultsSupported) return;
     final name = await _chooseVaultNameSheet(context);
     if (name == null || !context.mounted) return;
     final folder = await _chooseVaultFolder(context);
@@ -1627,6 +1631,7 @@ class SettingsPage extends ConsumerWidget {
     WidgetRef ref,
     String vaultId,
   ) async {
+    if (!externalVaultsSupported) return;
     final folder = await _chooseVaultFolder(context);
     if (folder == null || !context.mounted) return;
     try {
@@ -1645,11 +1650,7 @@ class SettingsPage extends ConsumerWidget {
           .relocateVault(newPath);
       final label = ref.read(vaultLabelsProvider)[vaultId];
       await ref.read(vaultFilesProvider.notifier).forget(vaultId);
-      final newPathIsExternal =
-          Platform.isMacOS && await storage.isExternalPath(newPath);
-      if (!newPathIsExternal) {
-        await ref.read(vaultFilesProvider.notifier).remember(newPath);
-      }
+      await ref.read(vaultFilesProvider.notifier).remember(newPath);
       await ref.read(vaultLabelsProvider.notifier).remove(vaultId);
       if (label != null) {
         await ref.read(vaultLabelsProvider.notifier).rename(newPath, label);
@@ -1729,14 +1730,15 @@ class SettingsPage extends ConsumerWidget {
               onTap: () =>
                   Navigator.of(sheetContext).pop(_VaultOnboardingChoice.local),
             ),
-            ListTile(
-              leading: const Icon(Symbols.folder_open),
-              title: const Text('settingsVaultCreateExternal').tr(),
-              subtitle: const Text('settingsVaultCreateExternalHint').tr(),
-              onTap: () => Navigator.of(
-                sheetContext,
-              ).pop(_VaultOnboardingChoice.external),
-            ),
+            if (externalVaultsSupported)
+              ListTile(
+                leading: const Icon(Symbols.folder_open),
+                title: const Text('settingsVaultCreateExternal').tr(),
+                subtitle: const Text('settingsVaultCreateExternalHint').tr(),
+                onTap: () => Navigator.of(
+                  sheetContext,
+                ).pop(_VaultOnboardingChoice.external),
+              ),
             ListTile(
               leading: const Icon(Symbols.cloud_download),
               title: const Text('settingsVaultDownloadCloud').tr(),
@@ -1783,12 +1785,12 @@ class SettingsPage extends ConsumerWidget {
         initialValue: workspace.name,
       );
       if (name == null || !context.mounted) return;
-      final folder = await _chooseVaultFolder(context);
-      if (folder == null || !context.mounted) return;
 
+      // Cloud downloads use MaidKit's private storage. External storage is
+      // available only through the explicit external-vault flow above.
       final path = await ref
           .read(vaultFileStorageProvider)
-          .createVaultPath(name: name, directoryPath: folder);
+          .createVaultPath(name: name);
       final sync = ref.read(cloudSyncServiceForVaultProvider(path));
       await sync.enable(workspace, existingBlob: blob);
       ref.invalidate(cloudSyncConfigurationForVaultProvider(path));
