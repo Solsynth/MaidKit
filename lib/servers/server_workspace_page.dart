@@ -28,6 +28,7 @@ class ServerWorkspacePage extends StatelessWidget {
         ProjectsTab(),
         SnippetsRoute(),
         AgentRoute(),
+        MaidCafeRoute(),
         SettingsRoute(),
       ],
       duration: const Duration(milliseconds: 180),
@@ -57,6 +58,11 @@ class _ServerTabsShell extends ConsumerWidget {
         );
     final isAgentInputFocused = ref.watch(agentInputFocusedProvider);
     final githubHasFailures = ref.watch(githubHasFailuresProvider);
+    final mobileSelectedIndex = tabsRouter.activeIndex == 6
+        ? 5
+        : tabsRouter.activeIndex == 5
+        ? null
+        : tabsRouter.activeIndex;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -73,7 +79,7 @@ class _ServerTabsShell extends ConsumerWidget {
                   children: [
                     NavigationRail(
                       backgroundColor: Colors.transparent,
-                      selectedIndex: tabsRouter.activeIndex < 5
+                      selectedIndex: tabsRouter.activeIndex < 6
                           ? tabsRouter.activeIndex
                           : null,
                       onDestinationSelected: tabsRouter.setActiveIndex,
@@ -88,11 +94,11 @@ class _ServerTabsShell extends ConsumerWidget {
                             const DeploySessionsRailButton(),
                             const SizedBox(height: 8),
                             _CloudAccountRailButton(
-                              onPressed: () => tabsRouter.setActiveIndex(5),
+                              onPressed: () => tabsRouter.setActiveIndex(6),
                             ),
                             IconButton(
                               tooltip: 'tabSettings'.tr(),
-                              onPressed: () => tabsRouter.setActiveIndex(5),
+                              onPressed: () => tabsRouter.setActiveIndex(6),
                               icon: const Icon(Symbols.settings),
                             ),
                           ],
@@ -133,6 +139,11 @@ class _ServerTabsShell extends ConsumerWidget {
                           selectedIcon: Icon(Symbols.smart_toy, fill: 1),
                           label: Text('Agent'),
                         ),
+                        NavigationRailDestination(
+                          icon: const Icon(Symbols.cloud),
+                          selectedIcon: const Icon(Symbols.cloud, fill: 1),
+                          label: Text('maidCafeTitle').tr(),
+                        ),
                       ],
                     ),
                     Expanded(
@@ -150,7 +161,10 @@ class _ServerTabsShell extends ConsumerWidget {
                 )
               : child,
           bottomNavigationBar:
-              isWide || !isDashboardFocused || isAgentInputFocused
+              isWide ||
+                  !isDashboardFocused ||
+                  isAgentInputFocused ||
+                  mobileSelectedIndex == null
               ? null
               : Material(
                   elevation: 0,
@@ -160,7 +174,7 @@ class _ServerTabsShell extends ConsumerWidget {
                     height: 56,
                     labelBehavior:
                         NavigationDestinationLabelBehavior.alwaysHide,
-                    selectedIndex: tabsRouter.activeIndex,
+                    selectedIndex: mobileSelectedIndex,
                     onDestinationSelected: tabsRouter.setActiveIndex,
                     destinations: [
                       NavigationDestination(

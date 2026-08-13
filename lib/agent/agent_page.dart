@@ -90,6 +90,7 @@ class _AgentPageState extends ConsumerState<AgentPage> {
   AgentProposal? _proposal;
   bool _reconnectRequired = false;
   bool _showScrollToBottom = false;
+  bool _scrollVisibilityUpdateScheduled = false;
   String? _pendingPrompt;
   int? _activeProviderId;
   int? _activeModelId;
@@ -173,11 +174,25 @@ class _AgentPageState extends ConsumerState<AgentPage> {
     _setScrollToBottomVisibility(_messagesScroll.position);
   }
 
+  // Scroll notifications can be delivered during layout, so defer the
+  // visibility rebuild until the frame has completed.
   void _setScrollToBottomVisibility(ScrollMetrics position) {
-    if (!position.hasContentDimensions) return;
+    if (!position.hasContentDimensions || !mounted) return;
     final visible = position.pixels < position.maxScrollExtent - 64;
-    if (visible == _showScrollToBottom || !mounted) return;
-    setState(() => _showScrollToBottom = visible);
+    if (visible == _showScrollToBottom || _scrollVisibilityUpdateScheduled) {
+      return;
+    }
+    _scrollVisibilityUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollVisibilityUpdateScheduled = false;
+      if (!mounted || !_messagesScroll.hasClients) return;
+      final currentPosition = _messagesScroll.position;
+      if (!currentPosition.hasContentDimensions) return;
+      final currentVisible =
+          currentPosition.pixels < currentPosition.maxScrollExtent - 64;
+      if (currentVisible == _showScrollToBottom) return;
+      setState(() => _showScrollToBottom = currentVisible);
+    });
   }
 
   void _scrollToLatest() {

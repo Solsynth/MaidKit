@@ -45,6 +45,11 @@ class Servers extends Table {
   // encoded SerialConfig.
   TextColumn get connectionType => text().withDefault(const Constant('ssh'))();
   TextColumn get serialConfig => text().nullable()();
+  // MaidCafe daemon configuration for this server. The webhook secret is
+  // encrypted with the vault key; the endpoint is non-secret metadata.
+  TextColumn get maidCafeDaemonUrl => text().nullable()();
+  TextColumn get encryptedMaidCafeWebhookSecret => text().nullable()();
+  TextColumn get maidCafeWebhookSecretNonce => text().nullable()();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -260,7 +265,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -485,6 +490,26 @@ class AppDatabase extends _$AppDatabase {
         ).get();
         if (hasJumpHostServerId.isEmpty) {
           await m.addColumn(servers, servers.jumpHostServerId);
+        }
+      }
+      if (from < 25) {
+        final maidCafeColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name IN ('maid_cafe_daemon_url', "
+          "'encrypted_maid_cafe_webhook_secret', "
+          "'maid_cafe_webhook_secret_nonce')",
+        ).get();
+        final existing = maidCafeColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('maid_cafe_daemon_url')) {
+          await m.addColumn(servers, servers.maidCafeDaemonUrl);
+        }
+        if (!existing.contains('encrypted_maid_cafe_webhook_secret')) {
+          await m.addColumn(servers, servers.encryptedMaidCafeWebhookSecret);
+        }
+        if (!existing.contains('maid_cafe_webhook_secret_nonce')) {
+          await m.addColumn(servers, servers.maidCafeWebhookSecretNonce);
         }
       }
     },

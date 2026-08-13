@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -9,8 +9,9 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'agent/local_mcp_server.dart';
 import 'routing/app_router.dart';
 import 'shared/presentation/maidkit_window_scaffold.dart';
-import 'shared/services/update_service.dart';
+import 'package:solsynth_express/solsynth_express.dart';
 import 'servers/server_providers.dart';
+import 'shared/services/update_preferences.dart';
 import 'servers/startup_connection_bootstrap.dart';
 import 'servers/tailscale_auto_connect.dart';
 import 'servers/vault_gate.dart';
@@ -45,11 +46,19 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
   }
 
   /// Runs the update check once the app navigator is ready to host the
-  /// update sheet, mirroring Island's startup update flow.
   Future<void> checkForUpdatesWhenReady([int retry = 0]) async {
     final ctx = maidKitNavigatorKey.currentContext;
     if (ctx != null && ctx.mounted) {
-      await UpdateService().checkForUpdates(ctx);
+      final updateChecksEnabled = await ref.read(
+        maidKitUpdateChecksEnabledProvider.future,
+      );
+      final updateChannel = await ref.read(maidKitUpdateChannelProvider.future);
+      if (!mounted || !ctx.mounted) return;
+      await UpdateService(
+        channel: updateChannel,
+        productId: kMaidKitDistributionProductId,
+        enabled: updateChecksEnabled,
+      ).checkForUpdates(ctx);
       return;
     }
     if (retry >= 120) return;

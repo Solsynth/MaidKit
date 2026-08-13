@@ -15,6 +15,7 @@ import 'package:maid_kit/containers/image_management_tab.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'activity_tab.dart';
+import 'maidcafe_server_tab.dart';
 import 'crontab_tab.dart';
 import 'firewall_tab.dart';
 import 'package_management_tab.dart';
@@ -47,6 +48,7 @@ class ServerDetailPage extends ConsumerStatefulWidget {
 
 class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   static const _processesTabIndex = 1;
+  static const _tabCount = 11;
 
   AsyncValue<List<ServerProcess>> _processes = const AsyncValue.data([]);
   Timer? _refreshTimer;
@@ -58,7 +60,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   @override
   void initState() {
     super.initState();
-    _activeTabIndex = widget.initialTab.clamp(0, 9);
+    _activeTabIndex = widget.initialTab.clamp(0, _tabCount - 1);
     _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
     // Lazy-load processes only when the Processes tab is open so a 3s metrics
     // tick does not keep spawning remote `ps` while the user is elsewhere.
@@ -480,15 +482,16 @@ class _InspectorTabs extends StatefulWidget {
 
 class _InspectorTabsState extends State<_InspectorTabs>
     with SingleTickerProviderStateMixin {
+  static const _tabCount = 11;
   late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: 10,
+      length: _tabCount,
       vsync: this,
-      initialIndex: widget.initialTab.clamp(0, 9),
+      initialIndex: widget.initialTab.clamp(0, _tabCount - 1),
     );
     _tabController.addListener(_handleTabChange);
   }
@@ -554,6 +557,10 @@ class _InspectorTabsState extends State<_InspectorTabs>
             Tab(
               icon: Icon(Symbols.swap_horiz, size: 18),
               text: 'detailPortForwarding'.tr(),
+            ),
+            Tab(
+              icon: Icon(Symbols.cloud, size: 18),
+              text: 'detailMaidCafe'.tr(),
             ),
           ],
         ),
@@ -629,6 +636,7 @@ class _InspectorTabsState extends State<_InspectorTabs>
                 server: widget.server,
                 connected: widget.connected,
               ),
+              MaidCafeServerTab(server: widget.server),
             ],
           ),
         ),

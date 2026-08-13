@@ -11,6 +11,7 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 
 import 'credentials_page.dart';
+import 'maidcafe_settings_section.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'servers_page.dart';
@@ -22,15 +23,21 @@ class AssetsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaidKitAppScaffold(
-    body: ListView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      children: const [
-        ServerAssetsSection(),
-        SizedBox(height: 32),
-        GitHubSection(),
-        SizedBox(height: 32),
-        CredentialsPage(),
-      ],
+    body: LayoutBuilder(
+      builder: (context, constraints) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+        children: [
+          const ServerAssetsSection(),
+          const SizedBox(height: 32),
+          const GitHubSection(),
+          const SizedBox(height: 32),
+          const CredentialsPage(),
+          if (constraints.maxWidth <= 768) ...[
+            const SizedBox(height: 32),
+            const MaidCafeSettingsSection(),
+          ],
+        ],
+      ),
     ),
   );
 }
@@ -44,19 +51,27 @@ class ServerAssetsSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final header = Text(
               'assetsConnections'.tr(),
               style: Theme.of(context).textTheme.titleLarge,
-            ),
-            FilledButton.icon(
+            );
+            final addButton = FilledButton.icon(
               onPressed: () => _add(context, ref),
               icon: const Icon(Symbols.add),
               label: Text('serversAddServer'.tr()),
-            ),
-          ],
+            );
+            return constraints.maxWidth < 600
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [header, const SizedBox(height: 8), addButton],
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [header, addButton],
+                  );
+          },
         ),
         const SizedBox(height: 4),
         Text(

@@ -1,5 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -9,6 +9,8 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/theme.dart';
+import 'package:maid_kit/servers/maidcafe_server_tab.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
 
 void main() {
   setUpAll(() async {
@@ -18,11 +20,15 @@ void main() {
     EasyLocalization.logger.enableBuildModes = [];
   });
 
-  Future<void> pumpApp(WidgetTester tester) async {
+  Future<void> pumpApp(
+    WidgetTester tester, {
+    Size size = const Size(1200, 800),
+    bool settle = true,
+  }) async {
     final router = AppRouter();
     addTearDown(router.dispose);
 
-    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -38,6 +44,7 @@ void main() {
             savedCredentialsProvider.overrideWith(
               (ref) => Stream.value(<SavedCredential>[]),
             ),
+            cloudUserProvider.overrideWith((ref) => Future.value(null)),
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),
             ),
@@ -56,7 +63,11 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
   }
 
   testWidgets('opens Settings from the desktop navigation rail', (
@@ -94,5 +105,73 @@ void main() {
 
     expect(find.text('assetsConnections'.tr()), findsOneWidget);
     expect(find.text('assetsCredentialsTitle'.tr()), findsOneWidget);
+  });
+  testWidgets('opens MaidCafe from the desktop navigation rail', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester);
+
+    await tester.tap(find.byIcon(Symbols.cloud));
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeTitle'.tr()), findsNWidgets(2));
+    expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
+  });
+
+  testWidgets('shows MaidCafe inside Assets on mobile', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(500, 800), settle: false);
+
+    await tester.tap(find.byIcon(Symbols.inventory_2));
+    await tester.pumpAndSettle();
+
+    expect(find.text('assetsConnections'.tr()), findsOneWidget);
+    expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
+    expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
+  });
+  testWidgets('shows MaidCafe configuration inside a server detail tab', (
+    WidgetTester tester,
+  ) async {
+    final server = Server(
+      id: 1,
+      name: 'Build host',
+      host: 'build.example',
+      port: 22,
+      username: 'builder',
+      collectStats: true,
+      collectSystemInfo: true,
+      connectionType: 'ssh',
+      maidCafeDaemonUrl: 'http://127.0.0.1:8747',
+    );
+    await tester.pumpWidget(
+      EasyLocalization(
+        supportedLocales: const [Locale('en', 'US')],
+        path: 'assets/translations',
+        fallbackLocale: const Locale('en', 'US'),
+        child: ProviderScope(
+          overrides: [
+            cloudUserProvider.overrideWith((ref) => Future.value(null)),
+            maidCafeDaemonsProvider.overrideWith(
+              (ref) => Future.value(<MaidCafeDaemon>[]),
+            ),
+          ],
+          child: MaterialApp(
+            theme: createMaidKitTheme(Brightness.light),
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            home: MaidCafeServerTab(server: server),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeServerConfigTitle'.tr()), findsOneWidget);
+    expect(find.text('maidCafeServerDaemonUrl'.tr()), findsOneWidget);
+    expect(find.text('maidCafeLocalDaemon'.tr()), findsNothing);
   });
 }

@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'server_models.dart';
+import 'maidcafe_service.dart';
 import 'vault_service.dart';
 
 class ServerRepository {
@@ -182,6 +183,50 @@ class ServerRepository {
       port: server.proxyPort ?? 1080,
       username: server.proxyUsername,
       password: password,
+    );
+  }
+
+  Future<void> updateMaidCafeConfig(
+    Server server, {
+    required String daemonUrl,
+    String? webhookSecret,
+    bool clearWebhookSecret = false,
+  }) async {
+    final normalizedUrl = normalizeMaidCafeLocalDaemonUrl(daemonUrl);
+    final encryptedSecret =
+        webhookSecret == null || webhookSecret.trim().isEmpty
+        ? null
+        : await _vault.encrypt(
+            webhookSecret.trim(),
+            context: 'maidcafe-webhook-secret',
+          );
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeDaemonUrl: Value(normalizedUrl),
+        encryptedMaidCafeWebhookSecret: clearWebhookSecret
+            ? const Value(null)
+            : encryptedSecret == null
+            ? const Value.absent()
+            : Value(encryptedSecret.bytes),
+        maidCafeWebhookSecretNonce: clearWebhookSecret
+            ? const Value(null)
+            : encryptedSecret == null
+            ? const Value.absent()
+            : Value(encryptedSecret.nonce),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  Future<String?> maidCafeWebhookSecretFor(Server server) async {
+    final bytes = server.encryptedMaidCafeWebhookSecret;
+    final nonce = server.maidCafeWebhookSecretNonce;
+    if (bytes == null || nonce == null) return null;
+    return _vault.decrypt(
+      EncryptedValue(bytes: bytes, nonce: nonce),
+      context: 'maidcafe-webhook-secret',
     );
   }
 

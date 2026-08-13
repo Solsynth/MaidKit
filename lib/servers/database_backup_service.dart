@@ -275,7 +275,9 @@ class DatabaseBackupService {
         ..remove('encryptedCredential')
         ..remove('credentialNonce')
         ..remove('encryptedProxyPassword')
-        ..remove('proxyPasswordNonce');
+        ..remove('proxyPasswordNonce')
+        ..remove('encryptedMaidCafeWebhookSecret')
+        ..remove('maidCafeWebhookSecretNonce');
       if (server.encryptedCredential != null &&
           server.credentialNonce != null) {
         record['credential'] = await _vault.decrypt(
@@ -294,6 +296,16 @@ class DatabaseBackupService {
             nonce: server.proxyPasswordNonce!,
           ),
           context: 'server-proxy-password',
+        );
+      }
+      if (server.encryptedMaidCafeWebhookSecret != null &&
+          server.maidCafeWebhookSecretNonce != null) {
+        record['maidCafeWebhookSecret'] = await _vault.decrypt(
+          EncryptedValue(
+            bytes: server.encryptedMaidCafeWebhookSecret!,
+            nonce: server.maidCafeWebhookSecretNonce!,
+          ),
+          context: 'maidcafe-webhook-secret',
         );
       }
       serverRecords.add(record);
@@ -439,6 +451,13 @@ class DatabaseBackupService {
                 context: 'server-proxy-password',
               )
             : null;
+        final webhookSecret = record['maidCafeWebhookSecret'];
+        final encryptedMaidCafeWebhookSecret = webhookSecret is String
+            ? await _vault.encrypt(
+                webhookSecret,
+                context: 'maidcafe-webhook-secret',
+              )
+            : null;
         await _database
             .into(_database.servers)
             .insert(
@@ -467,6 +486,13 @@ class DatabaseBackupService {
                 proxyUsername: Value(server.proxyUsername),
                 encryptedProxyPassword: Value(encryptedProxyPassword?.bytes),
                 proxyPasswordNonce: Value(encryptedProxyPassword?.nonce),
+                maidCafeDaemonUrl: Value(server.maidCafeDaemonUrl),
+                encryptedMaidCafeWebhookSecret: Value(
+                  encryptedMaidCafeWebhookSecret?.bytes,
+                ),
+                maidCafeWebhookSecretNonce: Value(
+                  encryptedMaidCafeWebhookSecret?.nonce,
+                ),
                 jumpHostServerId: Value(server.jumpHostServerId),
                 environment: Value(server.environment),
                 initialSnippets: Value(server.initialSnippets),

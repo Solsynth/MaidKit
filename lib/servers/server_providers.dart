@@ -27,6 +27,8 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'app_theme_preferences.dart';
 import 'ghostty_terminal_session_adapter.dart';
 import 'cloud_sync_service.dart';
+import 'maidcafe_preferences.dart';
+import 'maidcafe_service.dart';
 import 'local_connection_manager.dart';
 import 'local_machine_preferences.dart';
 import 'metrics_refresh_preferences.dart';
@@ -101,6 +103,50 @@ final cloudUserProvider = FutureProvider<CloudUser?>((ref) {
 final cloudWorkspacesProvider = FutureProvider<List<CloudWorkspace>>((ref) {
   return ref.watch(cloudSyncServiceProvider).listWorkspaces();
 });
+final maidCafeSettingsProvider = Provider<MaidCafeSettings>(
+  (ref) => InMemoryMaidCafeSettings(),
+);
+
+final maidCafeCloudUrlProvider =
+    NotifierProvider<MaidCafeCloudUrlNotifier, String>(
+      MaidCafeCloudUrlNotifier.new,
+    );
+
+class MaidCafeCloudUrlNotifier extends Notifier<String> {
+  @override
+  String build() => ref.watch(maidCafeSettingsProvider).cloudUrl;
+
+  Future<void> save(String value) async {
+    await ref.read(maidCafeSettingsProvider).saveCloudUrl(value);
+    state = ref.read(maidCafeSettingsProvider).cloudUrl;
+  }
+}
+
+final maidCafeServiceProvider = Provider<MaidCafeService>((ref) {
+  return MaidCafeService(
+    baseUrl: ref.watch(maidCafeCloudUrlProvider),
+    cloudSync: ref.watch(cloudSyncServiceProvider),
+  );
+});
+
+final maidCafeDaemonsProvider = FutureProvider<List<MaidCafeDaemon>>((ref) {
+  return ref.watch(maidCafeServiceProvider).listDaemons();
+});
+
+final maidCafeNotificationsProvider =
+    FutureProvider<List<MaidCafeNotification>>((ref) {
+      return ref.watch(maidCafeServiceProvider).listNotifications();
+    });
+
+final maidCafeMetricsProvider =
+    FutureProvider.family<List<MaidCafeMetric>, String>((ref, daemonId) {
+      return ref.watch(maidCafeServiceProvider).listMetrics(daemonId);
+    });
+
+final maidCafeAlarmsProvider =
+    FutureProvider.family<List<MaidCafeAlarm>, String>((ref, daemonId) {
+      return ref.watch(maidCafeServiceProvider).listAlarms(daemonId);
+    });
 
 final personalityBillingPolicyProvider = FutureProvider<BillingPolicy?>((
   ref,

@@ -15,6 +15,7 @@ import 'servers/terminal_adapter_preferences.dart';
 import 'servers/startup_connection_preferences.dart';
 import 'servers/privacy_preferences.dart';
 import 'servers/local_machine_preferences.dart';
+import 'servers/maidcafe_preferences.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,7 +35,6 @@ Future<void> main(List<String> args) async {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
   await EasyLocalization.ensureInitialized();
   EasyLocalization.logger.enableBuildModes = [];
-
   final preferences = await Future.wait([
     TerminalAdapterPreferences.load(),
     StartupConnectionPreferences.load(),
@@ -42,6 +42,7 @@ Future<void> main(List<String> args) async {
     AppThemePreferences.load(),
     PrivacyPreferences.load(),
     LocalMachinePreferences.load(),
+    MaidCafePreferences.load(),
   ]);
   final terminalAdapterPreferences =
       preferences[0] as TerminalAdapterPreferences;
@@ -51,6 +52,7 @@ Future<void> main(List<String> args) async {
   final appThemePreferences = preferences[3] as AppThemePreferences;
   final privacyPreferences = preferences[4] as PrivacyPreferences;
   final localMachinePreferences = preferences[5] as LocalMachinePreferences;
+  final maidCafePreferences = preferences[6] as MaidCafePreferences;
 
   await migrateLegacyVault(defaultName: 'Primary Vault');
 
@@ -85,6 +87,7 @@ Future<void> main(List<String> args) async {
         appThemeSettingsProvider.overrideWithValue(appThemePreferences),
         privacySettingsProvider.overrideWithValue(privacyPreferences),
         localMachineSettingsProvider.overrideWithValue(localMachinePreferences),
+        maidCafeSettingsProvider.overrideWithValue(maidCafePreferences),
       ],
       child: EasyLocalization(
         supportedLocales: const [

@@ -341,6 +341,40 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _maidCafeDaemonUrlMeta = const VerificationMeta(
+    'maidCafeDaemonUrl',
+  );
+  @override
+  late final GeneratedColumn<String> maidCafeDaemonUrl =
+      GeneratedColumn<String>(
+        'maid_cafe_daemon_url',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _encryptedMaidCafeWebhookSecretMeta =
+      const VerificationMeta('encryptedMaidCafeWebhookSecret');
+  @override
+  late final GeneratedColumn<String> encryptedMaidCafeWebhookSecret =
+      GeneratedColumn<String>(
+        'encrypted_maid_cafe_webhook_secret',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _maidCafeWebhookSecretNonceMeta =
+      const VerificationMeta('maidCafeWebhookSecretNonce');
+  @override
+  late final GeneratedColumn<String> maidCafeWebhookSecretNonce =
+      GeneratedColumn<String>(
+        'maid_cafe_webhook_secret_nonce',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _sortOrderMeta = const VerificationMeta(
     'sortOrder',
   );
@@ -384,6 +418,9 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     tags,
     connectionType,
     serialConfig,
+    maidCafeDaemonUrl,
+    encryptedMaidCafeWebhookSecret,
+    maidCafeWebhookSecretNonce,
     sortOrder,
   ];
   @override
@@ -632,6 +669,33 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         ),
       );
     }
+    if (data.containsKey('maid_cafe_daemon_url')) {
+      context.handle(
+        _maidCafeDaemonUrlMeta,
+        maidCafeDaemonUrl.isAcceptableOrUnknown(
+          data['maid_cafe_daemon_url']!,
+          _maidCafeDaemonUrlMeta,
+        ),
+      );
+    }
+    if (data.containsKey('encrypted_maid_cafe_webhook_secret')) {
+      context.handle(
+        _encryptedMaidCafeWebhookSecretMeta,
+        encryptedMaidCafeWebhookSecret.isAcceptableOrUnknown(
+          data['encrypted_maid_cafe_webhook_secret']!,
+          _encryptedMaidCafeWebhookSecretMeta,
+        ),
+      );
+    }
+    if (data.containsKey('maid_cafe_webhook_secret_nonce')) {
+      context.handle(
+        _maidCafeWebhookSecretNonceMeta,
+        maidCafeWebhookSecretNonce.isAcceptableOrUnknown(
+          data['maid_cafe_webhook_secret_nonce']!,
+          _maidCafeWebhookSecretNonceMeta,
+        ),
+      );
+    }
     if (data.containsKey('sort_order')) {
       context.handle(
         _sortOrderMeta,
@@ -767,6 +831,18 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         DriftSqlType.string,
         data['${effectivePrefix}serial_config'],
       ),
+      maidCafeDaemonUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}maid_cafe_daemon_url'],
+      ),
+      encryptedMaidCafeWebhookSecret: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}encrypted_maid_cafe_webhook_secret'],
+      ),
+      maidCafeWebhookSecretNonce: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}maid_cafe_webhook_secret_nonce'],
+      ),
       sortOrder: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}sort_order'],
@@ -811,6 +887,9 @@ class Server extends DataClass implements Insertable<Server> {
   final String? tags;
   final String connectionType;
   final String? serialConfig;
+  final String? maidCafeDaemonUrl;
+  final String? encryptedMaidCafeWebhookSecret;
+  final String? maidCafeWebhookSecretNonce;
   final int? sortOrder;
   const Server({
     required this.id,
@@ -843,6 +922,9 @@ class Server extends DataClass implements Insertable<Server> {
     this.tags,
     required this.connectionType,
     this.serialConfig,
+    this.maidCafeDaemonUrl,
+    this.encryptedMaidCafeWebhookSecret,
+    this.maidCafeWebhookSecretNonce,
     this.sortOrder,
   });
   @override
@@ -924,6 +1006,19 @@ class Server extends DataClass implements Insertable<Server> {
     if (!nullToAbsent || serialConfig != null) {
       map['serial_config'] = Variable<String>(serialConfig);
     }
+    if (!nullToAbsent || maidCafeDaemonUrl != null) {
+      map['maid_cafe_daemon_url'] = Variable<String>(maidCafeDaemonUrl);
+    }
+    if (!nullToAbsent || encryptedMaidCafeWebhookSecret != null) {
+      map['encrypted_maid_cafe_webhook_secret'] = Variable<String>(
+        encryptedMaidCafeWebhookSecret,
+      );
+    }
+    if (!nullToAbsent || maidCafeWebhookSecretNonce != null) {
+      map['maid_cafe_webhook_secret_nonce'] = Variable<String>(
+        maidCafeWebhookSecretNonce,
+      );
+    }
     if (!nullToAbsent || sortOrder != null) {
       map['sort_order'] = Variable<int>(sortOrder);
     }
@@ -1004,6 +1099,17 @@ class Server extends DataClass implements Insertable<Server> {
       serialConfig: serialConfig == null && nullToAbsent
           ? const Value.absent()
           : Value(serialConfig),
+      maidCafeDaemonUrl: maidCafeDaemonUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(maidCafeDaemonUrl),
+      encryptedMaidCafeWebhookSecret:
+          encryptedMaidCafeWebhookSecret == null && nullToAbsent
+          ? const Value.absent()
+          : Value(encryptedMaidCafeWebhookSecret),
+      maidCafeWebhookSecretNonce:
+          maidCafeWebhookSecretNonce == null && nullToAbsent
+          ? const Value.absent()
+          : Value(maidCafeWebhookSecretNonce),
       sortOrder: sortOrder == null && nullToAbsent
           ? const Value.absent()
           : Value(sortOrder),
@@ -1054,6 +1160,15 @@ class Server extends DataClass implements Insertable<Server> {
       tags: serializer.fromJson<String?>(json['tags']),
       connectionType: serializer.fromJson<String>(json['connectionType']),
       serialConfig: serializer.fromJson<String?>(json['serialConfig']),
+      maidCafeDaemonUrl: serializer.fromJson<String?>(
+        json['maidCafeDaemonUrl'],
+      ),
+      encryptedMaidCafeWebhookSecret: serializer.fromJson<String?>(
+        json['encryptedMaidCafeWebhookSecret'],
+      ),
+      maidCafeWebhookSecretNonce: serializer.fromJson<String?>(
+        json['maidCafeWebhookSecretNonce'],
+      ),
       sortOrder: serializer.fromJson<int?>(json['sortOrder']),
     );
   }
@@ -1093,6 +1208,13 @@ class Server extends DataClass implements Insertable<Server> {
       'tags': serializer.toJson<String?>(tags),
       'connectionType': serializer.toJson<String>(connectionType),
       'serialConfig': serializer.toJson<String?>(serialConfig),
+      'maidCafeDaemonUrl': serializer.toJson<String?>(maidCafeDaemonUrl),
+      'encryptedMaidCafeWebhookSecret': serializer.toJson<String?>(
+        encryptedMaidCafeWebhookSecret,
+      ),
+      'maidCafeWebhookSecretNonce': serializer.toJson<String?>(
+        maidCafeWebhookSecretNonce,
+      ),
       'sortOrder': serializer.toJson<int?>(sortOrder),
     };
   }
@@ -1128,6 +1250,9 @@ class Server extends DataClass implements Insertable<Server> {
     Value<String?> tags = const Value.absent(),
     String? connectionType,
     Value<String?> serialConfig = const Value.absent(),
+    Value<String?> maidCafeDaemonUrl = const Value.absent(),
+    Value<String?> encryptedMaidCafeWebhookSecret = const Value.absent(),
+    Value<String?> maidCafeWebhookSecretNonce = const Value.absent(),
     Value<int?> sortOrder = const Value.absent(),
   }) => Server(
     id: id ?? this.id,
@@ -1182,6 +1307,15 @@ class Server extends DataClass implements Insertable<Server> {
     tags: tags.present ? tags.value : this.tags,
     connectionType: connectionType ?? this.connectionType,
     serialConfig: serialConfig.present ? serialConfig.value : this.serialConfig,
+    maidCafeDaemonUrl: maidCafeDaemonUrl.present
+        ? maidCafeDaemonUrl.value
+        : this.maidCafeDaemonUrl,
+    encryptedMaidCafeWebhookSecret: encryptedMaidCafeWebhookSecret.present
+        ? encryptedMaidCafeWebhookSecret.value
+        : this.encryptedMaidCafeWebhookSecret,
+    maidCafeWebhookSecretNonce: maidCafeWebhookSecretNonce.present
+        ? maidCafeWebhookSecretNonce.value
+        : this.maidCafeWebhookSecretNonce,
     sortOrder: sortOrder.present ? sortOrder.value : this.sortOrder,
   );
   Server copyWithCompanion(ServersCompanion data) {
@@ -1250,6 +1384,16 @@ class Server extends DataClass implements Insertable<Server> {
       serialConfig: data.serialConfig.present
           ? data.serialConfig.value
           : this.serialConfig,
+      maidCafeDaemonUrl: data.maidCafeDaemonUrl.present
+          ? data.maidCafeDaemonUrl.value
+          : this.maidCafeDaemonUrl,
+      encryptedMaidCafeWebhookSecret:
+          data.encryptedMaidCafeWebhookSecret.present
+          ? data.encryptedMaidCafeWebhookSecret.value
+          : this.encryptedMaidCafeWebhookSecret,
+      maidCafeWebhookSecretNonce: data.maidCafeWebhookSecretNonce.present
+          ? data.maidCafeWebhookSecretNonce.value
+          : this.maidCafeWebhookSecretNonce,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
     );
   }
@@ -1287,6 +1431,11 @@ class Server extends DataClass implements Insertable<Server> {
           ..write('tags: $tags, ')
           ..write('connectionType: $connectionType, ')
           ..write('serialConfig: $serialConfig, ')
+          ..write('maidCafeDaemonUrl: $maidCafeDaemonUrl, ')
+          ..write(
+            'encryptedMaidCafeWebhookSecret: $encryptedMaidCafeWebhookSecret, ',
+          )
+          ..write('maidCafeWebhookSecretNonce: $maidCafeWebhookSecretNonce, ')
           ..write('sortOrder: $sortOrder')
           ..write(')'))
         .toString();
@@ -1324,6 +1473,9 @@ class Server extends DataClass implements Insertable<Server> {
     tags,
     connectionType,
     serialConfig,
+    maidCafeDaemonUrl,
+    encryptedMaidCafeWebhookSecret,
+    maidCafeWebhookSecretNonce,
     sortOrder,
   ]);
   @override
@@ -1360,6 +1512,10 @@ class Server extends DataClass implements Insertable<Server> {
           other.tags == this.tags &&
           other.connectionType == this.connectionType &&
           other.serialConfig == this.serialConfig &&
+          other.maidCafeDaemonUrl == this.maidCafeDaemonUrl &&
+          other.encryptedMaidCafeWebhookSecret ==
+              this.encryptedMaidCafeWebhookSecret &&
+          other.maidCafeWebhookSecretNonce == this.maidCafeWebhookSecretNonce &&
           other.sortOrder == this.sortOrder);
 }
 
@@ -1394,6 +1550,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
   final Value<String?> tags;
   final Value<String> connectionType;
   final Value<String?> serialConfig;
+  final Value<String?> maidCafeDaemonUrl;
+  final Value<String?> encryptedMaidCafeWebhookSecret;
+  final Value<String?> maidCafeWebhookSecretNonce;
   final Value<int?> sortOrder;
   const ServersCompanion({
     this.id = const Value.absent(),
@@ -1426,6 +1585,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.tags = const Value.absent(),
     this.connectionType = const Value.absent(),
     this.serialConfig = const Value.absent(),
+    this.maidCafeDaemonUrl = const Value.absent(),
+    this.encryptedMaidCafeWebhookSecret = const Value.absent(),
+    this.maidCafeWebhookSecretNonce = const Value.absent(),
     this.sortOrder = const Value.absent(),
   });
   ServersCompanion.insert({
@@ -1459,6 +1621,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.tags = const Value.absent(),
     this.connectionType = const Value.absent(),
     this.serialConfig = const Value.absent(),
+    this.maidCafeDaemonUrl = const Value.absent(),
+    this.encryptedMaidCafeWebhookSecret = const Value.absent(),
+    this.maidCafeWebhookSecretNonce = const Value.absent(),
     this.sortOrder = const Value.absent(),
   }) : name = Value(name),
        host = Value(host),
@@ -1494,6 +1659,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Expression<String>? tags,
     Expression<String>? connectionType,
     Expression<String>? serialConfig,
+    Expression<String>? maidCafeDaemonUrl,
+    Expression<String>? encryptedMaidCafeWebhookSecret,
+    Expression<String>? maidCafeWebhookSecretNonce,
     Expression<int>? sortOrder,
   }) {
     return RawValuesInsertable({
@@ -1531,6 +1699,11 @@ class ServersCompanion extends UpdateCompanion<Server> {
       if (tags != null) 'tags': tags,
       if (connectionType != null) 'connection_type': connectionType,
       if (serialConfig != null) 'serial_config': serialConfig,
+      if (maidCafeDaemonUrl != null) 'maid_cafe_daemon_url': maidCafeDaemonUrl,
+      if (encryptedMaidCafeWebhookSecret != null)
+        'encrypted_maid_cafe_webhook_secret': encryptedMaidCafeWebhookSecret,
+      if (maidCafeWebhookSecretNonce != null)
+        'maid_cafe_webhook_secret_nonce': maidCafeWebhookSecretNonce,
       if (sortOrder != null) 'sort_order': sortOrder,
     });
   }
@@ -1566,6 +1739,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Value<String?>? tags,
     Value<String>? connectionType,
     Value<String?>? serialConfig,
+    Value<String?>? maidCafeDaemonUrl,
+    Value<String?>? encryptedMaidCafeWebhookSecret,
+    Value<String?>? maidCafeWebhookSecretNonce,
     Value<int?>? sortOrder,
   }) {
     return ServersCompanion(
@@ -1600,6 +1776,11 @@ class ServersCompanion extends UpdateCompanion<Server> {
       tags: tags ?? this.tags,
       connectionType: connectionType ?? this.connectionType,
       serialConfig: serialConfig ?? this.serialConfig,
+      maidCafeDaemonUrl: maidCafeDaemonUrl ?? this.maidCafeDaemonUrl,
+      encryptedMaidCafeWebhookSecret:
+          encryptedMaidCafeWebhookSecret ?? this.encryptedMaidCafeWebhookSecret,
+      maidCafeWebhookSecretNonce:
+          maidCafeWebhookSecretNonce ?? this.maidCafeWebhookSecretNonce,
       sortOrder: sortOrder ?? this.sortOrder,
     );
   }
@@ -1699,6 +1880,19 @@ class ServersCompanion extends UpdateCompanion<Server> {
     if (serialConfig.present) {
       map['serial_config'] = Variable<String>(serialConfig.value);
     }
+    if (maidCafeDaemonUrl.present) {
+      map['maid_cafe_daemon_url'] = Variable<String>(maidCafeDaemonUrl.value);
+    }
+    if (encryptedMaidCafeWebhookSecret.present) {
+      map['encrypted_maid_cafe_webhook_secret'] = Variable<String>(
+        encryptedMaidCafeWebhookSecret.value,
+      );
+    }
+    if (maidCafeWebhookSecretNonce.present) {
+      map['maid_cafe_webhook_secret_nonce'] = Variable<String>(
+        maidCafeWebhookSecretNonce.value,
+      );
+    }
     if (sortOrder.present) {
       map['sort_order'] = Variable<int>(sortOrder.value);
     }
@@ -1738,6 +1932,11 @@ class ServersCompanion extends UpdateCompanion<Server> {
           ..write('tags: $tags, ')
           ..write('connectionType: $connectionType, ')
           ..write('serialConfig: $serialConfig, ')
+          ..write('maidCafeDaemonUrl: $maidCafeDaemonUrl, ')
+          ..write(
+            'encryptedMaidCafeWebhookSecret: $encryptedMaidCafeWebhookSecret, ',
+          )
+          ..write('maidCafeWebhookSecretNonce: $maidCafeWebhookSecretNonce, ')
           ..write('sortOrder: $sortOrder')
           ..write(')'))
         .toString();
@@ -8019,6 +8218,9 @@ typedef $$ServersTableCreateCompanionBuilder =
       Value<String?> tags,
       Value<String> connectionType,
       Value<String?> serialConfig,
+      Value<String?> maidCafeDaemonUrl,
+      Value<String?> encryptedMaidCafeWebhookSecret,
+      Value<String?> maidCafeWebhookSecretNonce,
       Value<int?> sortOrder,
     });
 typedef $$ServersTableUpdateCompanionBuilder =
@@ -8053,6 +8255,9 @@ typedef $$ServersTableUpdateCompanionBuilder =
       Value<String?> tags,
       Value<String> connectionType,
       Value<String?> serialConfig,
+      Value<String?> maidCafeDaemonUrl,
+      Value<String?> encryptedMaidCafeWebhookSecret,
+      Value<String?> maidCafeWebhookSecretNonce,
       Value<int?> sortOrder,
     });
 
@@ -8212,6 +8417,22 @@ class $$ServersTableFilterComposer
 
   ColumnFilters<String> get serialConfig => $composableBuilder(
     column: $table.serialConfig,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get maidCafeDaemonUrl => $composableBuilder(
+    column: $table.maidCafeDaemonUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get encryptedMaidCafeWebhookSecret =>
+      $composableBuilder(
+        column: $table.encryptedMaidCafeWebhookSecret,
+        builder: (column) => ColumnFilters(column),
+      );
+
+  ColumnFilters<String> get maidCafeWebhookSecretNonce => $composableBuilder(
+    column: $table.maidCafeWebhookSecretNonce,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -8380,6 +8601,22 @@ class $$ServersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get maidCafeDaemonUrl => $composableBuilder(
+    column: $table.maidCafeDaemonUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get encryptedMaidCafeWebhookSecret =>
+      $composableBuilder(
+        column: $table.encryptedMaidCafeWebhookSecret,
+        builder: (column) => ColumnOrderings(column),
+      );
+
+  ColumnOrderings<String> get maidCafeWebhookSecretNonce => $composableBuilder(
+    column: $table.maidCafeWebhookSecretNonce,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get sortOrder => $composableBuilder(
     column: $table.sortOrder,
     builder: (column) => ColumnOrderings(column),
@@ -8519,6 +8756,22 @@ class $$ServersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get maidCafeDaemonUrl => $composableBuilder(
+    column: $table.maidCafeDaemonUrl,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get encryptedMaidCafeWebhookSecret =>
+      $composableBuilder(
+        column: $table.encryptedMaidCafeWebhookSecret,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<String> get maidCafeWebhookSecretNonce => $composableBuilder(
+    column: $table.maidCafeWebhookSecretNonce,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get sortOrder =>
       $composableBuilder(column: $table.sortOrder, builder: (column) => column);
 }
@@ -8581,6 +8834,11 @@ class $$ServersTableTableManager
                 Value<String?> tags = const Value.absent(),
                 Value<String> connectionType = const Value.absent(),
                 Value<String?> serialConfig = const Value.absent(),
+                Value<String?> maidCafeDaemonUrl = const Value.absent(),
+                Value<String?> encryptedMaidCafeWebhookSecret =
+                    const Value.absent(),
+                Value<String?> maidCafeWebhookSecretNonce =
+                    const Value.absent(),
                 Value<int?> sortOrder = const Value.absent(),
               }) => ServersCompanion(
                 id: id,
@@ -8613,6 +8871,9 @@ class $$ServersTableTableManager
                 tags: tags,
                 connectionType: connectionType,
                 serialConfig: serialConfig,
+                maidCafeDaemonUrl: maidCafeDaemonUrl,
+                encryptedMaidCafeWebhookSecret: encryptedMaidCafeWebhookSecret,
+                maidCafeWebhookSecretNonce: maidCafeWebhookSecretNonce,
                 sortOrder: sortOrder,
               ),
           createCompanionCallback:
@@ -8647,6 +8908,11 @@ class $$ServersTableTableManager
                 Value<String?> tags = const Value.absent(),
                 Value<String> connectionType = const Value.absent(),
                 Value<String?> serialConfig = const Value.absent(),
+                Value<String?> maidCafeDaemonUrl = const Value.absent(),
+                Value<String?> encryptedMaidCafeWebhookSecret =
+                    const Value.absent(),
+                Value<String?> maidCafeWebhookSecretNonce =
+                    const Value.absent(),
                 Value<int?> sortOrder = const Value.absent(),
               }) => ServersCompanion.insert(
                 id: id,
@@ -8679,6 +8945,9 @@ class $$ServersTableTableManager
                 tags: tags,
                 connectionType: connectionType,
                 serialConfig: serialConfig,
+                maidCafeDaemonUrl: maidCafeDaemonUrl,
+                encryptedMaidCafeWebhookSecret: encryptedMaidCafeWebhookSecret,
+                maidCafeWebhookSecretNonce: maidCafeWebhookSecretNonce,
                 sortOrder: sortOrder,
               ),
           withReferenceMapper: (p0) => p0

@@ -68,6 +68,7 @@ class AppRouter extends RootStackRouter {
         ),
         AutoRoute(page: SnippetsRoute.page, path: 'snippets'),
         AutoRoute(page: AgentRoute.page, path: 'agent'),
+        AutoRoute(page: MaidCafeRoute.page, path: 'maidcafe'),
         AutoRoute(page: SettingsRoute.page, path: 'settings'),
       ],
     ),

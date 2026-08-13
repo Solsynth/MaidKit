@@ -597,23 +597,58 @@ fi
     required String script,
     void Function(String chunk)? onOutput,
     void Function(void Function())? onCancelReady,
+  }) => _runScriptSnippet(
+    serverId,
+    command: 'sh -s',
+    stdin: script,
+    displayCommand: r'$ sh -s',
+    onOutput: onOutput,
+    onCancelReady: onCancelReady,
+  );
+
+  /// Runs a root-owned POSIX shell script through an existing SSH session.
+  ///
+  /// When the SSH user is not root, [sudoPassword] is sent only through the
+  /// SSH channel to sudo's stdin; it is never interpolated into the command.
+  Future<void> runPrivilegedScriptSnippet(
+    int serverId, {
+    required String script,
+    required bool sshUserIsRoot,
+    String? sudoPassword,
+    void Function(String chunk)? onOutput,
+    void Function(void Function())? onCancelReady,
+  }) {
+    final prefix = _rootPrefix(sshUserIsRoot, sudoPassword);
+    final stdin = sshUserIsRoot || sudoPassword == null
+        ? script
+        : '$sudoPassword\n$script';
+    return _runScriptSnippet(
+      serverId,
+      command: '${prefix}sh -s',
+      stdin: stdin,
+      displayCommand: r'$ sudo sh -s',
+      onOutput: onOutput,
+      onCancelReady: onCancelReady,
+    );
+  }
+
+  Future<void> _runScriptSnippet(
+    int serverId, {
+    required String command,
+    required String stdin,
+    required String displayCommand,
+    void Function(String chunk)? onOutput,
+    void Function(void Function())? onCancelReady,
   }) async {
-    if (script.trim().isEmpty) {
-      throw ArgumentError.value(
-        script,
-        'script',
-        'The script cannot be empty.',
-      );
+    if (stdin.trim().isEmpty) {
+      throw ArgumentError.value(stdin, 'script', 'The script cannot be empty.');
     }
     await withClient(serverId, (client) async {
-      onOutput?.call(
-        r'$ sh -s'
-        '\n',
-      );
+      onOutput?.call('$displayCommand\n');
       final result = await _executeStreaming(
         client,
-        'sh -s',
-        stdin: script,
+        command,
+        stdin: stdin,
         onOutput: onOutput,
         onSession: (session) => onCancelReady?.call(() {
           session.kill(SSHSignal.TERM);
@@ -3580,6 +3615,17 @@ uname -r
       _sessions[server.id] = client;
       _sessionJumpHosts[server.id] = server.jumpHostServerId;
       _set(_states[server.id]!.copyWith(status: SessionStatus.connected));
+      // Listen before issuing probes: a transport can fail while the first
+      // command is being opened, and [SSHClient.done] completes with that
+      // transport error.
+      unawaited(
+        client.done.then<void>(
+          (_) => _handleClientClosed(server, client),
+          onError: (Object _, StackTrace _) {
+            _handleClientClosed(server, client);
+          },
+        ),
+      );
       // Establish the first latency sample before this connection is allowed
       // to yield to another startup/reconnect attempt. Otherwise the next
       // SSH handshake can delay this probe and make the first displayed
@@ -3593,21 +3639,6 @@ uname -r
       await _probeLatency(client);
       await _refreshLatency(client, _states[server.id]!);
       unawaited(_refreshConnectionDetails(server, client));
-      unawaited(
-        client.done.whenComplete(() {
-          if (!identical(_sessions[server.id], client)) return;
-          _sessions.remove(server.id);
-          _sessionJumpHosts.remove(server.id);
-          unawaited(_closeDependentSessions(server.id));
-          unawaited(_closeTerminalsFor(server.id));
-          unawaited(_closeTerminalsForJumpHost(server.id));
-          unawaited(_stopPortForwardsFor(server.id));
-          final state = _states[server.id];
-          if (state != null && state.status == SessionStatus.connected) {
-            _set(state.copyWith(status: SessionStatus.closed));
-          }
-        }),
-      );
     } catch (error) {
       final message = error is SSHAuthFailError
           ? serverAuthMethods == null || serverAuthMethods!.isEmpty
@@ -3621,6 +3652,20 @@ uname -r
         ),
       );
       rethrow;
+    }
+  }
+
+  void _handleClientClosed(Server server, SSHClient client) {
+    if (!identical(_sessions[server.id], client)) return;
+    _sessions.remove(server.id);
+    _sessionJumpHosts.remove(server.id);
+    unawaited(_closeDependentSessions(server.id));
+    unawaited(_closeTerminalsFor(server.id));
+    unawaited(_closeTerminalsForJumpHost(server.id));
+    unawaited(_stopPortForwardsFor(server.id));
+    final state = _states[server.id];
+    if (state != null && state.status == SessionStatus.connected) {
+      _set(state.copyWith(status: SessionStatus.closed));
     }
   }
 
