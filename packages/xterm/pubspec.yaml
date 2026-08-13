@@ -18,6 +18,8 @@ dependencies:
     sdk: flutter
   zmodem: ^0.0.6
 
+  material_ui: any
+  cupertino_ui: any
 dev_dependencies:
   flutter_test:
     sdk: flutter

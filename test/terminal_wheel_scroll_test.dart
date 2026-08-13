@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flterm/flterm.dart' as flterm;
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Wheel scrolling in the alternate screen buffer must not be dead.

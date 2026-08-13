@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
 /// Wraps [child] so right-click / control-click presents [menuBuilder].

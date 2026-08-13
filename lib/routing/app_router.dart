@@ -1,7 +1,7 @@
 // Shell route consts follow the generated-route naming style.
 // ignore_for_file: constant_identifier_names
 import 'package:auto_route/auto_route.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'app_router.gr.dart';

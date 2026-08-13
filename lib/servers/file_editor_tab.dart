@@ -5,7 +5,7 @@ import 'dart:isolate';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_code_editor/flutter_code_editor.dart';
 import 'package:highlight/highlight_core.dart' show Mode;

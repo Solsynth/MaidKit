@@ -1,7 +1,7 @@
 import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:window_manager/window_manager.dart';

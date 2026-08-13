@@ -1,5 +1,5 @@
 import 'package:flterm/flterm.dart' as flterm;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maid_kit/servers/ghostty_terminal_session_adapter.dart';
