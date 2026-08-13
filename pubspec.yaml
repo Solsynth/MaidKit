@@ -52,10 +52,10 @@ dependencies:
       path: packages/flutter_app_update
   flutter_hooks: ^0.21.3+1
   flutter_secure_storage: ^10.3.1
-  flutter_web_auth_2: ^5.0.3
+  flutter_web_auth_2: ^5.1.0
   hooks_riverpod: ^3.4.2
   highlight: ^0.7.0
-  intl: ^0.20.2
+  intl: ^0.20.3
   island_ui_foundation:
     git:
       url: https://src.solsynth.dev/SoSYS/Solian.git
@@ -96,9 +96,9 @@ dependencies:
   dart_openai: ^6.1.1
   markdown_widget: ^2.3.2+8
 dev_dependencies:
-  auto_route_generator: ^10.5.0
+  auto_route_generator: ^10.6.0
   build_runner: ^2.15.1
-  drift_dev: ^2.34.0
+  drift_dev: ^2.34.5
   flutter_test:
     sdk: flutter
 
