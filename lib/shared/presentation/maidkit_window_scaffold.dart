@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart' as flutter;
+import 'package:maid_kit/theme.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -30,21 +32,56 @@ class MaidKitWindowScaffold extends ConsumerWidget {
         }
         return KeyEventResult.ignored;
       },
-      child: DesktopWindowFrame(
-        isDesktopPlatform: isDesktop,
-        title: Text(
-          title ?? 'MaidKit',
-          style: Theme.of(context).textTheme.labelLarge,
-        ),
-        // Routes own their safe areas. Consuming mobile insets here prevents
-        // page scaffolds from participating correctly in gesture-back.
-        child: Column(
-          children: [
-            Expanded(child: child),
-            const TaskProgressBar(),
-          ],
+      // Island's frame still reads Flutter's Material theme while MaidKit
+      // uses the modular material_ui package.
+      child: flutter.Theme(
+        data: _createWindowFrameTheme(Theme.of(context)),
+        child: DesktopWindowFrame(
+          isDesktopPlatform: isDesktop,
+          title: Text(
+            title ?? 'MaidKit',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          // Routes own their safe areas. Consuming mobile insets here prevents
+          // page scaffolds from participating correctly in gesture-back.
+          child: Column(
+            children: [
+              Expanded(child: child),
+              const TaskProgressBar(),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// Supplies the Flutter Material theme consumed by Island's window frame.
+///
+/// `material_ui` and Flutter's Material library expose separate Theme
+/// inherited widgets, so the frame otherwise falls back to Flutter defaults.
+flutter.ThemeData _createWindowFrameTheme(ThemeData theme) {
+  final colors = theme.colorScheme;
+  final colorScheme =
+      flutter.ColorScheme.fromSeed(
+        seedColor: colors.primary,
+        brightness: colors.brightness,
+      ).copyWith(
+        primary: colors.primary,
+        onPrimary: colors.onPrimary,
+        surface: colors.surface,
+        onSurface: colors.onSurface,
+        surfaceContainer: colors.surfaceContainer,
+        onSurfaceVariant: colors.onSurfaceVariant,
+        outline: colors.outline,
+      );
+
+  return flutter.ThemeData(
+    brightness: colors.brightness,
+    fontFamily: MaidKitFonts.sans,
+    colorScheme: colorScheme,
+    iconTheme: flutter.IconThemeData(
+      color: theme.iconTheme.color ?? colors.onSurface,
+    ),
+  );
 }

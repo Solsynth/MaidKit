@@ -23,6 +23,7 @@ import 'package:maid_kit/agent/billing_service.dart';
 import 'package:maid_kit/agent/personality_service.dart';
 import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/update_settings_section.dart';
 
 import 'database_backup_service.dart';
 import 'cloud_sync_service.dart';
@@ -581,6 +582,12 @@ class SettingsPage extends ConsumerWidget {
                     ],
                   ),
                 ),
+              ),
+              const SizedBox(height: 24),
+              _SettingsSection(
+                titleKey: 'settingsUpdates',
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: const MaidKitUpdateSettingsSection(),
               ),
               const SizedBox(height: 24),
               _SettingsSection(
