@@ -981,7 +981,6 @@ class SettingsPage extends HookConsumerWidget {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 24),
                   if (selectedCategory.id == 'vaults') ...[
                     _SettingsSection(
                       titleKey: 'settingsVaults',
@@ -1109,7 +1108,7 @@ class SettingsPage extends HookConsumerWidget {
           }
           return Column(
             children: [
-              _SettingsCategoryPicker(
+              _SettingsCategoryTabs(
                 categories: visibleCategories,
                 selectedId: selectedCategory.id,
                 onSelected: (id) => selectedCategoryId.value = id,
@@ -2743,8 +2742,8 @@ class _SettingsCategoryRail extends StatelessWidget {
   }
 }
 
-class _SettingsCategoryPicker extends StatelessWidget {
-  const _SettingsCategoryPicker({
+class _SettingsCategoryTabs extends StatefulWidget {
+  const _SettingsCategoryTabs({
     required this.categories,
     required this.selectedId,
     required this.onSelected,
@@ -2755,41 +2754,76 @@ class _SettingsCategoryPicker extends StatelessWidget {
   final ValueChanged<String> onSelected;
 
   @override
+  State<_SettingsCategoryTabs> createState() => _SettingsCategoryTabsState();
+}
+
+class _SettingsCategoryTabsState extends State<_SettingsCategoryTabs>
+    with SingleTickerProviderStateMixin {
+  late TabController _controller;
+
+  int get _selectedIndex => widget.categories.indexWhere(
+    (category) => category.id == widget.selectedId,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = _createController();
+  }
+
+  TabController _createController() {
+    final index = _selectedIndex;
+    return TabController(
+      length: widget.categories.length,
+      vsync: this,
+      initialIndex: index < 0 ? 0 : index,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettingsCategoryTabs oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.categories.length != oldWidget.categories.length) {
+      _controller.dispose();
+      _controller = _createController();
+    } else if (widget.selectedId != oldWidget.selectedId) {
+      final index = _selectedIndex;
+      if (index >= 0 && index != _controller.index) {
+        _controller.index = index;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Material(
-            color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(10),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: selectedId,
-                isExpanded: true,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                items: [
-                  for (final category in categories)
-                    DropdownMenuItem(
-                      value: category.id,
-                      child: Row(
-                        children: [
-                          Icon(category.icon, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(child: Text(category.titleKey).tr()),
-                        ],
-                      ),
-                    ),
-                ],
-                onChanged: (id) {
-                  if (id != null) onSelected(id);
-                },
+        child: TabBar(
+          controller: _controller,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          dividerColor: scheme.outlineVariant.withValues(alpha: 0.7),
+          dividerHeight: 1,
+          indicatorColor: scheme.primary,
+          labelColor: scheme.primary,
+          unselectedLabelColor: scheme.onSurfaceVariant,
+          onTap: (index) => widget.onSelected(widget.categories[index].id),
+          tabs: [
+            for (final category in widget.categories)
+              Tab(
+                icon: Icon(category.icon, size: 18),
+                text: category.titleKey.tr(),
               ),
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -3146,52 +3180,71 @@ class _LanguageSwitcher extends StatelessWidget {
   Widget build(BuildContext context) {
     final currentLocale = context.locale;
     final supportedLocales = context.supportedLocales;
-
-    return Row(
+    final languageLabel = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'settingsDisplayLanguage'.tr(),
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _languageDisplayName(currentLocale),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+        Text(
+          'settingsDisplayLanguage'.tr(),
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _languageDisplayName(currentLocale),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
-        DropdownButton<Locale?>(
-          value: supportedLocales.contains(currentLocale)
-              ? currentLocale
-              : null,
-          underline: const SizedBox.shrink(),
-          items: [
-            for (final locale in supportedLocales)
-              DropdownMenuItem<Locale?>(
-                value: locale,
-                child: Text(_languageDisplayName(locale)),
-              ),
-            DropdownMenuItem<Locale?>(
-              value: null,
-              child: Text('languageFollowSystem'.tr()),
-            ),
-          ],
-          onChanged: (Locale? value) {
-            if (value != null) {
-              context.setLocale(value);
-            } else {
-              context.resetLocale();
-            }
-          },
+      ],
+    );
+    final languageDropdown = DropdownButton<Locale?>(
+      isExpanded: true,
+      underline: const SizedBox.shrink(),
+      items: [
+        for (final locale in supportedLocales)
+          DropdownMenuItem<Locale?>(
+            value: locale,
+            child: Text(_languageDisplayName(locale)),
+          ),
+        DropdownMenuItem<Locale?>(
+          value: null,
+          child: Text('languageFollowSystem'.tr()),
         ),
       ],
+      onChanged: (Locale? value) {
+        if (value != null) {
+          context.setLocale(value);
+        } else {
+          context.resetLocale();
+        }
+      },
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final dropdownWidth = constraints.hasBoundedWidth
+            ? constraints.maxWidth.clamp(160.0, 240.0).toDouble()
+            : 240.0;
+        final boundedDropdown = SizedBox(
+          width: dropdownWidth,
+          child: languageDropdown,
+        );
+        if (!constraints.hasBoundedWidth || constraints.maxWidth < 360) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              languageLabel,
+              const SizedBox(height: 8),
+              Align(alignment: Alignment.centerRight, child: boundedDropdown),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: languageLabel),
+            boundedDropdown,
+          ],
+        );
+      },
     );
   }
 }
@@ -3249,57 +3302,109 @@ class _TerminalFontDropdown extends HookConsumerWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final fontHint = Text(
+          'settingsTerminalFontHint',
+          style: Theme.of(context).textTheme.bodySmall,
+        ).tr();
+        final monospaceToggle = constraints.maxWidth < 420
+            ? Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      'settingsTerminalFontMonospaceOnly'.tr(),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Switch(
+                    value: monoOnly,
+                    onChanged: (value) => ref
+                        .read(monospaceTerminalFontsOnlyProvider.notifier)
+                        .setEnabled(value),
+                  ),
+                ],
+              )
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'settingsTerminalFontMonospaceOnly'.tr(),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(width: 4),
+                  Switch(
+                    value: monoOnly,
+                    onChanged: (value) => ref
+                        .read(monospaceTerminalFontsOnlyProvider.notifier)
+                        .setEnabled(value),
+                  ),
+                ],
+              );
+
+        void setFontFamily(String? family) {
+          if (family != null) {
+            ref.read(terminalFontFamilyProvider.notifier).setFontFamily(family);
+          }
+        }
+
+        final fontDropdown = constraints.maxWidth < 420
+            ? DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: current,
+                decoration: InputDecoration(
+                  labelText: 'settingsTerminalFont'.tr(),
+                ),
+                items: [
+                  for (final option in filtered)
+                    DropdownMenuItem(
+                      value: option.family,
+                      child: Text(
+                        option.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontFamily: option.family),
+                      ),
+                    ),
+                ],
+                onChanged: setFontFamily,
+              )
+            : DropdownMenu<String>(
+                width: constraints.maxWidth,
+                enableFilter: true,
+                initialSelection: current,
+                label: Text('settingsTerminalFont'.tr()),
+                onSelected: setFontFamily,
+                dropdownMenuEntries: [
+                  for (final option in filtered)
+                    DropdownMenuEntry(
+                      value: option.family,
+                      label: option.label,
+                      labelWidget: Text(
+                        option.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontFamily: option.family),
+                      ),
+                    ),
+                ],
+              );
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownMenu<String>(
-              width: constraints.maxWidth,
-              enableFilter: true,
-              initialSelection: current,
-              label: Text('settingsTerminalFont'.tr()),
-              onSelected: (family) {
-                if (family != null) {
-                  ref
-                      .read(terminalFontFamilyProvider.notifier)
-                      .setFontFamily(family);
-                }
-              },
-              dropdownMenuEntries: [
-                for (final option in filtered)
-                  DropdownMenuEntry(
-                    value: option.family,
-                    label: option.label,
-                    labelWidget: Text(
-                      option.label,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontFamily: option.family),
-                    ),
-                  ),
-              ],
-            ),
+            fontDropdown,
             const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'settingsTerminalFontHint',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ).tr(),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'settingsTerminalFontMonospaceOnly'.tr(),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(width: 4),
-                Switch(
-                  value: monoOnly,
-                  onChanged: (value) => ref
-                      .read(monospaceTerminalFontsOnlyProvider.notifier)
-                      .setEnabled(value),
-                ),
-              ],
-            ),
+            if (constraints.maxWidth < 420)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [fontHint, monospaceToggle],
+              )
+            else
+              Row(
+                children: [
+                  Expanded(child: fontHint),
+                  const SizedBox(width: 8),
+                  monospaceToggle,
+                ],
+              ),
           ],
         );
       },

@@ -10,7 +10,6 @@ import 'package:maid_kit/routing/app_router.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/servers/maidcafe_server_tab.dart';
-import 'package:maid_kit/servers/maidcafe_service.dart';
 
 void main() {
   setUpAll(() async {
@@ -88,6 +87,22 @@ void main() {
     expect(find.text('settingsAbout'.tr()), findsWidgets);
   });
 
+  testWidgets('uses category tabs on mobile settings', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(390, 844));
+
+    await tester.tap(find.byIcon(Symbols.settings).last);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TabBar), findsOneWidget);
+    final terminalTab = find.text('settingsTerminal'.tr()).first;
+    await tester.ensureVisible(terminalTab);
+    await tester.tap(terminalTab);
+    await tester.pumpAndSettle();
+    expect(find.text('settingsTerminalRenderer'.tr()), findsOneWidget);
+  });
+
   testWidgets('opens Assets from the desktop navigation rail', (
     WidgetTester tester,
   ) async {
@@ -123,7 +138,7 @@ void main() {
     expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
     expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
   });
-  testWidgets('shows MaidCafe configuration inside a server detail tab', (
+  testWidgets('shows the MaidCafe label and installer in a server detail tab', (
     WidgetTester tester,
   ) async {
     final server = Server(
@@ -143,12 +158,6 @@ void main() {
         path: 'assets/translations',
         fallbackLocale: const Locale('en', 'US'),
         child: ProviderScope(
-          overrides: [
-            cloudUserProvider.overrideWith((ref) => Future.value(null)),
-            maidCafeDaemonsProvider.overrideWith(
-              (ref) => Future.value(<MaidCafeDaemon>[]),
-            ),
-          ],
           child: MaterialApp(
             theme: createMaidKitTheme(Brightness.light),
             localizationsDelegates: const [
@@ -156,15 +165,21 @@ void main() {
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
-            home: MaidCafeServerTab(server: server),
+            home: MaidCafeServerTab(
+              server: server,
+              connected: true,
+              connectionError: null,
+              onConnect: () async {},
+            ),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('maidCafeServerConfigTitle'.tr()), findsOneWidget);
-    expect(find.text('maidCafeServerDaemonUrl'.tr()), findsOneWidget);
-    expect(find.text('maidCafeLocalDaemon'.tr()), findsNothing);
+    expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
+    expect(find.text('maidCafeInstallApplication'.tr()), findsOneWidget);
+    expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
+    expect(find.text('maidCafeServerDaemonUrl'.tr()), findsNothing);
   });
 }
