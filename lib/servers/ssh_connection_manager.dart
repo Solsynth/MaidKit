@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dart_ping/dart_ping.dart';
 import 'package:dartssh2/dartssh2.dart';
-
 import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'activity_models.dart';
@@ -376,7 +376,7 @@ class SshConnectionManager {
     if (!_supportsDirectNetworkPing(server)) return;
     final client = _sessions[server.id];
     if (client == null || client.isClosed) return;
-    final latency = await _probeNetworkLatency(server.host, server.port);
+    final latency = await _probeNetworkLatency(server.host);
     if (latency == null || !identical(_sessions[server.id], client)) return;
     _set((_states[server.id] ?? state).copyWith(networkLatency: latency));
   }
@@ -386,20 +386,16 @@ class SshConnectionManager {
       (server.proxyType == null ||
           server.proxyType == ServerProxyType.none.name);
 
-  Future<Duration?> _probeNetworkLatency(String host, int port) async {
-    Socket? socket;
-    final stopwatch = Stopwatch()..start();
+  Future<Duration?> _probeNetworkLatency(String host) async {
     try {
-      socket = await Socket.connect(
+      final event = await Ping(
         host,
-        port,
-        timeout: const Duration(seconds: 2),
-      );
-      return stopwatch.elapsed;
+        count: 1,
+        timeout: 2,
+      ).stream.first.timeout(const Duration(seconds: 4));
+      return event is PingResponse ? event.time : null;
     } catch (_) {
       return null;
-    } finally {
-      socket?.destroy();
     }
   }
 

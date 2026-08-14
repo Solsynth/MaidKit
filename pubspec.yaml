@@ -35,7 +35,7 @@ dependencies:
   archive: ^4.0.9
   async: ^2.13.1
   cryptography: ^2.9.0
-  crypto: ^3.0.7
+  dart_ping: ^10.0.1
   dartssh2: ^2.22.5
   dio: ^5.11.0
   desktop_drop: ^0.7.1
