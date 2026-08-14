@@ -69,6 +69,9 @@ abstract interface class TerminalViewBinding {
   /// Reports scroll by line count.
   void handleScroll(int lines);
 
+  /// Records the pointer location used by the next wheel report.
+  void updatePointerPosition(Offset position);
+
   /// Applies a press selection gesture.
   void handleSelectionPress({
     required Position cell,

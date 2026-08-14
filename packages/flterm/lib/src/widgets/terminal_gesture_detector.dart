@@ -63,6 +63,7 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
       onPointerDown: tracked ? _handleTrackedDown : null,
       onPointerMove: tracked ? _handleTrackedMove : null,
       onPointerUp: tracked ? _handleTrackedUp : null,
+      onPointerSignal: _handlePointerSignal,
       child: TerminalRawGestureDetector(
         onTapDown: _handleTapDown,
         onTapUp: _handleTapUp,
@@ -75,6 +76,15 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
         child: widget.child,
       ),
     );
+  }
+
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final renderObject = context.findRenderObject();
+    final position = renderObject is RenderBox
+        ? renderObject.globalToLocal(event.position)
+        : event.position;
+    _binding.updatePointerPosition(position);
   }
 
   @override

@@ -41,6 +41,7 @@ class TerminalControllerImpl extends TerminalController
   late final SelectionGestureDriver _selectionGesture;
   final vt.KeyEvent _keyEvent;
   final MouseEvent _mouseEvent;
+  Offset _lastPointerPosition = Offset.zero;
   final TerminalInputClient _textInput;
 
   TerminalConfig _config;
@@ -397,6 +398,11 @@ class TerminalControllerImpl extends TerminalController
   }
 
   @override
+  void updatePointerPosition(Offset position) {
+    _lastPointerPosition = position;
+  }
+
+  @override
   void handleScroll(int lines) {
     if (_activeScreen != .alternate || lines == 0) return;
 
@@ -411,7 +417,10 @@ class TerminalControllerImpl extends TerminalController
           ..action = .press
           ..button = button
           ..mods = _currentMods()
-          ..setPosition(x: 0, y: 0);
+          ..setPosition(
+            x: _lastPointerPosition.dx * _lastDevicePixelRatio,
+            y: _lastPointerPosition.dy * _lastDevicePixelRatio,
+          );
         final result = _mouseEncoder.encode(_mouseEvent);
         if (result.isNotEmpty) _emitOutput(utf8.encode(result));
       }

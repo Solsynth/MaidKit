@@ -116,16 +116,17 @@ void main() {
         seq(const [0x1b, 0x5b, 0x3f, 0x31, 0x30, 0x30, 0x36, 0x68]),
       );
       await tester.pump();
+      bytes.clear();
 
       await wheel(tester, -120); // wheel up
       final all = outputs(bytes);
-      // SGR wheel up is button code 64, emitted as \x1b[<64;…
+      final report = String.fromCharCodes(all);
+      // SGR wheel up is button code 64 and must retain the wheel location.
+      expect(report, contains('\x1b[<64;'));
       expect(
-        all,
-        containsAllInOrder(const [0x1b, 0x5b, 0x3c, 0x36, 0x34]),
-        reason:
-            'wheel up with SGR tracking must emit a button-64 report, got '
-            '${all.map((b) => b.toRadixString(16))}',
+        report,
+        isNot(contains(';1;1M')),
+        reason: 'wheel reports must not use the fixed origin',
       );
     },
   );
