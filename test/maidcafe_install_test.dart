@@ -39,4 +39,25 @@ void main() {
     expect(script, isNot(contains('https://example.test/path?x=1')));
     expect(script, contains('base64 -d'));
   });
+
+  test('stdio installer writes an SSH-stream daemon without systemd', () {
+    final script = buildMaidCafeDaemonInstallScript(
+      daemonId: 'daemon-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      transport: 'stdio',
+      actions: const [
+        MaidCafeActionDefinition(
+          name: 'backup',
+          command: '/usr/local/bin/backup',
+          arguments: ['--mode', 'incremental'],
+        ),
+      ],
+    );
+
+    expect(script, contains('/etc/maidcafe/config.stdio.toml'));
+    expect(script, contains('install -o root -g root -m 0644'));
+    expect(script, isNot(contains('systemctl enable --now maidcafe-daemon')));
+    expect(script, contains('base64 -d'));
+  });
 }

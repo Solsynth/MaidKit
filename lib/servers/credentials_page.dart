@@ -11,37 +11,47 @@ import 'server_models.dart';
 import 'server_providers.dart';
 
 class CredentialsPage extends ConsumerWidget {
-  const CredentialsPage({super.key});
+  const CredentialsPage({super.key, this.showHeader = true});
 
+  final bool showHeader;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final credentials = ref.watch(savedCredentialsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final header = Text(
-              'assetsCredentialsTitle'.tr(),
-              style: Theme.of(context).textTheme.titleLarge,
-            );
-            final addButton = FilledButton.icon(
+        if (showHeader)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final header = Text(
+                'assetsCredentialsTitle'.tr(),
+                style: Theme.of(context).textTheme.titleLarge,
+              );
+              final addButton = FilledButton.icon(
+                onPressed: () => _addCredential(context, ref),
+                icon: const Icon(Symbols.add),
+                label: Text('settingsCredentialAdd'.tr()),
+              );
+              return constraints.maxWidth < 600
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [header, const SizedBox(height: 8), addButton],
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [header, addButton],
+                    );
+            },
+          )
+        else
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
               onPressed: () => _addCredential(context, ref),
               icon: const Icon(Symbols.add),
               label: Text('settingsCredentialAdd'.tr()),
-            );
-            return constraints.maxWidth < 600
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [header, const SizedBox(height: 8), addButton],
-                  )
-                : Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [header, addButton],
-                  );
-          },
-        ),
-        const SizedBox(height: 4),
+            ),
+          ),
         Text(
           'assetsCredentialsDescription'.tr(),
           style: Theme.of(context).textTheme.bodyMedium,

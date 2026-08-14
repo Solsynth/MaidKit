@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/servers/maidcafe_server_tab.dart';
 
@@ -42,6 +43,9 @@ void main() {
             serversProvider.overrideWith((ref) => Stream.value(<Server>[])),
             savedCredentialsProvider.overrideWith(
               (ref) => Stream.value(<SavedCredential>[]),
+            ),
+            scriptSnippetsProvider.overrideWith(
+              (ref) => Stream.value(<ScriptSnippet>[]),
             ),
             cloudUserProvider.overrideWith((ref) => Future.value(null)),
             biometricUnlockEnabledProvider.overrideWith(
@@ -113,6 +117,16 @@ void main() {
 
     expect(find.text('assetsConnections'.tr()), findsOneWidget);
     expect(find.text('assetsCredentialsTitle'.tr()), findsOneWidget);
+
+    expect(find.text('assetsConnectionsDescription'.tr()), findsOneWidget);
+
+    await tester.tap(find.text('assetsConnections'.tr()));
+    await tester.pumpAndSettle();
+    expect(find.text('assetsConnectionsDescription'.tr()), findsNothing);
+
+    await tester.tap(find.text('assetsConnections'.tr()));
+    await tester.pumpAndSettle();
+    expect(find.text('assetsConnectionsDescription'.tr()), findsOneWidget);
   });
   testWidgets('opens MaidCafe from the desktop navigation rail', (
     WidgetTester tester,
@@ -135,6 +149,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('assetsConnections'.tr()), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('maidCafeTitle'.tr()), 500);
     expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
     expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
   });
@@ -179,6 +194,7 @@ void main() {
 
     expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
     expect(find.text('maidCafeInstallApplication'.tr()), findsOneWidget);
+    expect(find.text('maidCafeActions'.tr()), findsOneWidget);
     expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
     expect(find.text('maidCafeServerDaemonUrl'.tr()), findsNothing);
   });

@@ -26,7 +26,6 @@ class ServerWorkspacePage extends StatelessWidget {
         ServersTab(),
         AssetsTab(),
         ProjectsTab(),
-        SnippetsRoute(),
         AgentRoute(),
         MaidCafeRoute(),
         SettingsRoute(),
@@ -58,9 +57,9 @@ class _ServerTabsShell extends ConsumerWidget {
         );
     final isAgentInputFocused = ref.watch(agentInputFocusedProvider);
     final githubHasFailures = ref.watch(githubHasFailuresProvider);
-    final mobileSelectedIndex = tabsRouter.activeIndex == 6
-        ? 5
-        : tabsRouter.activeIndex == 5
+    final mobileSelectedIndex = tabsRouter.activeIndex == 5
+        ? 4
+        : tabsRouter.activeIndex == 4
         ? null
         : tabsRouter.activeIndex;
 
@@ -79,7 +78,7 @@ class _ServerTabsShell extends ConsumerWidget {
                   children: [
                     NavigationRail(
                       backgroundColor: Colors.transparent,
-                      selectedIndex: tabsRouter.activeIndex < 6
+                      selectedIndex: tabsRouter.activeIndex < 5
                           ? tabsRouter.activeIndex
                           : null,
                       onDestinationSelected: tabsRouter.setActiveIndex,
@@ -94,11 +93,11 @@ class _ServerTabsShell extends ConsumerWidget {
                             const DeploySessionsRailButton(),
                             const SizedBox(height: 8),
                             _CloudAccountRailButton(
-                              onPressed: () => tabsRouter.setActiveIndex(6),
+                              onPressed: () => tabsRouter.setActiveIndex(5),
                             ),
                             IconButton(
                               tooltip: 'tabSettings'.tr(),
-                              onPressed: () => tabsRouter.setActiveIndex(6),
+                              onPressed: () => tabsRouter.setActiveIndex(5),
                               icon: const Icon(Symbols.settings),
                             ),
                           ],
@@ -128,11 +127,6 @@ class _ServerTabsShell extends ConsumerWidget {
                             fill: 1,
                           ),
                           label: Text('tabProjects').tr(),
-                        ),
-                        NavigationRailDestination(
-                          icon: const Icon(Symbols.code),
-                          selectedIcon: const Icon(Symbols.code, fill: 1),
-                          label: Text('tabSnippets').tr(),
                         ),
                         const NavigationRailDestination(
                           icon: Icon(Symbols.smart_toy),
@@ -175,7 +169,8 @@ class _ServerTabsShell extends ConsumerWidget {
                     labelBehavior:
                         NavigationDestinationLabelBehavior.alwaysHide,
                     selectedIndex: mobileSelectedIndex,
-                    onDestinationSelected: tabsRouter.setActiveIndex,
+                    onDestinationSelected: (index) =>
+                        tabsRouter.setActiveIndex(index == 4 ? 5 : index),
                     destinations: [
                       NavigationDestination(
                         icon: const Icon(Symbols.dns),
@@ -200,11 +195,6 @@ class _ServerTabsShell extends ConsumerWidget {
                           fill: 1,
                         ),
                         label: 'tabProjects'.tr(),
-                      ),
-                      NavigationDestination(
-                        icon: const Icon(Symbols.code),
-                        selectedIcon: const Icon(Symbols.code, fill: 1),
-                        label: 'tabSnippets'.tr(),
                       ),
                       const NavigationDestination(
                         icon: Icon(Symbols.smart_toy),

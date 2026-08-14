@@ -12,6 +12,7 @@ import 'package:tailscale/tailscale.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/github/github_workflow_strip.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/collapsible_section.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
@@ -2172,10 +2173,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ],
                 ],
                 if (_connectionType == ServerConnectionType.ssh) ...[
-                  ExpansionTile(
+                  MaidKitCollapsibleSection(
                     initiallyExpanded: _jumpHostServerId != null,
-                    tilePadding: EdgeInsets.zero,
-                    childrenPadding: const EdgeInsets.only(bottom: 8),
+                    tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                    childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     title: Text('serverJumpHostLabel'.tr()),
                     subtitle: Text(
                       _jumpHostServerId == null
@@ -2224,10 +2225,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                     ],
                   ),
                 ],
-                ExpansionTile(
+                MaidKitCollapsibleSection(
                   initiallyExpanded: false,
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: const EdgeInsets.only(bottom: 8),
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   title: Text('serverProxyLabel'.tr()),
                   subtitle: Text(switch (_proxyType) {
                     ServerProxyType.none => 'serverProxyNone'.tr(),
@@ -2303,10 +2304,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                ExpansionTile(
+                MaidKitCollapsibleSection(
                   initiallyExpanded: false,
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: const EdgeInsets.only(bottom: 8),
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   title: Text('serverEnvironmentLabel'.tr()),
                   subtitle: Text('serverEnvironmentHint'.tr()),
                   children: [
@@ -2353,10 +2354,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                ExpansionTile(
+                MaidKitCollapsibleSection(
                   initiallyExpanded: false,
-                  tilePadding: EdgeInsets.zero,
-                  childrenPadding: const EdgeInsets.only(bottom: 8),
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   title: Text('serverInitialSnippetsLabel'.tr()),
                   subtitle: Text('serverInitialSnippetsHint'.tr()),
                   children: [
@@ -2547,10 +2548,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ),
                 ),
               ],
-              ExpansionTile(
+              MaidKitCollapsibleSection(
                 initiallyExpanded: false,
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
+                tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 title: Text('serverTagsLabel'.tr()),
                 subtitle: Text('serverTagsAddHint'.tr()),
                 children: [

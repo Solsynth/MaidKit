@@ -17,7 +17,9 @@ import 'github_ui.dart';
 /// GitHub account, pinned repositories, workflow runs, pull requests, and
 /// releases. Lives inside the Assets tab.
 class GitHubSection extends ConsumerStatefulWidget {
-  const GitHubSection({super.key});
+  const GitHubSection({super.key, this.showHeader = true});
+
+  final bool showHeader;
 
   @override
   ConsumerState<GitHubSection> createState() => _GitHubSectionState();
@@ -40,18 +42,20 @@ class _GitHubSectionState extends ConsumerState<GitHubSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(
-              Symbols.rocket_launch,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 8),
-            Text('tabGithub'.tr(), style: theme.textTheme.titleLarge),
-          ],
-        ),
-        const SizedBox(height: 4),
+        if (widget.showHeader) ...[
+          Row(
+            children: [
+              Icon(
+                Symbols.rocket_launch,
+                size: 20,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text('tabGithub'.tr(), style: theme.textTheme.titleLarge),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
         Text(
           'githubSignInDescription'.tr(),
           style: theme.textTheme.bodyMedium?.copyWith(
