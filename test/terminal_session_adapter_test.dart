@@ -408,6 +408,105 @@ void main() {
     await adapter.dispose();
   });
 
+  test('OSC 52 synchronizes split TUI clipboard sequences', () async {
+    String? clipboard;
+    final responses = <String>[];
+    final bridge = TerminalClipboardBridge(
+      setClipboard: (text) async => clipboard = text,
+      getClipboard: () async => clipboard,
+      sendResponse: responses.add,
+    );
+    addTearDown(bridge.dispose);
+
+    final encoded = base64.encode(utf8.encode('copied from a TUI app'));
+    final sequence = Uint8List.fromList(
+      utf8.encode('\x1b]52;c;$encoded\x1b\\'),
+    );
+    bridge.add(sequence.sublist(0, 7));
+    bridge.add(sequence.sublist(7));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(clipboard, 'copied from a TUI app');
+    expect(responses, isEmpty);
+  });
+
+  test('OSC 52 accepts unpadded base64 payloads', () async {
+    String? clipboard;
+    final bridge = TerminalClipboardBridge(
+      setClipboard: (text) async => clipboard = text,
+      getClipboard: () async => null,
+      sendResponse: (_) {},
+    );
+    addTearDown(bridge.dispose);
+
+    bridge.add(Uint8List.fromList(utf8.encode('\x1b]52;c;aGVsbG8\x07')));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(clipboard, 'hello');
+  });
+  test('OSC 52 responds to TUI clipboard queries', () async {
+    final responses = <String>[];
+    final bridge = TerminalClipboardBridge(
+      setClipboard: (_) async {},
+      getClipboard: () async => 'host clipboard',
+      sendResponse: responses.add,
+    );
+    addTearDown(bridge.dispose);
+
+    bridge.add(Uint8List.fromList(utf8.encode('\x1b]52;c;?\x07')));
+    await Future<void>.delayed(Duration.zero);
+
+    final encoded = base64.encode(utf8.encode('host clipboard'));
+    expect(responses, ['\x1b]52;c;$encoded\x1b\\']);
+  });
+
+  test(
+    'both terminal adapters synchronize OSC 52 with host clipboard',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final copied = <String>[];
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.getData') {
+          return <String, String>{'text': 'host clipboard'};
+        }
+        if (call.method == 'Clipboard.setData') {
+          copied.add(
+            (call.arguments as Map<Object?, Object?>)['text']! as String,
+          );
+        }
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      for (final adapter in <TerminalSessionAdapter>[
+        XtermTerminalSessionAdapter(
+          colorScheme: TerminalColorSchemes.defaultScheme,
+        ),
+        GhosttyTerminalSessionAdapter(),
+      ]) {
+        final output = adapter.outgoingBytes.first;
+        adapter.write(Uint8List.fromList(utf8.encode('\x1b]52;c;?\x07')));
+        expect(
+          utf8.decode(await output),
+          '\x1b]52;c;aG9zdCBjbGlwYm9hcmQ=\x1b\\',
+        );
+
+        adapter.write(
+          Uint8List.fromList(
+            utf8.encode(
+              '\x1b]52;c;${base64.encode(utf8.encode('from TUI'))}\x07',
+            ),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await adapter.dispose();
+      }
+      expect(copied, ['from TUI', 'from TUI']);
+    },
+  );
+
   test('terminal activity follows shell integration markers', () async {
     final adapter = GhosttyTerminalSessionAdapter();
     addTearDown(adapter.dispose);

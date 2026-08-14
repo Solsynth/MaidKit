@@ -82,6 +82,181 @@ abstract interface class TerminalSessionAdapter {
   Future<void> dispose();
 }
 
+/// Bridges OSC 52 clipboard requests from terminal applications to the host.
+///
+/// TUI applications cannot access the host clipboard directly. They use OSC
+/// 52 to publish selected text or request the current host clipboard value.
+/// The terminal renderer still receives the original bytes; this bridge only
+/// observes the control sequence and emits a response for query requests.
+class TerminalClipboardBridge {
+  TerminalClipboardBridge({
+    required this._setClipboard,
+    required this._getClipboard,
+    required this._sendResponse,
+  });
+
+  static const _escape = 0x1b;
+  static const _closeString = 0x5c;
+  static const _bel = 0x07;
+  static const _maxPayloadBytes = 4 * 1024 * 1024;
+
+  final Future<void> Function(String text) _setClipboard;
+  final Future<String?> Function() _getClipboard;
+  final void Function(String text) _sendResponse;
+  final _payload = BytesBuilder(copy: false);
+  var _stage = 0;
+  var _disposed = false;
+
+  /// Feeds raw terminal output into the OSC 52 recognizer.
+  ///
+  /// OSC sequences may be split across transport packets, so recognition is
+  /// intentionally byte-oriented and retains only a possible OSC 52 payload.
+  void add(Uint8List bytes) {
+    if (_disposed) return;
+    for (final byte in bytes) {
+      _consume(byte);
+    }
+  }
+
+  void _consume(int byte) {
+    if (_stage == 0) {
+      if (byte == _escape) _stage = 1;
+      return;
+    }
+
+    switch (_stage) {
+      case 1:
+        if (byte == 0x5d) {
+          _stage = 2;
+        } else {
+          _reset(byte);
+        }
+        return;
+      case 2:
+        if (byte == 0x35) {
+          _stage = 3;
+        } else {
+          _reset(byte);
+        }
+        return;
+      case 3:
+        if (byte == 0x32) {
+          _stage = 4;
+        } else {
+          _reset(byte);
+        }
+        return;
+      case 4:
+        if (byte == 0x3b) {
+          _payload.clear();
+          _stage = 5;
+        } else {
+          _reset(byte);
+        }
+        return;
+      case 5:
+        if (byte == _bel) {
+          _finish();
+        } else if (byte == _escape) {
+          _stage = 6;
+        } else if (_payload.length < _maxPayloadBytes) {
+          _payload.addByte(byte);
+        } else {
+          _stage = 0;
+          _payload.clear();
+        }
+        return;
+      case 6:
+        if (byte == _closeString) {
+          _finish();
+        } else {
+          _reset(byte);
+        }
+        return;
+    }
+    return;
+  }
+
+  void _reset(int byte) {
+    _stage = byte == _escape ? 1 : 0;
+    _payload.clear();
+  }
+
+  void _finish() {
+    final fields = utf8
+        .decode(_payload.takeBytes(), allowMalformed: true)
+        .split(';');
+    _stage = 0;
+    if (fields.length < 2 || !_isClipboardSelection(fields.first)) return;
+
+    final selection = fields.first;
+    final encoded = fields.sublist(1).join(';');
+    if (encoded == '?') {
+      unawaited(_sendClipboardResponse(selection));
+      return;
+    }
+
+    try {
+      final compact = encoded.replaceAll(RegExp(r'\s'), '');
+      final padded = compact.padRight(
+        compact.length + (4 - compact.length % 4) % 4,
+        '=',
+      );
+      final text = utf8.decode(base64.decode(padded), allowMalformed: true);
+      unawaited(_setClipboard(text).catchError((_) {}));
+    } on FormatException {
+      // Ignore malformed OSC 52 payloads; they are not terminal output.
+    }
+  }
+
+  Future<void> _sendClipboardResponse(String selection) async {
+    try {
+      final text = await _getClipboard() ?? '';
+      if (_disposed) return;
+      final encoded = base64.encode(utf8.encode(text));
+      _sendResponse('\x1b]52;$selection;$encoded\x1b\\');
+    } catch (_) {
+      // Clipboard access is optional on headless and restricted platforms.
+    }
+  }
+
+  bool _isClipboardSelection(String selection) =>
+      selection == 'c' ||
+      selection == 'p' ||
+      selection == 'q' ||
+      selection == 's' ||
+      selection == '0' ||
+      selection == '1' ||
+      selection == '2' ||
+      selection == '3' ||
+      selection == '4' ||
+      selection == '5' ||
+      selection == '6' ||
+      selection == '7';
+
+  void dispose() {
+    _disposed = true;
+    _stage = 0;
+    _payload.clear();
+  }
+}
+
+Future<void> _setHostClipboard(String text) =>
+    Clipboard.setData(ClipboardData(text: text));
+
+Future<String?> _getHostClipboard() async =>
+    (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+
+TerminalClipboardBridge createHostClipboardBridge({
+  required void Function(String text) sendResponse,
+}) => TerminalClipboardBridge(
+  setClipboard: _setHostClipboard,
+  getClipboard: _getHostClipboard,
+  sendResponse: sendResponse,
+);
+
+/// A terminal resize notification from the renderer.
+
 class TerminalResize {
   const TerminalResize({
     required this.columns,
@@ -253,6 +428,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
   }) : _terminal = Terminal(maxLines: 10000) {
+    _clipboard = createHostClipboardBridge(sendResponse: sendInput);
     _terminal.onOutput = (data) {
       if (!_disposed) {
         _activity.sentInput(data);
@@ -278,6 +454,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   final bool transparentBackground;
   final String fontFamily;
   final TerminalController _controller = TerminalController();
+  late final TerminalClipboardBridge _clipboard;
   final ScrollController _scrollController = ScrollController();
   final _terminalViewKey = GlobalKey<TerminalViewState>();
   final _outgoingBytes = StreamController<Uint8List>.broadcast();
@@ -312,6 +489,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   @override
   void write(Uint8List bytes) {
     if (!_disposed) {
+      _clipboard.add(bytes);
       _activity.receivedOutput(bytes);
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
     }
@@ -521,6 +699,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _clipboard.dispose();
     findClear();
     _terminal.onOutput = null;
     _terminal.onResize = null;

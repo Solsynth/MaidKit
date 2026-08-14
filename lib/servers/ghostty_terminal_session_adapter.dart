@@ -49,6 +49,7 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
            cursorBlink: cursorAnimationEnabled,
          ),
        ) {
+    _clipboard = createHostClipboardBridge(sendResponse: sendInput);
     _controller.onOutput = (bytes) {
       if (!_disposed) {
         _activity.sentInput(utf8.decode(bytes, allowMalformed: true));
@@ -63,7 +64,9 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
   final bool transparentBackground;
   final String fontFamily;
   final flterm.TerminalController _controller;
+  late final TerminalClipboardBridge _clipboard;
   final _terminalViewKey = GlobalKey<flterm.TerminalViewState>();
+
   final flterm.TerminalScrollController _scrollController =
       flterm.TerminalScrollController();
   final _outgoingBytes = StreamController<Uint8List>.broadcast();
@@ -96,6 +99,7 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
   @override
   void write(Uint8List bytes) {
     if (!_disposed) {
+      _clipboard.add(bytes);
       _activity.receivedOutput(bytes);
       _controller.write(bytes);
     }
@@ -265,6 +269,7 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _clipboard.dispose();
     _matches.clear();
     _controller.dispose();
     _scrollController.dispose();
