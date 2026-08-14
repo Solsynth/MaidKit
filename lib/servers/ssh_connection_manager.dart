@@ -376,7 +376,7 @@ class SshConnectionManager {
     if (!_supportsDirectNetworkPing(server)) return;
     final client = _sessions[server.id];
     if (client == null || client.isClosed) return;
-    final latency = await _probeNetworkLatency(server.host);
+    final latency = await _probeNetworkLatency(server.host, server.port);
     if (latency == null || !identical(_sessions[server.id], client)) return;
     _set((_states[server.id] ?? state).copyWith(networkLatency: latency));
   }
@@ -386,33 +386,21 @@ class SshConnectionManager {
       (server.proxyType == null ||
           server.proxyType == ServerProxyType.none.name);
 
-  Future<Duration?> _probeNetworkLatency(String host) async {
-    final arguments = Platform.isWindows
-        ? ['-n', '1', '-w', '1000', host]
-        : ['-c', '1', '-W', Platform.isMacOS ? '1000' : '1', '-n', host];
+  Future<Duration?> _probeNetworkLatency(String host, int port) async {
+    Socket? socket;
+    final stopwatch = Stopwatch()..start();
     try {
-      final result = await Process.run(
-        'ping',
-        arguments,
-      ).timeout(const Duration(seconds: 2));
-      if (result.exitCode != 0) return null;
-      return _parsePingLatency('${result.stdout}\n${result.stderr}');
+      socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 2),
+      );
+      return stopwatch.elapsed;
     } catch (_) {
       return null;
+    } finally {
+      socket?.destroy();
     }
-  }
-
-  static Duration? _parsePingLatency(String output) {
-    final match = RegExp(
-      r'(?:time|average)\s*[=<]\s*(\d+(?:[.,]\d+)?)\s*ms',
-      caseSensitive: false,
-    ).firstMatch(output);
-    if (match == null) return null;
-    final milliseconds = double.tryParse(
-      match.group(1)!.replaceFirst(',', '.'),
-    );
-    if (milliseconds == null) return null;
-    return Duration(microseconds: (milliseconds * 1000).round());
   }
 
   /// Measures one SSH command round trip on [client], or returns `null` if
