@@ -85,11 +85,11 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
           resourceCount == 0
               ? 'deploymentDeleteConfirmEmpty'.tr(args: [project.name])
               : 'deploymentDeleteConfirm'.tr(
-                  args: [
-                    project.name,
-                    '$resourceCount',
-                    resourceCount == 1 ? '' : 's',
-                  ],
+                  namedArgs: {
+                    'name': project.name,
+                    'count': '$resourceCount',
+                    'plural': resourceCount == 1 ? '' : 's',
+                  },
                 ),
         ),
         actions: [
@@ -263,12 +263,14 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
                             items.isEmpty
                                 ? 'deploymentProjectsSubtitleEmpty'.tr()
                                 : 'deploymentProjectsCount'.tr(
-                                    args: [
-                                      '${items.length}',
-                                      items.length == 1 ? '' : 's',
-                                      '${allResources.length}',
-                                      allResources.length == 1 ? '' : 's',
-                                    ],
+                                    namedArgs: {
+                                      'count': '${items.length}',
+                                      'plural': items.length == 1 ? '' : 's',
+                                      'resourceCount': '${allResources.length}',
+                                      'resourcePlural': allResources.length == 1
+                                          ? ''
+                                          : 's',
+                                    },
                                   ),
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
@@ -761,10 +763,10 @@ class _ProjectCard extends StatelessWidget {
                     resources.isEmpty
                         ? 'deploymentResourceCountZero'.tr()
                         : 'deploymentResourceCount'.tr(
-                            args: [
-                              '${resources.length}',
-                              resources.length == 1 ? '' : 's',
-                            ],
+                            namedArgs: {
+                              'count': '${resources.length}',
+                              'plural': resources.length == 1 ? '' : 's',
+                            },
                           ),
                     style: theme.textTheme.labelMedium?.copyWith(
                       color: scheme.onSurfaceVariant,
