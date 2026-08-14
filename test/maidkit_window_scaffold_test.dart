@@ -30,11 +30,21 @@ void main() {
     final windowFrameColors = windowFrameTheme.data.colorScheme;
 
     expect(windowFrameTheme.data.brightness, Brightness.dark);
+    expect(windowFrameTheme.data.useMaterial3, isTrue);
     expect(
       windowFrameColors.surfaceContainer,
       appTheme.colorScheme.surfaceContainer,
     );
     expect(windowFrameColors.onSurface, appTheme.colorScheme.onSurface);
     expect(windowFrameTheme.data.iconTheme.color, appTheme.iconTheme.color);
+    expect(
+      windowFrameTheme.data.inputDecorationTheme.border,
+      isA<flutter.OutlineInputBorder>(),
+    );
+    final legacyMaterial = tester.widget<flutter.Material>(
+      find.byType(flutter.Material),
+    );
+
+    expect(legacyMaterial.type, flutter.MaterialType.transparency);
   });
 }

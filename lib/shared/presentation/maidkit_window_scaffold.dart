@@ -36,19 +36,24 @@ class MaidKitWindowScaffold extends ConsumerWidget {
       // uses the modular material_ui package.
       child: flutter.Theme(
         data: _createWindowFrameTheme(Theme.of(context)),
-        child: DesktopWindowFrame(
-          isDesktopPlatform: isDesktop,
-          title: Text(
-            title ?? 'MaidKit',
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
-          // Routes own their safe areas. Consuming mobile insets here prevents
-          // page scaffolds from participating correctly in gesture-back.
-          child: Column(
-            children: [
-              Expanded(child: child),
-              const TaskProgressBar(),
-            ],
+        child: flutter.Material(
+          // Keep the frame's existing surface painting while providing the
+          // Flutter SDK Material ancestor required by legacy controls.
+          type: flutter.MaterialType.transparency,
+          child: DesktopWindowFrame(
+            isDesktopPlatform: isDesktop,
+            title: Text(
+              title ?? 'MaidKit',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            // Routes own their safe areas. Consuming mobile insets here prevents
+            // page scaffolds from participating correctly in gesture-back.
+            child: Column(
+              children: [
+                Expanded(child: child),
+                const TaskProgressBar(),
+              ],
+            ),
           ),
         ),
       ),
@@ -78,8 +83,14 @@ flutter.ThemeData _createWindowFrameTheme(ThemeData theme) {
 
   return flutter.ThemeData(
     brightness: colors.brightness,
+    useMaterial3: true,
     fontFamily: MaidKitFonts.sans,
     colorScheme: colorScheme,
+    inputDecorationTheme: flutter.InputDecorationTheme(
+      border: flutter.OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+    ),
     iconTheme: flutter.IconThemeData(
       color: theme.iconTheme.color ?? colors.onSurface,
     ),
