@@ -493,7 +493,7 @@ class SshAgentService {
           if (path == null || path.isEmpty) {
             throw ArgumentError('A file path is required to read a file.');
           }
-          return _withSftp(client, cancelToken, (sftp) async {
+          return await _withSftp(client, cancelToken, (sftp) async {
             final file = await sftp.open(path, mode: SftpFileOpenMode.read);
             try {
               return _limit(utf8.decode(await file.readBytes()));
@@ -505,7 +505,7 @@ class SshAgentService {
           if (path == null || path.isEmpty) {
             throw ArgumentError('A file path is required to write a file.');
           }
-          return _withSftp(client, cancelToken, (sftp) async {
+          return await _withSftp(client, cancelToken, (sftp) async {
             final file = await sftp.open(
               path,
               mode:
@@ -528,7 +528,7 @@ class SshAgentService {
           if (path == null || path.isEmpty) {
             throw ArgumentError('A file path is required to delete a file.');
           }
-          return _withSftp(client, cancelToken, (sftp) async {
+          return await _withSftp(client, cancelToken, (sftp) async {
             await sftp.remove(path);
             return 'Deleted $path';
           });

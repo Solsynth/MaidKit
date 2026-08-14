@@ -251,13 +251,11 @@ class MaidCafeWebhookResult {
 class MaidCafeService {
   MaidCafeService({
     required String baseUrl,
-    required CloudSyncService cloudSync,
+    required this._cloudSync,
     Dio? dio,
     FlutterSecureStorage? secureStorage,
-    Future<String?> Function()? accessToken,
+    this._accessToken,
   }) : baseUrl = normalizeMaidCafeUrl(baseUrl),
-       _cloudSync = cloudSync,
-       _accessToken = accessToken,
        _dio = dio ?? Dio(),
        _secureStorage = secureStorage ?? const FlutterSecureStorage() {
     _dio.options.connectTimeout ??= const Duration(seconds: 10);
@@ -476,7 +474,7 @@ class MaidCafeService {
     final query = <String, dynamic>{
       'unread': unread,
       'limit': limit,
-      if (daemonId != null) 'daemon_id': daemonId,
+      'daemon_id': ?daemonId,
       if (before != null) 'before': before.toUtc().toIso8601String(),
     };
     final response = await _cloudRequest(

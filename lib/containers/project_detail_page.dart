@@ -2183,7 +2183,7 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
   /// Repo picker for the GitHub workflow kind. Keyed by repo slug with a
   /// membership-guarded value so an async items refresh can never leave the
   /// dropdown holding a value that no longer matches an item.
-  Widget _GithubRepoDropdown() {
+  Widget _githubRepoDropdown() {
     final repos =
         ref.watch(githubAvailableReposProvider).asData?.value ??
         const <GitHubRepo>[];
@@ -2222,7 +2222,7 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
   }
 
   /// Workflow picker for the GitHub workflow kind, gated on the selected repo.
-  Widget _GithubWorkflowDropdown() {
+  Widget _githubWorkflowDropdown() {
     final workflows = _ghRepoSlug == null
         ? const <GitHubWorkflow>[]
         : ref
@@ -2384,9 +2384,9 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
           ),
           const SizedBox(height: 12),
           if (isGithub) ...[
-            _GithubRepoDropdown(),
+            _githubRepoDropdown(),
             const SizedBox(height: 16),
-            _GithubWorkflowDropdown(),
+            _githubWorkflowDropdown(),
           ] else ...[
             if (widget.servers.isEmpty)
               Text(

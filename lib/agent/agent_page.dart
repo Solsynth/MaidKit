@@ -815,7 +815,11 @@ class _AgentPageState extends ConsumerState<AgentPage> {
         ..clear()
         ..addAll([
           for (final message in conversation.messages)
-            _AgentMessage(message.text, _roleKind(message.role)),
+            _AgentMessage(
+              message.text,
+              _roleKind(message.role),
+              autoApproved: false,
+            ),
         ]);
       _agentContext
         ..clear()
@@ -1524,10 +1528,11 @@ class _AgentPageState extends ConsumerState<AgentPage> {
 }
 
 class _AgentMessage {
-  const _AgentMessage(this.text, this.kind, {this.autoApproved = false});
-  const _AgentMessage.user(String text) : this(text, _MessageKind.user);
+  const _AgentMessage(this.text, this.kind, {required this.autoApproved});
+  const _AgentMessage.user(String text)
+    : this(text, _MessageKind.user, autoApproved: false);
   const _AgentMessage.assistant(String text)
-    : this(text, _MessageKind.assistant);
+    : this(text, _MessageKind.assistant, autoApproved: false);
   const _AgentMessage.tool(String text, {bool autoApproved = false})
     : this(text, _MessageKind.tool, autoApproved: autoApproved);
   final String text;
