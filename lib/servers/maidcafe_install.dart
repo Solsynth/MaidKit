@@ -1,15 +1,25 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/servers/ssh_connection_manager.dart';
+import 'package:solsynth_express/solsynth_express.dart';
 
 import 'maidcafe_service.dart';
 import 'package_models.dart';
 import 'server_providers.dart';
 
-const _maidCafeRepository = 'https://github.com/Solsynth/MaidCafe.git';
+const _maidCafeDistributionApiBaseUrl = String.fromEnvironment(
+  'DISTRIBUTION_API_BASE_URL',
+  defaultValue: 'https://api.solian.app/dist',
+);
+const _maidCafeDistributionProductId = '36221713-7909-4132-bfca-d800bd69fdc2';
+const _maidCafeDistributionChannel = String.fromEnvironment(
+  'MAIDCAFE_DISTRIBUTION_CHANNEL',
+);
 
 class MaidCafeActionDefinition {
   const MaidCafeActionDefinition({
@@ -23,10 +33,57 @@ class MaidCafeActionDefinition {
   final List<String> arguments;
 }
 
-/// Installs the MaidCafe daemon and enables its systemd service on [server].
+/// Returns paths and services that would conflict with a MaidKit-managed
+/// MaidCafe installation.
+Future<List<String>> detectMaidCafeInstallation({
+  required SshConnectionManager manager,
+  required int serverId,
+}) => manager.withClient(serverId, (client) async {
+  final session = await client.execute(r'''
+ set +e
+ for path in \
+   /usr/local/bin/maidcafe-daemon \
+   /etc/maidcafe \
+   /etc/systemd/system/maidcafe-daemon.service
+ do
+   if [ -e "$path" ]; then
+     printf 'path:%s\n' "$path"
+   fi
+ done
+ if [ -f /etc/maidcafe/maidkit-managed ]; then
+   printf '%s\n' 'managed'
+ fi
+ if command -v systemctl >/dev/null 2>&1 &&
+    systemctl is-active --quiet maidcafe-daemon
+ then
+   printf '%s\n' 'service:maidcafe-daemon(active)'
+ fi
+ if command -v pgrep >/dev/null 2>&1; then
+   for pid in $(pgrep -x maidcafe-daemon 2>/dev/null); do
+     printf 'process:maidcafe-daemon(%s)\n' "$pid"
+   done
+ fi
+ ''');
+  try {
+    final output = await utf8.decoder
+        .bind(session.stdout)
+        .join()
+        .timeout(const Duration(seconds: 15));
+    await session.done.timeout(const Duration(seconds: 5));
+    return output
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+  } finally {
+    session.close();
+  }
+});
+
+/// Installs the published MaidCafe daemon bundle on [server].
 ///
-/// The daemon is built from the upstream source because MaidCafe currently
-/// publishes its daemon as a CI artifact rather than a package repository.
+/// The bundle is fetched from DistributionCenter; the remote host does not
+/// need Go or a source checkout.
 Future<void> installMaidCafeDaemon({
   required WidgetRef ref,
   required Server server,
@@ -34,6 +91,7 @@ Future<void> installMaidCafeDaemon({
   required String cloudUrl,
   required String cloudSecret,
   required String? sudoPassword,
+  String? channel,
 }) => _installMaidCafeDaemon(
   ref: ref,
   server: server,
@@ -43,6 +101,7 @@ Future<void> installMaidCafeDaemon({
   sudoPassword: sudoPassword,
   transport: 'http',
   title: 'maidCafeInstallDaemonRunning'.tr(),
+  channel: channel,
 );
 
 /// Installs MaidCafe in standalone stdio mode without cloud registration.
@@ -50,6 +109,7 @@ Future<void> installMaidCafeApplication({
   required WidgetRef ref,
   required Server server,
   required String? sudoPassword,
+  String? channel,
   List<MaidCafeActionDefinition> actions = const [],
 }) => _installMaidCafeDaemon(
   ref: ref,
@@ -61,6 +121,7 @@ Future<void> installMaidCafeApplication({
   transport: 'stdio',
   actions: actions,
   title: 'maidCafeInstallApplicationRunning'.tr(),
+  channel: channel,
 );
 
 Future<void> _installMaidCafeDaemon({
@@ -72,6 +133,7 @@ Future<void> _installMaidCafeDaemon({
   required String? sudoPassword,
   required String transport,
   required String title,
+  String? channel,
   List<MaidCafeActionDefinition> actions = const [],
 }) async {
   final manager = ref.read(connectionManagerProvider);
@@ -88,24 +150,20 @@ Future<void> _installMaidCafeDaemon({
     title: title,
     subtitle: server.name,
     command: transport == 'stdio'
-        ? 'git clone · go build · install MaidCafe stdio daemon'
-        : 'git clone · go build · systemctl enable --now maidcafe-daemon',
+        ? 'download · install MaidCafe stdio daemon'
+        : 'download · install · systemctl enable --now maidcafe-daemon',
     onCancel: () => cancelScript?.call(),
     run: (onOutput) async {
-      for (final package in [
-        _maidCafeGitPackage(),
-        _maidCafeGoPackage(packageManager),
-      ]) {
-        await manager.runPackageAction(
-          server.id,
-          manager: packageManager,
-          action: PackageAction.install,
-          packageName: package,
-          sshUserIsRoot: server.username == 'root',
-          sudoPassword: sudoPassword,
-          onOutput: onOutput,
-        );
-      }
+      final artifactUrl = await _fetchMaidCafeArtifactUrl(channel: channel);
+      await manager.runPackageAction(
+        server.id,
+        manager: packageManager,
+        action: PackageAction.install,
+        packageName: _maidCafeDownloadPackage(packageManager),
+        sshUserIsRoot: server.username == 'root',
+        sudoPassword: sudoPassword,
+        onOutput: onOutput,
+      );
 
       await manager.runPrivilegedScriptSnippet(
         server.id,
@@ -113,6 +171,7 @@ Future<void> _installMaidCafeDaemon({
           daemonId: daemonId,
           cloudUrl: cloudUrl,
           cloudSecret: cloudSecret,
+          artifactUrl: artifactUrl,
           transport: transport,
           actions: actions,
         ),
@@ -125,19 +184,21 @@ Future<void> _installMaidCafeDaemon({
   );
 }
 
-/// Builds the non-interactive Linux/systemd installation script.
+/// Builds the non-interactive Linux installation script from a MaidCafe
+/// binary archive.
 ///
-/// Configuration is encoded before it enters the shell script so the cloud
-/// secret is not present in a command argument or terminal status line.
+/// Configuration and the signed artifact URL are base64 encoded before they
+/// enter the shell script so neither is present in command arguments or
+/// terminal status lines.
 String buildMaidCafeDaemonInstallScript({
   required String daemonId,
   required String cloudUrl,
   required String cloudSecret,
+  required String artifactUrl,
   String transport = 'http',
   List<MaidCafeActionDefinition> actions = const [],
 }) {
   final stdio = transport == 'stdio';
-  final listenLine = stdio ? '' : ' listen = "127.0.0.1:8747"\n';
   final configPath = stdio
       ? '/etc/maidcafe/config.stdio.toml'
       : '/etc/maidcafe/config.toml';
@@ -147,12 +208,109 @@ String buildMaidCafeDaemonInstallScript({
   final serviceInstall = stdio
       ? ''
       : '''
-install -o root -g root -m 0644 "\$work_dir/source/deploy/maidcafe-daemon.service" /etc/systemd/system/maidcafe-daemon.service
+cat > "\$work_dir/maidcafe-daemon.service" <<'EOF'
+[Unit]
+Description=MaidCafe daemon
+After=network-online.target
+
+[Service]
+User=maidcafe
+Group=maidcafe
+ExecStart=/usr/local/bin/maidcafe-daemon --config /etc/maidcafe/config.toml
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+install -o root -g root -m 0644 "\$work_dir/maidcafe-daemon.service" /etc/systemd/system/maidcafe-daemon.service
 systemctl daemon-reload
 systemctl enable --now maidcafe-daemon
 ''';
-  final config =
-      '''[daemon]
+  final encodedConfig = base64Encode(
+    utf8.encode(
+      _maidCafeConfig(
+        daemonId: daemonId,
+        cloudUrl: cloudUrl,
+        cloudSecret: cloudSecret,
+        transport: transport,
+        actions: actions,
+      ),
+    ),
+  );
+  final encodedArtifactUrl = base64Encode(utf8.encode(artifactUrl));
+
+  return '''set -eu
+${stdio ? '' : '''command -v systemctl >/dev/null 2>&1 || {
+  echo "MaidCafe daemon installation requires systemd." >&2
+  exit 1
+}
+'''}work_dir="\$(mktemp -d "\${TMPDIR:-/tmp}/maidcafe-install.XXXXXX")"
+trap 'rm -rf "\$work_dir"' EXIT
+
+printf '%s' '$encodedArtifactUrl' | base64 -d > "\$work_dir/artifact.url"
+mkdir -p "\$work_dir/extracted"
+curl --fail --location --retry 3 --silent --show-error "\$(cat "\$work_dir/artifact.url")" \\
+  --output "\$work_dir/maidcafe-daemon.tar"
+tar -xf "\$work_dir/maidcafe-daemon.tar" -C "\$work_dir/extracted"
+daemon_binary="\$(find "\$work_dir/extracted" -type f -name maidcafe-daemon -print -quit)"
+test -n "\$daemon_binary"
+
+${stdio ? '' : '''if ! id maidcafe >/dev/null 2>&1; then
+  useradd --system --home /var/lib/maidcafe --create-home maidcafe
+fi
+'''}install -o root -g root -m 0755 "\$daemon_binary" /usr/local/bin/maidcafe-daemon
+install -d -o root -g root -m 0755 /etc/maidcafe
+printf '%s\n' 'maidkit' > "\$work_dir/maidkit-managed"
+install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidkit-managed
+printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
+
+$configInstall "\$work_dir/config.toml" $configPath
+$serviceInstall''';
+}
+
+/// Builds a root-owned MaidCafe configuration update without replacing the
+/// daemon binary.
+String buildMaidCafeDaemonConfigScript({
+  required String daemonId,
+  required String cloudUrl,
+  required String cloudSecret,
+  String transport = 'stdio',
+  List<MaidCafeActionDefinition> actions = const [],
+}) {
+  final configPath = transport == 'stdio'
+      ? '/etc/maidcafe/config.stdio.toml'
+      : '/etc/maidcafe/config.toml';
+  final installMode = transport == 'stdio' ? '0644' : '0640';
+  final installGroup = transport == 'stdio' ? 'root' : 'maidcafe';
+  final encodedConfig = base64Encode(
+    utf8.encode(
+      _maidCafeConfig(
+        daemonId: daemonId,
+        cloudUrl: cloudUrl,
+        cloudSecret: cloudSecret,
+        transport: transport,
+        actions: actions,
+      ),
+    ),
+  );
+  return '''set -eu
+install -d -o root -g root -m 0755 /etc/maidcafe
+printf '%s\n' 'maidkit' | install -o root -g root -m 0644 /dev/stdin /etc/maidcafe/maidkit-managed
+printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
+''';
+}
+
+String _maidCafeConfig({
+  required String daemonId,
+  required String cloudUrl,
+  required String cloudSecret,
+  required String transport,
+  required List<MaidCafeActionDefinition> actions,
+}) {
+  final listenLine = transport == 'stdio' ? '' : ' listen = "127.0.0.1:8747"\n';
+  return '''[daemon]
  id = ${_tomlString(daemonId)}
  transport = ${_tomlString(transport)}
 $listenLine cloudUrl = ${_tomlString(cloudUrl)}
@@ -163,42 +321,128 @@ $listenLine cloudUrl = ${_tomlString(cloudUrl)}
  maxBodyBytes = 65536
  maxConcurrentRuns = 4
 ${_tomlActions(actions)}'''
-          .replaceAll('\n ', '\n');
-  final encodedConfig = base64Encode(utf8.encode(config));
-
-  return '''set -eu
-${stdio ? '' : '''command -v systemctl >/dev/null 2>&1 || {
-  echo "MaidCafe daemon installation requires systemd." >&2
-  exit 1
-}
-'''}work_dir="\$(mktemp -d "\${TMPDIR:-/tmp}/maidcafe-install.XXXXXX")"
-trap 'rm -rf "\$work_dir"' EXIT
-
-git clone --depth 1 $_maidCafeRepository "\$work_dir/source"
-go build -trimpath -ldflags='-s -w' \\
-  -o "\$work_dir/maidcafe-daemon" "\$work_dir/source/cmd/daemon"
-
-${stdio ? '' : '''if ! id maidcafe >/dev/null 2>&1; then
-  useradd --system --home /var/lib/maidcafe --create-home maidcafe
-fi
-'''}install -o root -g root -m 0755 "\$work_dir/maidcafe-daemon" /usr/local/bin/maidcafe-daemon
-install -d -o root -g root -m 0755 /etc/maidcafe
-printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
-
-$configInstall "\$work_dir/config.toml" $configPath
-$serviceInstall''';
+      .replaceAll('\n ', '\n');
 }
 
-String _maidCafeGitPackage() => 'git';
+/// Returns the currently published MaidCafe channels.
+Future<List<DistributionChannel>> fetchMaidCafeDistributionChannels() async {
+  final endpoint = Uri.parse(
+    '$_maidCafeDistributionApiBaseUrl/products/'
+    '$_maidCafeDistributionProductId/channels',
+  );
+  try {
+    return await SolsynthExpressApi(
+      baseUrl: _maidCafeDistributionApiBaseUrl,
+      productId: _maidCafeDistributionProductId,
+    ).listChannels();
+  } on DioException catch (error) {
+    final status = error.response?.statusCode;
+    final statusSuffix = status == null ? '' : ' (HTTP $status)';
+    throw StateError(
+      'MaidCafe channel lookup failed$statusSuffix.\n'
+      'URL: $endpoint',
+    );
+  }
+}
 
-String _maidCafeGoPackage(PackageManager manager) => switch (manager) {
-  PackageManager.apt => 'golang-go',
-  PackageManager.dnf || PackageManager.yum => 'golang',
+Future<String> _fetchMaidCafeArtifactUrl({String? channel}) async {
+  final api = SolsynthExpressApi(
+    baseUrl: _maidCafeDistributionApiBaseUrl,
+    productId: _maidCafeDistributionProductId,
+  );
+  final channelsEndpoint = Uri.parse(
+    '$_maidCafeDistributionApiBaseUrl/products/'
+    '$_maidCafeDistributionProductId/channels',
+  );
+  final channels = await fetchMaidCafeDistributionChannels();
+  if (channels.isEmpty) {
+    throw StateError(
+      'MaidCafe has no published distribution channels.\n'
+      'URL: $channelsEndpoint',
+    );
+  }
+
+  final requestedChannel = (channel ?? _maidCafeDistributionChannel).trim();
+  DistributionChannel? selectedChannel;
+  if (requestedChannel.isNotEmpty) {
+    for (final channel in channels) {
+      if (channel.name == requestedChannel || channel.id == requestedChannel) {
+        selectedChannel = channel;
+        break;
+      }
+    }
+    if (selectedChannel == null) {
+      throw StateError(
+        'MaidCafe distribution channel "$requestedChannel" is unavailable. '
+        'Available channels: ${channels.map((channel) => channel.name).join(', ')}.\n'
+        'URL: $channelsEndpoint',
+      );
+    }
+  } else {
+    for (final channel in channels) {
+      if (channel.latest?.artifactFor('linux', 'amd64') != null) {
+        selectedChannel = channel;
+        break;
+      }
+    }
+  }
+  if (selectedChannel == null) {
+    throw StateError(
+      'No MaidCafe distribution channel has a Linux amd64 artifact. '
+      'Available channels: ${channels.map((channel) => channel.name).join(', ')}.\n'
+      'URL: $channelsEndpoint',
+    );
+  }
+
+  final channelName = selectedChannel.name;
+  final endpoint =
+      Uri.parse(
+        '$_maidCafeDistributionApiBaseUrl/products/'
+        '$_maidCafeDistributionProductId/releases',
+      ).replace(
+        queryParameters: {
+          'channel': channelName,
+          'platform': 'linux',
+          'architecture': 'amd64',
+          'limit': '1',
+          'offset': '0',
+        },
+      );
+  DistributionReleaseInfo? release;
+  try {
+    release = await api.fetchLatestRelease(
+      channel: channelName,
+      platform: 'linux',
+      architecture: 'amd64',
+    );
+  } on DioException catch (error) {
+    final status = error.response?.statusCode;
+    final statusSuffix = status == null ? '' : ' (HTTP $status)';
+    throw StateError(
+      'MaidCafe artifact lookup failed$statusSuffix.\n'
+      'URL: $endpoint',
+    );
+  }
+  final artifact = release?.artifactFor('linux', 'amd64');
+  if (artifact == null) {
+    throw StateError(
+      'No MaidCafe Linux amd64 artifact is available in the '
+      '"$channelName" channel.\n'
+      'URL: $endpoint',
+    );
+  }
+  return artifact.downloadUrl;
+}
+
+String _maidCafeDownloadPackage(PackageManager manager) => switch (manager) {
+  PackageManager.apt ||
+  PackageManager.dnf ||
+  PackageManager.yum ||
   PackageManager.pacman ||
   PackageManager.zypper ||
   PackageManager.apk ||
   PackageManager.xbps ||
-  PackageManager.brew => 'go',
+  PackageManager.brew => 'curl',
 };
 
 String _tomlActions(List<MaidCafeActionDefinition> actions) => actions

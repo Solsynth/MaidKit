@@ -3634,8 +3634,8 @@ uname -r
       unawaited(
         client.done.then<void>(
           (_) => _handleClientClosed(server, client),
-          onError: (Object _, StackTrace _) {
-            _handleClientClosed(server, client);
+          onError: (Object error, StackTrace _) {
+            _handleClientClosed(server, client, error: error);
           },
         ),
       );
@@ -3659,7 +3659,7 @@ uname -r
     }
   }
 
-  void _handleClientClosed(Server server, SSHClient client) {
+  void _handleClientClosed(Server server, SSHClient client, {Object? error}) {
     if (!identical(_sessions[server.id], client)) return;
     _sessions.remove(server.id);
     _sessionJumpHosts.remove(server.id);
@@ -3669,7 +3669,12 @@ uname -r
     unawaited(_stopPortForwardsFor(server.id));
     final state = _states[server.id];
     if (state != null && state.status == SessionStatus.connected) {
-      _set(state.copyWith(status: SessionStatus.closed));
+      _set(
+        state.copyWith(
+          status: SessionStatus.closed,
+          error: error == null ? 'SSH connection closed.' : error.toString(),
+        ),
+      );
     }
   }
 
@@ -3789,7 +3794,7 @@ uname -r
     final identities = credential.type == CredentialType.privateKey
         ? SSHKeyPair.fromPem(credential.privateKey!, credential.keyPassphrase)
         : null;
-    final socket = server.jumpHostServerId != null
+    final rawSocket = server.jumpHostServerId != null
         ? await _socketThroughJumpHost(server)
         : isTailnetAddress(server.host) && tailscaleSupported
         ? await TailscaleSshSocket.connect(server.host, server.port)
@@ -3798,6 +3803,7 @@ uname -r
             server.port,
             proxy: proxy,
           );
+    final socket = _SafeSshSocket(rawSocket);
     final client = SSHClient(
       socket,
       username: server.username,
@@ -3845,6 +3851,85 @@ uname -r
     }
     return jumpClient.forwardLocal(server.host, server.port);
   }
+}
+
+/// Prevents dartssh2's asynchronous channel uploader from throwing after the
+/// underlying socket has already completed. The transport closure is still
+/// reported through [SSHClient.done]; closed writes are deliberately dropped.
+class _SafeSshSocket implements SSHSocket {
+  _SafeSshSocket(this._delegate) {
+    unawaited(
+      _delegate.done.then<void>(
+        (_) => _closed = true,
+        onError: (_, _) => _closed = true,
+      ),
+    );
+  }
+
+  final SSHSocket _delegate;
+  var _closed = false;
+  late final StreamSink<List<int>> _safeSink = _SafeSshSink(
+    _delegate.sink,
+    () => _closed,
+    () => _closed = true,
+  );
+
+  @override
+  Stream<Uint8List> get stream => _delegate.stream;
+  @override
+  StreamSink<List<int>> get sink => _safeSink;
+
+  @override
+  Future<void> get done => _delegate.done;
+
+  @override
+  Future<void> close() => _delegate.close();
+
+  @override
+  void destroy() => _delegate.destroy();
+
+  @override
+  Future<void> flush() => _delegate.flush();
+
+  @override
+  String toString() => _delegate.toString();
+}
+
+class _SafeSshSink implements StreamSink<List<int>> {
+  _SafeSshSink(this._delegate, this._isClosed, this._markClosed);
+
+  final StreamSink<List<int>> _delegate;
+  final bool Function() _isClosed;
+  final void Function() _markClosed;
+
+  @override
+  void add(List<int> data) {
+    if (_isClosed()) return;
+    try {
+      _delegate.add(data);
+    } on StateError catch (error) {
+      if (!error.toString().contains('StreamSink is bound to a stream')) {
+        rethrow;
+      }
+      _markClosed();
+    }
+  }
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {
+    if (_isClosed()) return;
+    _delegate.addError(error, stackTrace);
+  }
+
+  @override
+  Future<void> close() => _delegate.close();
+
+  @override
+  Future<void> get done => _delegate.done;
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) =>
+      _delegate.addStream(stream);
 }
 
 /// An SSH socket with Nagle's algorithm disabled.

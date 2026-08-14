@@ -68,7 +68,7 @@ class _MaidKitUpdateSettingsSectionState
             final channels = <String>{
               kMaidKitDefaultUpdateChannel,
               channel,
-              ...remoteChannels.map((item) => item.id),
+              ...remoteChannels.map((item) => item.name),
             }.toList();
             return DropdownButtonFormField<String>(
               initialValue: channel,
@@ -167,7 +167,7 @@ class _MaidKitUpdateSettingsSectionState
       return 'settingsUpdateChannelStable'.tr();
     }
     for (final item in remoteChannels) {
-      if (item.id == channel) return item.label(locale);
+      if (item.name == channel) return item.label(locale);
     }
     return channel;
   }

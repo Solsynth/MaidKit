@@ -11,6 +11,16 @@ class MaidCafeStreamSession {
         .bind(_session.stdout)
         .transform(const LineSplitter())
         .listen(_handleLine, onError: _handleError, onDone: _handleDone);
+    unawaited(
+      _session.done.then((_) {
+        _markClosed(
+          StateError(
+            'MaidCafe SSH stream closed before the request completed.',
+          ),
+          StackTrace.current,
+        );
+      }),
+    );
   }
 
   static const command =
@@ -22,6 +32,8 @@ class MaidCafeStreamSession {
   final _events = StreamController<MaidCafeStreamEvent>.broadcast();
   var _nextId = 0;
   var _closed = false;
+  var _closing = false;
+  Future<void> _writeTail = Future<void>.value();
 
   Stream<MaidCafeStreamEvent> get events => _events.stream;
 
@@ -48,7 +60,7 @@ class MaidCafeStreamSession {
     String? name,
     Object? body,
   }) async {
-    if (_closed) throw StateError('MaidCafe stream is closed.');
+    _throwIfClosed();
     final id = 'maidkit-${_nextId++}';
     final completer = Completer<Map<String, dynamic>>();
     _pending[id] = completer;
@@ -60,14 +72,36 @@ class MaidCafeStreamSession {
       ...?(body == null ? null : {'body': body}),
     };
     try {
-      _session.stdin.add(
-        Uint8List.fromList(utf8.encode('${jsonEncode(payload)}\n')),
-      );
-      await _session.flush();
-      return await completer.future;
+      await _write(Uint8List.fromList(utf8.encode('${jsonEncode(payload)}\n')));
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      _pending.remove(id);
+      rethrow;
     } catch (_) {
       _pending.remove(id);
       rethrow;
+    }
+  }
+
+  Future<void> _write(Uint8List data) {
+    final previous = _writeTail;
+    final write = previous.then<void>(
+      (_) async {
+        _throwIfClosed();
+        _session.stdin.add(data);
+        await _session.flush();
+      },
+      onError: (_, _) {
+        _throwIfClosed();
+      },
+    );
+    _writeTail = write.catchError((_) {});
+    return write;
+  }
+
+  void _throwIfClosed() {
+    if (_closed || _closing) {
+      throw StateError('MaidCafe stream is closed.');
     }
   }
 
@@ -86,7 +120,7 @@ class MaidCafeStreamSession {
       if (event.event == 'ready' && !_ready.isCompleted) {
         _ready.complete();
       }
-      _events.add(event);
+      if (!_events.isClosed) _events.add(event);
       return;
     }
     final id = decoded['id'];
@@ -105,13 +139,17 @@ class MaidCafeStreamSession {
   }
 
   void _handleError(Object error, StackTrace stackTrace) {
-    if (!_closed) _failPending(error, stackTrace);
+    _markClosed(error, stackTrace);
   }
 
   void _handleDone() {
-    if (!_closed) {
-      _failPending(StateError('MaidCafe stream ended.'), StackTrace.current);
-    }
+    _markClosed(StateError('MaidCafe stream ended.'), StackTrace.current);
+  }
+
+  void _markClosed(Object error, StackTrace stackTrace) {
+    if (_closed) return;
+    _closed = true;
+    _failPending(error, stackTrace);
   }
 
   void _failPending(Object error, StackTrace stackTrace) {
@@ -122,22 +160,22 @@ class MaidCafeStreamSession {
   }
 
   Future<void> close() async {
-    if (_closed) return;
+    if (_closing) return;
+    _closing = true;
     _closed = true;
+    _failPending(StateError('MaidCafe stream closed.'), StackTrace.current);
     try {
-      _session.stdin.add(
-        Uint8List.fromList(
-          utf8.encode(
-            '${jsonEncode({'type': 'request', 'action': 'shutdown'})}\n',
-          ),
-        ),
-      );
-      await _session.flush();
+      await _writeTail;
+    } catch (_) {}
+    try {
+      await _session.stdin.close();
+    } catch (_) {}
+    try {
+      _session.close();
     } catch (_) {}
     await _stdoutSubscription.cancel();
     await _session.done.timeout(const Duration(seconds: 3), onTimeout: () {});
     await _events.close();
-    _failPending(StateError('MaidCafe stream closed.'), StackTrace.current);
   }
 }
 

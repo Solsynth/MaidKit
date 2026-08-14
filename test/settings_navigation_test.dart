@@ -194,7 +194,7 @@ void main() {
 
     expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
     expect(find.text('maidCafeInstallApplication'.tr()), findsOneWidget);
-    expect(find.text('maidCafeActions'.tr()), findsOneWidget);
+    expect(find.text('maidCafeActions'.tr()), findsNothing);
     expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
     expect(find.text('maidCafeServerDaemonUrl'.tr()), findsNothing);
   });
