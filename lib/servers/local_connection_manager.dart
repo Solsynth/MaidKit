@@ -337,7 +337,7 @@ class LocalConnectionManager {
                 connectedAt: DateTime.now(),
                 status: SessionStatus.connected,
               ))
-          .copyWith(status: SessionStatus.connected, latency: Duration.zero),
+          .copyWith(status: SessionStatus.connected),
     );
     return TerminalSessionHandle(
       id: terminalId,
@@ -381,7 +381,6 @@ class LocalConnectionManager {
                 ))
             .copyWith(
               status: SessionStatus.connected,
-              latency: Duration.zero,
               stats: stats,
               systemInfo: systemInfo,
             ),

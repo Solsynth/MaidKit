@@ -365,7 +365,7 @@ class SshSessionInfo {
     this.error,
     this.stats,
     this.systemInfo,
-    this.latency,
+    this.networkLatency,
   });
 
   final int serverId;
@@ -375,14 +375,16 @@ class SshSessionInfo {
   final String? error;
   final ServerStats? stats;
   final ServerSystemInfo? systemInfo;
-  final Duration? latency;
+
+  /// Direct network ping latency used by server cards.
+  final Duration? networkLatency;
 
   SshSessionInfo copyWith({
     SessionStatus? status,
     String? error,
     ServerStats? stats,
     ServerSystemInfo? systemInfo,
-    Duration? latency,
+    Duration? networkLatency,
   }) => SshSessionInfo(
     serverId: serverId,
     serverName: serverName,
@@ -391,7 +393,7 @@ class SshSessionInfo {
     error: error ?? this.error,
     stats: stats ?? this.stats,
     systemInfo: systemInfo ?? this.systemInfo,
-    latency: latency ?? this.latency,
+    networkLatency: networkLatency ?? this.networkLatency,
   );
 }
 

@@ -940,7 +940,7 @@ class _ServerCard extends ConsumerWidget {
                       connected: connected,
                       connecting: connecting,
                       failed: failed,
-                      latency: session?.latency,
+                      networkLatency: session?.networkLatency,
                     ),
                     const Spacer(),
                     if (!connected && !connecting)
@@ -1111,19 +1111,19 @@ class _ConnectionStatus extends StatelessWidget {
     required this.connected,
     required this.connecting,
     required this.failed,
-    this.latency,
+    this.networkLatency,
   });
 
   final bool connected;
   final bool connecting;
   final bool failed;
-  final Duration? latency;
+  final Duration? networkLatency;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final latency = this.latency;
+    final latency = networkLatency;
 
     if (connected) {
       final latencyColor = latency == null
@@ -1144,9 +1144,12 @@ class _ConnectionStatus extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            latency == null ? '—' : '${latency.inMilliseconds} ms',
-            style: textTheme.labelLarge?.copyWith(color: latencyColor),
+          Tooltip(
+            message: 'serversNetworkPingTooltip'.tr(),
+            child: Text(
+              latency == null ? '—' : '${latency.inMilliseconds} ms',
+              style: textTheme.labelLarge?.copyWith(color: latencyColor),
+            ),
           ),
         ],
       );

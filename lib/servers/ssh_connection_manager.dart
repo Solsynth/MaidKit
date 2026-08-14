@@ -333,16 +333,10 @@ class SshConnectionManager {
     final terminal = _terminals[terminalId];
     if (terminal == null || terminal.client.isClosed) return null;
 
-    final stopwatch = Stopwatch()..start();
-    try {
-      final session = await terminal.client.execute(':');
-      await session.done;
-      return identical(_terminals[terminalId], terminal)
-          ? stopwatch.elapsed
-          : null;
-    } catch (_) {
-      return null;
-    }
+    final latency = await _probeLatency(terminal.client);
+    return latency != null && identical(_terminals[terminalId], terminal)
+        ? latency
+        : null;
   }
 
   void _closeTerminalAfterShellEnds(String terminalId, SSHSession shell) {
@@ -354,8 +348,10 @@ class SshConnectionManager {
     final client = clientFor(server.id);
     final state = _states[server.id];
     if (client == null || client.isClosed || state == null) return;
-    await _refreshLatency(client, state);
-    if (server.collectStats) await _refreshStats(client, state);
+    await _refreshNetworkLatency(server, state);
+    if (server.collectStats) {
+      await _refreshStats(client, _states[server.id] ?? state);
+    }
     if (server.collectSystemInfo) {
       await _refreshSystemInfo(client, _states[server.id] ?? state);
     }
@@ -367,17 +363,60 @@ class SshConnectionManager {
     final client = clientFor(server.id);
     final state = _states[server.id];
     if (client == null || client.isClosed || state == null) return;
-    await _refreshLatency(client, state);
-    if (server.collectStats) await _refreshStats(client, state);
+    await _refreshNetworkLatency(server, state);
+    if (server.collectStats) {
+      await _refreshStats(client, _states[server.id] ?? state);
+    }
+  }
+
+  Future<void> _refreshNetworkLatency(
+    Server server,
+    SshSessionInfo state,
+  ) async {
+    if (!_supportsDirectNetworkPing(server)) return;
+    final client = _sessions[server.id];
+    if (client == null || client.isClosed) return;
+    final latency = await _probeNetworkLatency(server.host);
+    if (latency == null || !identical(_sessions[server.id], client)) return;
+    _set((_states[server.id] ?? state).copyWith(networkLatency: latency));
+  }
+
+  bool _supportsDirectNetworkPing(Server server) =>
+      server.jumpHostServerId == null &&
+      (server.proxyType == null ||
+          server.proxyType == ServerProxyType.none.name);
+
+  Future<Duration?> _probeNetworkLatency(String host) async {
+    final arguments = Platform.isWindows
+        ? ['-n', '1', '-w', '1000', host]
+        : ['-c', '1', '-W', Platform.isMacOS ? '1000' : '1', '-n', host];
+    try {
+      final result = await Process.run(
+        'ping',
+        arguments,
+      ).timeout(const Duration(seconds: 2));
+      if (result.exitCode != 0) return null;
+      return _parsePingLatency('${result.stdout}\n${result.stderr}');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Duration? _parsePingLatency(String output) {
+    final match = RegExp(
+      r'(?:time|average)\s*[=<]\s*(\d+(?:[.,]\d+)?)\s*ms',
+      caseSensitive: false,
+    ).firstMatch(output);
+    if (match == null) return null;
+    final milliseconds = double.tryParse(
+      match.group(1)!.replaceFirst(',', '.'),
+    );
+    if (milliseconds == null) return null;
+    return Duration(microseconds: (milliseconds * 1000).round());
   }
 
   /// Measures one SSH command round trip on [client], or returns `null` if
   /// the probe fails.
-  ///
-  /// The first request on a fresh connection absorbs a one-time per-connection
-  /// cost (session spawn / first fork) that is unrelated to the network round
-  /// trip. Callers displaying steady-state latency should discard one round
-  /// trip as a warm-up before relying on the next measurement.
   Future<Duration?> _probeLatency(SSHClient client) async {
     final stopwatch = Stopwatch()..start();
     try {
@@ -389,16 +428,6 @@ class SshConnectionManager {
     }
   }
 
-  Future<void> _refreshLatency(SSHClient client, SshSessionInfo state) async {
-    final latency = await _probeLatency(client);
-    if (latency == null) return;
-    if (!identical(_sessions[state.serverId], client)) return;
-    _set((_states[state.serverId] ?? state).copyWith(latency: latency));
-  }
-
-  /// Process list for the detail page. Caps output so busy hosts (thousands of
-  /// threads) stay cheap over SSH; client-side table re-sorts within this set.
-  /// Prefer not calling this on a tight timer unless the Processes tab is open.
   static const processListLimit = 250;
 
   Future<List<ServerProcess>> listProcesses(int serverId) async {
@@ -3626,18 +3655,9 @@ uname -r
           },
         ),
       );
-      // Establish the first latency sample before this connection is allowed
-      // to yield to another startup/reconnect attempt. Otherwise the next
-      // SSH handshake can delay this probe and make the first displayed
-      // response time include local connection work rather than the server's
-      // SSH round trip.
-      //
-      // The very first request on a fresh connection also pays a one-time
-      // per-connection cost that is unrelated to the network round trip, so
-      // discard that round trip as a warm-up before taking the measurement
-      // that is actually displayed.
-      await _probeLatency(client);
-      await _refreshLatency(client, _states[server.id]!);
+      unawaited(
+        _refreshNetworkLatency(server, _states[server.id]!).catchError((_) {}),
+      );
       unawaited(_refreshConnectionDetails(server, client));
     } catch (error) {
       final message = error is SSHAuthFailError
