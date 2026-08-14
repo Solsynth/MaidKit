@@ -160,7 +160,11 @@ class _ProjectDetailState extends ConsumerState<_ProjectDetail> {
           count == 0
               ? 'deploymentDeleteConfirmEmpty'.tr(args: [widget.project.name])
               : 'deploymentDeleteConfirm'.tr(
-                  args: [widget.project.name, '$count', count == 1 ? '' : 's'],
+                  namedArgs: {
+                    'name': widget.project.name,
+                    'count': '$count',
+                    'plural': count == 1 ? '' : 's',
+                  },
                 ),
         ),
         actions: [
