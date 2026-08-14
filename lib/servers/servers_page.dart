@@ -1911,6 +1911,25 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         : 'serverPortInvalid'.tr();
   }
 
+  String _jumpHostSummary() {
+    if (_jumpHostServerId == null) return 'serverJumpHostNone'.tr();
+    final names = <String>[];
+    final visited = <int>{};
+    var current = _jumpHostServerId;
+    while (current != null && visited.add(current)) {
+      final host = widget.servers
+          .where((server) => server.id == current)
+          .firstOrNull;
+      if (host == null) {
+        names.add('serverJumpHostMissing'.tr());
+        break;
+      }
+      names.add(host.name);
+      current = host.jumpHostServerId;
+    }
+    return names.reversed.join(' → ');
+  }
+
   bool _hasJumpHostCycle() {
     if (_jumpHostServerId == null) return false;
     if (_connectionType != ServerConnectionType.ssh) return true;
@@ -2181,53 +2200,46 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                     tilePadding: const EdgeInsets.symmetric(horizontal: 12),
                     childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     title: Text('serverJumpHostLabel'.tr()),
-                    subtitle: Text(
-                      _jumpHostServerId == null
-                          ? 'serverJumpHostNone'.tr()
-                          : widget.servers
-                                    .where(
-                                      (server) =>
-                                          server.id == _jumpHostServerId,
-                                    )
-                                    .firstOrNull
-                                    ?.name ??
-                                'serverJumpHostMissing'.tr(),
-                    ),
+                    subtitle: Text(_jumpHostSummary()),
                     children: [
-                      DropdownButtonFormField<int?>(
-                        initialValue: _jumpHostServerId,
-                        decoration: InputDecoration(
-                          labelText: 'serverJumpHostLabel'.tr(),
-                          helperText: 'serverJumpHostHint'.tr(),
-                        ),
-                        items: [
-                          DropdownMenuItem<int?>(
-                            value: null,
-                            child: Text('serverJumpHostNone'.tr()),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: DropdownButtonFormField<int?>(
+                          initialValue: _jumpHostServerId,
+                          decoration: InputDecoration(
+                            labelText: 'serverJumpHostLabel'.tr(),
+                            helperText: 'serverJumpHostHint'.tr(),
                           ),
-                          if (_jumpHostServerId != null &&
-                              !widget.servers.any(
-                                (server) => server.id == _jumpHostServerId,
-                              ))
+                          items: [
                             DropdownMenuItem<int?>(
-                              value: _jumpHostServerId,
-                              child: Text('serverJumpHostMissing'.tr()),
+                              value: null,
+                              child: Text('serverJumpHostNone'.tr()),
                             ),
-                          for (final candidate in widget.servers)
-                            if (candidate.id != widget.serverId &&
-                                candidate.connectionType ==
-                                    ServerConnectionType.ssh.name)
+                            if (_jumpHostServerId != null &&
+                                !widget.servers.any(
+                                  (server) => server.id == _jumpHostServerId,
+                                ))
                               DropdownMenuItem<int?>(
-                                value: candidate.id,
-                                child: Text(candidate.name),
+                                value: _jumpHostServerId,
+                                child: Text('serverJumpHostMissing'.tr()),
                               ),
-                        ],
-                        onChanged: (value) =>
-                            setState(() => _jumpHostServerId = value),
+                            for (final candidate in widget.servers)
+                              if (candidate.id != widget.serverId &&
+                                  candidate.connectionType ==
+                                      ServerConnectionType.ssh.name)
+                                DropdownMenuItem<int?>(
+                                  value: candidate.id,
+                                  child: Text(candidate.name),
+                                ),
+                          ],
+                          onChanged: (value) =>
+                              setState(() => _jumpHostServerId = value),
+                        ),
                       ),
                     ],
                   ),
                 ],
+                const SizedBox(height: 8),
                 MaidKitCollapsibleSection(
                   initiallyExpanded: false,
                   tilePadding: const EdgeInsets.symmetric(horizontal: 12),
@@ -2551,6 +2563,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ),
                 ),
               ],
+              const SizedBox(height: 8),
               MaidKitCollapsibleSection(
                 initiallyExpanded: false,
                 tilePadding: const EdgeInsets.symmetric(horizontal: 12),

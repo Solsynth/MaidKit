@@ -72,12 +72,21 @@ void main() {
     });
 
     test('create and update persist chained jump hosts', () async {
-      final jumpHost = await repository.create(
+      final firstHop = await repository.create(
         const ServerDraft(
           name: 'bastion',
           host: '10.0.0.10',
           port: 22,
           username: 'root',
+        ),
+      );
+      final secondHop = await repository.create(
+        ServerDraft(
+          name: 'internal-gateway',
+          host: '10.0.0.15',
+          port: 22,
+          username: 'root',
+          jumpHostServerId: firstHop.id,
         ),
       );
       final target = await repository.create(
@@ -86,11 +95,11 @@ void main() {
           host: '10.0.0.20',
           port: 22,
           username: 'root',
-          jumpHostServerId: jumpHost.id,
+          jumpHostServerId: secondHop.id,
         ),
       );
 
-      expect(target.jumpHostServerId, jumpHost.id);
+      expect(target.jumpHostServerId, secondHop.id);
       await repository.update(
         target,
         const ServerDraft(
