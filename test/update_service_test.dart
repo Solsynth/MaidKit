@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:maid_kit/shared/services/maidkit_update_service.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:solsynth_express/solsynth_express.dart';
 
 /// Dio adapter that answers every request with a canned HTTP response.
@@ -43,6 +45,30 @@ SolsynthExpressApi _apiWith(int statusCode, String body) {
 }
 
 void main() {
+  group('MaidKit update version checks', () {
+    test('includes the platform build number in update requests', () {
+      final info = PackageInfo(
+        appName: 'MaidKit',
+        packageName: 'dev.solsynth.maidkit',
+        version: '1.3.0',
+        buildNumber: '20',
+      );
+
+      expect(installedUpdateVersion(info), '1.3.0+20');
+    });
+
+    test('does not offer the installed or an older build', () {
+      expect(isDistributionReleaseNewer('1.3.0+20', '1.3.0+20'), isFalse);
+      expect(isDistributionReleaseNewer('1.3.0+19', '1.3.0+20'), isFalse);
+      expect(isDistributionReleaseNewer('1.3.0', '1.3.0+20'), isFalse);
+    });
+
+    test('offers a newer build or app version', () {
+      expect(isDistributionReleaseNewer('1.3.0+21', '1.3.0+20'), isTrue);
+      expect(isDistributionReleaseNewer('1.4.0+1', '1.3.0+20'), isTrue);
+    });
+  });
+
   group('SolsynthExpressApi releases', () {
     test('parses a release and compatible artifacts', () async {
       final release = await _apiWith(

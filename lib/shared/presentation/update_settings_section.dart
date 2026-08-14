@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:solsynth_express/solsynth_express.dart';
 
 import '../services/update_preferences.dart';
+import '../services/maidkit_update_service.dart';
 
 class MaidKitUpdateSettingsSection extends ConsumerStatefulWidget {
   const MaidKitUpdateSettingsSection({super.key});
@@ -22,7 +23,7 @@ class _MaidKitUpdateSettingsSectionState
   @override
   void initState() {
     super.initState();
-    _channelsFuture = UpdateService(
+    _channelsFuture = MaidKitUpdateService.forProduct(
       productId: kMaidKitDistributionProductId,
     ).fetchChannels();
   }
@@ -39,11 +40,11 @@ class _MaidKitUpdateSettingsSectionState
     if (_latestReleaseKey != latestKey) {
       _latestReleaseKey = latestKey;
       _latestReleaseFuture = enabled
-          ? UpdateService(
+          ? MaidKitUpdateService.forProduct(
               channel: channel,
               productId: kMaidKitDistributionProductId,
               enabled: true,
-            ).fetchLatestRelease()
+            ).fetchLatestAvailableRelease()
           : Future.value(null);
     }
 
@@ -127,7 +128,7 @@ class _MaidKitUpdateSettingsSectionState
                   : const Icon(Icons.chevron_right),
               onTap: release == null
                   ? null
-                  : () => UpdateService(
+                  : () => MaidKitUpdateService.forProduct(
                       channel: channel,
                       productId: kMaidKitDistributionProductId,
                       enabled: true,
@@ -140,7 +141,7 @@ class _MaidKitUpdateSettingsSectionState
           alignment: Alignment.centerRight,
           child: TextButton.icon(
             onPressed: () async {
-              await UpdateService(
+              await MaidKitUpdateService.forProduct(
                 channel: channel,
                 productId: kMaidKitDistributionProductId,
                 enabled: true,

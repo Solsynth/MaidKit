@@ -9,8 +9,8 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'agent/local_mcp_server.dart';
 import 'routing/app_router.dart';
 import 'shared/presentation/maidkit_window_scaffold.dart';
-import 'package:solsynth_express/solsynth_express.dart';
 import 'servers/server_providers.dart';
+import 'shared/services/maidkit_update_service.dart';
 import 'shared/services/update_preferences.dart';
 import 'servers/startup_connection_bootstrap.dart';
 import 'servers/tailscale_auto_connect.dart';
@@ -54,7 +54,7 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
       );
       final updateChannel = await ref.read(maidKitUpdateChannelProvider.future);
       if (!mounted || !ctx.mounted) return;
-      await UpdateService(
+      await MaidKitUpdateService.forProduct(
         channel: updateChannel,
         productId: kMaidKitDistributionProductId,
         enabled: updateChecksEnabled,

@@ -7,7 +7,7 @@ import 'package:styled_widget/styled_widget.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:maid_kit/shared/services/package_info_provider.dart';
-import 'package:solsynth_express/solsynth_express.dart';
+import 'package:maid_kit/shared/services/maidkit_update_service.dart';
 import 'package:maid_kit/shared/services/update_preferences.dart';
 
 /// Opens the Solar Network product page in the default browser.
@@ -146,7 +146,7 @@ class AboutPage extends ConsumerWidget {
                       subtitle: Text('checkForUpdatesHint'.tr()),
                       trailing: const Icon(Symbols.chevron_right),
                       onTap: () async {
-                        await UpdateService(
+                        await MaidKitUpdateService.forProduct(
                           channel: updateChannel,
                           productId: kMaidKitDistributionProductId,
                           enabled: true,
