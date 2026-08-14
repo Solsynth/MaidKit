@@ -1,313 +1,157 @@
-import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'server_models.dart';
 
-import 'maidcafe_service.dart';
 import 'maidcafe_install.dart';
+import 'maidcafe_stream.dart';
+import 'server_models.dart';
 import 'server_providers.dart';
 
+/// The lightweight MaidCafe entry point for a managed server.
 class MaidCafeServerTab extends ConsumerStatefulWidget {
-  const MaidCafeServerTab({super.key, required this.server});
+  const MaidCafeServerTab({
+    super.key,
+    required this.server,
+    required this.connected,
+    required this.connectionError,
+    required this.onConnect,
+  });
 
   final Server server;
+  final bool connected;
+  final String? connectionError;
+  final Future<void> Function() onConnect;
 
   @override
   ConsumerState<MaidCafeServerTab> createState() => _MaidCafeServerTabState();
 }
 
 class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab> {
-  late final TextEditingController _nameController;
-  late final TextEditingController _daemonUrlController;
-  late final TextEditingController _webhookSecretController;
+  late final TextEditingController _actionNameController;
+  late final TextEditingController _actionCommandController;
+  late final TextEditingController _actionArgumentsController;
+  final _actions = <MaidCafeActionDefinition>[];
+  MaidCafeStreamSession? _stream;
+  var _busy = false;
   String? _message;
-  String? _health;
-  bool _busy = false;
+  String? _streamStatus;
+
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.server.name);
-    _daemonUrlController = TextEditingController(
-      text: widget.server.maidCafeDaemonUrl ?? maidCafeDefaultLocalDaemonUrl,
-    );
-    _webhookSecretController = TextEditingController();
+    _actionNameController = TextEditingController();
+    _actionCommandController = TextEditingController();
+    _actionArgumentsController = TextEditingController();
+  }
+
+  @override
+  void didUpdateWidget(MaidCafeServerTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.connected && oldWidget.connected) {
+      _closeStream();
+    }
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _daemonUrlController.dispose();
-    _webhookSecretController.dispose();
+    _actionNameController.dispose();
+    _actionCommandController.dispose();
+    _actionArgumentsController.dispose();
+    _closeStream();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final cloudUser = ref.watch(cloudUserProvider);
-    final daemons = ref.watch(maidCafeDaemonsProvider);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'maidCafeServerTitle'.tr(),
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 6),
-          Text('maidCafeServerHint'.tr()),
-          const SizedBox(height: 20),
-          _serverConfig(context),
-          const SizedBox(height: 20),
-          cloudUser.when(
-            loading: () => const LinearProgressIndicator(),
-            error: (_, _) => _signedOut(),
-            data: (user) => user == null ? _signedOut() : _registered(daemons),
-          ),
-          if (_message != null) ...[
-            const SizedBox(height: 12),
-            Text(_message!),
-          ],
-        ],
-      ),
-    );
+  void _closeStream() {
+    final stream = _stream;
+    _stream = null;
+    if (stream != null) Future<void>.microtask(stream.close);
   }
 
-  Widget _serverConfig(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'maidCafeServerConfigTitle'.tr(),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 4),
-          Text('maidCafeServerConfigHint'.tr()),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _daemonUrlController,
-            enabled: !_busy,
-            decoration: InputDecoration(
-              labelText: 'maidCafeServerDaemonUrl'.tr(),
-              helperText: 'maidCafeServerDaemonUrlHint'.tr(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _webhookSecretController,
-            enabled: !_busy,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: 'maidCafeServerWebhookSecret'.tr(),
-              helperText: 'maidCafeServerWebhookSecretHint'.tr(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: _busy ? null : () => _saveConfig(context),
-                child: Text('maidCafeSave'.tr()),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : () => _checkHealth(context),
-                icon: const Icon(Symbols.health_and_safety),
-                label: Text('maidCafeCheckHealth'.tr()),
-              ),
-              if (_health != null) Text(_health!),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Future<void> _saveConfig(BuildContext context) async {
-    setState(() {
-      _busy = true;
-      _message = null;
-    });
-    try {
-      await ref
-          .read(serverRepositoryProvider)
-          .updateMaidCafeConfig(
-            widget.server,
-            daemonUrl: _daemonUrlController.text,
-            webhookSecret: _webhookSecretController.text,
-          );
-      _webhookSecretController.clear();
-      if (mounted) {
-        setState(() => _message = 'maidCafeServerConfigSaved'.tr());
-      }
-      ref.invalidate(serversProvider);
-    } catch (error) {
-      if (mounted) setState(() => _message = _errorText(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _checkHealth(BuildContext context) async {
-    setState(() {
-      _busy = true;
-      _message = null;
-    });
-    try {
-      final health = await ref
-          .read(maidCafeServiceProvider)
-          .checkDaemonHealth(daemonBaseUrl: _daemonUrlController.text);
-      if (mounted) {
-        setState(
-          () => _health = '${'maidCafeHealthResult'.tr()}: ${health.ok}',
-        );
-      }
-    } catch (error) {
-      if (mounted) setState(() => _message = _errorText(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Widget _signedOut() => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text('maidCafeSignInRequired'.tr()),
-    ),
-  );
-
-  Widget _registered(AsyncValue<List<MaidCafeDaemon>> daemons) => daemons.when(
-    loading: () => const LinearProgressIndicator(),
-    error: (error, _) => Row(
-      children: [
-        Expanded(child: Text(_errorText(error))),
-        TextButton(
-          onPressed: () => ref.invalidate(maidCafeDaemonsProvider),
-          child: Text('maidCafeRetry'.tr()),
-        ),
-      ],
-    ),
-    data: (items) {
-      final daemon = items
-          .where((item) => item.name == _nameController.text.trim())
-          .firstOrNull;
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (daemon != null) ...[
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('maidCafeInstallDaemonHint'.tr()),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                        onPressed: _busy ? null : () => _installDaemon(daemon),
-                        icon: const Icon(Symbols.download),
-                        label: Text('maidCafeInstallDaemon'.tr()),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          TextField(
-            controller: _nameController,
-            enabled: !_busy,
-            decoration: InputDecoration(
-              labelText: 'maidCafeDaemonName'.tr(),
-              helperText: daemon == null
-                  ? 'maidCafeServerRegisterHint'.tr()
-                  : 'maidCafeServerRegisteredHint'.tr(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              onPressed: _busy || daemon != null ? null : _register,
-              icon: const Icon(Symbols.add_link),
-              label: Text('maidCafeRegister'.tr()),
-            ),
-          ),
-        ],
-      );
-    },
-  );
-
-  Future<void> _installDaemon(MaidCafeDaemon daemon) async {
-    setState(() {
-      _busy = true;
-      _message = null;
-    });
-    try {
-      final cloudSecret = await ref
-          .read(maidCafeServiceProvider)
-          .storedCloudSecret(daemon.id);
-      if (cloudSecret == null || cloudSecret.trim().isEmpty) {
-        if (mounted) {
-          setState(
-            () => _message = 'maidCafeInstallDaemonNeedsRegistration'.tr(),
-          );
-        }
-        return;
-      }
-      String? sudoPassword;
-      if (widget.server.username != 'root') {
-        final credential = await ref
-            .read(serverRepositoryProvider)
-            .credentialFor(widget.server);
-        if (credential.type == CredentialType.password) {
-          sudoPassword = credential.password;
-        }
-      }
-      await installMaidCafeDaemon(
-        ref: ref,
-        server: widget.server,
-        daemon: daemon,
-        cloudUrl: ref.read(maidCafeCloudUrlProvider),
-        cloudSecret: cloudSecret,
-        sudoPassword: sudoPassword,
-      );
-      if (mounted) {
-        setState(() => _message = 'maidCafeInstallDaemonSuccess'.tr());
-      }
-    } catch (error) {
-      if (mounted) setState(() => _message = _errorText(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _register() async {
-    final name = _nameController.text.trim();
-    if (name.isEmpty) {
-      setState(() => _message = 'maidCafeDaemonNameRequired'.tr());
+  void _addAction() {
+    final name = _actionNameController.text.trim();
+    final command = _actionCommandController.text.trim();
+    if (name.isEmpty || command.isEmpty || !command.startsWith('/')) {
+      setState(() => _message = 'maidCafeActionCommandRequired'.tr());
       return;
     }
+    if (_actions.any((action) => action.name == name)) {
+      setState(() => _message = 'maidCafeActionNameUnique'.tr());
+      return;
+    }
+    setState(() {
+      _actions.add(
+        MaidCafeActionDefinition(
+          name: name,
+          command: command,
+          arguments: _actionArgumentsController.text
+              .split(',')
+              .map((argument) => argument.trim())
+              .where((argument) => argument.isNotEmpty)
+              .toList(),
+        ),
+      );
+      _actionNameController.clear();
+      _actionCommandController.clear();
+      _actionArgumentsController.clear();
+      _message = null;
+    });
+  }
+
+  Future<void> _openStream() async {
+    final stream = await ref
+        .read(connectionManagerProvider)
+        .withClient(widget.server.id, MaidCafeStreamSession.open);
+    try {
+      final health = await stream.health();
+      await _stream?.close();
+      if (mounted) {
+        setState(() {
+          _stream = stream;
+          _streamStatus = '${'maidCafeStreamConnected'.tr()} · ${health['id']}';
+        });
+      } else {
+        await stream.close();
+      }
+    } catch (_) {
+      await stream.close();
+      rethrow;
+    }
+  }
+
+  Future<void> _install() async {
+    if (_busy || !widget.connected) return;
     setState(() {
       _busy = true;
       _message = null;
     });
     try {
       final credential = await ref
-          .read(maidCafeServiceProvider)
-          .createDaemon(name: name);
-      ref.invalidate(maidCafeDaemonsProvider);
-      if (mounted) await _showSecret(credential);
-    } on MaidCafeException catch (error) {
-      if (mounted) setState(() => _message = error.message);
+          .read(serverRepositoryProvider)
+          .credentialFor(widget.server);
+      final sudoPassword = credential.type == CredentialType.password
+          ? credential.password
+          : null;
+      await installMaidCafeApplication(
+        ref: ref,
+        server: widget.server,
+        sudoPassword: sudoPassword,
+        actions: List.unmodifiable(_actions),
+      );
+      try {
+        await _openStream();
+        if (mounted) {
+          setState(() => _message = 'maidCafeInstallApplicationSuccess'.tr());
+        }
+      } catch (error) {
+        if (mounted) {
+          setState(
+            () =>
+                _message = '${'maidCafeInstallApplicationSuccess'.tr()} $error',
+          );
+        }
+      }
     } catch (error) {
       if (mounted) setState(() => _message = error.toString());
     } finally {
@@ -315,39 +159,196 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab> {
     }
   }
 
-  Future<void> _showSecret(MaidCafeDaemonCredential credential) async {
-    final snippet =
-        '[daemon]\nid = "${credential.id}"\ncloudUrl = "${ref.read(maidCafeCloudUrlProvider)}"\ncloudSecret = "${credential.secret}"';
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('maidCafeOneTimeSecret'.tr()),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+  Future<void> _refreshMetrics() async {
+    final stream = _stream;
+    if (stream == null) return;
+    try {
+      final metrics = await stream.metrics();
+      if (mounted) {
+        setState(
+          () => _streamStatus =
+              '${'maidCafeStreamConnected'.tr()} · CPU ${metrics['cpu_percent']}%',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    }
+  }
+
+  Future<void> _invokeAction(MaidCafeActionDefinition action) async {
+    final stream = _stream;
+    if (stream == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      final result = await stream.invokeAction(action.name);
+      if (mounted) {
+        setState(
+          () => _message =
+              '${'maidCafeActionCompleted'.tr()}: ${result['stdout'] ?? ''}',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Text('maidCafeOneTimeSecretWarning'.tr()),
-              const SizedBox(height: 12),
-              SelectableText(credential.secret),
-              const SizedBox(height: 12),
-              SelectableText(snippet),
+              Icon(Symbols.local_cafe, color: scheme.primary),
+              const SizedBox(width: 10),
+              Text('maidCafeTitle'.tr(), style: theme.textTheme.titleLarge),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Clipboard.setData(ClipboardData(text: snippet)),
-            child: Text('maidCafeCopySnippet'.tr()),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('maidCafeDone'.tr()),
-          ),
+          const SizedBox(height: 8),
+          Text('maidCafeServerInstallHint'.tr()),
+          const SizedBox(height: 20),
+          if (!widget.connected)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      widget.connectionError ?? 'detailConnectToCollect'.tr(),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.icon(
+                        onPressed: widget.onConnect,
+                        icon: const Icon(Symbols.link),
+                        label: Text('detailConnectForMetrics'.tr()),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else ...[
+            _actionEditor(context),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _busy ? null : _install,
+              icon: const Icon(Symbols.download),
+              label: Text('maidCafeInstallApplication'.tr()),
+            ),
+            if (_streamStatus != null) ...[
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(_streamStatus!),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _busy ? null : _refreshMetrics,
+                            icon: const Icon(Symbols.monitoring),
+                            label: Text('maidCafeRefreshMetrics'.tr()),
+                          ),
+                          for (final action in _actions)
+                            OutlinedButton.icon(
+                              onPressed: _busy
+                                  ? null
+                                  : () => _invokeAction(action),
+                              icon: const Icon(Symbols.play_arrow),
+                              label: Text(action.name),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 12),
+            Text(_message!, style: theme.textTheme.bodySmall),
+          ],
         ],
       ),
     );
   }
 
-  String _errorText(Object error) =>
-      error is MaidCafeException ? error.message : error.toString();
+  Widget _actionEditor(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'maidCafeActions'.tr(),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text('maidCafeActionsHint'.tr()),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _actionNameController,
+            enabled: !_busy,
+            decoration: InputDecoration(labelText: 'maidCafeActionName'.tr()),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _actionCommandController,
+            enabled: !_busy,
+            decoration: InputDecoration(
+              labelText: 'maidCafeActionCommand'.tr(),
+              helperText: 'maidCafeActionCommandHint'.tr(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _actionArgumentsController,
+            enabled: !_busy,
+            decoration: InputDecoration(
+              labelText: 'maidCafeActionArguments'.tr(),
+              helperText: 'maidCafeActionArgumentsHint'.tr(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : _addAction,
+              icon: const Icon(Symbols.add),
+              label: Text('maidCafeAddAction'.tr()),
+            ),
+          ),
+          for (final action in _actions)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(action.name),
+              subtitle: Text('${action.command} ${action.arguments.join(' ')}'),
+              trailing: IconButton(
+                tooltip: 'maidCafeRemoveAction'.tr(),
+                onPressed: _busy
+                    ? null
+                    : () => setState(() => _actions.remove(action)),
+                icon: const Icon(Symbols.delete_outline),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 }
