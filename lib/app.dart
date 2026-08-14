@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
+import 'package:material_ui/material_ui.dart'
+    as material_ui
+    show GlobalMaterialLocalizations;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -55,6 +58,7 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
       final updateChannel = await ref.read(maidKitUpdateChannelProvider.future);
       if (!mounted || !ctx.mounted) return;
       await UpdateService(
+        apiBaseUrl: kMaidKitDistributionApiBaseUrl,
         channel: updateChannel,
         productId: kMaidKitDistributionProductId,
         enabled: updateChecksEnabled,
@@ -89,12 +93,10 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
       theme: createMaidKitTheme(Brightness.light, seedColor: appSeedColor),
       darkTheme: createMaidKitTheme(Brightness.dark, seedColor: appSeedColor),
       themeMode: themeMode,
-      locale: context.locale,
-      supportedLocales: context.supportedLocales,
       localizationsDelegates: [
         ...context.localizationDelegates,
+        ...material_ui.GlobalMaterialLocalizations.delegates,
         GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
       routerConfig: appRouter.config(),

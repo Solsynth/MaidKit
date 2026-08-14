@@ -4,9 +4,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 const kMaidKitUpdateChecksEnabledKey = 'maidkit_update_checks_enabled';
 const kMaidKitUpdateChannelKey = 'maidkit_update_channel';
 const kMaidKitDefaultUpdateChannel = 'stable';
+const kMaidKitDistributionApiBaseUrl = String.fromEnvironment(
+  'DISTRIBUTION_API_BASE_URL',
+  defaultValue: 'https://api.solian.app/dist',
+);
 const kMaidKitDistributionProductId = String.fromEnvironment(
   'DISTRIBUTION_PRODUCT_ID',
-  defaultValue: '5260a14a-97f3-431c-9c2a-b174a4de7d97',
+  defaultValue: 'ba8fa0fa-e0af-4c33-871f-25090e13dd3a',
 );
 
 final maidKitUpdateChecksEnabledProvider =

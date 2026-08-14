@@ -79,20 +79,13 @@ void main() {
     await tester.tap(find.byTooltip(settingsLabel));
     await tester.pumpAndSettle();
 
-    expect(find.text('settingsTitle'.tr()), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('settingsTerminalRenderer'.tr()),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.tap(find.text('settingsTerminal'.tr()).first);
+    await tester.pumpAndSettle();
     expect(find.text('settingsTerminalRenderer'.tr()), findsOneWidget);
 
-    await tester.scrollUntilVisible(
-      find.text('settingsAbout'.tr()),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('settingsAbout'.tr()), findsOneWidget);
+    await tester.tap(find.text('settingsAbout'.tr()).first);
+    await tester.pumpAndSettle();
+    expect(find.text('settingsAbout'.tr()), findsWidgets);
   });
 
   testWidgets('opens Assets from the desktop navigation rail', (

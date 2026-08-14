@@ -23,6 +23,7 @@ class _MaidKitUpdateSettingsSectionState
   void initState() {
     super.initState();
     _channelsFuture = UpdateService(
+      apiBaseUrl: kMaidKitDistributionApiBaseUrl,
       productId: kMaidKitDistributionProductId,
     ).fetchChannels();
   }
@@ -40,6 +41,7 @@ class _MaidKitUpdateSettingsSectionState
       _latestReleaseKey = latestKey;
       _latestReleaseFuture = enabled
           ? UpdateService(
+              apiBaseUrl: kMaidKitDistributionApiBaseUrl,
               channel: channel,
               productId: kMaidKitDistributionProductId,
               enabled: true,
@@ -58,7 +60,7 @@ class _MaidKitUpdateSettingsSectionState
               .read(maidKitUpdateChecksEnabledProvider.notifier)
               .setEnabled(value),
         ),
-        const Divider(height: 1),
+        const SizedBox(height: 8),
         FutureBuilder<List<DistributionChannel>>(
           future: _channelsFuture,
           builder: (context, snapshot) {
@@ -91,7 +93,7 @@ class _MaidKitUpdateSettingsSectionState
             );
           },
         ),
-        const Divider(height: 1),
+        const SizedBox(height: 8),
         FutureBuilder<DistributionReleaseInfo?>(
           future: _latestReleaseFuture,
           builder: (context, snapshot) {
@@ -128,6 +130,7 @@ class _MaidKitUpdateSettingsSectionState
               onTap: release == null
                   ? null
                   : () => UpdateService(
+                      apiBaseUrl: kMaidKitDistributionApiBaseUrl,
                       channel: channel,
                       productId: kMaidKitDistributionProductId,
                       enabled: true,
@@ -135,12 +138,13 @@ class _MaidKitUpdateSettingsSectionState
             );
           },
         ),
-        const Divider(height: 1),
+        const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerRight,
           child: TextButton.icon(
             onPressed: () async {
               await UpdateService(
+                apiBaseUrl: kMaidKitDistributionApiBaseUrl,
                 channel: channel,
                 productId: kMaidKitDistributionProductId,
                 enabled: true,

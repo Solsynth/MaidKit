@@ -2,6 +2,8 @@ import 'package:flutter/material.dart' as flutter;
 import 'package:maid_kit/theme.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'
+    as flutter_localizations;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 
@@ -36,23 +38,31 @@ class MaidKitWindowScaffold extends ConsumerWidget {
       // uses the modular material_ui package.
       child: flutter.Theme(
         data: _createWindowFrameTheme(Theme.of(context)),
-        child: flutter.Material(
-          // Keep the frame's existing surface painting while providing the
-          // Flutter SDK Material ancestor required by legacy controls.
-          type: flutter.MaterialType.transparency,
-          child: DesktopWindowFrame(
-            isDesktopPlatform: isDesktop,
-            title: Text(
-              title ?? 'MaidKit',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            // Routes own their safe areas. Consuming mobile insets here prevents
-            // page scaffolds from participating correctly in gesture-back.
-            child: Column(
-              children: [
-                Expanded(child: child),
-                const TaskProgressBar(),
-              ],
+        child: flutter.Localizations.override(
+          context: context,
+          delegates: const [
+            // Both packages define distinct MaterialLocalizations types.
+            ...GlobalMaterialLocalizations.delegates,
+            flutter_localizations.GlobalMaterialLocalizations.delegate,
+          ],
+          child: flutter.Material(
+            // Keep the frame's existing surface painting while providing the
+            // Flutter SDK Material ancestor required by legacy controls.
+            type: flutter.MaterialType.transparency,
+            child: DesktopWindowFrame(
+              isDesktopPlatform: isDesktop,
+              title: Text(
+                title ?? 'MaidKit',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              // Routes own their safe areas. Consuming mobile insets here prevents
+              // page scaffolds from participating correctly in gesture-back.
+              child: Column(
+                children: [
+                  Expanded(child: child),
+                  const TaskProgressBar(),
+                ],
+              ),
             ),
           ),
         ),

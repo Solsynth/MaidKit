@@ -147,6 +147,7 @@ class AboutPage extends ConsumerWidget {
                       trailing: const Icon(Symbols.chevron_right),
                       onTap: () async {
                         await UpdateService(
+                          apiBaseUrl: kMaidKitDistributionApiBaseUrl,
                           channel: updateChannel,
                           productId: kMaidKitDistributionProductId,
                           enabled: true,
