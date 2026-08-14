@@ -18,4 +18,38 @@ void main() {
     expect(settings.seedColor, color);
     expect(container.read(appSeedColorProvider), color);
   });
+
+  test('restores and saves the theme mode', () async {
+    final settings = InMemoryAppThemeSettings(themeMode: ThemeMode.dark);
+    final container = ProviderContainer(
+      overrides: [appThemeSettingsProvider.overrideWithValue(settings)],
+    );
+    addTearDown(container.dispose);
+
+    expect(container.read(themeModeProvider), ThemeMode.dark);
+
+    await container
+        .read(themeModeProvider.notifier)
+        .setThemeMode(ThemeMode.light);
+
+    expect(settings.themeMode, ThemeMode.light);
+    expect(container.read(themeModeProvider), ThemeMode.light);
+  });
+
+  test('restores and saves the compact dashboard preference', () async {
+    final settings = InMemoryAppThemeSettings(compactDashboard: true);
+    final container = ProviderContainer(
+      overrides: [appThemeSettingsProvider.overrideWithValue(settings)],
+    );
+    addTearDown(container.dispose);
+
+    expect(container.read(dashboardCompactViewProvider), isTrue);
+
+    await container
+        .read(dashboardCompactViewProvider.notifier)
+        .setCompact(false);
+
+    expect(settings.compactDashboard, isFalse);
+    expect(container.read(dashboardCompactViewProvider), isFalse);
+  });
 }
