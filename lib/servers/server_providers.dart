@@ -17,6 +17,7 @@ import 'package:maid_kit/agent/mcp_repository.dart';
 import 'package:maid_kit/agent/skill_repository.dart';
 import 'package:maid_kit/agent/skill_registry.dart';
 import 'package:maid_kit/agent/agent_repository.dart';
+import 'package:maid_kit/agent/agent_model_catalog.dart';
 import 'package:maid_kit/agent/conversation_store.dart';
 import 'package:maid_kit/agent/agent_personality.dart';
 import 'package:maid_kit/agent/agent_run_policy.dart';
@@ -425,6 +426,10 @@ final agentRepositoryProvider = Provider<AgentRepository>((ref) {
     ref.watch(vaultServiceProvider),
   );
 });
+
+final agentModelCatalogProvider = Provider<AgentModelCatalog>(
+  (ref) => AgentModelCatalog(),
+);
 
 final agentConfiguredProvider = StreamProvider<bool>((ref) {
   return ref

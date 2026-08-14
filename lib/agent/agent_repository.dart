@@ -25,6 +25,7 @@ class AgentProviderDraft {
     required this.apiKey,
     required this.baseUrl,
     required this.model,
+    this.models = const [],
   });
   final String name;
 
@@ -32,6 +33,7 @@ class AgentProviderDraft {
   final String apiKey;
   final String? baseUrl;
   final String model;
+  final List<String> models;
 }
 
 class AgentRepository {
@@ -94,20 +96,17 @@ class AgentRepository {
               updatedAt: DateTime.now().toUtc(),
             ),
           );
-      await _database
-          .into(_database.agentProviderModels)
-          .insert(
-            AgentProviderModelsCompanion.insert(
-              providerId: providerId,
-              model: model,
-              createdAt: DateTime.now().toUtc(),
-            ),
-          );
+      for (final discoveredModel in {model, ...draft.models}) {
+        await addModel(providerId, discoveredModel);
+      }
     } else {
       await (_database.update(
         _database.agentProviders,
       )..where((table) => table.id.equals(existing.id))).write(values);
       await addModel(existing.id, model);
+      for (final discoveredModel in draft.models) {
+        await addModel(existing.id, discoveredModel);
+      }
     }
   }
 

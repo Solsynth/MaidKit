@@ -867,6 +867,9 @@ class _AgentPageState extends ConsumerState<AgentPage> {
       useRootNavigator: true,
       builder: (sheetContext) => _AgentProviderEditorSheet(
         existing: existing,
+        onFetchModels: (apiKey, baseUrl) => ref
+            .read(agentModelCatalogProvider)
+            .fetchModels(baseUrl: baseUrl, apiKey: apiKey),
         onSave: (draft) async {
           try {
             await ref
@@ -1756,9 +1759,12 @@ class _ConversationTile extends StatelessWidget {
 class _AgentProviderEditorSheet extends StatefulWidget {
   const _AgentProviderEditorSheet({
     required this.existing,
+    required this.onFetchModels,
     required this.onSave,
   });
   final AgentProvider? existing;
+  final Future<List<String>> Function(String apiKey, String baseUrl)
+  onFetchModels;
   final Future<void> Function(AgentProviderDraft draft) onSave;
 
   @override
@@ -1850,6 +1856,8 @@ class _AgentProviderEditorSheetState extends State<_AgentProviderEditorSheet> {
   late final _model = TextEditingController(
     text: widget.existing?.model ?? 'gpt-4o-mini',
   );
+  var _models = <String>[];
+  var _fetchingModels = false;
   var _saving = false;
 
   @override
@@ -1865,16 +1873,39 @@ class _AgentProviderEditorSheetState extends State<_AgentProviderEditorSheet> {
     if (_saving) return;
     setState(() => _saving = true);
     try {
+      if (_key.text.trim().isNotEmpty && _models.isEmpty) {
+        await _fetchModels(showError: false);
+      }
       await widget.onSave(
         AgentProviderDraft(
           name: _name.text,
           apiKey: _key.text,
           baseUrl: _endpoint.text,
           model: _model.text,
+          models: _models,
         ),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _fetchModels({bool showError = true}) async {
+    if (_fetchingModels) return;
+    setState(() => _fetchingModels = true);
+    try {
+      final models = await widget.onFetchModels(_key.text, _endpoint.text);
+      if (!mounted) return;
+      setState(() {
+        _models = models;
+        if (!models.contains(_model.text)) _model.text = models.first;
+      });
+    } catch (error) {
+      if (showError) {
+        showMaidKitErrorAlert(error, title: 'agentCouldNotFetchModels'.tr());
+      }
+    } finally {
+      if (mounted) setState(() => _fetchingModels = false);
     }
   }
 
@@ -1901,6 +1932,7 @@ class _AgentProviderEditorSheetState extends State<_AgentProviderEditorSheet> {
               _name.text = preset.name;
               _endpoint.text = preset.baseUrl;
               _model.text = preset.models.first;
+              _models = [];
             });
           },
         ),
@@ -1931,6 +1963,33 @@ class _AgentProviderEditorSheetState extends State<_AgentProviderEditorSheet> {
           textInputAction: TextInputAction.next,
           decoration: InputDecoration(labelText: 'agentBaseUrl'.tr()),
         ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _fetchingModels ? null : _fetchModels,
+          icon: _fetchingModels
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Symbols.refresh),
+          label: Text('agentFetchModels'.tr()),
+        ),
+        if (_models.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _models.contains(_model.text) ? _model.text : null,
+            decoration: InputDecoration(
+              labelText: 'agentDiscoveredModels'.tr(),
+            ),
+            items: [
+              for (final model in _models)
+                DropdownMenuItem(value: model, child: Text(model)),
+            ],
+            onChanged: (model) {
+              if (model != null) _model.text = model;
+            },
+          ),
+        ],
         const SizedBox(height: 12),
         TextField(
           controller: _model,
