@@ -588,9 +588,12 @@ final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
 
 class ThemeModeNotifier extends Notifier<ThemeMode> {
   @override
-  ThemeMode build() => ThemeMode.system;
+  ThemeMode build() => ref.read(appThemeSettingsProvider).themeMode;
 
-  void setThemeMode(ThemeMode mode) => state = mode;
+  Future<void> setThemeMode(ThemeMode mode) async {
+    await ref.read(appThemeSettingsProvider).saveThemeMode(mode);
+    state = mode;
+  }
 }
 
 final appThemeSettingsProvider = Provider<AppThemeSettings>(
@@ -608,6 +611,21 @@ class AppSeedColorNotifier extends Notifier<Color> {
   Future<void> setSeedColor(Color color) async {
     await ref.read(appThemeSettingsProvider).saveSeedColor(color);
     state = color;
+  }
+}
+
+final dashboardCompactViewProvider =
+    NotifierProvider<DashboardCompactViewNotifier, bool>(
+      DashboardCompactViewNotifier.new,
+    );
+
+class DashboardCompactViewNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.read(appThemeSettingsProvider).compactDashboard;
+
+  Future<void> setCompact(bool compact) async {
+    await ref.read(appThemeSettingsProvider).saveCompactDashboard(compact);
+    state = compact;
   }
 }
 

@@ -269,7 +269,7 @@ class _ServersCatalog extends StatelessWidget {
   }
 }
 
-class _ServerGrid extends StatefulWidget {
+class _ServerGrid extends ConsumerStatefulWidget {
   const _ServerGrid({
     required this.servers,
     required this.sessions,
@@ -297,13 +297,12 @@ class _ServerGrid extends StatefulWidget {
   final ValueChanged<Server> onRefresh;
 
   @override
-  State<_ServerGrid> createState() => _ServerGridState();
+  ConsumerState<_ServerGrid> createState() => _ServerGridState();
 }
 
-class _ServerGridState extends State<_ServerGrid> {
+class _ServerGridState extends ConsumerState<_ServerGrid> {
   var _isReconnecting = false;
   var _isArranging = false;
-  var _isCompactView = false;
   var _isSavingOrder = false;
   final _selectedTags = <String>{};
   List<int>? _pendingOrder;
@@ -360,6 +359,7 @@ class _ServerGridState extends State<_ServerGrid> {
 
   @override
   Widget build(BuildContext context) {
+    final isCompactView = ref.watch(dashboardCompactViewProvider);
     final sessionsByServerId = {
       for (final session in widget.sessions) session.serverId: session,
     };
@@ -456,7 +456,7 @@ class _ServerGridState extends State<_ServerGrid> {
                   sliver: SliverGrid(
                     gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                       maxCrossAxisExtent: 380,
-                      mainAxisExtent: _isCompactView ? 200 : 320,
+                      mainAxisExtent: isCompactView ? 200 : 320,
                       mainAxisSpacing: 16,
                       crossAxisSpacing: 16,
                     ),
@@ -466,7 +466,7 @@ class _ServerGridState extends State<_ServerGrid> {
                       final card = _ServerCard(
                         server: server,
                         session: session,
-                        compact: _isCompactView,
+                        compact: isCompactView,
                         onConnect: () => widget.onConnect(server),
                         onOpenDetail: () => widget.onOpenDetail(server),
                         onOpenTerminal: () => widget.onOpenTerminal(server),
@@ -519,6 +519,7 @@ class _ServerGridState extends State<_ServerGrid> {
   }
 
   Widget _arrangeServersFooter(BuildContext context) {
+    final isCompactView = ref.watch(dashboardCompactViewProvider);
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
@@ -528,13 +529,14 @@ class _ServerGridState extends State<_ServerGrid> {
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
               OutlinedButton.icon(
-                onPressed: () =>
-                    setState(() => _isCompactView = !_isCompactView),
+                onPressed: () => ref
+                    .read(dashboardCompactViewProvider.notifier)
+                    .setCompact(!isCompactView),
                 icon: Icon(
-                  _isCompactView ? Symbols.view_agenda : Symbols.view_compact,
+                  isCompactView ? Symbols.view_agenda : Symbols.view_compact,
                 ),
                 label: Text(
-                  _isCompactView
+                  isCompactView
                       ? 'serversDetailedView'.tr()
                       : 'serversCompactView'.tr(),
                 ),
