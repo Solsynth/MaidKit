@@ -569,6 +569,11 @@
   "detailPerformance": "效能",
   "detailPid": "PID",
   "detailPortForwarding": "埠轉發",
+  "activePortForwards": {
+    "zero": "沒有正在轉發的埠",
+    "one": "正在轉發 {} 个埠",
+    "other": "正在轉發 {} 个埠"
+  },
   "detailCafe": "Cafe",
   "detailProcessCount": "{} 個程序",
   "detailProcesses": "程序",

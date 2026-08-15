@@ -569,6 +569,11 @@
   "detailPerformance": "Performance",
   "detailPid": "PID",
   "detailPortForwarding": "Port forwarding",
+  "activePortForwards": {
+    "zero": "No active port forwards",
+    "one": "{} forwarding port",
+    "other": "{} forwarding ports"
+  },
   "detailCafe": "Cafe",
   "detailProcessCount": "{} processes",
   "detailProcesses": "Processes",

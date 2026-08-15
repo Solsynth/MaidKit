@@ -202,8 +202,18 @@ ActivityCounters? parseMaidCafeMetrics(Map<String, dynamic> response) {
         DateTime.tryParse(response['sent_at']?.toString() ?? '') ??
         DateTime.now(),
     cpuPercent: cpuPercent,
+    cpuCount: _metricInt(response['cpu_count']),
+    load1: _metricDouble(response['load1']),
+    load5: _metricDouble(response['load5']),
+    load15: _metricDouble(response['load15']),
     memoryTotalKb: memoryTotalKb,
     memoryAvailableKb: memoryAvailableKb,
+    swapTotalKb: _metricInt(response['swap_total_kb']),
+    swapFreeKb: _metricInt(response['swap_free_kb']),
+    diskTotalKb: _metricInt(response['disk_total_kb']),
+    diskAvailableKb: _metricInt(response['disk_available_kb']),
+    netRxBytes: _metricInt(response['net_rx_bytes']),
+    netTxBytes: _metricInt(response['net_tx_bytes']),
     uptime: uptimeSeconds == null ? null : Duration(seconds: uptimeSeconds),
   );
 }
