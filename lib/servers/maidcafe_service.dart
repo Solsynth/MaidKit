@@ -5,7 +5,10 @@ import 'package:cryptography/cryptography.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../containers/container_models.dart';
 import 'cloud_sync_service.dart';
+import 'server_models.dart';
+import 'systemd_models.dart';
 
 const maidCafeMinimumPort = 1024;
 const maidCafeDefaultCloudUrl = 'https://mk.solsynth.dev';
@@ -877,4 +880,182 @@ Map<String, dynamic> _metadata(Object? value) {
   if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
   if (value is Map) return value.map((key, value) => MapEntry('$key', value));
   throw _invalidResponse('MaidCafe notification metadata is invalid.');
+}
+
+/// Containers for one runtime from a `containers` event or endpoint.
+class MaidCafeRuntimeContainers {
+  const MaidCafeRuntimeContainers({
+    required this.runtime,
+    required this.available,
+    this.error,
+    this.containers = const [],
+  });
+
+  /// `"podman"` or `"docker"`.
+  final String runtime;
+  final bool available;
+
+  /// Collection failure message when the runtime exists but could not be
+  /// listed; null when the list is current.
+  final String? error;
+  final List<ServerContainer> containers;
+}
+
+/// Typed containers from a `containers` SSE event or `/api/v1/containers`.
+///
+/// [runtimes] covers every runtime found on the host (podman first); an empty
+/// list means the daemon found no container runtime at all.
+class MaidCafeContainersSnapshot {
+  const MaidCafeContainersSnapshot({this.runtimes = const []});
+
+  final List<MaidCafeRuntimeContainers> runtimes;
+
+  bool get hasRuntimes => runtimes.isNotEmpty;
+}
+
+/// Typed processes from a `processes` SSE event.
+class MaidCafeProcessesSnapshot {
+  const MaidCafeProcessesSnapshot({this.processes = const []});
+
+  final List<ServerProcess> processes;
+}
+
+/// Typed systemd units from a `systemd` SSE event.
+class MaidCafeSystemdSnapshot {
+  const MaidCafeSystemdSnapshot({
+    required this.available,
+    this.error,
+    this.units = const [],
+  });
+
+  final bool available;
+  final String? error;
+  final List<SystemdUnit> units;
+}
+
+/// Tolerant parse of a `containers` SSE event or `/api/v1/containers` payload.
+///
+/// Malformed or incomplete container entries are skipped; missing scalar
+/// fields fall back to null/empty values so one bad entry never aborts the
+/// whole snapshot.
+MaidCafeContainersSnapshot parseMaidCafeContainers(Map<String, dynamic> json) {
+  final runtimes = <MaidCafeRuntimeContainers>[];
+  final rawRuntimes = json['runtimes'];
+  if (rawRuntimes is List) {
+    for (final raw in rawRuntimes) {
+      if (raw is! Map) continue;
+      final entry = Map<String, dynamic>.from(raw);
+      final runtime = _optionalString(entry, 'runtime');
+      if (runtime == null) continue;
+      final containers = <ServerContainer>[];
+      final rawContainers = entry['containers'];
+      if (rawContainers is List) {
+        for (final rawContainer in rawContainers) {
+          if (rawContainer is! Map) continue;
+          final container = _parseSseContainer(
+            Map<String, dynamic>.from(rawContainer),
+          );
+          if (container != null) containers.add(container);
+        }
+      }
+      runtimes.add(
+        MaidCafeRuntimeContainers(
+          runtime: runtime,
+          available: entry['available'] is bool
+              ? entry['available'] as bool
+              : true,
+          error: _optionalString(entry, 'error'),
+          containers: containers,
+        ),
+      );
+    }
+  }
+  return MaidCafeContainersSnapshot(runtimes: runtimes);
+}
+
+ServerContainer? _parseSseContainer(Map<String, dynamic> json) {
+  final id = _optionalString(json, 'id');
+  final name = _optionalString(json, 'name');
+  if (id == null || name == null) return null;
+  return ServerContainer(
+    id: id,
+    name: name,
+    image: _optionalString(json, 'image') ?? '',
+    state: _optionalString(json, 'state') ?? '',
+    status: _optionalString(json, 'status') ?? '',
+    composeProject: _optionalString(json, 'compose_project'),
+  );
+}
+
+/// Tolerant parse of a `processes` SSE event payload.
+MaidCafeProcessesSnapshot parseMaidCafeProcesses(Map<String, dynamic> json) {
+  final processes = <ServerProcess>[];
+  final rawProcesses = json['processes'];
+  if (rawProcesses is List) {
+    for (final raw in rawProcesses) {
+      if (raw is! Map) continue;
+      final process = _parseSseProcess(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (process != null) processes.add(process);
+    }
+  }
+  return MaidCafeProcessesSnapshot(processes: processes);
+}
+
+ServerProcess? _parseSseProcess(Map<String, dynamic> json) {
+  final pid = json['pid'];
+  final user = _optionalString(json, 'user');
+  if (pid is! num || user == null) return null;
+  return ServerProcess(
+    pid: pid.toInt(),
+    user: user,
+    cpuPercent: _optionalNum(json, 'cpu_percent')?.toDouble() ?? 0,
+    memoryPercent: _optionalNum(json, 'memory_percent')?.toDouble() ?? 0,
+    rssKb: _optionalNum(json, 'rss_kb')?.toInt() ?? 0,
+    command: _optionalString(json, 'command') ?? '',
+  );
+}
+
+/// Tolerant parse of a `systemd` SSE event payload.
+MaidCafeSystemdSnapshot parseMaidCafeSystemd(Map<String, dynamic> json) {
+  final units = <SystemdUnit>[];
+  final rawUnits = json['units'];
+  if (rawUnits is List) {
+    for (final raw in rawUnits) {
+      if (raw is! Map) continue;
+      final unit = _parseSseSystemdUnit(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (unit != null) units.add(unit);
+    }
+  }
+  return MaidCafeSystemdSnapshot(
+    available: json['available'] is bool ? json['available'] as bool : true,
+    error: _optionalString(json, 'error'),
+    units: units,
+  );
+}
+
+SystemdUnit? _parseSseSystemdUnit(Map<String, dynamic> json) {
+  final name = _optionalString(json, 'name');
+  if (name == null) return null;
+  return SystemdUnit(
+    name: name,
+    loadState: _optionalString(json, 'load_state') ?? '',
+    activeState: _optionalString(json, 'active_state') ?? '',
+    subState: _optionalString(json, 'sub_state') ?? '',
+    description: _optionalString(json, 'description') ?? '',
+    unitFileState: _optionalString(json, 'unit_file_state') ?? '',
+  );
+}
+
+String? _optionalString(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  return value is String ? value : null;
+}
+
+num? _optionalNum(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  return value is num ? value : null;
 }

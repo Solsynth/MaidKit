@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/routing/app_router.dart';
+import 'package:maid_kit/theme.dart';
 
 enum TaskProgressStatus {
   queued,
@@ -515,52 +517,25 @@ class _TaskProgressSheet extends ConsumerWidget {
         : 'taskProgressTransfersCount'.tr(args: ['$activeCount']);
     final colorScheme = Theme.of(context).colorScheme;
 
-    return SafeArea(
-      child: FractionallySizedBox(
-        heightFactor: 0.56,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 12, 8),
-              child: Row(
-                children: [
-                  Icon(Symbols.sync, size: 20, color: colorScheme.primary),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: MaterialLocalizations.of(context).closeButtonLabel,
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Symbols.close),
-                  ),
-                ],
+    return SheetScaffold(
+      titleText: title,
+      heightFactor: 0.56,
+      child: tasks.isEmpty
+          ? Center(
+              child: Text(
+                'taskProgressNoTransfers'.tr(),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: tasks.length,
+              separatorBuilder: (_, _) => const Divider(height: 1, indent: 72),
+              itemBuilder: (context, index) =>
+                  _TaskProgressListTile(task: tasks[index]),
             ),
-            const Divider(height: 1),
-            Expanded(
-              child: tasks.isEmpty
-                  ? Center(
-                      child: Text(
-                        'taskProgressNoTransfers'.tr(),
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: tasks.length,
-                      itemBuilder: (context, index) =>
-                          _TaskProgressListTile(task: tasks[index]),
-                    ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -595,7 +570,10 @@ class _TaskProgressListTile extends StatelessWidget {
               details,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontFamily: MaidKitFonts.mono,
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
           if (progress != null) ...[
@@ -615,7 +593,9 @@ class _TaskProgressListTile extends StatelessWidget {
           if (progress != null)
             Text(
               '${(progress * 100).round()}%',
-              style: Theme.of(context).textTheme.labelMedium,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           _TaskProgressActions(task: task),
         ],

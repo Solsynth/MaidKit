@@ -12,6 +12,7 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:styled_widget/styled_widget.dart';
 import 'port_forwarding_models.dart';
+import 'quick_settings_sheet.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
 
@@ -96,8 +97,15 @@ class _ServerTabsShell extends ConsumerWidget {
                             ),
                             IconButton(
                               tooltip: 'tabSettings'.tr(),
-                              onPressed: () => tabsRouter.setActiveIndex(5),
-                              icon: const Icon(Symbols.settings),
+                              onPressed: () => showQuickSettingsSheet(
+                                context,
+                                onOpenSettings: () =>
+                                    tabsRouter.setActiveIndex(5),
+                              ),
+                              icon: Icon(
+                                Symbols.settings,
+                                fill: tabsRouter.activeIndex == 5 ? 1 : 0,
+                              ),
                             ),
                           ],
                         ),
@@ -196,8 +204,8 @@ class _ServerTabsShell extends ConsumerWidget {
                         label: 'tabAgent'.tr(),
                       ),
                       NavigationDestination(
-                        icon: const Icon(Symbols.settings, fill: 1),
-                        selectedIcon: const Icon(Symbols.settings),
+                        icon: const Icon(Symbols.settings),
+                        selectedIcon: const Icon(Symbols.settings, fill: 1),
                         label: 'tabSettings'.tr(),
                       ),
                     ],
@@ -249,6 +257,14 @@ class _PortForwardRailIndicator extends ConsumerWidget {
       label: Text('portForwardCount'.tr(args: ['${forwards.length}'])),
       child: PopupMenuButton<ActivePortForward>(
         tooltip: 'activePortForwards'.plural(forwards.length),
+        // Match the rail's plain IconButton (e.g. Settings): material_ui's
+        // fork renders 40x40 without the padded tap target, so shrink the
+        // popup's inner IconButton to the same box.
+        padding: const EdgeInsets.all(8),
+        iconSize: 24,
+        style: IconButton.styleFrom(
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
         icon: const Icon(Symbols.swap_horiz),
         onSelected: (forward) =>
             ref.read(connectionManagerProvider).stopPortForward(forward.id),

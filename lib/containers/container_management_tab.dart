@@ -14,6 +14,9 @@ import 'container_runtime_install.dart';
 import 'project_repository.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.gr.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
+import 'package:maid_kit/servers/maidcafe_stream.dart';
+import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
@@ -53,10 +56,32 @@ class _ContainerManagementTabState
   Timer? _refreshTimer;
   var _loading = false;
   var _hasLoadedEnvironments = false;
+  late final MaidCafeSessionRegistry _sessionRegistry;
+  MaidCafeStreamSession? _maidCafeStream;
+  StreamSubscription<MaidCafeStreamEvent>? _containersSubscription;
+  var _containersSseActive = false;
+
+  /// The daemon reported no container runtime; stop asking until a manual
+  /// refresh, an explicit action, or a fresh session.
+  var _containersUnavailable = false;
+
+  /// The stream already failed once; do not re-subscribe on later ticks.
+  /// Cleared by a manual refresh, an explicit action, or a fresh session.
+  var _containersSseAttempted = false;
+
+  /// Whether the visible list came from the MaidCafe daemon (banner).
+  var _containersFromMaidCafe = false;
+
+  /// Last `containers` event timestamp and the daemon's announced cadence,
+  /// used to detect a stream that stays connected but stops delivering data.
+  DateTime _lastContainersEvent = DateTime.fromMillisecondsSinceEpoch(0);
+  int _containersSseIntervalSeconds = 5;
 
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     if (widget.connected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load());
     }
@@ -66,14 +91,32 @@ class _ContainerManagementTabState
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _closeContainersSse();
+    _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ContainerManagementTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected &&
-        (!oldWidget.connected || oldWidget.server.id != widget.server.id)) {
+    final serverChanged = oldWidget.server.id != widget.server.id;
+    if (serverChanged) {
+      _closeContainersSse();
+      _sessionRegistry.release(oldWidget.server);
+      _sessionRegistry.retain(widget.server);
+      _maidCafeStream = null;
+      _containersSseAttempted = false;
+      _containersUnavailable = false;
+      _containersFromMaidCafe = false;
+      _hasLoadedEnvironments = false;
+    } else if (!widget.connected && oldWidget.connected) {
+      _closeContainersSse();
+      _sessionRegistry.invalidate(widget.server);
+      _maidCafeStream = null;
+      _containersFromMaidCafe = false;
+      _hasLoadedEnvironments = false;
+    }
+    if (widget.connected && (!oldWidget.connected || serverChanged)) {
       _load();
     }
     if (oldWidget.refreshInterval != widget.refreshInterval) {
@@ -86,13 +129,69 @@ class _ContainerManagementTabState
     _refreshTimer = Timer.periodic(widget.refreshInterval, (_) => _load());
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     if (!mounted || !widget.connected || _loading) return;
     _loading = true;
-    if (!_hasLoadedEnvironments) {
-      setState(() => _environments = const AsyncValue.loading());
-    }
     try {
+      if (force) {
+        // An explicit action may have changed what the daemon can see.
+        _containersSseAttempted = false;
+        _containersUnavailable = false;
+      }
+      if (!force) {
+        // SSE containers own freshness while active. When it is not, one
+        // stream attempt per tick is made only until it fails once; MaidCafe
+        // is not retried automatically once unavailable — only a manual
+        // refresh, an explicit action, or a fresh session re-attempts it.
+        if (_containersSseActive) {
+          final silence = DateTime.now().difference(_lastContainersEvent);
+          final timeoutSeconds = _containersSseIntervalSeconds * 3 >= 15
+              ? _containersSseIntervalSeconds * 3
+              : 15;
+          if (silence > Duration(seconds: timeoutSeconds)) {
+            // The stream stays connected (heartbeats) but stopped delivering
+            // data — the daemon collector may be disabled or failing. Fall
+            // back to on-demand fetches instead of freezing the list.
+            _containersSseAttempted = true;
+            _closeContainersSse();
+          } else {
+            return;
+          }
+        }
+        if (_containersSubscription == null &&
+            !_containersSseAttempted &&
+            !_containersUnavailable) {
+          await _startContainersSse();
+        }
+        if (_containersSseActive) return;
+        if (!_hasLoadedEnvironments) {
+          setState(() => _environments = const AsyncValue.loading());
+        }
+      }
+      if (!_containersUnavailable) {
+        final session = await _ensureMaidCafeStream();
+        if (session != null) {
+          try {
+            final snapshot = parseMaidCafeContainers(
+              await session.containers(),
+            );
+            if (snapshot.hasRuntimes && mounted) {
+              setState(() {
+                _containersFromMaidCafe = true;
+                _hasLoadedEnvironments = true;
+                _environments = AsyncValue.data(_environmentsFrom(snapshot));
+              });
+              return;
+            }
+            if (!snapshot.hasRuntimes) {
+              // The daemon has no container runtime; stop asking for it.
+              _containersUnavailable = true;
+            }
+          } catch (_) {
+            // Old daemon without /api/v1/containers: fall back to SSH.
+          }
+        }
+      }
       final environments = await ref
           .read(connectionManagerProvider)
           .listContainers(
@@ -102,6 +201,7 @@ class _ContainerManagementTabState
           );
       if (mounted) {
         setState(() {
+          _containersFromMaidCafe = false;
           _hasLoadedEnvironments = true;
           _environments = AsyncValue.data(environments);
         });
@@ -112,6 +212,125 @@ class _ContainerManagementTabState
       }
     } finally {
       _loading = false;
+    }
+  }
+
+  /// Manual refresh: always fetch (the stream may be silent), and re-arm the
+  /// MaidCafe path when it was previously unavailable.
+  Future<void> _refreshManually() async {
+    if (!_containersSseActive) {
+      _containersSseAttempted = false;
+      _containersUnavailable = false;
+      _maidCafeStream = null;
+      _sessionRegistry.invalidate(widget.server);
+    }
+    await _load(force: true);
+  }
+
+  /// Opens a MaidCafe session and subscribes to `containers` events.
+  ///
+  /// Failures leave [._containersSseActive] false so the SSH poller keeps
+  /// running; the failed attempt is latched so later ticks do not re-subscribe.
+  Future<void> _startContainersSse() async {
+    if (_containersSubscription != null ||
+        _containersSseAttempted ||
+        _containersUnavailable) {
+      return;
+    }
+    final session = await _ensureMaidCafeStream();
+    if (session == null || !mounted) return;
+    try {
+      final events = session.openStream(
+        events: const {MaidCafeStreamEventType.containers},
+      );
+      final subscription = events.listen(
+        _onContainersEvent,
+        onError: (Object error, StackTrace stackTrace) {
+          _containersSseAttempted = true;
+          _closeContainersSse();
+        },
+        onDone: () {
+          _containersSseAttempted = true;
+          _closeContainersSse();
+        },
+      );
+      _containersSubscription = subscription;
+    } catch (_) {
+      _containersSseAttempted = true;
+      _closeContainersSse();
+    }
+  }
+
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    _maidCafeStream = null;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      _maidCafeStream = session;
+      if (!identical(session, cached)) {
+        // A fresh session (reconnect or daemon restart) warrants a new stream
+        // attempt and a re-probe of the runtime.
+        _containersSseAttempted = false;
+        _containersUnavailable = false;
+      }
+    }
+    return session;
+  }
+
+  void _onContainersEvent(MaidCafeStreamEvent event) {
+    if (!mounted) return;
+    if (event.type == MaidCafeStreamEventType.hello) {
+      _lastContainersEvent = DateTime.now();
+      final intervals = event.data['intervals'];
+      if (intervals is Map) {
+        final seconds = intervals['containers'];
+        if (seconds is num && seconds > 0) {
+          _containersSseIntervalSeconds = seconds.toInt();
+        }
+      }
+      return;
+    }
+    if (event.type != MaidCafeStreamEventType.containers) return;
+    _lastContainersEvent = DateTime.now();
+    final snapshot = parseMaidCafeContainers(event.data);
+    if (!snapshot.hasRuntimes) {
+      // No runtime on the host: fall back to SSH without retrying the stream.
+      _containersUnavailable = true;
+      _containersSseAttempted = true;
+      _closeContainersSse();
+      unawaited(_load());
+      return;
+    }
+    setState(() {
+      _containersSseActive = true;
+      _containersFromMaidCafe = true;
+      _containersUnavailable = false;
+      _hasLoadedEnvironments = true;
+      _environments = AsyncValue.data(_environmentsFrom(snapshot));
+    });
+  }
+
+  List<ContainerEnvironment> _environmentsFrom(
+    MaidCafeContainersSnapshot snapshot,
+  ) => [
+    for (final runtime in snapshot.runtimes)
+      ContainerEnvironment(
+        runtime: runtime.runtime == 'podman'
+            ? ContainerRuntime.podman
+            : ContainerRuntime.docker,
+        scope: ContainerScope.root,
+        containers: runtime.containers,
+        error: runtime.error,
+      ),
+  ];
+
+  void _closeContainersSse() {
+    final subscription = _containersSubscription;
+    _containersSubscription = null;
+    _containersSseActive = false;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
     }
   }
 
@@ -192,7 +411,7 @@ class _ContainerManagementTabState
         icon: Symbols.check_circle,
         accentColor: Theme.of(context).colorScheme.primary,
       );
-      await _load();
+      await _load(force: true);
     } catch (error) {
       if (!mounted) return;
       showStyledSnackBar(
@@ -221,7 +440,7 @@ class _ContainerManagementTabState
         icon: Symbols.check_circle,
         accentColor: Theme.of(context).colorScheme.primary,
       );
-      await _load();
+      await _load(force: true);
     } catch (error) {
       if (!mounted) return;
       showStyledSnackBar(
@@ -253,13 +472,56 @@ class _ContainerManagementTabState
         actionLabel: 'commonRetry'.tr(),
         onAction: _load,
       ),
-      data: (environments) => _ContainerEnvironments(
-        server: widget.server,
-        environments: environments,
-        onRefresh: _load,
-        onAction: _runAction,
-        onInstallRuntime: _installRuntime,
-        focusComposeProject: widget.focusComposeProject,
+      data: (environments) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Shown only while the list is served by the MaidCafe daemon; the
+          // SSH poller is the default and gets no banner.
+          if (_containersFromMaidCafe) const _ContainerDataSourceBanner(),
+          Expanded(
+            child: _ContainerEnvironments(
+              server: widget.server,
+              environments: environments,
+              onRefresh: _refreshManually,
+              onAction: _runAction,
+              onInstallRuntime: _installRuntime,
+              focusComposeProject: widget.focusComposeProject,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Quiet indicator that the container list is served live by the MaidCafe
+/// daemon. Hidden entirely when the SSH poller is the data source.
+class _ContainerDataSourceBanner extends StatelessWidget {
+  const _ContainerDataSourceBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(color: scheme.secondaryContainer),
+      child: Row(
+        children: [
+          Icon(
+            Symbols.local_cafe,
+            size: 18,
+            color: scheme.onSecondaryContainer,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'containerDataSourceMaidCafe'.tr(),
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: scheme.onSecondaryContainer,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

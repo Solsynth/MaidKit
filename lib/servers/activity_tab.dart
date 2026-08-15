@@ -9,9 +9,9 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'activity_models.dart';
-import 'server_models.dart';
 import 'server_providers.dart';
 import 'maidcafe_stream.dart';
+import 'maidcafe_session_registry.dart';
 
 enum _ActivityMetricSource { ssh, maidCafe }
 
@@ -39,20 +39,31 @@ class ActivityTab extends ConsumerStatefulWidget {
 class _ActivityTabState extends ConsumerState<ActivityTab> {
   static const _historyLimit = 60;
 
+  late final MaidCafeSessionRegistry _sessionRegistry;
+
   final List<ActivitySample> _history = [];
   ActivityCounters? _previous;
   Timer? _timer;
   var _loading = false;
   var _hasSample = false;
   MaidCafeStreamSession? _maidCafeStream;
-  var _maidCafeAttempted = false;
   var _maidCafeHistoryLoaded = false;
+  StreamSubscription<MaidCafeStreamEvent>? _metricSubscription;
+  var _sseActive = false;
+  var _sseAttempted = false;
+
+  /// Last `metric` event timestamp and the daemon's announced cadence, used
+  /// to detect a stream that stays connected but stops delivering data.
+  DateTime _lastMetricEvent = DateTime.fromMillisecondsSinceEpoch(0);
+  int _metricSseIntervalSeconds = 1;
   _ActivityMetricSource? _source;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     if (widget.connected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _poll());
     }
@@ -62,7 +73,8 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   @override
   void dispose() {
     _timer?.cancel();
-    _maidCafeStream?.close();
+    _closeMaidCafeSse();
+    _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
@@ -70,9 +82,19 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   void didUpdateWidget(ActivityTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     final serverChanged = oldWidget.server.id != widget.server.id;
-    if (serverChanged || (!widget.connected && oldWidget.connected)) {
-      _maidCafeStream?.close();
-      _maidCafeAttempted = false;
+    if (serverChanged) {
+      _closeMaidCafeSse();
+      _sessionRegistry.release(oldWidget.server);
+      _sessionRegistry.retain(widget.server);
+      _maidCafeStream = null;
+      _sseAttempted = false;
+      _maidCafeHistoryLoaded = false;
+      _source = null;
+    } else if (!widget.connected && oldWidget.connected) {
+      _closeMaidCafeSse();
+      _sessionRegistry.invalidate(widget.server);
+      _maidCafeStream = null;
+      _sseAttempted = false;
       _maidCafeHistoryLoaded = false;
       _source = null;
     }
@@ -97,17 +119,40 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     if (!mounted || !widget.connected || _loading) return;
     _loading = true;
     try {
+      if (_sseActive) {
+        final silence = DateTime.now().difference(_lastMetricEvent);
+        final timeoutSeconds = _metricSseIntervalSeconds * 3 >= 10
+            ? _metricSseIntervalSeconds * 3
+            : 10;
+        if (silence > Duration(seconds: timeoutSeconds)) {
+          // The stream stays connected (heartbeats) but stopped delivering
+          // metrics — the daemon collector may be disabled or failing. Fall
+          // back to HTTP polling instead of freezing the charts.
+          _sseAttempted = true;
+          _closeMaidCafeSse();
+        } else {
+          return; // Per-second data flows from the stream.
+        }
+      }
       var source = _ActivityMetricSource.maidCafe;
       ActivityCounters counters;
       final maidCafe = await _ensureMaidCafeStream();
       if (maidCafe != null) {
+        if (_metricSubscription == null && !_sseAttempted) {
+          // One attempt per tick until it fails once; a failed stream is not
+          // retried automatically (only manual refresh or a fresh session).
+          _startMaidCafeSse(maidCafe);
+        }
+        if (_sseActive) return;
         try {
-          await _loadMaidCafeHistory(maidCafe);
+          if (!_maidCafeHistoryLoaded) {
+            await _loadMaidCafeHistory(maidCafe);
+          }
           counters =
               parseMaidCafeMetrics(await maidCafe.metrics()) ??
               (throw StateError('MaidCafe metrics response was empty.'));
         } catch (_) {
-          await _closeMaidCafeStream();
+          _closeMaidCafeStream();
           source = _ActivityMetricSource.ssh;
           counters = await _collectSshCounters();
         }
@@ -140,6 +185,96 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     }
   }
 
+  /// Opens the `metric` SSE subscription once the session is established.
+  ///
+  /// Failures are swallowed here: the caller falls back to HTTP polling and
+  /// retries on a later tick.
+  void _startMaidCafeSse(MaidCafeStreamSession session) {
+    try {
+      final events = session.openStream(
+        events: const {MaidCafeStreamEventType.metric},
+      );
+      final subscription = events.listen(
+        _onMaidCafeMetricEvent,
+        onError: (Object error, StackTrace stackTrace) {
+          _handleMaidCafeSseFailure();
+        },
+        onDone: _handleMaidCafeSseFailure,
+      );
+      _metricSubscription = subscription;
+    } catch (_) {
+      _handleMaidCafeSseFailure();
+    }
+  }
+
+  void _onMaidCafeMetricEvent(MaidCafeStreamEvent event) {
+    if (!mounted) return;
+    if (event.type == MaidCafeStreamEventType.hello) {
+      _sseActive = true;
+      _lastMetricEvent = DateTime.now();
+      final intervals = event.data['intervals'];
+      if (intervals is Map) {
+        final seconds = intervals['metric'];
+        if (seconds is num && seconds > 0) {
+          _metricSseIntervalSeconds = seconds.toInt();
+        }
+      }
+      final session = _maidCafeStream;
+      if (!_maidCafeHistoryLoaded && session != null) {
+        unawaited(_loadMaidCafeHistory(session));
+      }
+      return;
+    }
+    if (event.type != MaidCafeStreamEventType.metric) return;
+    _lastMetricEvent = DateTime.now();
+    final counters = parseMaidCafeMetrics(event.data);
+    if (counters == null) return;
+    _sseActive = true;
+    final sourceChanged =
+        _source != null && _source != _ActivityMetricSource.maidCafe;
+    final sample = counters.toSample(
+      previous: sourceChanged ? null : _previous,
+    );
+    _previous = counters;
+    setState(() {
+      _source = _ActivityMetricSource.maidCafe;
+      _hasSample = true;
+      _error = null;
+      if (sourceChanged) _history.clear();
+      _history.add(sample);
+      while (_history.length > _historyLimit) {
+        _history.removeAt(0);
+      }
+    });
+  }
+
+  void _handleMaidCafeSseFailure() {
+    _sseAttempted = true;
+    _closeMaidCafeSse();
+    // A later reconnect back-fills the history gap.
+    _maidCafeHistoryLoaded = false;
+  }
+
+  /// Manual refresh: re-arm the MaidCafe stream path and poll. Automatic
+  /// ticks never re-attempt a stream that already failed once.
+  void _refreshNow() {
+    if (!_sseActive) {
+      _sseAttempted = false;
+      _maidCafeStream = null;
+      _sessionRegistry.invalidate(widget.server);
+    }
+    unawaited(_poll());
+  }
+
+  void _closeMaidCafeSse() {
+    final subscription = _metricSubscription;
+    _metricSubscription = null;
+    _sseActive = false;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+  }
+
   Future<void> _loadMaidCafeHistory(MaidCafeStreamSession stream) async {
     if (_maidCafeHistoryLoaded) return;
     _maidCafeHistoryLoaded = true;
@@ -155,6 +290,7 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
       while (_history.length > _historyLimit) {
         _history.removeAt(0);
       }
+      if (mounted) setState(() {});
     } catch (_) {
       // Older MaidCafe daemons may not expose history yet; live metrics still work.
     }
@@ -165,32 +301,24 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
       .collectActivityCounters(widget.server.id);
 
   Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
-    if (_maidCafeStream != null || _maidCafeAttempted) {
-      return _maidCafeStream;
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    _maidCafeStream = null;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      _maidCafeStream = session;
+      if (!identical(session, cached)) {
+        // A fresh session (reconnect or daemon restart) warrants a new
+        // stream attempt.
+        _sseAttempted = false;
+      }
     }
-    _maidCafeAttempted = true;
-    try {
-      final credential = await ref
-          .read(serverRepositoryProvider)
-          .credentialFor(widget.server);
-      final sudoPassword = credential.type == CredentialType.password
-          ? credential.password
-          : null;
-      _maidCafeStream = await MaidCafeStreamSession.open(
-        manager: ref.read(connectionManagerProvider),
-        server: widget.server,
-        sudoPassword: sudoPassword,
-      );
-      return _maidCafeStream;
-    } catch (_) {
-      return null;
-    }
+    return session;
   }
 
-  Future<void> _closeMaidCafeStream() async {
-    final stream = _maidCafeStream;
+  void _closeMaidCafeStream() {
     _maidCafeStream = null;
-    if (stream != null) await stream.close();
+    _sessionRegistry.invalidate(widget.server);
   }
 
   @override
@@ -245,7 +373,7 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
               IconButton(
                 tooltip: 'activityRefreshNow'.tr(),
                 visualDensity: VisualDensity.compact,
-                onPressed: _poll,
+                onPressed: _refreshNow,
                 icon: const Icon(Symbols.refresh),
               ),
             ],
@@ -335,12 +463,8 @@ class _ActivitySourceBanner extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final maidCafe = source == _ActivityMetricSource.maidCafe;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(color: scheme.secondaryContainer),
       child: Row(
         children: [
           Icon(

@@ -16,6 +16,9 @@ import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'activity_tab.dart';
 import 'maidcafe_server_tab.dart';
+import 'maidcafe_service.dart';
+import 'maidcafe_stream.dart';
+import 'maidcafe_session_registry.dart';
 import 'crontab_tab.dart';
 import 'firewall_tab.dart';
 import 'package_management_tab.dart';
@@ -56,16 +59,31 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   var _refreshing = false;
   var _hasLoadedProcesses = false;
   late int _activeTabIndex;
+  late final MaidCafeSessionRegistry _sessionRegistry;
+  MaidCafeStreamSession? _maidCafeStream;
+  StreamSubscription<MaidCafeStreamEvent>? _processesSubscription;
+  var _processesSseActive = false;
+  var _processesSseAttempted = false;
+
+  /// Last `processes` event timestamp and the daemon's announced cadence,
+  /// used to detect a stream that stays connected but stops delivering data.
+  DateTime _lastProcessesEvent = DateTime.fromMillisecondsSinceEpoch(0);
+  int _processesSseIntervalSeconds = 10;
 
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     _activeTabIndex = widget.initialTab.clamp(0, _tabCount - 1);
     _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
     // Lazy-load processes only when the Processes tab is open so a 3s metrics
     // tick does not keep spawning remote `ps` while the user is elsewhere.
     if (_activeTabIndex == _processesTabIndex) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _loadProcesses());
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _startProcessesSse();
+        await _loadProcesses();
+      });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -84,6 +102,8 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _closeProcessesSse();
+    _sessionRegistry.release(widget.server);
     // Riverpod forbids mutating providers during dispose / tree finalization.
     final serverId = widget.server.id;
     final focused = _focusedServerNotifier;
@@ -101,13 +121,35 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
         index == _processesTabIndex && _activeTabIndex != _processesTabIndex;
     _activeTabIndex = index;
     if (openedProcesses) {
+      // Reopening the tab is a manual ask: allow a fresh stream attempt.
+      _processesSseAttempted = false;
+      unawaited(_startProcessesSse());
       unawaited(_loadProcesses());
     }
   }
 
-  Future<void> _loadProcesses() async {
+  Future<void> _loadProcesses({bool force = false}) async {
+    // While SSE is authoritative the daemon cadence owns freshness. A manual
+    // refresh (force) always fetches: the stream can be silent even while
+    // the connection looks alive.
+    if (_processesSseActive && !force) return;
     if (!_hasLoadedProcesses) {
       setState(() => _processes = const AsyncValue.loading());
+    }
+    final session = await _ensureMaidCafeStream();
+    if (session != null) {
+      try {
+        final snapshot = parseMaidCafeProcesses(await session.processes());
+        if (mounted) {
+          setState(() {
+            _hasLoadedProcesses = true;
+            _processes = AsyncValue.data(snapshot.processes);
+          });
+        }
+        return;
+      } catch (_) {
+        // Old daemon without /api/v1/processes: fall back to SSH.
+      }
     }
     try {
       final processes = await ref
@@ -126,6 +168,17 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     }
   }
 
+  /// Manual refresh: always fetch (the stream may be silent), and re-arm the
+  /// MaidCafe path when it was previously unavailable.
+  Future<void> _refreshProcesses() async {
+    if (!_processesSseActive) {
+      _processesSseAttempted = false;
+      _maidCafeStream = null;
+      _sessionRegistry.invalidate(widget.server);
+    }
+    await _loadProcesses(force: true);
+  }
+
   Future<void> _refresh() async {
     if (_refreshing) return;
     final manager = ref.read(connectionManagerProvider);
@@ -134,10 +187,100 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     try {
       await manager.refreshServerInfo(widget.server);
       if (_activeTabIndex == _processesTabIndex) {
+        if (_processesSseActive) {
+          final silence = DateTime.now().difference(_lastProcessesEvent);
+          final timeoutSeconds = _processesSseIntervalSeconds * 3 >= 15
+              ? _processesSseIntervalSeconds * 3
+              : 15;
+          if (silence > Duration(seconds: timeoutSeconds)) {
+            // The stream stays connected (heartbeats) but stopped delivering
+            // data — the daemon collector may be disabled or failing. Fall
+            // back to on-demand fetches instead of freezing the list.
+            _processesSseAttempted = true;
+            _closeProcessesSse();
+          }
+        }
+        if (_processesSubscription == null) {
+          unawaited(_startProcessesSse());
+        }
         await _loadProcesses();
       }
     } finally {
       _refreshing = false;
+    }
+  }
+
+  /// Opens a MaidCafe session with the same credential flow the Activity tab
+  /// uses, then subscribes to `processes` events.
+  Future<void> _startProcessesSse() async {
+    if (_processesSubscription != null || _processesSseAttempted) return;
+    final session = await _ensureMaidCafeStream();
+    if (session == null || !mounted) return;
+    try {
+      final events = session.openStream(
+        events: const {MaidCafeStreamEventType.processes},
+      );
+      final subscription = events.listen(
+        _onProcessesEvent,
+        onError: (Object error, StackTrace stackTrace) {
+          _processesSseAttempted = true;
+          _closeProcessesSse();
+        },
+        onDone: () {
+          _processesSseAttempted = true;
+          _closeProcessesSse();
+        },
+      );
+      _processesSubscription = subscription;
+    } catch (_) {
+      _processesSseAttempted = true;
+      _closeProcessesSse();
+    }
+  }
+
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    _maidCafeStream = null;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      _maidCafeStream = session;
+      if (!identical(session, cached)) {
+        _processesSseAttempted = false;
+      }
+    }
+    return session;
+  }
+
+  void _onProcessesEvent(MaidCafeStreamEvent event) {
+    if (!mounted) return;
+    if (event.type == MaidCafeStreamEventType.hello) {
+      _lastProcessesEvent = DateTime.now();
+      final intervals = event.data['intervals'];
+      if (intervals is Map) {
+        final seconds = intervals['processes'];
+        if (seconds is num && seconds > 0) {
+          _processesSseIntervalSeconds = seconds.toInt();
+        }
+      }
+      return;
+    }
+    if (event.type != MaidCafeStreamEventType.processes) return;
+    _lastProcessesEvent = DateTime.now();
+    final snapshot = parseMaidCafeProcesses(event.data);
+    setState(() {
+      _processesSseActive = true;
+      _hasLoadedProcesses = true;
+      _processes = AsyncValue.data(snapshot.processes);
+    });
+  }
+
+  void _closeProcessesSse() {
+    final subscription = _processesSubscription;
+    _processesSubscription = null;
+    _processesSseActive = false;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
     }
   }
 
@@ -166,7 +309,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       processes: _processes,
       refreshInterval: refreshInterval,
       onConnect: _connect,
-      onRefreshProcesses: _loadProcesses,
+      onRefreshProcesses: _refreshProcesses,
       onTabChanged: _onTabChanged,
       initialTab: widget.initialTab,
       initialComposeProject: widget.initialComposeProject,
@@ -989,8 +1132,10 @@ class _ProcessList extends ConsumerStatefulWidget {
 }
 
 class _ProcessListState extends ConsumerState<_ProcessList> {
-  // Default to highest CPU first so cost hotspots surface immediately.
-  _ProcessSort _sort = _ProcessSort.cpu;
+  // Null = preserve the server's order (ps --sort=-%cpu). A local default
+  // sort would reorder on every rebuild (unstable ties) and disagree with the
+  // daemon's ordering; the client only re-sorts when the user picks a column.
+  _ProcessSort? _sort;
   var _ascending = false;
   var _killingPid = false;
 
@@ -1010,9 +1155,11 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
   }
 
   List<ServerProcess> get _sorted {
+    final sort = _sort;
+    if (sort == null) return widget.items;
     final items = [...widget.items];
     int compare(ServerProcess a, ServerProcess b) {
-      final result = switch (_sort) {
+      final result = switch (sort) {
         _ProcessSort.pid => a.pid.compareTo(b.pid),
         _ProcessSort.user => a.user.toLowerCase().compareTo(
           b.user.toLowerCase(),
@@ -1154,7 +1301,7 @@ class _ProcessHeaderRow extends StatelessWidget {
   });
 
   final bool wide;
-  final _ProcessSort sort;
+  final _ProcessSort? sort;
   final bool ascending;
   final ValueChanged<_ProcessSort> onSort;
 

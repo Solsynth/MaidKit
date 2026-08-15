@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
@@ -13,6 +15,86 @@ const maidCafeDefaultPort = 8747;
 /// Raised when the daemon rejects the metrics secret (HTTP 401).
 class MaidCafeUnauthorizedException implements Exception {
   const MaidCafeUnauthorizedException();
+}
+
+/// Event types the daemon may broadcast on `/api/v1/stream`.
+///
+/// `hello` is always the first frame, regardless of the requested whitelist.
+enum MaidCafeStreamEventType { hello, metric, containers, processes, systemd }
+
+/// All streamable event types; the default whitelist for [MaidCafeStreamSession.openStream].
+const Set<MaidCafeStreamEventType> maidCafeStreamAllEvents = {
+  MaidCafeStreamEventType.hello,
+  MaidCafeStreamEventType.metric,
+  MaidCafeStreamEventType.containers,
+  MaidCafeStreamEventType.processes,
+  MaidCafeStreamEventType.systemd,
+};
+
+/// One decoded SSE frame from the daemon stream.
+class MaidCafeStreamEvent {
+  const MaidCafeStreamEvent({required this.type, required this.data});
+
+  final MaidCafeStreamEventType type;
+
+  /// Decoded JSON payload; already normalized to string keys.
+  final Map<String, dynamic> data;
+}
+
+/// Parses raw SSE bytes into typed events.
+///
+/// Standard SSE framing: `event:`/`data:` lines terminated by a blank line;
+/// comment lines starting with `:` are ignored. Frames with an unknown event
+/// name, missing data, or malformed JSON are skipped so one bad frame never
+/// kills the stream.
+Stream<MaidCafeStreamEvent> parseMaidCafeSseFrames(
+  Stream<List<int>> bytes,
+) async* {
+  final lines = const LineSplitter().bind(utf8.decoder.bind(bytes));
+  String? eventName;
+  final data = StringBuffer();
+  await for (final line in lines) {
+    if (line.isEmpty) {
+      final event = _dispatchSseFrame(eventName, data.toString());
+      eventName = null;
+      data.clear();
+      if (event != null) yield event;
+    } else if (line.startsWith(':')) {
+      // Comment (also used for heartbeats): ignore.
+    } else if (line.startsWith('event:')) {
+      eventName = line.substring('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      var value = line.substring('data:'.length);
+      // Per the SSE spec a single leading space after "data:" is stripped.
+      if (value.startsWith(' ')) value = value.substring(1);
+      data.writeln(value);
+    }
+    // Other SSE fields (id:, retry:) are not part of the contract; ignored.
+  }
+}
+
+MaidCafeStreamEvent? _dispatchSseFrame(String? eventName, String data) {
+  final name = eventName?.trim();
+  if (name == null || name.isEmpty || data.trim().isEmpty) return null;
+  final type = switch (name) {
+    'hello' => MaidCafeStreamEventType.hello,
+    'metric' => MaidCafeStreamEventType.metric,
+    'containers' => MaidCafeStreamEventType.containers,
+    'processes' => MaidCafeStreamEventType.processes,
+    'systemd' => MaidCafeStreamEventType.systemd,
+    _ => null,
+  };
+  if (type == null) return null;
+  try {
+    final decoded = jsonDecode(data);
+    if (decoded is! Map) return null;
+    return MaidCafeStreamEvent(
+      type: type,
+      data: decoded.map((key, value) => MapEntry(key.toString(), value)),
+    );
+  } on FormatException {
+    return null;
+  }
 }
 
 class MaidCafeDaemonAccess {
@@ -200,8 +282,14 @@ class MaidCafeStreamSession {
   final String? _apiSecret;
   var _closed = false;
   String? _version;
+  http.Client? _streamClient;
+  final Set<StreamSubscription<MaidCafeStreamEvent>>
+  _activeStreamSubscriptions = {};
 
   String? get apiSecret => _apiSecret;
+
+  /// Whether [close] has been called; a closed session cannot be reused.
+  bool get isClosed => _closed;
 
   static Future<MaidCafeStreamSession> open({
     required SshConnectionManager manager,
@@ -310,6 +398,16 @@ class MaidCafeStreamSession {
 
   Future<Map<String, dynamic>> metrics() => _get('/api/v1/metrics');
 
+  /// One-shot container list from the daemon (same payload as the `containers`
+  /// SSE event). Use for first paint; the stream keeps it fresh afterwards.
+  Future<Map<String, dynamic>> containers() => _get('/api/v1/containers');
+
+  /// One-shot top-processes snapshot (same payload as the `processes` event).
+  Future<Map<String, dynamic>> processes() => _get('/api/v1/processes');
+
+  /// One-shot systemd unit snapshot (same payload as the `systemd` event).
+  Future<Map<String, dynamic>> systemd() => _get('/api/v1/systemd');
+
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,
     DateTime? from,
@@ -334,6 +432,102 @@ class MaidCafeStreamSession {
         if (item is Map)
           item.map((key, value) => MapEntry(key.toString(), value)),
     ];
+  }
+
+  /// Opens a realtime SSE subscription over the session's port forward.
+  ///
+  /// Returns a single-subscription stream of decoded frames. The request
+  /// header phase is guarded by a 10s timeout; after that, connection errors
+  /// and non-200 responses surface through the stream's `onError` (HTTP 401
+  /// becomes [MaidCafeUnauthorizedException]). There is no auto-reconnect —
+  /// the consumer owns reconnection. The stream ends when the session is
+  /// closed.
+  Stream<MaidCafeStreamEvent> openStream({
+    Set<MaidCafeStreamEventType> events = maidCafeStreamAllEvents,
+  }) {
+    _throwIfClosed();
+    final forward = _forward;
+    if (forward == null) {
+      throw StateError('MaidCafe session has no active port forward.');
+    }
+    // `hello` is always sent first regardless of the filter and is not part
+    // of the daemon whitelist; omitting the param entirely means "all".
+    final requested = events
+        .where((event) => event != MaidCafeStreamEventType.hello)
+        .toList();
+    final uri = Uri(
+      scheme: 'http',
+      host: forward.bindHost,
+      port: forward.bindPort,
+      path: '/api/v1/stream',
+      queryParameters: requested.isEmpty
+          ? null
+          : <String, String>{
+              'events': requested.map((event) => event.name).join(','),
+            },
+    );
+    final request = http.Request('GET', uri);
+    final secret = _apiSecret;
+    if (secret != null) request.headers['Authorization'] = 'Bearer $secret';
+    request.headers['Accept'] = 'text/event-stream';
+
+    final controller = StreamController<MaidCafeStreamEvent>();
+    StreamSubscription<MaidCafeStreamEvent>? frameSubscription;
+    var cancelled = false;
+
+    Future<void> connect() async {
+      try {
+        final client = _streamClient ??= http.Client();
+        // Guard only the header phase: an SSE body never completes.
+        final response = await client
+            .send(request)
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode != 200) {
+          // Drain the (small) error body so the connection can be reused.
+          unawaited(response.stream.drain<void>().catchError((_) {}));
+          throw response.statusCode == 401
+              ? const MaidCafeUnauthorizedException()
+              : StateError(
+                  'MaidCafe stream request failed '
+                  '(${response.statusCode}).',
+                );
+        }
+        frameSubscription = parseMaidCafeSseFrames(response.stream).listen(
+          controller.add,
+          onError: (Object error, StackTrace stackTrace) {
+            // Closing the shared HTTP client while a response is mid-read
+            // surfaces ClientException on the socket stream. During teardown
+            // (session close or consumer cancel) that is expected, not an
+            // error: swallow it so it never escapes as an unhandled error.
+            if (cancelled || _closed) return;
+            controller.addError(error, stackTrace);
+          },
+          onDone: controller.close,
+        );
+        if (cancelled) {
+          unawaited(frameSubscription!.cancel());
+        } else {
+          _activeStreamSubscriptions.add(frameSubscription!);
+        }
+      } catch (error, stackTrace) {
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+          await controller.close();
+        }
+      }
+    }
+
+    controller.onCancel = () {
+      cancelled = true;
+      final subscription = frameSubscription;
+      if (subscription != null) {
+        _activeStreamSubscriptions.remove(subscription);
+        unawaited(subscription.cancel());
+      }
+    };
+
+    unawaited(connect());
+    return controller.stream;
   }
 
   Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) async {
@@ -414,6 +608,20 @@ class MaidCafeStreamSession {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    final subscriptions = _activeStreamSubscriptions.toList();
+    _activeStreamSubscriptions.clear();
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
+    final streamClient = _streamClient;
+    _streamClient = null;
+    if (streamClient != null) {
+      // Let the cancelled SSE subscriptions detach from their sockets before
+      // the shared client destroys them; the swallow above covers any error
+      // that still lands mid-read.
+      await Future<void>.delayed(Duration.zero);
+      streamClient.close();
+    }
     _dio.close(force: true);
     final forward = _forward;
     if (forward != null) {

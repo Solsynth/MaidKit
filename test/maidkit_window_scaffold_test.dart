@@ -1,10 +1,20 @@
+import 'dart:convert';
+import 'dart:io';
+
+// ignore: implementation_imports
+import 'package:easy_localization/src/localization.dart' as ez;
+// ignore: implementation_imports
+import 'package:easy_localization/src/translations.dart' as ez_tr;
 import 'package:flutter/material.dart' as flutter;
 import 'package:flutter_localizations/flutter_localizations.dart'
     as flutter_localizations;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:maid_kit/shared/presentation/maidkit_window_scaffold.dart';
+import 'package:maid_kit/shared/presentation/task_progress.dart';
 import 'package:maid_kit/theme.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
@@ -92,5 +102,60 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('localizations_loaded')), findsOneWidget);
+  });
+
+  testWidgets('task progress sheet uses SheetScaffold chrome', (tester) async {
+    // Prime translations so the sheet title resolves; the asset loader never
+    // completes under FakeAsync.
+    final enMap =
+        jsonDecode(File('assets/translations/en-US.json').readAsStringSync())
+            as Map<String, dynamic>;
+    ez.Localization.load(
+      const Locale('en', 'US'),
+      translations: ez_tr.Translations(enMap),
+      ignorePluralRules: false,
+    );
+
+    final container = ProviderContainer(
+      overrides: [desktopWindowProvider.overrideWithValue(false)],
+    );
+    addTearDown(container.dispose);
+    container
+        .read(taskProgressProvider.notifier)
+        .start(
+          title: 'Upload build.tar.gz',
+          totalBytes: 10 * 1024 * 1024,
+          onPause: () async {},
+          onResume: () async {},
+          onCancel: () async {},
+        );
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: createMaidKitTheme(Brightness.light),
+          home: const MaidKitWindowScaffold(child: SizedBox()),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Upload build.tar.gz'));
+    await tester.pumpAndSettle();
+
+    final scaffold = tester.widget<SheetScaffold>(find.byType(SheetScaffold));
+    expect(scaffold.leading, isNull, reason: 'no icon beside the title');
+    expect(scaffold.titleText, '1 active transfers');
+
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(SheetScaffold),
+            matching: find.byIcon(Symbols.close),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(SheetScaffold), findsNothing);
   });
 }

@@ -30,6 +30,7 @@ import 'ghostty_terminal_session_adapter.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_preferences.dart';
 import 'maidcafe_service.dart';
+import 'maidcafe_session_registry.dart';
 import 'local_connection_manager.dart';
 import 'local_machine_preferences.dart';
 import 'metrics_refresh_preferences.dart';
@@ -994,6 +995,17 @@ final connectionManagerProvider = Provider<SshConnectionManager>((ref) {
   );
   ref.onDispose(manager.dispose);
   return manager;
+});
+
+/// Shares one MaidCafe session (and one SSH port forward) per server across
+/// the Activity, Processes, Containers, Systemd and MaidCafe-management tabs.
+final maidCafeSessionRegistryProvider = Provider<MaidCafeSessionRegistry>((
+  ref,
+) {
+  return MaidCafeSessionRegistry(
+    manager: ref.watch(connectionManagerProvider),
+    serverRepository: ref.watch(serverRepositoryProvider),
+  );
 });
 
 /// The shared native serial-port client.

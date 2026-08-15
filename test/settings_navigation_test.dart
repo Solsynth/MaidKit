@@ -79,7 +79,7 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    final settingsLabel = 'tabSettings'.tr();
+    final settingsLabel = 'settingsAccount'.tr();
     await tester.tap(find.byTooltip(settingsLabel));
     await tester.pumpAndSettle();
 

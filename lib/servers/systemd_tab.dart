@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +11,9 @@ import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/theme.dart';
+import 'maidcafe_service.dart';
+import 'maidcafe_stream.dart';
+import 'maidcafe_session_registry.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -41,12 +46,30 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
   var _filter = _ServiceFilter.all;
   var _busy = false;
   String? _busyUnit;
+  late final MaidCafeSessionRegistry _sessionRegistry;
+  MaidCafeStreamSession? _maidCafeStream;
+  StreamSubscription<MaidCafeStreamEvent>? _systemdSubscription;
+  var _systemdSseActive = false;
+
+  /// The daemon reported no systemctl; stop asking until a manual refresh, an
+  /// explicit action, or a fresh session.
+  var _systemdUnavailable = false;
+
+  /// The stream already failed once; do not re-subscribe on later ticks.
+  var _systemdSseAttempted = false;
+
+  /// Last `systemd` event timestamp and the daemon's announced cadence, used
+  /// to detect a stream that stays connected but stops delivering data.
+  DateTime _lastSystemdEvent = DateTime.fromMillisecondsSinceEpoch(0);
+  int _systemdSseIntervalSeconds = 30;
 
   bool get _isRoot => widget.server.username == 'root';
 
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     _searchController.addListener(() => setState(() {}));
     if (widget.connected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load());
@@ -56,14 +79,30 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
   @override
   void dispose() {
     _searchController.dispose();
+    _closeSystemdSse();
+    _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(SystemdTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected &&
-        (!oldWidget.connected || oldWidget.server.id != widget.server.id)) {
+    final serverChanged = oldWidget.server.id != widget.server.id;
+    if (serverChanged) {
+      _closeSystemdSse();
+      _sessionRegistry.release(oldWidget.server);
+      _sessionRegistry.retain(widget.server);
+      _maidCafeStream = null;
+      _systemdSseAttempted = false;
+      _systemdUnavailable = false;
+    } else if (!widget.connected && oldWidget.connected) {
+      _closeSystemdSse();
+      _sessionRegistry.invalidate(widget.server);
+      _maidCafeStream = null;
+      _systemdSseAttempted = false;
+      _systemdUnavailable = false;
+    }
+    if (widget.connected && (!oldWidget.connected || serverChanged)) {
       _load();
     }
   }
@@ -77,9 +116,69 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
         : null;
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     if (!mounted || !widget.connected) return;
+    if (force) {
+      // An explicit action may have changed what the daemon can see.
+      _systemdSseAttempted = false;
+      _systemdUnavailable = false;
+    }
+    if (!force) {
+      // SSE owns freshness while active. When it is not, one stream attempt
+      // is made only until it fails once — MaidCafe is not retried
+      // automatically, only on manual refresh, an explicit action, or a
+      // fresh session.
+      if (_systemdSseActive) {
+        final silence = DateTime.now().difference(_lastSystemdEvent);
+        final timeoutSeconds = _systemdSseIntervalSeconds * 3 >= 15
+            ? _systemdSseIntervalSeconds * 3
+            : 15;
+        if (silence > Duration(seconds: timeoutSeconds)) {
+          // The stream stays connected (heartbeats) but stopped delivering
+          // data — the daemon collector may be disabled or failing. Fall
+          // back to on-demand fetches instead of freezing the snapshot.
+          _systemdSseAttempted = true;
+          _closeSystemdSse();
+        } else {
+          return;
+        }
+      }
+      if (_systemdSubscription == null && !_systemdSseAttempted) {
+        await _startSystemdSse();
+      }
+      if (_systemdSseActive) return;
+    }
     setState(() => _snapshot = const AsyncValue.loading());
+    if (!_systemdUnavailable) {
+      final session = await _ensureMaidCafeStream();
+      if (session != null) {
+        try {
+          final snapshot = parseMaidCafeSystemd(await session.systemd());
+          if (snapshot.available && mounted) {
+            setState(() {
+              _snapshot = AsyncValue.data(
+                SystemdUnitsSnapshot(available: true, units: snapshot.units),
+              );
+            });
+            return;
+          }
+          if (!snapshot.available) {
+            // The daemon (root) found no systemctl; stop asking for it.
+            _systemdUnavailable = true;
+            if (mounted) {
+              setState(() {
+                _snapshot = AsyncValue.data(
+                  SystemdUnitsSnapshot(available: false, error: snapshot.error),
+                );
+              });
+            }
+            return;
+          }
+        } catch (_) {
+          // Old daemon without /api/v1/systemd: fall back to SSH.
+        }
+      }
+    }
     try {
       final snapshot = await ref
           .read(connectionManagerProvider)
@@ -93,6 +192,112 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
       if (mounted) {
         setState(() => _snapshot = AsyncValue.error(error, stackTrace));
       }
+    }
+  }
+
+  /// Manual refresh: always fetch (the stream may be silent), and re-arm the
+  /// MaidCafe path when it was previously unavailable.
+  void _refreshManually() {
+    if (!_systemdSseActive) {
+      _systemdSseAttempted = false;
+      _systemdUnavailable = false;
+      _maidCafeStream = null;
+      _sessionRegistry.invalidate(widget.server);
+    }
+    unawaited(_load(force: true));
+  }
+
+  /// Opens a MaidCafe session and subscribes to `systemd` events.
+  ///
+  /// Failures leave [._systemdSseActive] false so the SSH probe keeps
+  /// working; the failed attempt is latched so later ticks do not re-subscribe.
+  Future<void> _startSystemdSse() async {
+    if (_systemdSubscription != null ||
+        _systemdSseAttempted ||
+        _systemdUnavailable) {
+      return;
+    }
+    final session = await _ensureMaidCafeStream();
+    if (session == null || !mounted) return;
+    try {
+      final events = session.openStream(
+        events: const {MaidCafeStreamEventType.systemd},
+      );
+      final subscription = events.listen(
+        _onSystemdEvent,
+        onError: (Object error, StackTrace stackTrace) {
+          _systemdSseAttempted = true;
+          _closeSystemdSse();
+        },
+        onDone: () {
+          _systemdSseAttempted = true;
+          _closeSystemdSse();
+        },
+      );
+      _systemdSubscription = subscription;
+    } catch (_) {
+      _systemdSseAttempted = true;
+      _closeSystemdSse();
+    }
+  }
+
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    _maidCafeStream = null;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      _maidCafeStream = session;
+      if (!identical(session, cached)) {
+        // A fresh session (reconnect or daemon restart) warrants a new
+        // stream attempt and a re-probe of systemd availability.
+        _systemdSseAttempted = false;
+        _systemdUnavailable = false;
+      }
+    }
+    return session;
+  }
+
+  void _onSystemdEvent(MaidCafeStreamEvent event) {
+    if (!mounted) return;
+    if (event.type == MaidCafeStreamEventType.hello) {
+      _lastSystemdEvent = DateTime.now();
+      final intervals = event.data['intervals'];
+      if (intervals is Map) {
+        final seconds = intervals['systemd'];
+        if (seconds is num && seconds > 0) {
+          _systemdSseIntervalSeconds = seconds.toInt();
+        }
+      }
+      return;
+    }
+    if (event.type != MaidCafeStreamEventType.systemd) return;
+    _lastSystemdEvent = DateTime.now();
+    final snapshot = parseMaidCafeSystemd(event.data);
+    if (!snapshot.available) {
+      // The daemon has no systemctl; stop retrying the stream.
+      _systemdUnavailable = true;
+      _systemdSseAttempted = true;
+      _closeSystemdSse();
+    }
+    setState(() {
+      _systemdSseActive = snapshot.available;
+      _snapshot = AsyncValue.data(
+        SystemdUnitsSnapshot(
+          available: snapshot.available,
+          units: snapshot.units,
+          error: snapshot.error,
+        ),
+      );
+    });
+  }
+
+  void _closeSystemdSse() {
+    final subscription = _systemdSubscription;
+    _systemdSubscription = null;
+    _systemdSseActive = false;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
     }
   }
 
@@ -110,7 +315,7 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
       await action();
       if (!mounted) return;
       showStyledSnackBar(message: success, title: 'systemdServices'.tr());
-      await _load();
+      await _load(force: true);
     } catch (error) {
       if (!mounted) return;
       final shouldRetry =
@@ -376,7 +581,7 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
                       IconButton(
                         tooltip: 'commonRefresh'.tr(),
                         visualDensity: VisualDensity.compact,
-                        onPressed: _busy ? null : _load,
+                        onPressed: _busy ? null : _refreshManually,
                         icon: const Icon(Symbols.refresh),
                       ),
                     ],
