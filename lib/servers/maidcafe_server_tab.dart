@@ -89,7 +89,8 @@ class MaidCafeServerTab extends ConsumerStatefulWidget {
   ConsumerState<MaidCafeServerTab> createState() => _MaidCafeServerTabState();
 }
 
-class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab> {
+class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
+    with AutomaticKeepAliveClientMixin {
   late final TextEditingController _actionNameController;
   late final TextEditingController _actionCommandController;
   late final TextEditingController _actionArgumentsController;
@@ -119,6 +120,11 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab> {
 
   List<MaidCafeActionDefinition> get _actions =>
       ref.read(maidCafeActionsProvider.notifier).forServer(widget.server.id);
+
+  // The SSH tunnel to the local daemon must outlive tab switches inside the
+  // server detail page; keep this state mounted until that page goes away.
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -826,9 +832,12 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.mode == MaidCafeTabMode.payload
-      ? _buildPayload(context)
-      : _buildInstallation(context);
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.mode == MaidCafeTabMode.payload
+        ? _buildPayload(context)
+        : _buildInstallation(context);
+  }
 
   Widget _buildInstallation(BuildContext context) {
     final theme = Theme.of(context);
