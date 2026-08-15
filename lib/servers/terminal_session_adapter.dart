@@ -2,14 +2,48 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:material_symbols_icons/symbols.dart';
+import 'package:super_context_menu/super_context_menu.dart';
 import 'package:xterm/xterm.dart';
+
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 
 import 'package:maid_kit/theme.dart';
 
 import 'terminal_color_scheme.dart';
+
+Menu terminalContextMenu({
+  required bool hasSelection,
+  required bool canPaste,
+  required VoidCallback onCopy,
+  required VoidCallback onPaste,
+  required VoidCallback onSelectAll,
+}) => Menu(
+  children: [
+    MenuAction(
+      title: 'commonCopy'.tr(),
+      image: MenuImage.icon(Symbols.content_copy),
+      attributes: MenuActionAttributes(disabled: !hasSelection),
+      callback: onCopy,
+    ),
+    MenuAction(
+      title: 'fileManagerPaste'.tr(),
+      image: MenuImage.icon(Symbols.content_paste),
+      attributes: MenuActionAttributes(disabled: !canPaste),
+      callback: onPaste,
+    ),
+    MenuSeparator(),
+    MenuAction(
+      title: 'commonSelectAll'.tr(),
+      image: MenuImage.icon(Symbols.select_all),
+      callback: onSelectAll,
+    ),
+  ],
+);
 
 /// A terminal emulator instance attached to one remote shell.
 ///
@@ -596,12 +630,41 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     );
   }
 
-  /// Handles clipboard shortcuts for log / read-only surfaces and swallows
-  /// other keys so they do not mutate the playback buffer.
-  ///
-  /// xterm attaches no keyboard Focus when both `readOnly` and
-  /// `hardwareKeyboardOnly` are true, so we keep a Focus path via
-  /// CustomTextEdit(readOnly: true) and route shortcuts here instead.
+  void _copySelectionToClipboard() {
+    if (_disposed) return;
+    final selection = _controller.selection;
+    if (selection == null) return;
+    final text = _terminal.buffer.getText(selection);
+    if (text.isNotEmpty) {
+      unawaited(Clipboard.setData(ClipboardData(text: text)));
+    }
+  }
+
+  void _selectAll() {
+    if (_disposed) return;
+    _controller.setSelection(
+      _terminal.buffer.createAnchor(
+        0,
+        _terminal.buffer.height - _terminal.viewHeight,
+      ),
+      _terminal.buffer.createAnchor(
+        _terminal.viewWidth,
+        _terminal.buffer.height - 1,
+      ),
+      mode: SelectionMode.line,
+    );
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    if (_disposed) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty && !_disposed) {
+      _terminal.paste(text);
+      _controller.clearSelection();
+    }
+  }
+
   KeyEventResult _handleReadOnlyKeyEvent(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -615,26 +678,12 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         : HardwareKeyboard.instance.isControlPressed;
 
     if (command && event.logicalKey == LogicalKeyboardKey.keyC) {
-      final selection = _controller.selection;
-      if (selection != null) {
-        final text = _terminal.buffer.getText(selection);
-        unawaited(Clipboard.setData(ClipboardData(text: text)));
-      }
+      _copySelectionToClipboard();
       return KeyEventResult.handled;
     }
 
     if (command && event.logicalKey == LogicalKeyboardKey.keyA) {
-      _controller.setSelection(
-        _terminal.buffer.createAnchor(
-          0,
-          _terminal.buffer.height - _terminal.viewHeight,
-        ),
-        _terminal.buffer.createAnchor(
-          _terminal.viewWidth,
-          _terminal.buffer.height - 1,
-        ),
-        mode: SelectionMode.line,
-      );
+      _selectAll();
       return KeyEventResult.handled;
     }
 
@@ -651,7 +700,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     FocusOnKeyEventCallback? onKeyEvent,
   }) {
     final theme = _xtermThemeFor(colorScheme, showCursor: showCursor);
-    return KeyedSubtree(
+    final terminal = KeyedSubtree(
       key: ObjectKey(this),
       child: TerminalView(
         _terminal,
@@ -692,6 +741,17 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
           fontSize: 14,
         ),
       ),
+    );
+    if (readOnly) return terminal;
+    return AppContextMenuRegion(
+      menuBuilder: () => terminalContextMenu(
+        hasSelection: _controller.selection != null,
+        canPaste: true,
+        onCopy: _copySelectionToClipboard,
+        onPaste: () => unawaited(_pasteFromClipboard()),
+        onSelectAll: _selectAll,
+      ),
+      child: terminal,
     );
   }
 

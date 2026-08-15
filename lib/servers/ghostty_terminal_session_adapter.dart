@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/theme.dart';
 import 'terminal_color_scheme.dart';
 import 'terminal_session_adapter.dart';
@@ -199,7 +200,17 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
         child: terminal,
       );
     }
-    return terminal;
+    if (readOnly) return terminal;
+    return AppContextMenuRegion(
+      menuBuilder: () => terminalContextMenu(
+        hasSelection: _controller.hasSelection,
+        canPaste: true,
+        onCopy: _copySelectionToClipboard,
+        onPaste: () => unawaited(_pasteFromClipboard()),
+        onSelectAll: _controller.selectAll,
+      ),
+      child: terminal,
+    );
   }
 
   void _copySelectionToClipboard() {
@@ -207,6 +218,15 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
     final text = _controller.selectedText();
     if (text.isNotEmpty) {
       unawaited(Clipboard.setData(ClipboardData(text: text)));
+    }
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    if (_disposed) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text != null && text.isNotEmpty && !_disposed) {
+      _controller.paste(text);
     }
   }
 
