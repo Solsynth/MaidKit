@@ -12,6 +12,8 @@ import 'package:maid_kit/servers/ghostty_terminal_session_adapter.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_adapter_preferences.dart';
 import 'package:maid_kit/servers/terminal_color_scheme.dart';
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
+import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 
 void main() {
@@ -218,19 +220,49 @@ void main() {
     addTearDown(xtermAdapter.dispose);
     addTearDown(ghostty.dispose);
 
-    final xtermView = xtermAdapter.buildView() as KeyedSubtree;
+    final xtermMenuView = xtermAdapter.buildView() as AppContextMenuRegion;
+    final xtermView = xtermMenuView.child as KeyedSubtree;
     expect(
       (xtermView.child as xterm.TerminalView).theme.background,
       scheme.background,
     );
 
-    final ghosttyView = ghostty.buildView() as flterm.TerminalView;
+    final ghosttyMenuView = ghostty.buildView() as AppContextMenuRegion;
+    final ghosttyView = ghosttyMenuView.child as flterm.TerminalView;
     expect(ghosttyView.theme!.background, scheme.background);
     expect(ghosttyView.theme!.foreground, scheme.foreground);
     expect(
       ghosttyView.theme!.cursorMotionDuration,
       const Duration(milliseconds: 90),
     );
+  });
+  test('tracks the shell directory reported through OSC 7', () async {
+    final adapter = GhosttyTerminalSessionAdapter();
+    addTearDown(adapter.dispose);
+
+    adapter.write(
+      Uint8List.fromList(
+        utf8.encode('\x1b]7;file:///tmp/project%20folder\x07'),
+      ),
+    );
+
+    expect(adapter.currentDirectory, '/tmp/project folder');
+  });
+
+  test('terminal context menu exposes file management', () {
+    var opened = false;
+    final menu = terminalContextMenu(
+      hasSelection: false,
+      canPaste: true,
+      onCopy: () {},
+      onPaste: () {},
+      onSelectAll: () {},
+      onOpenFileManagement: () => opened = true,
+    );
+
+    final action = menu.children.whereType<MenuAction>().last;
+    action.callback();
+    expect(opened, isTrue);
   });
 
   test('Ghostty adapter encodes cursor keys for the remote shell', () async {
@@ -629,12 +661,15 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
   @override
   TerminalTaskActivity get currentTaskActivity =>
       const TerminalTaskActivity(running: false);
+  @override
+  String? get currentDirectory => null;
 
   @override
   Widget buildView({
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
+    VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox();

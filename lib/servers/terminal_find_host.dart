@@ -16,6 +16,7 @@ class TerminalFindHost extends StatefulWidget {
     this.showCursor = true,
     this.transparentBackground,
     this.onKeyEvent,
+    this.onOpenFileManagement,
   });
 
   final TerminalSessionAdapter adapter;
@@ -24,6 +25,7 @@ class TerminalFindHost extends StatefulWidget {
   final bool showCursor;
   final bool? transparentBackground;
   final FocusOnKeyEventCallback? onKeyEvent;
+  final VoidCallback? onOpenFileManagement;
 
   @override
   State<TerminalFindHost> createState() => _TerminalFindHostState();
@@ -194,6 +196,7 @@ class _TerminalFindHostState extends State<TerminalFindHost> {
                 autofocus: widget.autofocus,
                 readOnly: widget.readOnly,
                 showCursor: widget.showCursor,
+                onOpenFileManagement: widget.onOpenFileManagement,
                 transparentBackground: widget.transparentBackground,
                 onKeyEvent: widget.onKeyEvent,
               ),

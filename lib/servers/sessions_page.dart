@@ -89,12 +89,13 @@ Future<void> _openFiles(
   WidgetRef ref,
   Server server, {
   String? paneId,
+  String? initialPath,
 }) async {
   if (server.connectionType == ServerConnectionType.serial.name) return;
   if (server.connectionType == ServerConnectionType.local.name) {
     ref
         .read(terminalTabsProvider.notifier)
-        .openFileManagement(server, paneId: paneId);
+        .openFileManagement(server, initialPath: initialPath, paneId: paneId);
     return;
   }
   final manager = ref.read(connectionManagerProvider);
@@ -104,7 +105,27 @@ Future<void> _openFiles(
   }
   ref
       .read(terminalTabsProvider.notifier)
-      .openFileManagement(server, paneId: paneId);
+      .openFileManagement(server, initialPath: initialPath, paneId: paneId);
+}
+
+Future<void> _openFilesForTerminal(
+  BuildContext context,
+  WidgetRef ref,
+  TerminalTab tab,
+) async {
+  final server = ref
+      .read(serversProvider)
+      .asData
+      ?.value
+      .where((item) => item.id == tab.serverId)
+      .firstOrNull;
+  if (server == null || !context.mounted) return;
+  await _openFiles(
+    context,
+    ref,
+    server,
+    initialPath: tab.terminal.currentDirectory,
+  );
 }
 
 class _SessionLayoutView extends ConsumerWidget {
@@ -887,6 +908,8 @@ class _SessionTabBody extends ConsumerWidget {
           transparentBackground: ref.watch(
             transparentTerminalBackgroundProvider,
           ),
+          onOpenFileManagement: () =>
+              unawaited(_openFilesForTerminal(context, ref, terminalTab)),
           onKeyEvent: (_, event) {
             if (!_isTerminalSnippetShortcut(event)) {
               return KeyEventResult.ignored;

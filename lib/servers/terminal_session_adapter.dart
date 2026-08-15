@@ -22,6 +22,7 @@ Menu terminalContextMenu({
   required VoidCallback onCopy,
   required VoidCallback onPaste,
   required VoidCallback onSelectAll,
+  VoidCallback? onOpenFileManagement,
 }) => Menu(
   children: [
     MenuAction(
@@ -42,8 +43,65 @@ Menu terminalContextMenu({
       image: MenuImage.icon(Symbols.select_all),
       callback: onSelectAll,
     ),
+    if (onOpenFileManagement != null) ...[
+      MenuSeparator(),
+      MenuAction(
+        title: 'sessionsOpenFileManagement'.tr(),
+        image: MenuImage.icon(Symbols.folder_open),
+        callback: onOpenFileManagement,
+      ),
+    ],
   ],
 );
+
+/// Tracks OSC 7 shell integration updates such as `file:///work/project`.
+class TerminalWorkingDirectoryTracker {
+  static const _marker = '\x1b]7;';
+
+  var _pending = '';
+  String? _directory;
+
+  String? get directory => _directory;
+
+  void add(Uint8List bytes) {
+    _pending += utf8.decode(bytes, allowMalformed: true);
+    while (true) {
+      final start = _pending.indexOf(_marker);
+      if (start < 0) {
+        _pending = _pending.length > _marker.length - 1
+            ? _pending.substring(_pending.length - _marker.length + 1)
+            : _pending;
+        return;
+      }
+      final bel = _pending.indexOf('\x07', start + _marker.length);
+      final st = _pending.indexOf('\x1b\\', start + _marker.length);
+      final end = bel < 0
+          ? st
+          : st < 0
+          ? bel
+          : bel < st
+          ? bel
+          : st;
+      if (end < 0) {
+        _pending = _pending.substring(start);
+        return;
+      }
+      final value = _pending.substring(start + _marker.length, end);
+      _directory = TerminalWorkingDirectoryTracker.decode(value);
+      _pending = _pending.substring(end + (end == bel ? 1 : 2));
+    }
+  }
+
+  static String? decode(String value) {
+    try {
+      final uri = Uri.parse(value);
+      if (uri.scheme == 'file') return Uri.decodeComponent(uri.path);
+    } on FormatException {
+      return null;
+    }
+    return value.startsWith('/') ? Uri.decodeComponent(value) : null;
+  }
+}
 
 /// A terminal emulator instance attached to one remote shell.
 ///
@@ -74,6 +132,9 @@ abstract interface class TerminalSessionAdapter {
   /// Latest detailed task activity value.
   TerminalTaskActivity get currentTaskActivity;
 
+  /// Current shell directory reported through OSC 7, when available.
+  String? get currentDirectory;
+
   /// Displays bytes received from the remote shell.
   void write(Uint8List bytes);
 
@@ -99,6 +160,7 @@ abstract interface class TerminalSessionAdapter {
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
+    VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
     FocusOnKeyEventCallback? onKeyEvent,
   });
@@ -496,6 +558,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   final _highlights = <TerminalHighlight>[];
   final _matches = <_BufferMatch>[];
   final _activity = TerminalActivityTracker();
+  final _workingDirectory = TerminalWorkingDirectoryTracker();
   var _disposed = false;
 
   static const _hitColor = Color(0x66E5E510);
@@ -519,10 +582,13 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
 
   @override
   TerminalTaskActivity get currentTaskActivity => _activity.current;
+  @override
+  String? get currentDirectory => _workingDirectory.directory;
 
   @override
   void write(Uint8List bytes) {
     if (!_disposed) {
+      _workingDirectory.add(bytes);
       _clipboard.add(bytes);
       _activity.receivedOutput(bytes);
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
@@ -696,6 +762,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
+    VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
     FocusOnKeyEventCallback? onKeyEvent,
   }) {
@@ -750,6 +817,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         onCopy: _copySelectionToClipboard,
         onPaste: () => unawaited(_pasteFromClipboard()),
         onSelectAll: _selectAll,
+        onOpenFileManagement: onOpenFileManagement,
       ),
       child: terminal,
     );

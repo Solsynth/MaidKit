@@ -194,6 +194,8 @@ class _RecordingAdapter implements TerminalSessionAdapter {
   @override
   TerminalTaskActivity get currentTaskActivity =>
       const TerminalTaskActivity(running: false);
+  @override
+  String? get currentDirectory => null;
 
   @override
   void write(Uint8List bytes) => received.add(bytes);
@@ -214,6 +216,7 @@ class _RecordingAdapter implements TerminalSessionAdapter {
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
+    VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox.shrink();

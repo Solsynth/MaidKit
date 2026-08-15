@@ -96,6 +96,9 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
 
   @override
   TerminalTaskActivity get currentTaskActivity => _activity.current;
+  @override
+  String? get currentDirectory =>
+      TerminalWorkingDirectoryTracker.decode(_controller.pwd);
 
   @override
   void write(Uint8List bytes) {
@@ -155,6 +158,7 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
+    VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
     FocusOnKeyEventCallback? onKeyEvent,
   }) {
@@ -203,6 +207,7 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
     if (readOnly) return terminal;
     return AppContextMenuRegion(
       menuBuilder: () => terminalContextMenu(
+        onOpenFileManagement: onOpenFileManagement,
         hasSelection: _controller.hasSelection,
         canPaste: true,
         onCopy: _copySelectionToClipboard,
