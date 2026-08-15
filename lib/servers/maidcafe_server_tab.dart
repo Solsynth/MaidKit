@@ -418,13 +418,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
 
   Future<bool> _openStream({int? port}) async {
     final generation = ++_streamGeneration;
-    final apiSecret = await ref
-        .read(serverRepositoryProvider)
-        .maidCafeMetricsSecretFor(widget.server);
+    final repository = ref.read(serverRepositoryProvider);
+    final apiSecret = await repository.maidCafeMetricsSecretFor(widget.server);
+    final resolvedPort = port ?? await _resolveMaidCafePort();
     final stream = await MaidCafeStreamSession.open(
       manager: ref.read(connectionManagerProvider),
       server: widget.server,
-      port: port ?? await _resolveMaidCafePort(),
+      port: resolvedPort,
       apiSecret: apiSecret,
     );
     try {
@@ -444,6 +444,21 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           _streamStatus =
               '${'maidCafeStreamConnected'.tr()}$versionSuffix · ${health['id']}';
         });
+        // The daemon's config secret is authoritative. Persist it when the
+        // stored one was stale so later connections skip the auth fallback;
+        // failure here only costs one retried connection later.
+        final usedSecret = stream.apiSecret;
+        if (usedSecret != null && usedSecret != apiSecret) {
+          try {
+            await repository.updateMaidCafeConfig(
+              widget.server,
+              daemonUrl: 'http://127.0.0.1:$resolvedPort',
+              metricsSecret: usedSecret,
+            );
+          } catch (_) {
+            // Best effort: keep the working connection regardless.
+          }
+        }
         return true;
       }
       await stream.close();

@@ -10,6 +10,11 @@ import 'maidcafe_service.dart';
 
 const maidCafeDefaultPort = 8747;
 
+/// Raised when the daemon rejects the metrics secret (HTTP 401).
+class MaidCafeUnauthorizedException implements Exception {
+  const MaidCafeUnauthorizedException();
+}
+
 class MaidCafeDaemonAccess {
   const MaidCafeDaemonAccess({
     required this.port,
@@ -172,7 +177,31 @@ class MaidCafeStreamSession {
   }) async {
     final access = await readMaidCafeConfig(manager: manager, server: server);
     final resolvedPort = port ?? access.port ?? maidCafeDefaultPort;
-    final resolvedSecret = apiSecret ?? access.apiSecret;
+    final primarySecret = apiSecret ?? access.apiSecret;
+    final configSecret = access.apiSecret;
+    try {
+      return await _openWithSecret(
+        manager,
+        server,
+        resolvedPort,
+        primarySecret,
+      );
+    } on MaidCafeUnauthorizedException {
+      if (configSecret == null || configSecret == primarySecret) {
+        rethrow;
+      }
+      // The stored secret is stale; the daemon accepts the one from its own
+      // config file, so retry with that. The caller persists the winner.
+      return await _openWithSecret(manager, server, resolvedPort, configSecret);
+    }
+  }
+
+  static Future<MaidCafeStreamSession> _openWithSecret(
+    SshConnectionManager manager,
+    Server server,
+    int resolvedPort,
+    String? resolvedSecret,
+  ) async {
     final direct = await _tryDirect(
       manager,
       server,
@@ -309,6 +338,9 @@ class MaidCafeStreamSession {
       final response = await _dio.get<Object?>(path);
       return _responseMap(response);
     } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
       throw StateError(_dioError(error));
     }
   }
