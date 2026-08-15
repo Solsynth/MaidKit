@@ -9,7 +9,49 @@ List<int> _bytes(String text) => utf8.encode(text);
 Future<List<MaidCafeStreamEvent>> _frames(String text) =>
     parseMaidCafeSseFrames(Stream.value(_bytes(text))).toList();
 
+String _hexEncode(String text) => utf8
+    .encode(text)
+    .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+    .join();
+
 void main() {
+  group('parseMaidCafeActionScripts', () {
+    test('decodes hex-encoded action scripts by name', () {
+      const backup = '#!/bin/sh\ntar -czf /var/backups/site.tar.gz /srv/site\n';
+      const cleanup = '#!/bin/sh\nrm -rf /tmp/old';
+      final blob =
+          '###FILE:backup.sh###\n${_hexEncode(backup)}\n'
+          '###FILE:cleanup.sh###\n${_hexEncode(cleanup)}\n';
+
+      final scripts = parseMaidCafeActionScripts(blob);
+      expect(scripts.keys, ['backup', 'cleanup']);
+      expect(scripts['backup'], backup);
+      expect(scripts['cleanup'], cleanup);
+    });
+
+    test('preserves a trailing newline verbatim', () {
+      const body = 'echo done\n';
+      final blob = '###FILE:run.sh###\n${_hexEncode(body)}\n';
+      expect(parseMaidCafeActionScripts(blob)['run'], body);
+    });
+
+    test('round-trips non-ASCII bytes', () {
+      const body = 'echo "备份完成"\n';
+      final blob = '###FILE:backup.sh###\n${_hexEncode(body)}\n';
+      expect(parseMaidCafeActionScripts(blob)['backup'], body);
+    });
+
+    test('ignores empty blobs and non-script files', () {
+      expect(parseMaidCafeActionScripts(''), isEmpty);
+      expect(
+        parseMaidCafeActionScripts('###FILE:notes.txt###\n68656c6c6f\n'),
+        isEmpty,
+      );
+      // An empty script body leaves no hex and is skipped.
+      expect(parseMaidCafeActionScripts('###FILE:empty.sh###\n'), isEmpty);
+    });
+  });
+
   group('parseMaidCafeSseFrames', () {
     test('parses hello and metric frames from bytes', () async {
       final events = await _frames(

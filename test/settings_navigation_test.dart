@@ -216,6 +216,7 @@ void main() {
               padding: const EdgeInsets.all(24),
               child: MaidCafeInstallChannelPicker(
                 channels: [channel],
+                selected: null,
                 onSelected: (_) {},
               ),
             ),

@@ -1,5 +1,25 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/servers/maidcafe_install.dart';
+
+/// Decodes the daemon config.toml embedded in a generated install/update
+/// script so tests can assert on the TOML the daemon will actually load.
+String decodeMaidCafeConfigFromScript(String script) {
+  final install = RegExp(
+    r'''printf '%s' '([^']+)' \| base64 -d > "\$work_dir/config\.toml"''',
+  ).firstMatch(script);
+  if (install != null) {
+    return utf8.decode(base64Decode(install.group(1)!));
+  }
+  final update = RegExp(
+    r'''printf '%s' '([^']+)' \| base64 -d \| install''',
+  ).firstMatch(script);
+  if (update != null) {
+    return utf8.decode(base64Decode(update.group(1)!));
+  }
+  fail('no embedded config.toml found in generated script');
+}
 
 void main() {
   test(
@@ -58,8 +78,7 @@ void main() {
       actions: const [
         MaidCafeActionDefinition(
           name: 'backup',
-          command: '/usr/local/bin/backup',
-          arguments: ['--mode', 'incremental'],
+          script: 'tar -czf /var/backups/site.tar.gz /srv/site',
         ),
       ],
     );
@@ -81,8 +100,7 @@ void main() {
       actions: const [
         MaidCafeActionDefinition(
           name: 'backup',
-          command: '/usr/local/bin/backup',
-          arguments: ['--mode', 'incremental'],
+          script: 'tar -czf /var/backups/site.tar.gz /srv/site',
         ),
       ],
     );
@@ -92,6 +110,7 @@ void main() {
     expect(script, isNot(contains('systemctl enable --now maidcafe-daemon')));
     expect(script, contains('base64 -d'));
   });
+
   test('rejects privileged HTTP ports', () {
     expect(
       () => buildMaidCafeDaemonInstallScript(
@@ -102,6 +121,162 @@ void main() {
         port: 80,
       ),
       throwsArgumentError,
+    );
+  });
+
+  test('actions derive an absolute command and deploy the body', () {
+    const body =
+        'tar -czf /var/backups/site.tar.gz /srv/site\n'
+        'echo backup done';
+    final script = buildMaidCafeDaemonInstallScript(
+      daemonId: 'daemon-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+      actions: const [
+        MaidCafeActionDefinition(
+          name: 'backup',
+          script: body,
+          notifyOnSuccess: true,
+        ),
+      ],
+    );
+
+    expect(
+      script,
+      contains(
+        'install -o root -g maidcafe -m 0750 /dev/stdin '
+        '/etc/maidcafe/actions/backup.sh',
+      ),
+    );
+    expect(
+      script,
+      contains('install -d -o root -g root -m 0755 /etc/maidcafe/actions'),
+    );
+    // The config records the deployed path and the script flag, never the
+    // raw body.
+    final config = decodeMaidCafeConfigFromScript(script);
+    expect(config, contains('command = "/etc/maidcafe/actions/backup.sh"'));
+    expect(config, contains('script = true'));
+    expect(config, isNot(contains(body)));
+    expect(config, contains('notifyOnSuccess = true'));
+  });
+
+  test('script deploy prepends a shebang and removes stale scripts', () {
+    const body = 'printf "%s" ok\n';
+    final snippet = buildMaidCafeActionScriptsScript(const [
+      MaidCafeActionDefinition(name: 'backup', script: body),
+    ], stdio: false);
+
+    final deployed = RegExp(
+      r"printf '%s' '([^']+)' \| base64 -d \| "
+      r'install -o root -g maidcafe -m 0750 /dev/stdin '
+      r'/etc/maidcafe/actions/backup\.sh',
+    ).firstMatch(snippet);
+    expect(deployed, isNotNull);
+    final written = utf8.decode(base64Decode(deployed!.group(1)!));
+    expect(written, startsWith('#!/bin/sh\n'));
+    expect(written, contains(body));
+
+    // An explicit shebang is preserved verbatim.
+    const withShebang = '#!/usr/bin/env bash\nset -eu\n';
+    final kept = buildMaidCafeActionScriptsScript(const [
+      MaidCafeActionDefinition(name: 'keep', script: withShebang),
+    ], stdio: false);
+    expect(
+      kept,
+      contains('if [ "\$f" = "/etc/maidcafe/actions/keep.sh" ]; then'),
+    );
+    final keptMatch = RegExp(
+      r"printf '%s' '([^']+)' \| base64 -d \| "
+      r'install -o root -g maidcafe -m 0750 /dev/stdin '
+      r'/etc/maidcafe/actions/keep\.sh',
+    ).firstMatch(kept);
+    expect(utf8.decode(base64Decode(keptMatch!.group(1)!)), withShebang);
+  });
+
+  test('stdio script deploy uses world-executable scripts', () {
+    final snippet = buildMaidCafeActionScriptsScript(const [
+      MaidCafeActionDefinition(name: 'backup', script: 'echo hi'),
+    ], stdio: true);
+    expect(
+      snippet,
+      contains(
+        'install -o root -g root -m 0755 /dev/stdin '
+        '/etc/maidcafe/actions/backup.sh',
+      ),
+    );
+  });
+
+  test('configuration updates deploy script bodies before restarting', () {
+    const body = 'systemctl restart nginx';
+    final script = buildMaidCafeDaemonConfigScript(
+      daemonId: 'maidkit-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      transport: 'http',
+      actions: const [
+        MaidCafeActionDefinition(name: 'reload-nginx', script: body),
+      ],
+    );
+
+    expect(script, contains('/etc/maidcafe/actions/reload-nginx.sh'));
+    final configIndex = script.indexOf('config.toml');
+    final restartIndex = script.indexOf('systemctl restart maidcafe-daemon');
+    final deployIndex = script.indexOf('/etc/maidcafe/actions/');
+    expect(configIndex, isNot(-1));
+    expect(restartIndex, isNot(-1));
+    // Scripts land between the config write and the daemon restart so the
+    // freshly deployed body is what the restarted daemon loads.
+    expect(deployIndex, greaterThan(configIndex));
+    expect(deployIndex, lessThan(restartIndex));
+    final config = decodeMaidCafeConfigFromScript(script);
+    expect(
+      config,
+      contains('command = "/etc/maidcafe/actions/reload-nginx.sh"'),
+    );
+  });
+
+  test('rejects actions with an empty script body', () {
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        actions: const [MaidCafeActionDefinition(name: 'backup', script: '')],
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('rejects action names outside the daemon charset', () {
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        actions: const [
+          MaidCafeActionDefinition(name: 'bad name!', script: 'echo hi'),
+        ],
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('extracts free-form template variables from action scripts', () {
+    expect(
+      maidCafeActionTemplateVariables(
+        'systemctl restart {{ SERVICE_NAME }}\n'
+        'echo {{ serviceName }} {{ SERVICE_NAME }}',
+      ),
+      ['SERVICE_NAME', 'serviceName'],
+    );
+    expect(maidCafeActionTemplateVariables('echo "no templates"'), isEmpty);
+    expect(
+      maidCafeActionTemplateVariables('echo {{my-var}} {{ with spaces }}'),
+      ['my-var', 'with spaces'],
     );
   });
 }

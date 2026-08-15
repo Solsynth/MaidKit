@@ -1,10 +1,13 @@
 import 'dart:math' as math;
 
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter_code_editor/flutter_code_editor.dart';
+import 'package:highlight/languages/bash.dart' as bash;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
+import 'package:maid_kit/theme.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
@@ -40,33 +43,51 @@ enum MaidCafeTabMode { installation, payload }
 
 enum _MaidCafeState { checking, notInstalled, running, conflict }
 
+/// Selects one download channel without dismissing the parent sheet.
 class MaidCafeInstallChannelPicker extends StatelessWidget {
   const MaidCafeInstallChannelPicker({
     super.key,
     required this.channels,
+    required this.selected,
     required this.onSelected,
   });
 
   final List<DistributionChannel> channels;
+
+  /// Currently selected channel name, if any.
+  final String? selected;
+
+  /// Called when the user taps a channel; the picker does not pop itself.
   final ValueChanged<String> onSelected;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: math.min(280.0, channels.length * 72.0),
-    child: ListView.separated(
-      itemCount: channels.length,
-      separatorBuilder: (_, index) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final channel = channels[index];
-        final release = channel.latest;
-        return ListTile(
-          title: Text(channel.name),
-          subtitle: release == null ? null : Text(release.tagName),
-          onTap: () => onSelected(channel.name),
-        );
-      },
-    ),
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: math.min(280.0, channels.length * 72.0),
+      child: ListView.separated(
+        itemCount: channels.length,
+        separatorBuilder: (_, index) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final channel = channels[index];
+          final release = channel.latest;
+          final isSelected = channel.name == selected;
+          return ListTile(
+            leading: Icon(
+              isSelected
+                  ? Symbols.radio_button_checked
+                  : Symbols.radio_button_unchecked,
+              color: isSelected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+            title: Text(channel.name),
+            subtitle: release == null ? null : Text(release.tagName),
+            selected: isSelected,
+            onTap: () => onSelected(channel.name),
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// MaidCafe installation management or the standalone payload workspace.
@@ -92,9 +113,13 @@ class MaidCafeServerTab extends ConsumerStatefulWidget {
 
 class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     with AutomaticKeepAliveClientMixin {
-  late final TextEditingController _actionNameController;
-  late final TextEditingController _actionCommandController;
-  late final TextEditingController _actionArgumentsController;
+  late final TextEditingController _newActionNameController;
+  late final CodeController _newActionController;
+  late final FocusNode _newActionFocusNode;
+  var _showComposer = false;
+  // Last values supplied for an action's {{ name }} template variables, so
+  // re-runs start from the previous invocation.
+  final Map<String, Map<String, String>> _actionVariableValues = {};
   late final TextEditingController _portController;
   late final TextEditingController _daemonIdController;
   late final TextEditingController _versionController;
@@ -117,6 +142,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   var _state = _MaidCafeState.checking;
   String? _streamStatus;
   String? _latestVersion;
+  List<MaidCafeActionDefinition>? _savedActions;
+  String? _runningActionName;
+  final Map<String, Map<String, dynamic>> _actionResults = {};
 
   List<MaidCafeActionDefinition> get _actions =>
       ref.read(maidCafeActionsProvider.notifier).forServer(widget.server.id);
@@ -131,9 +159,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     super.initState();
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     _sessionRegistry.retain(widget.server);
-    _actionNameController = TextEditingController();
-    _actionCommandController = TextEditingController();
-    _actionArgumentsController = TextEditingController();
+    _newActionNameController = TextEditingController();
+    _newActionController = CodeController(language: bash.bash);
+    _newActionFocusNode = FocusNode();
     final cachedPort = _cachedMaidCafePort(widget.server);
     _portController = TextEditingController(
       text: cachedPort == null ? '' : '$cachedPort',
@@ -169,9 +197,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
 
   @override
   void dispose() {
-    _actionNameController.dispose();
-    _actionCommandController.dispose();
-    _actionArgumentsController.dispose();
+    _newActionNameController.dispose();
+    _newActionController.dispose();
+    _newActionFocusNode.dispose();
     _portController.dispose();
     _daemonIdController.dispose();
     _versionController.dispose();
@@ -288,6 +316,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     ref
         .read(maidCafeActionsProvider.notifier)
         .setForServer(widget.server.id, config.actions);
+    _savedActions = List.unmodifiable(config.actions);
+    _actionResults.clear();
   }
 
   Future<void> _probeInstallation() async {
@@ -341,67 +371,74 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
-  Future<void> _addAction() async {
-    final name = _actionNameController.text.trim();
-    final command = _actionCommandController.text.trim();
-    if (name.isEmpty || command.isEmpty || !command.startsWith('/')) {
-      setState(() => _message = 'maidCafeActionCommandRequired'.tr());
+  void _stageAction(MaidCafeActionDefinition action) {
+    ref.read(maidCafeActionsProvider.notifier).setForServer(widget.server.id, [
+      for (final current in _actions)
+        identical(current, action) ? action : current,
+    ]);
+  }
+
+  void _addAction() {
+    final name = _newActionNameController.text.trim();
+    final script = _newActionController.text;
+    if (!RegExp(r'^[A-Za-z0-9._-]+$').hasMatch(name)) {
+      setState(() => _message = 'maidCafeActionNameInvalid'.tr());
       return;
     }
     if (_actions.any((action) => action.name == name)) {
       setState(() => _message = 'maidCafeActionNameUnique'.tr());
       return;
     }
+    if (script.trim().isEmpty) {
+      setState(() => _message = 'maidCafeActionScriptRequired'.tr());
+      return;
+    }
     ref.read(maidCafeActionsProvider.notifier).setForServer(widget.server.id, [
       ..._actions,
-      MaidCafeActionDefinition(
-        name: name,
-        command: command,
-        arguments: _actionArgumentsController.text
-            .split(',')
-            .map((argument) => argument.trim())
-            .where((argument) => argument.isNotEmpty)
-            .toList(),
-      ),
+      MaidCafeActionDefinition(name: name, script: script),
     ]);
     setState(() {
-      _actionNameController.clear();
-      _actionCommandController.clear();
-      _actionArgumentsController.clear();
+      _newActionNameController.clear();
+      _newActionController.text = '';
+      _showComposer = false;
       _message = null;
     });
-    await _syncConfiguration();
   }
 
-  Future<void> _removeAction(MaidCafeActionDefinition action) async {
+  void _removeAction(MaidCafeActionDefinition action) {
     ref.read(maidCafeActionsProvider.notifier).setForServer(widget.server.id, [
       for (final current in _actions)
         if (!identical(current, action)) current,
     ]);
-    await _syncConfiguration();
+    _actionResults.remove(action.name);
   }
 
-  Future<void> _updateAction(
-    MaidCafeActionDefinition action, {
-    bool? enabled,
-    bool? notifyOnSuccess,
-    bool? notifyOnFailure,
-  }) async {
-    ref.read(maidCafeActionsProvider.notifier).setForServer(widget.server.id, [
-      for (final current in _actions)
-        identical(current, action)
-            ? MaidCafeActionDefinition(
-                name: current.name,
-                command: current.command,
-                arguments: current.arguments,
-                enabled: enabled ?? current.enabled,
-                notifyOnSuccess: notifyOnSuccess ?? current.notifyOnSuccess,
-                notifyOnFailure: notifyOnFailure ?? current.notifyOnFailure,
-              )
-            : current,
-    ]);
-    await _syncConfiguration();
+  void _discardActionChanges() {
+    final saved = _savedActions;
+    if (saved == null) return;
+    ref
+        .read(maidCafeActionsProvider.notifier)
+        .setForServer(widget.server.id, saved);
+    _actionResults.clear();
+    setState(() => _message = null);
   }
+
+  bool get _actionsDirty {
+    final saved = _savedActions;
+    if (saved == null) return _actions.isNotEmpty;
+    if (saved.length != _actions.length) return true;
+    for (var i = 0; i < saved.length; i++) {
+      if (!_sameAction(saved[i], _actions[i])) return true;
+    }
+    return false;
+  }
+
+  bool _sameAction(MaidCafeActionDefinition a, MaidCafeActionDefinition b) =>
+      a.name == b.name &&
+      a.script == b.script &&
+      a.enabled == b.enabled &&
+      a.notifyOnSuccess == b.notifyOnSuccess &&
+      a.notifyOnFailure == b.notifyOnFailure;
 
   /// Connection-only status line: no metrics, no raw daemon ids.
   String _streamStatusLine(MaidCafeStreamSession stream) {
@@ -460,7 +497,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
-  Future<String?> _chooseInstallChannel() async {
+  /// Opens the tabbed install sheet: channel → what the script does → the
+  /// exact script. Returns the chosen channel name, or null when cancelled.
+  Future<String?> _showInstallSheet({
+    required bool updating,
+    required int port,
+    required String apiSecret,
+  }) async {
     final channels = await fetchMaidCafeDistributionChannels();
     final installable = channels
         .where(
@@ -471,53 +514,78 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       throw StateError('maidCafeNoInstallableChannels'.tr());
     }
     if (!mounted) return null;
-    return showDialog<String>(
+    return showModalBottomSheet<String>(
       context: context,
-      builder: (context) => Dialog(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'maidCafeSelectChannel'.tr(),
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 12),
-                Text('maidCafeSelectChannelHint'.tr()),
-                const SizedBox(height: 12),
-                MaidCafeInstallChannelPicker(
-                  channels: installable,
-                  onSelected: (channel) => Navigator.pop(context, channel),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: Text('maidCafeCancel'.tr()),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => MaidCafeInstallSheet(
+        channels: installable,
+        updating: updating,
+        transport: _transport,
+        scriptBuilder: (channel) => _buildInstallPreviewScript(
+          channel: channel,
+          port: port,
+          apiSecret: apiSecret,
         ),
       ),
     );
   }
 
+  /// Builds the exact install script the flow will run for [channel], so the
+  /// sheet can show it before anything touches the server.
+  Future<String> _buildInstallPreviewScript({
+    required String channel,
+    required int port,
+    required String apiSecret,
+  }) async {
+    final artifact = await fetchMaidCafeDistributionArtifact(channel: channel);
+    return buildMaidCafeDaemonInstallScript(
+      daemonId: _configText(_daemonIdController, 'maidkit-${widget.server.id}'),
+      cloudUrl: _cloudUrlController.text.trim(),
+      cloudSecret: _cloudSecretController.text,
+      artifactUrl: artifact.downloadUrl,
+      version: artifact.version,
+      transport: _transport,
+      listenHost: _configText(_listenHostController, '127.0.0.1'),
+      port: port,
+      apiSecret: apiSecret,
+      metricsInterval: _configText(_metricsIntervalController, '1m'),
+      requestTimeout: _configText(_requestTimeoutController, '10s'),
+      scriptTimeout: _configText(_scriptTimeoutController, '30s'),
+      maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
+      maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
+      actions: List.unmodifiable(_actions),
+    );
+  }
+
   Future<void> _install({bool updating = false}) async {
     if (_busy || !widget.connected) return;
+    // The install sheet previews the exact script, which embeds the port;
+    // reject an invalid edited port before opening it.
+    if (_portEdited && _configuredPort() == null) {
+      setState(() => _message = 'maidCafePortInvalid'.tr());
+      return;
+    }
     setState(() {
       _busy = true;
       _message = null;
     });
     try {
-      final channel = await _chooseInstallChannel();
+      // For updates the live daemon config (secrets, intervals, actions)
+      // must be loaded before the preview is built.
+      if (updating) await _loadDaemonConfig();
+      if (!mounted) return;
+      final apiSecret =
+          updating && _metricsSecretController.text.trim().isNotEmpty
+          ? _metricsSecretController.text.trim()
+          : generateMaidCafeApiSecret();
+      final port = await _resolveMaidCafePort(refreshRemote: updating);
+      if (!mounted) return;
+      final channel = await _showInstallSheet(
+        updating: updating,
+        port: port,
+        apiSecret: apiSecret,
+      );
       if (channel == null) return;
       final manager = ref.read(connectionManagerProvider);
       final existing = await detectMaidCafeInstallation(
@@ -535,12 +603,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         }
         return;
       }
-      if (updating) await _loadDaemonConfig();
-      final apiSecret =
-          updating && _metricsSecretController.text.trim().isNotEmpty
-          ? _metricsSecretController.text.trim()
-          : generateMaidCafeApiSecret();
-      final port = await _resolveMaidCafePort(refreshRemote: updating);
       final credential = await ref
           .read(serverRepositoryProvider)
           .credentialFor(widget.server);
@@ -690,7 +752,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
-  Future<void> _syncConfiguration() async {
+  Future<void> _syncConfiguration({String? successMessage}) async {
     if (_busy || _stream == null || _state != _MaidCafeState.running) return;
     setState(() {
       _busy = true;
@@ -751,10 +813,16 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             daemonUrl: 'http://127.0.0.1:$port',
             metricsSecret: apiSecret,
           );
+      // The config and scripts are on the server; the reopen failure below is
+      // connection-only, so the local snapshot is already committed.
+      _savedActions = List.unmodifiable(_actions);
       final opened = await _openStream(port: port, force: true);
       if (!opened) return;
       if (mounted) {
-        setState(() => _message = 'maidCafeSaveConfigurationSuccess'.tr());
+        setState(
+          () => _message =
+              successMessage ?? 'maidCafeSaveConfigurationSuccess'.tr(),
+        );
       }
     } catch (error) {
       if (mounted) {
@@ -824,20 +892,100 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   Future<void> _invokeAction(MaidCafeActionDefinition action) async {
     final stream = _stream;
     if (stream == null || _busy) return;
-    setState(() => _busy = true);
+    final variables = maidCafeActionTemplateVariables(action.script);
+    Map<String, dynamic>? body;
+    if (variables.isNotEmpty) {
+      body = await _promptActionVariables(action, variables);
+      if (body == null || !mounted) return; // Cancelled.
+    }
+    setState(() {
+      _busy = true;
+      _runningActionName = action.name;
+    });
     try {
-      final result = await stream.invokeAction(action.name);
+      final result = await stream.invokeAction(action.name, body: body);
       if (mounted) {
-        setState(
-          () => _message =
-              '${'maidCafeActionCompleted'.tr()}: ${result['stdout'] ?? ''}',
-        );
+        setState(() => _actionResults[action.name] = result);
       }
     } catch (error) {
       if (mounted) setState(() => _message = error.toString());
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _runningActionName = null;
+        });
+      }
     }
+  }
+
+  /// Collects values for the `{{ name }}` template variables [action.script]
+  /// references. Returns the JSON body for the invocation, or null when the
+  /// user cancels. Previous values are prefilled.
+  Future<Map<String, String>?> _promptActionVariables(
+    MaidCafeActionDefinition action,
+    List<String> variables,
+  ) async {
+    final previous = _actionVariableValues[action.name] ?? const {};
+    final controllers = <String, TextEditingController>{
+      for (final variable in variables)
+        variable: TextEditingController(text: previous[variable] ?? ''),
+    };
+    final values = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('maidCafeActionVariables'.tr()),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('maidCafeActionVariablesHint'.tr()),
+                for (final variable in variables) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controllers[variable],
+                    autofocus: variable == variables.first,
+                    decoration: InputDecoration(
+                      labelText: variable,
+                      border: const OutlineInputBorder(),
+                    ),
+                    onSubmitted: variable == variables.last
+                        ? (_) => Navigator.pop(dialogContext, {
+                            for (final entry in controllers.entries)
+                              entry.key: entry.value.text,
+                          })
+                        : null,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text('maidCafeCancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, {
+              for (final entry in controllers.entries)
+                entry.key: entry.value.text,
+            }),
+            child: Text('maidCafeRunAction'.tr()),
+          ),
+        ],
+      ),
+    );
+    for (final controller in controllers.values) {
+      controller.dispose();
+    }
+    if (values != null) {
+      _actionVariableValues[action.name] = values;
+    }
+    return values;
   }
 
   @override
@@ -947,41 +1095,170 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     ),
   );
 
-  Widget _actionsTab(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.all(16),
-    child: Column(
+  Widget _actionsTab(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (_streamStatus != null)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(_streamStatus!),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final action in _actions)
-                        OutlinedButton.icon(
-                          onPressed: _busy ? null : () => _invokeAction(action),
-                          icon: const Icon(Symbols.play_arrow),
-                          label: Text(action.name),
-                        ),
-                    ],
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                'maidCafeActionsHint'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() => _showComposer = !_showComposer),
+                  icon: Icon(_showComposer ? Symbols.close : Symbols.add),
+                  label: Text(
+                    _showComposer
+                        ? 'maidCafeCancel'.tr()
+                        : 'maidCafeAddAction'.tr(),
                   ),
-                ],
+                ),
+              ),
+              if (_showComposer) ...[
+                const SizedBox(height: 8),
+                _actionComposer(context),
+                const SizedBox(height: 16),
+              ],
+              if (_actions.isEmpty && !_showComposer)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'maidCafeNoActions'.tr(),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              for (final action in _actions) ...[
+                _MaidCafeActionCard(
+                  key: ValueKey('maidcafe-action-${action.name}'),
+                  action: action,
+                  busy: _busy,
+                  running: _runningActionName == action.name,
+                  result: _actionResults[action.name],
+                  onChanged: _stageAction,
+                  onRun: () => _invokeAction(action),
+                  onDelete: () => _removeAction(action),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+        _actionsFooter(context),
+      ],
+    );
+  }
+
+  Widget _actionComposer(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _newActionNameController,
+                    enabled: !_busy,
+                    decoration: InputDecoration(
+                      labelText: 'maidCafeActionName'.tr(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _addAction,
+                  icon: const Icon(Symbols.add),
+                  label: Text('maidCafeAddAction'.tr()),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _MaidCafeScriptField(
+              controller: _newActionController,
+              focusNode: _newActionFocusNode,
+              onChanged: (_) {},
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'maidCafeActionScriptHint'.tr(),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionsFooter(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final dirty = _actionsDirty;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Row(
+          children: [
+            if (dirty) ...[
+              Icon(Symbols.circle, size: 8, color: scheme.primary),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Text(
+                dirty
+                    ? 'maidCafeUnsavedChanges'.tr()
+                    : 'maidCafeAllChangesSaved'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
-          ),
-        const SizedBox(height: 16),
-        _actionEditor(context),
-      ],
-    ),
-  );
+            if (dirty) ...[
+              OutlinedButton(
+                onPressed: _busy ? null : _discardActionChanges,
+                child: Text('maidCafeDiscardChanges'.tr()),
+              ),
+              const SizedBox(width: 8),
+            ],
+            FilledButton.icon(
+              onPressed: dirty && !_busy
+                  ? () => _syncConfiguration(
+                      successMessage: 'maidCafeSaveActionsSuccess'.tr(),
+                    )
+                  : null,
+              icon: const Icon(Symbols.save),
+              label: Text('maidCafeSaveActions'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _connectionPrompt() => Card(
     child: Padding(
@@ -1020,53 +1297,79 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     ),
   );
 
-  Widget _notInstalledPrompt(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'maidCafeNotInstalledTitle'.tr(),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 4),
-          Text('maidCafeNotInstalledLead'.tr()),
-          const SizedBox(height: 16),
-          _benefitRow(
-            icon: Symbols.monitoring,
-            title: 'maidCafeBenefitOfflineTitle'.tr(),
-            description: 'maidCafeBenefitOfflineDesc'.tr(),
-          ),
-          _benefitRow(
-            icon: Symbols.bolt,
-            title: 'maidCafeBenefitWebhookTitle'.tr(),
-            description: 'maidCafeBenefitWebhookDesc'.tr(),
-          ),
-          _benefitRow(
-            icon: Symbols.restart_alt,
-            title: 'maidCafeBenefitAlwaysOnTitle'.tr(),
-            description: 'maidCafeBenefitAlwaysOnDesc'.tr(),
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: _busy ? null : _install,
-                icon: const Icon(Symbols.download),
-                label: Text('maidCafeInstallApplication'.tr()),
-              ),
-              if (_message != null)
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _showDaemonLogs,
-                  icon: const Icon(Symbols.article),
-                  label: Text('maidCafeViewDaemonLogs'.tr()),
+  Widget _notInstalledPrompt(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'maidCafeNotInstalledTitle'.tr(),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text('maidCafeNotInstalledLead'.tr()),
+            const SizedBox(height: 20),
+            _sectionLabel(theme, 'maidCafeHowItWorks'.tr()),
+            _benefitRow(
+              icon: Symbols.dns,
+              title: 'maidCafeHowItWorksDaemon'.tr(),
+              description: 'maidCafeHowItWorksDaemonDesc'.tr(),
+            ),
+            _benefitRow(
+              icon: Symbols.lock,
+              title: 'maidCafeHowItWorksChannel'.tr(),
+              description: 'maidCafeHowItWorksChannelDesc'.tr(),
+            ),
+            const SizedBox(height: 8),
+            _sectionLabel(theme, 'maidCafeWhatYouGet'.tr()),
+            _benefitRow(
+              icon: Symbols.monitoring,
+              title: 'maidCafeBenefitOfflineTitle'.tr(),
+              description: 'maidCafeBenefitOfflineDesc'.tr(),
+            ),
+            _benefitRow(
+              icon: Symbols.bolt,
+              title: 'maidCafeBenefitWebhookTitle'.tr(),
+              description: 'maidCafeBenefitWebhookDesc'.tr(),
+            ),
+            _benefitRow(
+              icon: Symbols.restart_alt,
+              title: 'maidCafeBenefitAlwaysOnTitle'.tr(),
+              description: 'maidCafeBenefitAlwaysOnDesc'.tr(),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _install,
+                  icon: const Icon(Symbols.download),
+                  label: Text('maidCafeInstallApplication'.tr()),
                 ),
-            ],
-          ),
-        ],
+                if (_message != null)
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _showDaemonLogs,
+                    icon: const Icon(Symbols.article),
+                    label: Text('maidCafeViewDaemonLogs'.tr()),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionLabel(ThemeData theme, String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Text(
+      text,
+      style: theme.textTheme.titleSmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
       ),
     ),
   );
@@ -1317,99 +1620,688 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     onChanged: onChanged,
     decoration: InputDecoration(labelText: label),
   );
-  Widget _actionEditor(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
+}
+
+/// Install/update sheet: channel selection, script explanation, and the exact
+/// script, arranged as a stepper. Fresh installs must visit every tab before
+/// the install button unlocks; updates only need a channel chosen.
+class MaidCafeInstallSheet extends StatefulWidget {
+  const MaidCafeInstallSheet({
+    super.key,
+    required this.channels,
+    required this.updating,
+    required this.transport,
+    required this.scriptBuilder,
+  });
+
+  final List<DistributionChannel> channels;
+  final bool updating;
+  final String transport;
+
+  /// Builds the exact install script for a chosen channel so the user can
+  /// review what will run on the server before anything is executed.
+  final Future<String> Function(String channel) scriptBuilder;
+
+  @override
+  State<MaidCafeInstallSheet> createState() => MaidCafeInstallSheetState();
+}
+
+class MaidCafeInstallSheetState extends State<MaidCafeInstallSheet>
+    with SingleTickerProviderStateMixin {
+  static const _tabCount = 3;
+
+  late final TabController _tabController;
+  String? _selectedChannel;
+  final Set<int> _visited = <int>{0};
+  int _currentTab = 0;
+  Future<String>? _scriptFuture;
+
+  bool get _channelChosen => _selectedChannel != null;
+
+  /// Updates skip the review gate; fresh installs must have seen all tabs.
+  bool get _reviewed => widget.updating || _visited.length == _tabCount;
+
+  bool get _canInstall => _channelChosen && _reviewed;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: _tabCount, vsync: this);
+    _tabController.addListener(_onTabChanged);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    final index = _tabController.index;
+    if (index == _currentTab) return;
+    _currentTab = index;
+    setState(() => _visited.add(index));
+  }
+
+  void _selectChannel(String name) {
+    setState(() {
+      _selectedChannel = name;
+      _scriptFuture = null;
+    });
+    _goTo(1);
+  }
+
+  void _goTo(int index) {
+    if (index < 0 || index >= _tabCount) return;
+    setState(() {
+      _currentTab = index;
+      _visited.add(index);
+    });
+    _tabController.animateTo(index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return FractionallySizedBox(
+      heightFactor: 0.86,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('maidCafeActionsHint'.tr()),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _actionNameController,
-            enabled: !_busy,
-            decoration: InputDecoration(labelText: 'maidCafeActionName'.tr()),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _actionCommandController,
-            enabled: !_busy,
-            decoration: InputDecoration(
-              labelText: 'maidCafeActionCommand'.tr(),
-              helperText: 'maidCafeActionCommandHint'.tr(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _actionArgumentsController,
-            enabled: !_busy,
-            decoration: InputDecoration(
-              labelText: 'maidCafeActionArguments'.tr(),
-              helperText: 'maidCafeActionArgumentsHint'.tr(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: _busy ? null : _addAction,
-              icon: const Icon(Symbols.add),
-              label: Text('maidCafeAddAction'.tr()),
-            ),
-          ),
-          for (final action in _actions)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
+            child: Row(
               children: [
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(action.name),
-                  subtitle: Text(
-                    '${action.command} ${action.arguments.join(' ')}',
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'maidCafeRemoveAction'.tr(),
-                    onPressed: _busy ? null : () => _removeAction(action),
-                    icon: const Icon(Symbols.delete_outline),
+                Icon(Symbols.local_cafe, size: 22, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.updating
+                        ? 'maidCafeUpdateApplication'.tr()
+                        : 'maidCafeInstallApplication'.tr(),
+                    style: theme.textTheme.titleLarge,
                   ),
                 ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: Text('maidCafeActionEnabled'.tr()),
-                  value: action.enabled,
-                  onChanged: _busy
-                      ? null
-                      : (value) => _updateAction(action, enabled: value),
-                ),
-                Wrap(
-                  spacing: 16,
-                  children: [
-                    FilterChip(
-                      label: Text('maidCafeNotifyOnSuccess'.tr()),
-                      selected: action.notifyOnSuccess,
-                      onSelected: _busy
-                          ? null
-                          : (value) =>
-                                _updateAction(action, notifyOnSuccess: value),
-                    ),
-                    FilterChip(
-                      label: Text('maidCafeNotifyOnFailure'.tr()),
-                      selected: action.notifyOnFailure,
-                      onSelected: _busy
-                          ? null
-                          : (value) =>
-                                _updateAction(action, notifyOnFailure: value),
-                    ),
-                  ],
+                IconButton(
+                  tooltip: 'commonClose'.tr(),
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Symbols.close),
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 8),
+          TabBar(
+            controller: _tabController,
+            tabs: [
+              Tab(
+                icon: const Icon(Symbols.sell, size: 18),
+                text: 'maidCafeInstallStepChannel'.tr(),
+              ),
+              Tab(
+                icon: const Icon(Symbols.info, size: 18),
+                text: 'maidCafeInstallStepExplain'.tr(),
+              ),
+              Tab(
+                icon: const Icon(Symbols.code, size: 18),
+                text: 'maidCafeInstallStepScript'.tr(),
+              ),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildChannelTab(context),
+                _buildExplainTab(context),
+                _buildScriptTab(context),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            child: Row(
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('maidCafeCancel'.tr()),
+                ),
+                const Spacer(),
+                if (_currentTab > 0)
+                  TextButton(
+                    onPressed: () => _goTo(_currentTab - 1),
+                    child: Text('maidCafeInstallBack'.tr()),
+                  ),
+                const SizedBox(width: 8),
+                if (_currentTab < _tabCount - 1)
+                  FilledButton(
+                    onPressed: _currentTab == 0 && !_channelChosen
+                        ? null
+                        : () => _goTo(_currentTab + 1),
+                    child: Text('maidCafeInstallNext'.tr()),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: _canInstall
+                        ? () => Navigator.pop(context, _selectedChannel)
+                        : null,
+                    icon: const Icon(Symbols.download),
+                    label: Text(
+                      widget.updating
+                          ? 'maidCafeUpdateApplication'.tr()
+                          : 'maidCafeInstallApplication'.tr(),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
-    ),
+    );
+  }
+
+  Widget _buildChannelTab(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      Text('maidCafeSelectChannelHint'.tr()),
+      const SizedBox(height: 12),
+      MaidCafeInstallChannelPicker(
+        channels: widget.channels,
+        selected: _selectedChannel,
+        onSelected: _selectChannel,
+      ),
+    ],
   );
+
+  Widget _buildExplainTab(BuildContext context) {
+    final steps = widget.transport == 'stdio' ? _stdioSteps() : _systemdSteps();
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text('maidCafeInstallExplainLead'.tr()),
+        const SizedBox(height: 16),
+        for (final step in steps)
+          _installStepRow(
+            icon: step.$1,
+            title: step.$2.tr(),
+            description: step.$3.tr(),
+          ),
+      ],
+    );
+  }
+
+  List<(IconData, String, String)> _systemdSteps() => const [
+    (
+      Symbols.download,
+      'maidCafeInstallStepCurlTitle',
+      'maidCafeInstallStepCurlDesc',
+    ),
+    (
+      Symbols.cloud_download,
+      'maidCafeInstallStepDownloadTitle',
+      'maidCafeInstallStepDownloadDesc',
+    ),
+    (
+      Symbols.terminal,
+      'maidCafeInstallStepBinaryTitle',
+      'maidCafeInstallStepBinaryDesc',
+    ),
+    (
+      Symbols.person_add,
+      'maidCafeInstallStepUserTitle',
+      'maidCafeInstallStepUserDesc',
+    ),
+    (
+      Symbols.tune,
+      'maidCafeInstallStepConfigTitle',
+      'maidCafeInstallStepConfigDesc',
+    ),
+    (
+      Symbols.power,
+      'maidCafeInstallStepSystemdTitle',
+      'maidCafeInstallStepSystemdDesc',
+    ),
+    (
+      Symbols.fact_check,
+      'maidCafeInstallStepHealthTitle',
+      'maidCafeInstallStepHealthDesc',
+    ),
+  ];
+
+  List<(IconData, String, String)> _stdioSteps() => const [
+    (
+      Symbols.download,
+      'maidCafeInstallStepCurlTitle',
+      'maidCafeInstallStepCurlDesc',
+    ),
+    (
+      Symbols.cloud_download,
+      'maidCafeInstallStepDownloadTitle',
+      'maidCafeInstallStepDownloadDesc',
+    ),
+    (
+      Symbols.terminal,
+      'maidCafeInstallStepBinaryTitle',
+      'maidCafeInstallStepBinaryDesc',
+    ),
+    (
+      Symbols.tune,
+      'maidCafeInstallStepStdioConfigTitle',
+      'maidCafeInstallStepStdioConfigDesc',
+    ),
+    (
+      Symbols.code,
+      'maidCafeInstallStepStdioNoteTitle',
+      'maidCafeInstallStepStdioNoteDesc',
+    ),
+  ];
+
+  Widget _installStepRow({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: theme.textTheme.titleSmall),
+                const SizedBox(height: 2),
+                Text(description, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScriptTab(BuildContext context) {
+    final theme = Theme.of(context);
+    final channel = _selectedChannel;
+    if (channel == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'maidCafeInstallSelectChannelFirst'.tr(),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    final future = _scriptFuture ??= widget.scriptBuilder(channel);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Text(
+            'maidCafeInstallScriptNote'.tr(),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<String>(
+            future: future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final error = snapshot.error;
+              if (error != null) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: SelectableText('$error'),
+                );
+              }
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SelectableText(
+                    snapshot.data ?? '',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MaidCafeActionCard extends StatefulWidget {
+  const _MaidCafeActionCard({
+    super.key,
+    required this.action,
+    required this.busy,
+    required this.running,
+    required this.onChanged,
+    required this.onRun,
+    required this.onDelete,
+    this.result,
+  });
+
+  final MaidCafeActionDefinition action;
+  final bool busy;
+  final bool running;
+  final Map<String, dynamic>? result;
+  final ValueChanged<MaidCafeActionDefinition> onChanged;
+  final VoidCallback onRun;
+  final VoidCallback onDelete;
+
+  @override
+  State<_MaidCafeActionCard> createState() => _MaidCafeActionCardState();
+}
+
+class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
+  late final CodeController _scriptController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scriptController = CodeController(
+      text: widget.action.script,
+      language: bash.bash,
+    );
+  }
+
+  @override
+  void didUpdateWidget(_MaidCafeActionCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // External changes (reload after reconnect, discard) replace the script;
+    // edits that originated here already match and are left alone so the
+    // caret is not disturbed.
+    if (widget.action.script != _scriptController.text) {
+      _scriptController.text = widget.action.script;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scriptController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final action = widget.action;
+    final variables = maidCafeActionTemplateVariables(action.script);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        action.name,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontFamily: MaidKitFonts.mono,
+                        ),
+                      ),
+                      if (variables.isNotEmpty)
+                        Text(
+                          variables
+                              .map((variable) => '{{ $variable }}')
+                              .join('  '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontFamily: MaidKitFonts.mono,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Switch(
+                  value: action.enabled,
+                  onChanged: widget.busy
+                      ? null
+                      : (value) =>
+                            widget.onChanged(action.copyWith(enabled: value)),
+                ),
+                IconButton(
+                  tooltip: 'maidCafeRunAction'.tr(),
+                  onPressed: widget.busy ? null : widget.onRun,
+                  icon: widget.running
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Symbols.play_arrow),
+                ),
+                IconButton(
+                  tooltip: 'maidCafeRemoveAction'.tr(),
+                  onPressed: widget.busy ? null : widget.onDelete,
+                  icon: const Icon(Symbols.delete_outline),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _MaidCafeScriptField(
+              controller: _scriptController,
+              onChanged: (text) =>
+                  widget.onChanged(action.copyWith(script: text)),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilterChip(
+                  label: Text('maidCafeNotifyOnSuccess'.tr()),
+                  selected: action.notifyOnSuccess,
+                  onSelected: widget.busy
+                      ? null
+                      : (value) => widget.onChanged(
+                          action.copyWith(notifyOnSuccess: value),
+                        ),
+                ),
+                FilterChip(
+                  label: Text('maidCafeNotifyOnFailure'.tr()),
+                  selected: action.notifyOnFailure,
+                  onSelected: widget.busy
+                      ? null
+                      : (value) => widget.onChanged(
+                          action.copyWith(notifyOnFailure: value),
+                        ),
+                ),
+              ],
+            ),
+            if (widget.result != null) ...[
+              const SizedBox(height: 12),
+              _MaidCafeActionResultView(result: widget.result!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Syntax-highlighted bash editor used for action script bodies.
+class _MaidCafeScriptField extends StatelessWidget {
+  const _MaidCafeScriptField({
+    required this.controller,
+    required this.onChanged,
+    this.focusNode,
+  });
+
+  static const _height = 168.0;
+
+  final CodeController controller;
+  final ValueChanged<String> onChanged;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: _height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: scheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: CodeTheme(
+            data: CodeThemeData(
+              styles: {
+                'root': TextStyle(
+                  color: scheme.onSurface,
+                  backgroundColor: scheme.surfaceContainerLowest,
+                  fontFamily: MaidKitFonts.mono,
+                ),
+                'comment': TextStyle(color: scheme.onSurfaceVariant),
+                'keyword': TextStyle(color: scheme.primary),
+                'string': TextStyle(color: scheme.tertiary),
+                'number': TextStyle(color: scheme.secondary),
+                'literal': TextStyle(color: scheme.secondary),
+                'built_in': TextStyle(color: scheme.primary),
+              },
+            ),
+            child: CodeField(
+              controller: controller,
+              focusNode: focusNode,
+              expands: true,
+              wrap: false,
+              padding: const EdgeInsets.all(12),
+              textStyle: const TextStyle(
+                fontFamily: MaidKitFonts.mono,
+                fontSize: 13,
+                height: 1.45,
+              ),
+              gutterStyle: GutterStyle(
+                textStyle: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+                showErrors: false,
+                showFoldingHandles: false,
+              ),
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact run result for one action: exit code plus stdout/stderr panes.
+class _MaidCafeActionResultView extends StatelessWidget {
+  const _MaidCafeActionResultView({required this.result});
+
+  final Map<String, dynamic> result;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final ok = result['ok'] == true;
+    final exitCode = result['exitCode'];
+    final stdout = result['stdout']?.toString() ?? '';
+    final stderr = result['stderr']?.toString() ?? '';
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  ok ? Symbols.check_circle : Symbols.error,
+                  size: 18,
+                  color: ok ? scheme.primary : scheme.error,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  ok
+                      ? 'maidCafeActionCompleted'.tr()
+                      : 'maidCafeActionFailed'.tr(),
+                  style: theme.textTheme.bodySmall,
+                ),
+                const Spacer(),
+                Text(
+                  '${'maidCafeActionExitCode'.tr()} $exitCode',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontFamily: MaidKitFonts.mono,
+                  ),
+                ),
+              ],
+            ),
+            if (stdout.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'maidCafeActionStdout'.tr(),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(height: 120, child: AnsiLogView(text: stdout)),
+            ],
+            if (stderr.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'maidCafeActionStderr'.tr(),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(height: 120, child: AnsiLogView(text: stderr)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _MaidCafeLogsSheet extends StatelessWidget {

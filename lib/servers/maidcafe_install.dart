@@ -27,28 +27,133 @@ String generateMaidCafeApiSecret() {
   return base64UrlEncode(bytes).replaceAll('=', '');
 }
 
+/// A preset script the daemon can run on demand.
+///
+/// The daemon only executes absolute-path commands, so MaidKit deploys the
+/// [script] body to `/etc/maidcafe/actions/<name>.sh` (root-owned,
+/// executable by the `maidcafe` service user) and records that path as the
+/// action's command. [script] is edited exactly like the app's snippets: a
+/// multi-line shell body.
+///
+/// Scripts may reference `{{ name }}` template variables. When the action is
+/// invoked, the requester supplies values in the request body and the daemon
+/// substitutes them verbatim into the script (the SSH-authenticated runner is
+/// a trusted source, so no escaping is applied). Names are free-form; there
+/// is no enforced convention.
 class MaidCafeActionDefinition {
   const MaidCafeActionDefinition({
     required this.name,
-    required this.command,
-    required this.arguments,
+    required this.script,
     this.enabled = true,
     this.notifyOnSuccess = false,
     this.notifyOnFailure = false,
   });
 
   final String name;
-  final String command;
-  final List<String> arguments;
+  final String script;
   final bool enabled;
   final bool notifyOnSuccess;
   final bool notifyOnFailure;
+
+  MaidCafeActionDefinition copyWith({
+    String? name,
+    String? script,
+    bool? enabled,
+    bool? notifyOnSuccess,
+    bool? notifyOnFailure,
+  }) => MaidCafeActionDefinition(
+    name: name ?? this.name,
+    script: script ?? this.script,
+    enabled: enabled ?? this.enabled,
+    notifyOnSuccess: notifyOnSuccess ?? this.notifyOnSuccess,
+    notifyOnFailure: notifyOnFailure ?? this.notifyOnFailure,
+  );
+}
+
+/// Absolute path where an action's script body is deployed on the server.
+String maidCafeActionScriptPath(MaidCafeActionDefinition action) =>
+    '/etc/maidcafe/actions/${action.name}.sh';
+
+final _maidCafeActionNamePattern = RegExp(r'^[A-Za-z0-9._-]+$');
+
+final _maidCafeTemplateVarPattern = RegExp(r'\{\{\s*([^{}]+?)\s*\}\}');
+
+/// Extracts the `{{ name }}` template variables [script] references, in first
+/// appearance order and deduplicated. Names are kept verbatim (free-form);
+/// this is the vocabulary the invoker must supply values for.
+List<String> maidCafeActionTemplateVariables(String script) {
+  final seen = <String>{};
+  final variables = <String>[];
+  for (final match in _maidCafeTemplateVarPattern.allMatches(script)) {
+    final name = match.group(1)!.trim();
+    if (seen.add(name)) variables.add(name);
+  }
+  return variables;
+}
+
+/// Builds a privileged shell snippet that deploys action script bodies to
+/// `/etc/maidcafe/actions/<name>.sh` and removes stale scripts.
+///
+/// The daemon only executes absolute-path commands (no inline scripts), so
+/// bodies are installed as executables and the action's `command` points at
+/// them. Under systemd the daemon runs as `maidcafe`, so scripts are
+/// group-executable but not world-readable; stdio mode runs as the SSH user,
+/// so they are world-executable instead.
+String buildMaidCafeActionScriptsScript(
+  List<MaidCafeActionDefinition> actions, {
+  required bool stdio,
+}) {
+  final writes = <String>[];
+  final names = <String>[];
+  for (final action in actions) {
+    final body = action.script.startsWith('#!')
+        ? action.script
+        : '#!/bin/sh\n${action.script}';
+    final encoded = base64Encode(utf8.encode(body));
+    writes.add(
+      "printf '%s' '$encoded' | base64 -d | "
+      'install -o root -g ${stdio ? "root" : "maidcafe"} '
+      '-m ${stdio ? "0755" : "0750"} /dev/stdin '
+      '/etc/maidcafe/actions/${action.name}.sh',
+    );
+    names.add(action.name);
+  }
+  final keepChecks = names
+      .map(
+        (name) =>
+            '  if [ "\$f" = "/etc/maidcafe/actions/$name.sh" ]; then\n'
+            '    keep=true\n'
+            '  fi',
+      )
+      .join('\n');
+  return '''
+install -d -o root -g root -m 0755 /etc/maidcafe/actions
+${writes.join('\n')}
+for f in /etc/maidcafe/actions/*.sh; do
+  [ -e "\$f" ] || continue
+  keep=false
+$keepChecks
+  if [ "\$keep" != true ]; then
+    rm -f "\$f"
+  fi
+done''';
 }
 
 class _MaidCafeArtifact {
   const _MaidCafeArtifact({required this.url, required this.version});
 
   final String url;
+  final String version;
+}
+
+/// A published MaidCafe daemon bundle for the Linux amd64 platform.
+class MaidCafeDistributionArtifact {
+  const MaidCafeDistributionArtifact({
+    required this.downloadUrl,
+    required this.version,
+  });
+
+  final String downloadUrl;
   final String version;
 }
 
@@ -101,7 +206,8 @@ Future<List<String>> detectMaidCafeInstallation({
 
 /// Installs the published MaidCafe daemon bundle on [server].
 ///
-/// The bundle is fetched from DistributionCenter; the remote host does not
+/// The bundle is fetched from Solsynth Express (internally the
+/// DistributionCenter service); the remote host does not
 /// need Go or a source checkout.
 Future<void> installMaidCafeDaemon({
   required WidgetRef ref,
@@ -287,6 +393,7 @@ String buildMaidCafeDaemonInstallScript({
     listenHost: listenHost,
     maxBodyBytes: maxBodyBytes,
     maxConcurrentRuns: maxConcurrentRuns,
+    actions: actions,
   );
   final resolvedApiSecret = apiSecret.trim().isEmpty
       ? generateMaidCafeApiSecret()
@@ -390,6 +497,7 @@ install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidk
 printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
 
 $configInstall "\$work_dir/config.toml" $configPath
+${buildMaidCafeActionScriptsScript(actions, stdio: stdio)}
 $serviceInstall''';
 }
 
@@ -422,6 +530,7 @@ String buildMaidCafeDaemonConfigScript({
     listenHost: listenHost,
     maxBodyBytes: maxBodyBytes,
     maxConcurrentRuns: maxConcurrentRuns,
+    actions: actions,
   );
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
@@ -458,6 +567,7 @@ String buildMaidCafeDaemonConfigScript({
 install -d -o root -g root -m 0755 /etc/maidcafe
 printf '%s\n' 'maidkit' | install -o root -g root -m 0644 /dev/stdin /etc/maidcafe/maidkit-managed
 printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
+${buildMaidCafeActionScriptsScript(actions, stdio: transport == 'stdio')}
 $serviceRestart''';
 }
 
@@ -465,6 +575,7 @@ void _validateMaidCafeConfigFields({
   required String listenHost,
   required int maxBodyBytes,
   required int maxConcurrentRuns,
+  List<MaidCafeActionDefinition> actions = const [],
 }) {
   if (!RegExp(r'^[A-Za-z0-9_.:-]+$').hasMatch(listenHost)) {
     throw ArgumentError.value(
@@ -482,6 +593,23 @@ void _validateMaidCafeConfigFields({
       'maxConcurrentRuns',
       'must be positive',
     );
+  }
+  for (var i = 0; i < actions.length; i++) {
+    final action = actions[i];
+    if (!_maidCafeActionNamePattern.hasMatch(action.name)) {
+      throw ArgumentError.value(
+        action.name,
+        'actions[$i].name',
+        'must match [A-Za-z0-9._-]+',
+      );
+    }
+    if (action.script.trim().isEmpty) {
+      throw ArgumentError.value(
+        action.name,
+        'actions[$i].script',
+        'must not be empty',
+      );
+    }
   }
 }
 
@@ -547,7 +675,21 @@ Future<List<DistributionChannel>> fetchMaidCafeDistributionChannels() async {
 
 /// Returns the latest published MaidCafe release tag for [channel].
 Future<String> fetchMaidCafeLatestVersion({String? channel}) async =>
-    (await _fetchMaidCafeArtifact(channel: channel)).version;
+    (await fetchMaidCafeDistributionArtifact(channel: channel)).version;
+
+/// Resolves the latest published MaidCafe bundle for [channel].
+///
+/// Used by the install preview so the script shown to the user matches the
+/// artifact the install flow will actually download.
+Future<MaidCafeDistributionArtifact> fetchMaidCafeDistributionArtifact({
+  String? channel,
+}) async {
+  final artifact = await _fetchMaidCafeArtifact(channel: channel);
+  return MaidCafeDistributionArtifact(
+    downloadUrl: artifact.url,
+    version: artifact.version,
+  );
+}
 
 Future<_MaidCafeArtifact> _fetchMaidCafeArtifact({String? channel}) async {
   final api = SolsynthExpressApi(
@@ -658,8 +800,9 @@ String _tomlActions(List<MaidCafeActionDefinition> actions) => actions
       (action) =>
           '''[[daemon.actions]]
 name = ${_tomlString(action.name)}
-command = ${_tomlString(action.command)}
-args = [${action.arguments.map(_tomlString).join(', ')}]
+command = ${_tomlString(maidCafeActionScriptPath(action))}
+args = []
+script = true
 enabled = ${action.enabled}
 notifyOnSuccess = ${action.notifyOnSuccess}
 notifyOnFailure = ${action.notifyOnFailure}

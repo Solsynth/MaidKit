@@ -131,11 +131,74 @@ class MaidCafeDaemonAccess {
   final List<MaidCafeActionDefinition> actions;
 }
 
-/// Reads the daemon's HTTP endpoint and API secret over SSH.
+/// Reads the daemon's HTTP endpoint, API secret, and action scripts over SSH.
 ///
 /// The daemon config is root-only (`0640 root:maidcafe`), so a plain read is
 /// tried first and elevated reads fall back to [sudoPassword] when the SSH
-/// user cannot open it.
+/// user cannot open it. The `[daemon]` section (including `[[daemon.actions]]`
+/// blocks) is extracted with awk, then every deployed action script is
+/// appended after a marker. Script bodies are hex-encoded (`od -tx1`) so
+/// arbitrary content — including a trailing newline — round-trips verbatim
+/// and can never be confused with the file separators.
+const _maidCafeConfigReadBody = r'''awk '
+  /^\[daemon\]/{section="daemon"; next}
+  /^\[\[/{if (section=="daemon" && $0=="[[daemon.actions]]") {section="actions"; next}}
+  /^\[/{section=""; next}
+  section!=""{print}
+' /etc/maidcafe/config.toml 2>/dev/null || true
+printf '\n###MAIDKIT-ACTION-SCRIPTS###\n'
+ls /etc/maidcafe/actions/*.sh 2>/dev/null | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  printf '###FILE:%s###\n' "$(basename "$f")"
+  od -An -tx1 -v < "$f" 2>/dev/null | tr -d ' \n'
+  printf '\n'
+done''';
+
+const _maidCafeActionScriptsMarker = '###MAIDKIT-ACTION-SCRIPTS###';
+
+/// Splits the combined read-back payload into the `[daemon]` config section
+/// and the deployed action-scripts blob.
+(String config, String scripts) _splitMaidCafeConfigPayload(String output) {
+  final marker = output.indexOf(_maidCafeActionScriptsMarker);
+  if (marker == -1) return (output, '');
+  return (
+    output.substring(0, marker),
+    output.substring(marker + _maidCafeActionScriptsMarker.length),
+  );
+}
+
+/// Decodes deployed action scripts from the marker-delimited read-back blob:
+/// `###FILE:<name>.sh###` followed by the body hex-encoded with `od -tx1`.
+///
+/// Keys are action names (file name without `.sh`); bodies are returned
+/// verbatim, including any trailing newline. Public so round-trip parsing can
+/// be unit-tested.
+Map<String, String> parseMaidCafeActionScripts(String blob) {
+  final result = <String, String>{};
+  // The read-back protocol terminates every hex line with a newline, so the
+  // hex capture is bounded by an explicit \n rather than an end-of-input
+  // assertion (which does not match before a trailing newline).
+  final pattern = RegExp(r'###FILE:([A-Za-z0-9._-]+\.sh)###\n([0-9a-fA-F]*)\n');
+  for (final match in pattern.allMatches(blob)) {
+    final fileName = match.group(1)!;
+    final hex = match.group(2)!;
+    if (hex.isEmpty) continue;
+    final bytes = <int>[];
+    for (var i = 0; i < hex.length; i += 2) {
+      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+    }
+    result[fileName.substring(0, fileName.length - 3)] = utf8.decode(
+      bytes,
+      allowMalformed: true,
+    );
+  }
+  return result;
+}
+
+/// Wraps a multi-line [body] for elevation as a single `sh -c` argument.
+String _elevatedMaidCafeRead(String prefix, String body) =>
+    "$prefix sh -c '${body.replaceAll("'", r"'\''")}'";
+
 Future<MaidCafeDaemonAccess> readMaidCafeConfig({
   required SshConnectionManager manager,
   required Server server,
@@ -156,23 +219,27 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     return stdout;
   }
 
-  const plainRead =
-      r'''sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''';
-  const passwordlessRead =
-      r'''sudo -n sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''';
-  final passwordRead =
-      r'''sudo -S -p "" sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''';
+  final plainRead = _maidCafeConfigReadBody;
+  final passwordlessRead = _elevatedMaidCafeRead('sudo -n', plainRead);
+  final passwordRead = _elevatedMaidCafeRead('sudo -S -p ""', plainRead);
 
-  var config = await read(plainRead);
+  var output = await read(plainRead);
   if (server.username != 'root') {
-    if (config.trim().isEmpty) {
-      config = await read(passwordlessRead);
+    // The scripts section always prints its marker even when the config is
+    // unreadable, so the elevation gate must test the config section alone,
+    // not the combined payload.
+    var configSection = _splitMaidCafeConfigPayload(output).$1;
+    if (configSection.trim().isEmpty) {
+      output = await read(passwordlessRead);
+      configSection = _splitMaidCafeConfigPayload(output).$1;
     }
     final password = sudoPassword?.trim() ?? '';
-    if (config.trim().isEmpty && password.isNotEmpty) {
-      config = await read(passwordRead, stdin: password);
+    if (configSection.trim().isEmpty && password.isNotEmpty) {
+      output = await read(passwordRead, stdin: password);
     }
   }
+  final (config, scriptsBlob) = _splitMaidCafeConfigPayload(output);
+  final scripts = parseMaidCafeActionScripts(scriptsBlob);
   final listen = _configValue(config, 'listen');
   final listenUri = listen == null ? null : Uri.tryParse('http://$listen');
   return MaidCafeDaemonAccess(
@@ -196,7 +263,12 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     maxConcurrentRuns: int.tryParse(
       _configValue(config, 'maxConcurrentRuns') ?? '',
     ),
-    actions: _configActions(config),
+    actions: [
+      for (final action in _configActions(config))
+        scripts[action.name] == null
+            ? action
+            : action.copyWith(script: scripts[action.name]),
+    ],
   );
 });
 
@@ -227,19 +299,6 @@ bool _configBool(String config, String key, {bool fallback = false}) =>
       _ => fallback,
     };
 
-List<String> _configArray(String config, String key) {
-  final match = RegExp(
-    r'^\s*' + RegExp.escape(key) + r'\s*=\s*\[(.*?)\]\s*$',
-    multiLine: true,
-    dotAll: true,
-  ).firstMatch(config);
-  if (match == null) return const [];
-  return RegExp(r'"((?:\\.|[^"])*)"')
-      .allMatches(match.group(1)!)
-      .map((match) => match.group(1)!.replaceAll(r'\"', '"'))
-      .toList();
-}
-
 List<MaidCafeActionDefinition> _configActions(String config) {
   final blocks = RegExp(
     r'\[\[daemon\.actions\]\](.*?)(?=\n\[\[daemon\.actions\]\]|$)',
@@ -251,8 +310,7 @@ List<MaidCafeActionDefinition> _configActions(String config) {
           _configValue(block.group(1)!, 'command') != null)
         MaidCafeActionDefinition(
           name: _configValue(block.group(1)!, 'name')!,
-          command: _configValue(block.group(1)!, 'command')!,
-          arguments: _configArray(block.group(1)!, 'args'),
+          script: '',
           enabled: _configBool(block.group(1)!, 'enabled', fallback: true),
           notifyOnSuccess: _configBool(block.group(1)!, 'notifyOnSuccess'),
           notifyOnFailure: _configBool(block.group(1)!, 'notifyOnFailure'),

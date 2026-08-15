@@ -1,17 +1,170 @@
 import 'package:easy_localization/easy_localization.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_server_tab.dart';
+import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
+import 'package:material_ui/material_ui.dart'
+    as material_ui
+    show GlobalMaterialLocalizations;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:solsynth_express/solsynth_express.dart';
+
+const _testChannels = [
+  DistributionChannel(
+    id: 'stable-id',
+    name: 'stable',
+    displayName: 'Stable',
+    displayNames: {},
+    description: '',
+    descriptions: {},
+    latest: null,
+  ),
+  DistributionChannel(
+    id: 'beta-id',
+    name: 'beta',
+    displayName: 'Beta',
+    displayNames: {},
+    description: '',
+    descriptions: {},
+    latest: null,
+  ),
+];
 
 void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
     await EasyLocalization.ensureInitialized();
     EasyLocalization.logger.enableBuildModes = [];
+  });
+
+  Future<void> pumpInstallSheet(
+    WidgetTester tester, {
+    required bool updating,
+    required void Function(String?) onChosen,
+  }) async {
+    await tester.pumpWidget(
+      EasyLocalization(
+        supportedLocales: const [Locale('en', 'US')],
+        path: 'assets/translations',
+        fallbackLocale: const Locale('en', 'US'),
+        child: MaterialApp(
+          localizationsDelegates: [
+            ...material_ui.GlobalMaterialLocalizations.delegates,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('en', 'US')],
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: FilledButton(
+                  onPressed: () async {
+                    onChosen(
+                      await showModalBottomSheet<String>(
+                        context: context,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        builder: (_) => MaidCafeInstallSheet(
+                          channels: _testChannels,
+                          updating: updating,
+                          transport: 'http',
+                          scriptBuilder: (channel) async =>
+                              'script-for-$channel',
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('open-sheet'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'install sheet locks the install button until every step is reviewed',
+    (WidgetTester tester) async {
+      String? chosen;
+      await pumpInstallSheet(
+        tester,
+        updating: false,
+        onChosen: (v) {
+          chosen = v;
+        },
+      );
+
+      await tester.tap(find.text('open-sheet'));
+      await tester.pumpAndSettle();
+
+      // Step 1 (channel): Next is disabled until a channel is picked.
+      final nextButton = find.widgetWithText(
+        FilledButton,
+        'maidCafeInstallNext'.tr(),
+      );
+      expect(tester.widget<FilledButton>(nextButton).onPressed, isNull);
+
+      // Picking a channel advances to step 2 (what the script does).
+      await tester.tap(find.text('stable'));
+      await tester.pumpAndSettle();
+      expect(find.text('maidCafeInstallStepCurlTitle'.tr()), findsOneWidget);
+      expect(tester.widget<FilledButton>(nextButton).onPressed, isNotNull);
+
+      // Step 3 (script): the exact script is shown and install unlocks.
+      await tester.tap(nextButton);
+      await tester.pumpAndSettle();
+      expect(find.text('script-for-stable'), findsOneWidget);
+      final installButton = find.widgetWithText(
+        FilledButton,
+        'maidCafeInstallApplication'.tr(),
+      );
+      expect(tester.widget<FilledButton>(installButton).onPressed, isNotNull);
+
+      await tester.tap(installButton);
+      await tester.pumpAndSettle();
+      expect(chosen, 'stable');
+    },
+  );
+
+  testWidgets('update sheet needs only a channel, not the review walkthrough', (
+    WidgetTester tester,
+  ) async {
+    String? chosen;
+    await pumpInstallSheet(
+      tester,
+      updating: true,
+      onChosen: (v) {
+        chosen = v;
+      },
+    );
+
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeUpdateApplication'.tr()), findsOneWidget);
+
+    await tester.tap(find.text('stable'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(FilledButton, 'maidCafeInstallNext'.tr()),
+    );
+    await tester.pumpAndSettle();
+
+    final installButton = find.widgetWithText(
+      FilledButton,
+      'maidCafeUpdateApplication'.tr(),
+    );
+    expect(tester.widget<FilledButton>(installButton).onPressed, isNotNull);
+
+    await tester.tap(installButton);
+    await tester.pumpAndSettle();
+    expect(chosen, 'stable');
   });
 
   Future<void> pumpDetailTabs(WidgetTester tester) async {
