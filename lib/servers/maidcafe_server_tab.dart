@@ -196,6 +196,15 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     if (stream != null) Future<void>.microtask(stream.close);
   }
 
+  Future<String?> _sudoPassword() async {
+    final credential = await ref
+        .read(serverRepositoryProvider)
+        .credentialFor(widget.server);
+    return credential.type == CredentialType.password
+        ? credential.password
+        : null;
+  }
+
   int? _configuredPort() {
     final value = int.tryParse(_portController.text.trim());
     return value != null && value >= maidCafeMinimumPort && value <= 65535
@@ -224,6 +233,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     final remote = await readMaidCafeListenPort(
       manager: ref.read(connectionManagerProvider),
       server: widget.server,
+      sudoPassword: await _sudoPassword(),
     ).catchError((_) => null);
     final port = remote ?? cached ?? maidCafeDefaultPort;
     if (!_portEdited && mounted) _portController.text = '$port';
@@ -251,6 +261,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     final config = await readMaidCafeConfig(
       manager: ref.read(connectionManagerProvider),
       server: widget.server,
+      sudoPassword: await _sudoPassword(),
     );
     if (!mounted) return;
     void setText(TextEditingController controller, String? value) {
@@ -426,6 +437,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       server: widget.server,
       port: resolvedPort,
       apiSecret: apiSecret,
+      sudoPassword: await _sudoPassword(),
     );
     try {
       final health = await stream.health();

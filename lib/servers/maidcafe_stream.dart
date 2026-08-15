@@ -50,50 +50,83 @@ class MaidCafeDaemonAccess {
 }
 
 /// Reads the daemon's HTTP endpoint and API secret over SSH.
+///
+/// The daemon config is root-only (`0640 root:maidcafe`), so a plain read is
+/// tried first and elevated reads fall back to [sudoPassword] when the SSH
+/// user cannot open it.
 Future<MaidCafeDaemonAccess> readMaidCafeConfig({
   required SshConnectionManager manager,
   required Server server,
+  String? sudoPassword,
 }) => manager.withClient(server.id, (client) async {
-  final session = await client.execute(
-    r'''sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''',
-  );
-  try {
-    final config = await utf8.decoder.bind(session.stdout).join();
-    await session.done.timeout(const Duration(seconds: 5));
-    final listen = _configValue(config, 'listen');
-    final listenUri = listen == null ? null : Uri.tryParse('http://$listen');
-    return MaidCafeDaemonAccess(
-      port:
-          listenUri?.port != null &&
-              listenUri!.port >= maidCafeMinimumPort &&
-              listenUri.port <= 65535
-          ? listenUri.port
-          : null,
-      apiSecret: _configValue(config, 'metricsSecret'),
-      id: _configValue(config, 'id'),
-      version: _configValue(config, 'version'),
-      transport: _configValue(config, 'transport'),
-      listenHost: listenUri?.host,
-      cloudUrl: _configValue(config, 'cloudUrl'),
-      cloudSecret: _configValue(config, 'cloudSecret'),
-      metricsInterval: _configValue(config, 'metricsInterval'),
-      requestTimeout: _configValue(config, 'requestTimeout'),
-      scriptTimeout: _configValue(config, 'scriptTimeout'),
-      maxBodyBytes: int.tryParse(_configValue(config, 'maxBodyBytes') ?? ''),
-      maxConcurrentRuns: int.tryParse(
-        _configValue(config, 'maxConcurrentRuns') ?? '',
-      ),
-      actions: _configActions(config),
-    );
-  } finally {
-    session.close();
+  Future<String> read(String command, {String? stdin}) async {
+    final session = await client.execute(command);
+    final stdout = utf8.decoder.bind(session.stdout).join();
+    if (stdin != null) {
+      session.stdin.add(utf8.encode('$stdin\n'));
+      await session.stdin.close();
+    }
+    try {
+      await session.done.timeout(const Duration(seconds: 8));
+    } finally {
+      session.close();
+    }
+    return stdout;
   }
+
+  const plainRead =
+      r'''sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''';
+  const passwordlessRead =
+      r'''sudo -n sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''';
+  final passwordRead =
+      r'''sudo -S -p "" sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''';
+
+  var config = await read(plainRead);
+  if (server.username != 'root') {
+    if (config.trim().isEmpty) {
+      config = await read(passwordlessRead);
+    }
+    final password = sudoPassword?.trim() ?? '';
+    if (config.trim().isEmpty && password.isNotEmpty) {
+      config = await read(passwordRead, stdin: password);
+    }
+  }
+  final listen = _configValue(config, 'listen');
+  final listenUri = listen == null ? null : Uri.tryParse('http://$listen');
+  return MaidCafeDaemonAccess(
+    port:
+        listenUri?.port != null &&
+            listenUri!.port >= maidCafeMinimumPort &&
+            listenUri.port <= 65535
+        ? listenUri.port
+        : null,
+    apiSecret: _configValue(config, 'metricsSecret'),
+    id: _configValue(config, 'id'),
+    version: _configValue(config, 'version'),
+    transport: _configValue(config, 'transport'),
+    listenHost: listenUri?.host,
+    cloudUrl: _configValue(config, 'cloudUrl'),
+    cloudSecret: _configValue(config, 'cloudSecret'),
+    metricsInterval: _configValue(config, 'metricsInterval'),
+    requestTimeout: _configValue(config, 'requestTimeout'),
+    scriptTimeout: _configValue(config, 'scriptTimeout'),
+    maxBodyBytes: int.tryParse(_configValue(config, 'maxBodyBytes') ?? ''),
+    maxConcurrentRuns: int.tryParse(
+      _configValue(config, 'maxConcurrentRuns') ?? '',
+    ),
+    actions: _configActions(config),
+  );
 });
 
 Future<int?> readMaidCafeListenPort({
   required SshConnectionManager manager,
   required Server server,
-}) async => (await readMaidCafeConfig(manager: manager, server: server)).port;
+  String? sudoPassword,
+}) async => (await readMaidCafeConfig(
+  manager: manager,
+  server: server,
+  sudoPassword: sudoPassword,
+)).port;
 
 String? _configValue(String config, String key) {
   final pattern =
@@ -174,8 +207,13 @@ class MaidCafeStreamSession {
     required Server server,
     int? port,
     String? apiSecret,
+    String? sudoPassword,
   }) async {
-    final access = await readMaidCafeConfig(manager: manager, server: server);
+    final access = await readMaidCafeConfig(
+      manager: manager,
+      server: server,
+      sudoPassword: sudoPassword,
+    );
     final resolvedPort = port ?? access.port ?? maidCafeDefaultPort;
     final primarySecret = apiSecret ?? access.apiSecret;
     final configSecret = access.apiSecret;

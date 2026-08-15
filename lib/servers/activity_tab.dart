@@ -9,6 +9,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'activity_models.dart';
+import 'server_models.dart';
 import 'server_providers.dart';
 import 'maidcafe_stream.dart';
 
@@ -169,9 +170,16 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     }
     _maidCafeAttempted = true;
     try {
+      final credential = await ref
+          .read(serverRepositoryProvider)
+          .credentialFor(widget.server);
+      final sudoPassword = credential.type == CredentialType.password
+          ? credential.password
+          : null;
       _maidCafeStream = await MaidCafeStreamSession.open(
         manager: ref.read(connectionManagerProvider),
         server: widget.server,
+        sudoPassword: sudoPassword,
       );
       return _maidCafeStream;
     } catch (_) {
