@@ -152,6 +152,12 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   final Map<String, Map<String, dynamic>> _actionResults = {};
   List<MaidCafeAuditEntry> _auditEntries = const [];
   var _auditLoading = false;
+  String? _auditError;
+  // Guards the build-time auto-load: empty entries are a legitimate state
+  // (no runs yet, or the daemon lacks the endpoint), so the trigger must
+  // fire once per stream, not on every rebuild — otherwise each failed or
+  // empty fetch reschedules itself and the progress bar flashes forever.
+  var _auditLoaded = false;
 
   List<MaidCafeActionDefinition> get _actions =>
       ref.read(maidCafeActionsProvider.notifier).forServer(widget.server.id);
@@ -526,6 +532,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         setState(() {
           _stream = stream;
           _streamStatus = _streamStatusLine(stream);
+          // A fresh stream may be a (re)started daemon; let the next build
+          // of the actions tab reload the audit log once.
+          _auditLoaded = false;
         });
         // The daemon's config secret is authoritative. Persist it when the
         // stored one was stale so later connections skip the auth fallback;
@@ -947,12 +956,28 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   Future<void> _loadAudit() async {
     final stream = _stream;
     if (stream == null || _busy || _auditLoading) return;
-    setState(() => _auditLoading = true);
+    setState(() {
+      _auditLoading = true;
+      _auditError = null;
+    });
     try {
       final entries = await stream.audit();
-      if (mounted) setState(() => _auditEntries = entries);
+      if (mounted) {
+        setState(() {
+          _auditEntries = entries;
+          _auditLoaded = true;
+        });
+      }
     } catch (error) {
-      if (mounted) setState(() => _message = error.toString());
+      if (mounted) {
+        setState(() {
+          // Terminal: do not reschedule on failure either, or the page
+          // flashes the loader forever against an old daemon. The refresh
+          // button retries.
+          _auditLoaded = true;
+          _auditError = error.toString();
+        });
+      }
     } finally {
       if (mounted) setState(() => _auditLoading = false);
     }
@@ -1168,7 +1193,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   Widget _actionsTab(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    if (_stream != null && _auditEntries.isEmpty && !_auditLoading) {
+    if (_stream != null && !_auditLoaded && !_auditLoading) {
       Future<void>.microtask(_loadAudit);
     }
     return Column(
@@ -1249,6 +1274,16 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
                   child: LinearProgressIndicator(),
+                )
+              else if (_auditError != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    _auditError!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.error,
+                    ),
+                  ),
                 )
               else if (_auditEntries.isEmpty)
                 Padding(
