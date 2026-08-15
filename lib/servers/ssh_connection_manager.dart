@@ -77,6 +77,7 @@ class SshConnectionManager {
     required int bindPort,
     String targetHost = '',
     int targetPort = 0,
+    PortForwardOwner owner = PortForwardOwner.user,
   }) async {
     final client = clientFor(server.id);
     if (client == null) throw const ServerConnectionRequiredException();
@@ -87,7 +88,7 @@ class SshConnectionManager {
       );
     }
     final id = 'forward-${_nextPortForwardId++}';
-    final info = ActivePortForward(
+    var info = ActivePortForward(
       id: id,
       serverId: server.id,
       serverName: server.name,
@@ -97,19 +98,24 @@ class SshConnectionManager {
       bindPort: bindPort,
       targetHost: targetHost,
       targetPort: targetPort,
+      owner: owner,
     );
 
     late final _PortForwardingConnection connection;
     if (direction == PortForwardDirection.local) {
       final listener = await ServerSocket.bind(bindHost, bindPort);
+      info = info.copyWith(bindPort: listener.port);
       connection = _PortForwardingConnection.local(info, listener);
-      connection.subscription = listener.listen((socket) {
-        unawaited(
-          kind == PortForwardKind.socks5
-              ? _pipeSocks5Connection(client, socket)
-              : _pipeLocalConnection(client, socket, targetHost, targetPort),
-        );
-      }, onError: (_, _) => unawaited(stopPortForward(id)));
+      connection.subscription = listener.listen(
+        (socket) {
+          unawaited(
+            kind == PortForwardKind.socks5
+                ? _pipeSocks5Connection(client, socket)
+                : _pipeLocalConnection(client, socket, targetHost, targetPort),
+          );
+        },
+        onError: (_, _) => unawaited(_stopPortForward(id, allowManaged: true)),
+      );
     } else {
       final remote = await client.forwardRemote(host: bindHost, port: bindPort);
       if (remote == null) {
@@ -118,18 +124,30 @@ class SshConnectionManager {
         );
       }
       connection = _PortForwardingConnection.remote(info, remote);
-      connection.subscription = remote.connections.listen((channel) {
-        unawaited(_pipeRemoteConnection(channel, targetHost, targetPort));
-      }, onError: (_, _) => unawaited(stopPortForward(id)));
+      connection.subscription = remote.connections.listen(
+        (channel) {
+          unawaited(_pipeRemoteConnection(channel, targetHost, targetPort));
+        },
+        onError: (_, _) => unawaited(_stopPortForward(id, allowManaged: true)),
+      );
     }
     _portForwards[id] = connection;
     _emitPortForwards();
     return info;
   }
 
-  Future<void> stopPortForward(String id) async {
-    final forward = _portForwards.remove(id);
-    if (forward == null) return;
+  Future<void> stopPortForward(String id) => _stopPortForward(id);
+
+  /// Stops a MaidCafe-owned forward during its owner session cleanup.
+  Future<void> stopManagedPortForward(String id) =>
+      _stopPortForward(id, allowManaged: true);
+
+  Future<void> _stopPortForward(String id, {bool allowManaged = false}) async {
+    final forward = _portForwards[id];
+    if (forward == null || (forward.info.isManaged && !allowManaged)) {
+      return;
+    }
+    _portForwards.remove(id);
     await forward.close();
     _emitPortForwards();
   }
@@ -3714,7 +3732,7 @@ uname -r
       await disconnect(serverId);
     }
     for (final id in _portForwards.keys.toList()) {
-      await stopPortForward(id);
+      await _stopPortForward(id, allowManaged: true);
     }
     await _controller.close();
     await _portForwardController.close();
@@ -3736,7 +3754,7 @@ uname -r
         .map((entry) => entry.key)
         .toList();
     for (final id in ids) {
-      await stopPortForward(id);
+      await _stopPortForward(id, allowManaged: true);
     }
   }
 

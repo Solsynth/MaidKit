@@ -15,7 +15,6 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 
 import 'credentials_page.dart';
-import 'maidcafe_settings_section.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'servers_page.dart';
@@ -27,43 +26,33 @@ class AssetsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaidKitAppScaffold(
-    body: LayoutBuilder(
-      builder: (context, constraints) => ListView(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-        children: [
-          MaidKitCollapsibleSection(
-            title: Text('assetsConnections'.tr()),
-            icon: Symbols.dns,
-            children: [const ServerAssetsSection(showHeader: false)],
-          ),
-          const SizedBox(height: 12),
-          MaidKitCollapsibleSection(
-            title: Text('tabGithub'.tr()),
-            icon: Symbols.rocket_launch,
-            children: [const GitHubSection(showHeader: false)],
-          ),
-          const SizedBox(height: 12),
-          MaidKitCollapsibleSection(
-            title: Text('assetsCredentialsTitle'.tr()),
-            icon: Symbols.key,
-            children: [const CredentialsPage(showHeader: false)],
-          ),
-          const SizedBox(height: 12),
-          MaidKitCollapsibleSection(
-            title: Text('tabSnippets'.tr()),
-            icon: Symbols.code,
-            children: [const SnippetsSection()],
-          ),
-          if (constraints.maxWidth <= 768) ...[
-            const SizedBox(height: 12),
-            MaidKitCollapsibleSection(
-              title: Text('maidCafeTitle'.tr()),
-              icon: Symbols.cloud,
-              children: [const MaidCafeSettingsSection(showTitle: false)],
-            ),
-          ],
-        ],
-      ),
+    body: ListView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+      children: [
+        MaidKitCollapsibleSection(
+          title: Text('assetsConnections'.tr()),
+          icon: Symbols.dns,
+          children: [const ServerAssetsSection(showHeader: false)],
+        ),
+        const SizedBox(height: 12),
+        MaidKitCollapsibleSection(
+          title: Text('tabGithub'.tr()),
+          icon: Symbols.rocket_launch,
+          children: [const GitHubSection(showHeader: false)],
+        ),
+        const SizedBox(height: 12),
+        MaidKitCollapsibleSection(
+          title: Text('assetsCredentialsTitle'.tr()),
+          icon: Symbols.key,
+          children: [const CredentialsPage(showHeader: false)],
+        ),
+        const SizedBox(height: 12),
+        MaidKitCollapsibleSection(
+          title: Text('tabSnippets'.tr()),
+          icon: Symbols.code,
+          children: [const SnippetsSection()],
+        ),
+      ],
     ),
   );
 }

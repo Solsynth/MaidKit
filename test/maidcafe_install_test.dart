@@ -11,6 +11,7 @@ void main() {
         cloudUrl: 'https://mk.solsynth.dev',
         cloudSecret: secret,
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        apiSecret: 'metrics-secret',
       );
 
       expect(script, contains('curl --fail --location'));
@@ -20,7 +21,10 @@ void main() {
       expect(script, contains('/etc/maidcafe/config.toml'));
       expect(script, contains('printf \'%s\''));
       expect(script, contains('base64 -d'));
-      expect(script, contains('systemctl enable --now maidcafe-daemon'));
+      expect(script, contains('http://127.0.0.1:8747/health'));
+      expect(script, contains('Authorization: Bearer \$metricsSecret'));
+      expect(script, contains('systemctl restart maidcafe-daemon'));
+      expect(script, contains('MaidCafe daemon did not become healthy.'));
       expect(script, contains('maidkit-managed'));
       expect(script, isNot(contains('git clone')));
       expect(script, isNot(contains('go build')));
@@ -50,6 +54,7 @@ void main() {
       daemonId: 'maidkit-1',
       cloudUrl: '',
       cloudSecret: '',
+      transport: 'http',
       actions: const [
         MaidCafeActionDefinition(
           name: 'backup',
@@ -59,9 +64,10 @@ void main() {
       ],
     );
 
-    expect(script, contains('/etc/maidcafe/config.stdio.toml'));
+    expect(script, contains('/etc/maidcafe/config.toml'));
     expect(script, contains('/etc/maidcafe/maidkit-managed'));
     expect(script, contains('base64 -d'));
+    expect(script, contains('systemctl restart maidcafe-daemon'));
     expect(script, isNot(contains('/usr/local/bin/maidcafe-daemon')));
   });
 
@@ -85,5 +91,17 @@ void main() {
     expect(script, contains('install -o root -g root -m 0644'));
     expect(script, isNot(contains('systemctl enable --now maidcafe-daemon')));
     expect(script, contains('base64 -d'));
+  });
+  test('rejects privileged HTTP ports', () {
+    expect(
+      () => buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        port: 80,
+      ),
+      throwsArgumentError,
+    );
   });
 }

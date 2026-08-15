@@ -11,6 +11,7 @@ import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/servers/maidcafe_server_tab.dart';
+import 'package:solsynth_express/solsynth_express.dart';
 
 void main() {
   setUpAll(() async {
@@ -128,19 +129,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('assetsConnectionsDescription'.tr()), findsOneWidget);
   });
-  testWidgets('opens MaidCafe from the desktop navigation rail', (
+  testWidgets('hides MaidCafe from the desktop navigation rail', (
     WidgetTester tester,
   ) async {
     await pumpApp(tester);
 
-    await tester.tap(find.byIcon(Symbols.cloud));
-    await tester.pumpAndSettle();
-
-    expect(find.text('maidCafeTitle'.tr()), findsNWidgets(2));
-    expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
+    expect(find.text('maidCafeTitle'.tr()), findsNothing);
+    expect(find.byIcon(Symbols.cloud), findsNothing);
   });
-
-  testWidgets('shows MaidCafe inside Assets on mobile', (
+  testWidgets('hides MaidCafe from Assets on mobile', (
     WidgetTester tester,
   ) async {
     await pumpApp(tester, size: const Size(500, 800), settle: false);
@@ -149,10 +146,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('assetsConnections'.tr()), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('maidCafeTitle'.tr()), 500);
-    expect(find.text('maidCafeTitle'.tr()), findsOneWidget);
-    expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
+    expect(find.text('maidCafeTitle'.tr()), findsNothing);
   });
+
   testWidgets('shows the MaidCafe label and installer in a server detail tab', (
     WidgetTester tester,
   ) async {
@@ -197,5 +193,39 @@ void main() {
     expect(find.text('maidCafeActions'.tr()), findsNothing);
     expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
     expect(find.text('maidCafeServerDaemonUrl'.tr()), findsNothing);
+  });
+  testWidgets('channel picker lays out inside a dialog', (
+    WidgetTester tester,
+  ) async {
+    final channel = DistributionChannel(
+      id: 'rolling-id',
+      name: 'rolling',
+      displayName: 'Rolling',
+      displayNames: const {},
+      description: 'Nightly builds',
+      descriptions: const {},
+      latest: null,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: createMaidKitTheme(Brightness.light),
+        home: Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: MaidCafeInstallChannelPicker(
+                channels: [channel],
+                onSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('rolling'), findsOneWidget);
   });
 }

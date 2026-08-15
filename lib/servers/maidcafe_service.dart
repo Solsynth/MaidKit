@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'cloud_sync_service.dart';
 
+const maidCafeMinimumPort = 1024;
 const maidCafeDefaultCloudUrl = 'https://mk.solsynth.dev';
 const maidCafeDefaultLocalDaemonUrl = 'http://127.0.0.1:8747';
 

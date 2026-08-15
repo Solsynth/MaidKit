@@ -62,7 +62,6 @@ class _ServerTabsShell extends ConsumerWidget {
         : tabsRouter.activeIndex == 4
         ? null
         : tabsRouter.activeIndex;
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth > 768;
@@ -78,7 +77,7 @@ class _ServerTabsShell extends ConsumerWidget {
                   children: [
                     NavigationRail(
                       backgroundColor: Colors.transparent,
-                      selectedIndex: tabsRouter.activeIndex < 5
+                      selectedIndex: tabsRouter.activeIndex < 4
                           ? tabsRouter.activeIndex
                           : null,
                       onDestinationSelected: tabsRouter.setActiveIndex,
@@ -132,11 +131,6 @@ class _ServerTabsShell extends ConsumerWidget {
                           icon: Icon(Symbols.smart_toy),
                           selectedIcon: Icon(Symbols.smart_toy, fill: 1),
                           label: Text('Agent'),
-                        ),
-                        NavigationRailDestination(
-                          icon: const Icon(Symbols.cloud),
-                          selectedIcon: const Icon(Symbols.cloud, fill: 1),
-                          label: Text('maidCafeTitle').tr(),
                         ),
                       ],
                     ),
@@ -262,14 +256,24 @@ class _PortForwardRailIndicator extends ConsumerWidget {
           for (final forward in forwards)
             PopupMenuItem(
               value: forward,
+              enabled: !forward.isManaged,
               child: SizedBox(
                 width: 260,
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Symbols.swap_horiz),
+                  leading: Icon(
+                    forward.isManaged ? Symbols.lock : Symbols.swap_horiz,
+                  ),
                   title: Text(forward.serverName),
-                  subtitle: Text(forward.summary),
-                  trailing: const Icon(Symbols.stop_circle),
+                  subtitle: Text(
+                    forward.isManaged
+                        ? '${forward.summary}\n'
+                              '${'portForwardingManagedByMaidCafe'.tr()}'
+                        : forward.summary,
+                  ),
+                  trailing: forward.isManaged
+                      ? null
+                      : const Icon(Symbols.stop_circle),
                 ),
               ),
             ),

@@ -264,7 +264,7 @@ class _HostPortFields extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        Text(context.tr(label), style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
         TextFormField(
           controller: host,
@@ -293,28 +293,36 @@ class _ForwardTile extends ConsumerWidget {
   final ActivePortForward forward;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    leading: Icon(
-      forward.kind == PortForwardKind.socks5
-          ? Symbols.vpn_lock
-          : forward.direction == PortForwardDirection.local
-          ? Symbols.laptop_mac
-          : Symbols.dns,
-    ),
-    title: Text('${forward.label} · ${forward.summary}'),
-    subtitle: Text(
-      forward.direction == PortForwardDirection.local
-          ? 'portForwardingRunningOnThisComputer'.tr()
-          : 'portForwardingRunningOn'.tr(args: [forward.serverName]),
-    ),
-    trailing: IconButton(
-      tooltip: 'portForwardingStop'.tr(),
-      onPressed: () =>
-          ref.read(connectionManagerProvider).stopPortForward(forward.id),
-      icon: const Icon(Symbols.stop_circle),
-    ),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final managedReason = 'portForwardingManagedByMaidCafe'.tr();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        forward.kind == PortForwardKind.socks5
+            ? Symbols.vpn_lock
+            : forward.direction == PortForwardDirection.local
+            ? Symbols.laptop_mac
+            : Symbols.dns,
+      ),
+      title: Text('${forward.label} · ${forward.summary}'),
+      subtitle: Text(
+        forward.isManaged
+            ? '${'portForwardingRunningOnThisComputer'.tr()}\n$managedReason'
+            : forward.direction == PortForwardDirection.local
+            ? 'portForwardingRunningOnThisComputer'.tr()
+            : 'portForwardingRunningOn'.tr(args: [forward.serverName]),
+      ),
+      trailing: forward.isManaged
+          ? Tooltip(message: managedReason, child: const Icon(Symbols.lock))
+          : IconButton(
+              tooltip: 'portForwardingStop'.tr(),
+              onPressed: () => ref
+                  .read(connectionManagerProvider)
+                  .stopPortForward(forward.id),
+              icon: const Icon(Symbols.stop_circle),
+            ),
+    );
+  }
 }
 
 String? _hostValidator(String? value) => value == null || value.trim().isEmpty

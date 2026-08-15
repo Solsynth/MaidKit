@@ -277,7 +277,9 @@ class DatabaseBackupService {
         ..remove('encryptedProxyPassword')
         ..remove('proxyPasswordNonce')
         ..remove('encryptedMaidCafeWebhookSecret')
-        ..remove('maidCafeWebhookSecretNonce');
+        ..remove('maidCafeWebhookSecretNonce')
+        ..remove('encryptedMaidCafeMetricsSecret')
+        ..remove('maidCafeMetricsSecretNonce');
       if (server.encryptedCredential != null &&
           server.credentialNonce != null) {
         record['credential'] = await _vault.decrypt(
@@ -306,6 +308,16 @@ class DatabaseBackupService {
             nonce: server.maidCafeWebhookSecretNonce!,
           ),
           context: 'maidcafe-webhook-secret',
+        );
+      }
+      if (server.encryptedMaidCafeMetricsSecret != null &&
+          server.maidCafeMetricsSecretNonce != null) {
+        record['maidCafeMetricsSecret'] = await _vault.decrypt(
+          EncryptedValue(
+            bytes: server.encryptedMaidCafeMetricsSecret!,
+            nonce: server.maidCafeMetricsSecretNonce!,
+          ),
+          context: 'maidcafe-metrics-secret',
         );
       }
       serverRecords.add(record);
@@ -458,6 +470,13 @@ class DatabaseBackupService {
                 context: 'maidcafe-webhook-secret',
               )
             : null;
+        final metricsSecret = record['maidCafeMetricsSecret'];
+        final encryptedMaidCafeMetricsSecret = metricsSecret is String
+            ? await _vault.encrypt(
+                metricsSecret,
+                context: 'maidcafe-metrics-secret',
+              )
+            : null;
         await _database
             .into(_database.servers)
             .insert(
@@ -492,6 +511,12 @@ class DatabaseBackupService {
                 ),
                 maidCafeWebhookSecretNonce: Value(
                   encryptedMaidCafeWebhookSecret?.nonce,
+                ),
+                encryptedMaidCafeMetricsSecret: Value(
+                  encryptedMaidCafeMetricsSecret?.bytes,
+                ),
+                maidCafeMetricsSecretNonce: Value(
+                  encryptedMaidCafeMetricsSecret?.nonce,
                 ),
                 jumpHostServerId: Value(server.jumpHostServerId),
                 environment: Value(server.environment),

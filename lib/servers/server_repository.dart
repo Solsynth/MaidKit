@@ -191,6 +191,8 @@ class ServerRepository {
     required String daemonUrl,
     String? webhookSecret,
     bool clearWebhookSecret = false,
+    String? metricsSecret,
+    bool clearMetricsSecret = false,
   }) async {
     final normalizedUrl = normalizeMaidCafeLocalDaemonUrl(daemonUrl);
     final encryptedSecret =
@@ -199,6 +201,13 @@ class ServerRepository {
         : await _vault.encrypt(
             webhookSecret.trim(),
             context: 'maidcafe-webhook-secret',
+          );
+    final encryptedMetricsSecret =
+        metricsSecret == null || metricsSecret.trim().isEmpty
+        ? null
+        : await _vault.encrypt(
+            metricsSecret.trim(),
+            context: 'maidcafe-metrics-secret',
           );
     await (_database.update(
       _database.servers,
@@ -215,6 +224,16 @@ class ServerRepository {
             : encryptedSecret == null
             ? const Value.absent()
             : Value(encryptedSecret.nonce),
+        encryptedMaidCafeMetricsSecret: clearMetricsSecret
+            ? const Value(null)
+            : encryptedMetricsSecret == null
+            ? const Value.absent()
+            : Value(encryptedMetricsSecret.bytes),
+        maidCafeMetricsSecretNonce: clearMetricsSecret
+            ? const Value(null)
+            : encryptedMetricsSecret == null
+            ? const Value.absent()
+            : Value(encryptedMetricsSecret.nonce),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -227,6 +246,16 @@ class ServerRepository {
     return _vault.decrypt(
       EncryptedValue(bytes: bytes, nonce: nonce),
       context: 'maidcafe-webhook-secret',
+    );
+  }
+
+  Future<String?> maidCafeMetricsSecretFor(Server server) async {
+    final bytes = server.encryptedMaidCafeMetricsSecret;
+    final nonce = server.maidCafeMetricsSecretNonce;
+    if (bytes == null || nonce == null) return null;
+    return _vault.decrypt(
+      EncryptedValue(bytes: bytes, nonce: nonce),
+      context: 'maidcafe-metrics-secret',
     );
   }
 

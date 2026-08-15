@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -20,6 +21,11 @@ const _maidCafeDistributionProductId = '36221713-7909-4132-bfca-d800bd69fdc2';
 const _maidCafeDistributionChannel = String.fromEnvironment(
   'MAIDCAFE_DISTRIBUTION_CHANNEL',
 );
+String generateMaidCafeApiSecret() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+  return base64UrlEncode(bytes).replaceAll('=', '');
+}
 
 class MaidCafeActionDefinition {
   const MaidCafeActionDefinition({
@@ -31,6 +37,13 @@ class MaidCafeActionDefinition {
   final String name;
   final String command;
   final List<String> arguments;
+}
+
+class _MaidCafeArtifact {
+  const _MaidCafeArtifact({required this.url, required this.version});
+
+  final String url;
+  final String version;
 }
 
 /// Returns paths and services that would conflict with a MaidKit-managed
@@ -92,6 +105,8 @@ Future<void> installMaidCafeDaemon({
   required String cloudSecret,
   required String? sudoPassword,
   String? channel,
+  int port = 8747,
+  String? apiSecret,
 }) => _installMaidCafeDaemon(
   ref: ref,
   server: server,
@@ -102,15 +117,19 @@ Future<void> installMaidCafeDaemon({
   transport: 'http',
   title: 'maidCafeInstallDaemonRunning'.tr(),
   channel: channel,
+  port: port,
+  apiSecret: apiSecret ?? generateMaidCafeApiSecret(),
 );
 
-/// Installs MaidCafe in standalone stdio mode without cloud registration.
+/// Installs MaidCafe as a systemd-managed local HTTP daemon without cloud
 Future<void> installMaidCafeApplication({
   required WidgetRef ref,
   required Server server,
   required String? sudoPassword,
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
+  int port = 8747,
+  String? apiSecret,
 }) => _installMaidCafeDaemon(
   ref: ref,
   server: server,
@@ -118,10 +137,12 @@ Future<void> installMaidCafeApplication({
   cloudUrl: '',
   cloudSecret: '',
   sudoPassword: sudoPassword,
-  transport: 'stdio',
+  transport: 'http',
   actions: actions,
   title: 'maidCafeInstallApplicationRunning'.tr(),
   channel: channel,
+  port: port,
+  apiSecret: apiSecret ?? generateMaidCafeApiSecret(),
 );
 
 Future<void> _installMaidCafeDaemon({
@@ -135,15 +156,13 @@ Future<void> _installMaidCafeDaemon({
   required String title,
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
+  required int port,
+  required String apiSecret,
 }) async {
   final manager = ref.read(connectionManagerProvider);
   final packageManager = (await manager.getPackageManagerStatus(
     server.id,
   )).preferred;
-  if (packageManager == null) {
-    throw StateError('No supported system package manager was found.');
-  }
-
   void Function()? cancelScript;
   await runWithDeployTerminal(
     ref: ref,
@@ -154,25 +173,40 @@ Future<void> _installMaidCafeDaemon({
         : 'download · install · systemctl enable --now maidcafe-daemon',
     onCancel: () => cancelScript?.call(),
     run: (onOutput) async {
-      final artifactUrl = await _fetchMaidCafeArtifactUrl(channel: channel);
-      await manager.runPackageAction(
-        server.id,
-        manager: packageManager,
-        action: PackageAction.install,
-        packageName: _maidCafeDownloadPackage(packageManager),
-        sshUserIsRoot: server.username == 'root',
-        sudoPassword: sudoPassword,
-        onOutput: onOutput,
-      );
-
+      final artifact = await _fetchMaidCafeArtifact(channel: channel);
+      if (packageManager != null) {
+        await manager.runPackageAction(
+          server.id,
+          manager: packageManager,
+          action: PackageAction.install,
+          packageName: _maidCafeDownloadPackage(packageManager),
+          sshUserIsRoot: server.username == 'root',
+          sudoPassword: sudoPassword,
+          onOutput: onOutput,
+        );
+      } else {
+        await manager.runPrivilegedScriptSnippet(
+          server.id,
+          script: r'''command -v curl >/dev/null 2>&1 || {
+  echo "MaidCafe installation requires curl." >&2
+  exit 1
+}''',
+          sshUserIsRoot: server.username == 'root',
+          sudoPassword: sudoPassword,
+          onOutput: onOutput,
+        );
+      }
       await manager.runPrivilegedScriptSnippet(
         server.id,
         script: buildMaidCafeDaemonInstallScript(
           daemonId: daemonId,
           cloudUrl: cloudUrl,
           cloudSecret: cloudSecret,
-          artifactUrl: artifactUrl,
+          artifactUrl: artifact.url,
+          version: artifact.version,
           transport: transport,
+          port: port,
+          apiSecret: apiSecret,
           actions: actions,
         ),
         sshUserIsRoot: server.username == 'root',
@@ -182,22 +216,37 @@ Future<void> _installMaidCafeDaemon({
       );
     },
   );
+  await ref
+      .read(serverRepositoryProvider)
+      .updateMaidCafeConfig(
+        server,
+        daemonUrl: 'http://127.0.0.1:$port',
+        metricsSecret: apiSecret,
+      );
 }
 
-/// Builds the non-interactive Linux installation script from a MaidCafe
-/// binary archive.
-///
-/// Configuration and the signed artifact URL are base64 encoded before they
-/// enter the shell script so neither is present in command arguments or
-/// terminal status lines.
 String buildMaidCafeDaemonInstallScript({
   required String daemonId,
   required String cloudUrl,
   required String cloudSecret,
   required String artifactUrl,
+  String version = '',
   String transport = 'http',
+  int port = 8747,
+  String apiSecret = '',
   List<MaidCafeActionDefinition> actions = const [],
 }) {
+  if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
+    throw ArgumentError.value(
+      port,
+      'port',
+      'must be between $maidCafeMinimumPort and 65535',
+    );
+  }
+  final resolvedApiSecret = apiSecret.trim().isEmpty
+      ? generateMaidCafeApiSecret()
+      : apiSecret.trim();
+  final healthUrl = 'http://127.0.0.1:$port/health';
   final stdio = transport == 'stdio';
   final configPath = stdio
       ? '/etc/maidcafe/config.stdio.toml'
@@ -226,7 +275,27 @@ WantedBy=multi-user.target
 EOF
 install -o root -g root -m 0644 "\$work_dir/maidcafe-daemon.service" /etc/systemd/system/maidcafe-daemon.service
 systemctl daemon-reload
-systemctl enable --now maidcafe-daemon
+systemctl enable maidcafe-daemon
+systemctl restart maidcafe-daemon
+metricsSecret="\$(awk -F'"' '/metricsSecret[[:space:]]*=/{print \$2; exit}' /etc/maidcafe/config.toml)"
+ i=0
+ while [ "\$i" -lt 10 ]; do
+   if curl --fail --silent --max-time 2 \\
+     -H "Authorization: Bearer \$metricsSecret" $healthUrl >/dev/null
+   then
+     break
+   fi
+   i=\$((i + 1))
+   sleep 1
+ done
+ if ! curl --fail --silent --show-error --max-time 2 \\
+   -H "Authorization: Bearer \$metricsSecret" $healthUrl >/dev/null
+then
+  echo "MaidCafe daemon did not become healthy." >&2
+  systemctl status maidcafe-daemon --no-pager || true
+  journalctl -u maidcafe-daemon -n 50 --no-pager || true
+  exit 1
+fi
 ''';
   final encodedConfig = base64Encode(
     utf8.encode(
@@ -234,6 +303,9 @@ systemctl enable --now maidcafe-daemon
         daemonId: daemonId,
         cloudUrl: cloudUrl,
         cloudSecret: cloudSecret,
+        metricsSecret: resolvedApiSecret,
+        version: version,
+        port: port,
         transport: transport,
         actions: actions,
       ),
@@ -276,20 +348,39 @@ String buildMaidCafeDaemonConfigScript({
   required String daemonId,
   required String cloudUrl,
   required String cloudSecret,
+  String version = '',
   String transport = 'stdio',
+  int port = 8747,
+  String apiSecret = '',
   List<MaidCafeActionDefinition> actions = const [],
 }) {
+  if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
+    throw ArgumentError.value(
+      port,
+      'port',
+      'must be between $maidCafeMinimumPort and 65535',
+    );
+  }
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
       : '/etc/maidcafe/config.toml';
+  final resolvedApiSecret = transport == 'stdio' || apiSecret.trim().isNotEmpty
+      ? apiSecret.trim()
+      : generateMaidCafeApiSecret();
   final installMode = transport == 'stdio' ? '0644' : '0640';
   final installGroup = transport == 'stdio' ? 'root' : 'maidcafe';
+  final serviceRestart = transport == 'stdio'
+      ? ''
+      : 'systemctl restart maidcafe-daemon\n';
   final encodedConfig = base64Encode(
     utf8.encode(
       _maidCafeConfig(
         daemonId: daemonId,
         cloudUrl: cloudUrl,
+        version: version,
         cloudSecret: cloudSecret,
+        metricsSecret: resolvedApiSecret,
+        port: port,
         transport: transport,
         actions: actions,
       ),
@@ -299,21 +390,32 @@ String buildMaidCafeDaemonConfigScript({
 install -d -o root -g root -m 0755 /etc/maidcafe
 printf '%s\n' 'maidkit' | install -o root -g root -m 0644 /dev/stdin /etc/maidcafe/maidkit-managed
 printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
-''';
+$serviceRestart''';
 }
 
 String _maidCafeConfig({
   required String daemonId,
   required String cloudUrl,
   required String cloudSecret,
+  String metricsSecret = '',
+  String version = '',
+  int port = 8747,
   required String transport,
   required List<MaidCafeActionDefinition> actions,
 }) {
-  final listenLine = transport == 'stdio' ? '' : ' listen = "127.0.0.1:8747"\n';
+  final versionLine = version.trim().isEmpty
+      ? ''
+      : ' version = ${_tomlString(version.trim())}\n';
+  final listenLine = transport == 'stdio'
+      ? ''
+      : ' listen = "127.0.0.1:$port"\n';
+  final metricsSecretLine = metricsSecret.trim().isEmpty
+      ? ''
+      : ' metricsSecret = ${_tomlString(metricsSecret.trim())}\n';
   return '''[daemon]
  id = ${_tomlString(daemonId)}
- transport = ${_tomlString(transport)}
-$listenLine cloudUrl = ${_tomlString(cloudUrl)}
+$versionLine transport = ${_tomlString(transport)}
+$listenLine$metricsSecretLine cloudUrl = ${_tomlString(cloudUrl)}
  cloudSecret = ${_tomlString(cloudSecret)}
  metricsInterval = "1m"
  requestTimeout = "10s"
@@ -345,7 +447,11 @@ Future<List<DistributionChannel>> fetchMaidCafeDistributionChannels() async {
   }
 }
 
-Future<String> _fetchMaidCafeArtifactUrl({String? channel}) async {
+/// Returns the latest published MaidCafe release tag for [channel].
+Future<String> fetchMaidCafeLatestVersion({String? channel}) async =>
+    (await _fetchMaidCafeArtifact(channel: channel)).version;
+
+Future<_MaidCafeArtifact> _fetchMaidCafeArtifact({String? channel}) async {
   final api = SolsynthExpressApi(
     baseUrl: _maidCafeDistributionApiBaseUrl,
     productId: _maidCafeDistributionProductId,
@@ -423,15 +529,19 @@ Future<String> _fetchMaidCafeArtifactUrl({String? channel}) async {
       'URL: $endpoint',
     );
   }
-  final artifact = release?.artifactFor('linux', 'amd64');
-  if (artifact == null) {
+  final releaseInfo = release;
+  final artifact = releaseInfo?.artifactFor('linux', 'amd64');
+  if (artifact == null || releaseInfo == null) {
     throw StateError(
       'No MaidCafe Linux amd64 artifact is available in the '
       '"$channelName" channel.\n'
       'URL: $endpoint',
     );
   }
-  return artifact.downloadUrl;
+  return _MaidCafeArtifact(
+    url: artifact.downloadUrl,
+    version: releaseInfo.tagName,
+  );
 }
 
 String _maidCafeDownloadPackage(PackageManager manager) => switch (manager) {

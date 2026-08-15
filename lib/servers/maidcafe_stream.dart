@@ -1,195 +1,248 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:dartssh2/dartssh2.dart';
+import 'package:dio/dio.dart';
+import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/port_forwarding_models.dart';
+import 'package:maid_kit/servers/ssh_connection_manager.dart';
 
-/// Newline-delimited JSON protocol used by MaidCafe's stdio daemon mode.
+import 'maidcafe_service.dart';
+
+const maidCafeDefaultPort = 8747;
+
+class MaidCafeDaemonAccess {
+  const MaidCafeDaemonAccess({required this.port, required this.apiSecret});
+
+  final int? port;
+  final String? apiSecret;
+}
+
+/// Reads the daemon's HTTP endpoint and API secret over SSH.
+Future<MaidCafeDaemonAccess> readMaidCafeConfig({
+  required SshConnectionManager manager,
+  required Server server,
+}) => manager.withClient(server.id, (client) async {
+  final session = await client.execute(
+    r'''sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml /etc/maidcafe/config.stdio.toml 2>/dev/null || true''',
+  );
+  try {
+    final config = await utf8.decoder.bind(session.stdout).join();
+    await session.done.timeout(const Duration(seconds: 5));
+    final port = Uri.tryParse(
+      'http://${_configValue(config, 'listen') ?? ''}',
+    )?.port;
+    final apiSecret = _configValue(config, 'metricsSecret');
+    return MaidCafeDaemonAccess(
+      port: port == null || port < maidCafeMinimumPort || port > 65535
+          ? null
+          : port,
+      apiSecret: apiSecret,
+    );
+  } finally {
+    session.close();
+  }
+});
+
+Future<int?> readMaidCafeListenPort({
+  required SshConnectionManager manager,
+  required Server server,
+}) async => (await readMaidCafeConfig(manager: manager, server: server)).port;
+
+String? _configValue(String config, String key) {
+  final pattern =
+      r'''^\s*''' + RegExp.escape(key) + r'''\s*=\s*["']([^"']+)["']\s*$''';
+  final value = RegExp(pattern, multiLine: true).firstMatch(config)?.group(1);
+  return value?.trim().isEmpty ?? true ? null : value!.trim();
+}
+
+/// HTTP client for the systemd-managed MaidCafe daemon.
+///
+/// MaidKit first tries the configured server address directly. If the daemon
+/// is loopback-only or the host is not reachable from this computer, it falls
+/// back to a short-lived SSH local TCP forward.
 class MaidCafeStreamSession {
-  MaidCafeStreamSession._(this._session) {
-    _stdoutSubscription = utf8.decoder
-        .bind(_session.stdout)
-        .transform(const LineSplitter())
-        .listen(_handleLine, onError: _handleError, onDone: _handleDone);
-    unawaited(
-      _session.done.then((_) {
-        _markClosed(
-          StateError(
-            'MaidCafe SSH stream closed before the request completed.',
-          ),
-          StackTrace.current,
+  MaidCafeStreamSession._(
+    this._manager,
+    this._forward,
+    this._dio,
+    this._apiSecret,
+  );
+
+  static const _remoteHost = '127.0.0.1';
+
+  final SshConnectionManager _manager;
+  final ActivePortForward? _forward;
+  final Dio _dio;
+  final String? _apiSecret;
+  var _closed = false;
+  String? _version;
+
+  String? get apiSecret => _apiSecret;
+
+  static Future<MaidCafeStreamSession> open({
+    required SshConnectionManager manager,
+    required Server server,
+    int? port,
+    String? apiSecret,
+  }) async {
+    final access = await readMaidCafeConfig(manager: manager, server: server);
+    final resolvedPort = port ?? access.port ?? maidCafeDefaultPort;
+    final resolvedSecret = apiSecret ?? access.apiSecret;
+    final direct = await _tryDirect(
+      manager,
+      server,
+      resolvedPort,
+      resolvedSecret,
+    );
+    if (direct != null) return direct;
+
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      ActivePortForward? forward;
+      MaidCafeStreamSession? connection;
+      try {
+        forward = await manager.startPortForward(
+          server: server,
+          direction: PortForwardDirection.local,
+          kind: PortForwardKind.tcp,
+          bindHost: '127.0.0.1',
+          bindPort: 0,
+          targetHost: _remoteHost,
+          targetPort: resolvedPort,
+          owner: PortForwardOwner.maidCafe,
         );
-      }),
+        connection = MaidCafeStreamSession._(
+          manager,
+          forward,
+          _newDio(
+            'http://${forward.bindHost}:${forward.bindPort}',
+            resolvedSecret,
+          ),
+          resolvedSecret,
+        );
+        await connection.health();
+        return connection;
+      } catch (error) {
+        lastError = error;
+        if (connection != null) {
+          await connection.close();
+        } else if (forward != null) {
+          await manager.stopManagedPortForward(forward.id);
+        }
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    Error.throwWithStackTrace(
+      lastError ?? StateError('MaidCafe connection failed.'),
+      StackTrace.current,
     );
   }
 
-  static const command =
-      '/usr/local/bin/maidcafe-daemon --config /etc/maidcafe/config.stdio.toml';
-  final _ready = Completer<void>();
-  final SSHSession _session;
-  late final StreamSubscription<String> _stdoutSubscription;
-  final _pending = <String, Completer<Map<String, dynamic>>>{};
-  final _events = StreamController<MaidCafeStreamEvent>.broadcast();
-  var _nextId = 0;
-  var _closed = false;
-  var _closing = false;
-  Future<void> _writeTail = Future<void>.value();
-
-  Stream<MaidCafeStreamEvent> get events => _events.stream;
-
-  static Future<MaidCafeStreamSession> open(SSHClient client) async {
-    final connection = MaidCafeStreamSession._(await client.execute(command));
+  static Future<MaidCafeStreamSession?> _tryDirect(
+    SshConnectionManager manager,
+    Server server,
+    int port,
+    String? apiSecret,
+  ) async {
+    final host = server.host.contains(':') && !server.host.startsWith('[')
+        ? '[${server.host}]'
+        : server.host;
+    final connection = MaidCafeStreamSession._(
+      manager,
+      null,
+      _newDio('http://$host:$port', apiSecret),
+      apiSecret,
+    );
     try {
-      await connection._ready.future.timeout(const Duration(seconds: 10));
+      await connection.health();
       return connection;
     } catch (_) {
       await connection.close();
-      rethrow;
+      return null;
     }
   }
 
-  Future<Map<String, dynamic>> health() => request('health');
+  static Dio _newDio(String baseUrl, String? apiSecret) => Dio(
+    BaseOptions(
+      baseUrl: baseUrl,
+      headers: apiSecret == null
+          ? null
+          : <String, String>{'Authorization': 'Bearer $apiSecret'},
+      connectTimeout: const Duration(seconds: 3),
+      sendTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+    ),
+  );
 
-  Future<Map<String, dynamic>> metrics() => request('metrics');
+  String? get version => _version;
+
+  Future<Map<String, dynamic>> health() async {
+    final result = await _get('/health');
+    final value = result['version']?.toString().trim();
+    _version = value == null || value.isEmpty ? null : value;
+    return result;
+  }
+
+  Future<Map<String, dynamic>> metrics() => _get('/api/v1/metrics');
 
   Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) =>
-      request('action', name: name, body: body);
+      _post('/api/v1/actions/${Uri.encodeComponent(name)}', body: body);
 
-  Future<Map<String, dynamic>> request(
-    String action, {
-    String? name,
-    Object? body,
-  }) async {
+  Future<Map<String, dynamic>> _get(String path) async {
     _throwIfClosed();
-    final id = 'maidkit-${_nextId++}';
-    final completer = Completer<Map<String, dynamic>>();
-    _pending[id] = completer;
-    final payload = <String, dynamic>{
-      'type': 'request',
-      'id': id,
-      'action': action,
-      ...?(name == null ? null : {'name': name}),
-      ...?(body == null ? null : {'body': body}),
-    };
     try {
-      await _write(Uint8List.fromList(utf8.encode('${jsonEncode(payload)}\n')));
-      return await completer.future.timeout(const Duration(seconds: 10));
-    } on TimeoutException {
-      _pending.remove(id);
-      rethrow;
-    } catch (_) {
-      _pending.remove(id);
-      rethrow;
+      final response = await _dio.get<Object?>(path);
+      return _responseMap(response);
+    } on DioException catch (error) {
+      throw StateError(_dioError(error));
     }
   }
 
-  Future<void> _write(Uint8List data) {
-    final previous = _writeTail;
-    final write = previous.then<void>(
-      (_) async {
-        _throwIfClosed();
-        _session.stdin.add(data);
-        await _session.flush();
-      },
-      onError: (_, _) {
-        _throwIfClosed();
-      },
-    );
-    _writeTail = write.catchError((_) {});
-    return write;
+  Future<Map<String, dynamic>> _post(String path, {Object? body}) async {
+    _throwIfClosed();
+    try {
+      final response = await _dio.post<Object?>(path, data: body);
+      return _responseMap(response);
+    } on DioException catch (error) {
+      throw StateError(_dioError(error));
+    }
+  }
+
+  Map<String, dynamic> _responseMap(Response<Object?> response) {
+    final status = response.statusCode ?? 500;
+    final data = response.data;
+    if (status >= 400) {
+      final message = data is Map ? data['error']?.toString() : null;
+      throw StateError(message ?? 'MaidCafe HTTP request failed ($status).');
+    }
+    if (data is! Map) {
+      throw StateError('MaidCafe returned an invalid response.');
+    }
+    return data.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  String _dioError(DioException error) {
+    final data = error.response?.data;
+    if (data is Map && data['error'] != null) {
+      return data['error'].toString();
+    }
+    return error.message ?? 'MaidCafe HTTP request failed.';
   }
 
   void _throwIfClosed() {
-    if (_closed || _closing) {
-      throw StateError('MaidCafe stream is closed.');
-    }
-  }
-
-  void _handleLine(String line) {
-    if (line.trim().isEmpty) return;
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(line);
-    } catch (error, stackTrace) {
-      _handleError(error, stackTrace);
-      return;
-    }
-    if (decoded is! Map<String, dynamic>) return;
-    if (decoded['type'] == 'event') {
-      final event = MaidCafeStreamEvent.fromJson(decoded);
-      if (event.event == 'ready' && !_ready.isCompleted) {
-        _ready.complete();
-      }
-      if (!_events.isClosed) _events.add(event);
-      return;
-    }
-    final id = decoded['id'];
-    final completer = id is String ? _pending.remove(id) : null;
-    if (completer == null || completer.isCompleted) return;
-    if (decoded['ok'] != true) {
-      completer.completeError(
-        StateError(decoded['error']?.toString() ?? 'MaidCafe request failed.'),
-      );
-      return;
-    }
-    final result = decoded['result'];
-    completer.complete(
-      result is Map<String, dynamic> ? result : <String, dynamic>{},
-    );
-  }
-
-  void _handleError(Object error, StackTrace stackTrace) {
-    _markClosed(error, stackTrace);
-  }
-
-  void _handleDone() {
-    _markClosed(StateError('MaidCafe stream ended.'), StackTrace.current);
-  }
-
-  void _markClosed(Object error, StackTrace stackTrace) {
-    if (_closed) return;
-    _closed = true;
-    _failPending(error, stackTrace);
-  }
-
-  void _failPending(Object error, StackTrace stackTrace) {
-    for (final completer in _pending.values) {
-      if (!completer.isCompleted) completer.completeError(error, stackTrace);
-    }
-    _pending.clear();
+    if (_closed) throw StateError('MaidCafe session is closed.');
   }
 
   Future<void> close() async {
-    if (_closing) return;
-    _closing = true;
+    if (_closed) return;
     _closed = true;
-    _failPending(StateError('MaidCafe stream closed.'), StackTrace.current);
-    try {
-      await _writeTail;
-    } catch (_) {}
-    try {
-      await _session.stdin.close();
-    } catch (_) {}
-    try {
-      _session.close();
-    } catch (_) {}
-    await _stdoutSubscription.cancel();
-    await _session.done.timeout(const Duration(seconds: 3), onTimeout: () {});
-    await _events.close();
-  }
-}
-
-class MaidCafeStreamEvent {
-  const MaidCafeStreamEvent({required this.event, required this.data});
-
-  final String event;
-  final Map<String, dynamic> data;
-
-  factory MaidCafeStreamEvent.fromJson(Map<String, dynamic> json) {
-    final data = json['data'];
-    return MaidCafeStreamEvent(
-      event: json['event']?.toString() ?? '',
-      data: data is Map<String, dynamic> ? data : const {},
-    );
+    _dio.close(force: true);
+    final forward = _forward;
+    if (forward != null) {
+      await _manager.stopManagedPortForward(forward.id);
+    }
   }
 }

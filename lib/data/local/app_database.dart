@@ -45,11 +45,13 @@ class Servers extends Table {
   // encoded SerialConfig.
   TextColumn get connectionType => text().withDefault(const Constant('ssh'))();
   TextColumn get serialConfig => text().nullable()();
-  // MaidCafe daemon configuration for this server. The webhook secret is
-  // encrypted with the vault key; the endpoint is non-secret metadata.
+  // MaidCafe daemon configuration. Secrets are encrypted with the vault key;
+  // the endpoint is non-secret metadata.
   TextColumn get maidCafeDaemonUrl => text().nullable()();
   TextColumn get encryptedMaidCafeWebhookSecret => text().nullable()();
   TextColumn get maidCafeWebhookSecretNonce => text().nullable()();
+  TextColumn get encryptedMaidCafeMetricsSecret => text().nullable()();
+  TextColumn get maidCafeMetricsSecretNonce => text().nullable()();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -265,7 +267,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -511,6 +513,10 @@ class AppDatabase extends _$AppDatabase {
         if (!existing.contains('maid_cafe_webhook_secret_nonce')) {
           await m.addColumn(servers, servers.maidCafeWebhookSecretNonce);
         }
+      }
+      if (from < 26) {
+        await m.addColumn(servers, servers.encryptedMaidCafeMetricsSecret);
+        await m.addColumn(servers, servers.maidCafeMetricsSecretNonce);
       }
     },
   );
