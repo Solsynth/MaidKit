@@ -274,8 +274,21 @@ class MaidCafeStreamSession {
 
   Future<Map<String, dynamic>> metrics() => _get('/api/v1/metrics');
 
-  Future<List<Map<String, dynamic>>> metricsHistory({int limit = 60}) async {
-    final result = await _get('/api/v1/metrics/history?limit=$limit');
+  Future<List<Map<String, dynamic>>> metricsHistory({
+    int limit = 60,
+    DateTime? from,
+    DateTime? to,
+    DateTime? before,
+  }) async {
+    final query = <String, String>{'limit': '$limit'};
+    if (from != null) query['from'] = from.toUtc().toIso8601String();
+    if (to != null) query['to'] = to.toUtc().toIso8601String();
+    if (before != null) {
+      query['before'] = before.toUtc().toIso8601String();
+    }
+    final result = await _get(
+      Uri(path: '/api/v1/metrics/history', queryParameters: query).toString(),
+    );
     final metrics = result['metrics'];
     if (metrics is! List) {
       throw StateError('MaidCafe returned an invalid metrics history.');
