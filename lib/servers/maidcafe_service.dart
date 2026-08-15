@@ -253,11 +253,15 @@ class MaidCafeWebhookResult {
     required this.statusCode,
     required this.body,
     required this.headers,
+    this.error,
   });
 
   final int statusCode;
   final Uint8List body;
   final Map<String, List<String>> headers;
+
+  /// Remote execution error, e.g. a failed script or rejected signature.
+  final String? error;
 
   bool get isSuccess => statusCode == 200;
   String get text => utf8.decode(body, allowMalformed: true);
@@ -572,6 +576,91 @@ class MaidCafeService {
         (key, values) => MapEntry(key, List<String>.from(values)),
       ),
     );
+  }
+
+  /// Enqueues a signed webhook invocation on the MaidKit cloud relay; the
+  /// daemon polls the cloud (every 60s) and executes the webhook locally.
+  /// Returns the relay request id to poll with [waitForWebhookResult].
+  Future<String> enqueueWebhookRequest({
+    required String daemonId,
+    required String webhookName,
+    required String webhookSecret,
+    required List<int> payload,
+  }) async {
+    if (webhookName.trim().isEmpty) {
+      throw const MaidCafeException(
+        'Webhook name is required.',
+        kind: MaidCafeErrorKind.validation,
+      );
+    }
+    if (webhookSecret.trim().isEmpty) {
+      throw const MaidCafeException(
+        'Webhook secret is required.',
+        kind: MaidCafeErrorKind.validation,
+      );
+    }
+    final signature = await maidCafeHmacSignature(
+      webhookSecret.trim(),
+      payload,
+    );
+    final response = await _cloudRequest(
+      (token) => _dio.post<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/webhook-requests',
+        data: {
+          'name': webhookName.trim(),
+          'body': base64Encode(payload),
+          'signature': signature,
+        },
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseMap(response);
+    final id = data['id']?.toString();
+    if (id == null || id.isEmpty) {
+      throw const MaidCafeException(
+        'The cloud did not return a webhook request id.',
+        kind: MaidCafeErrorKind.invalidResponse,
+      );
+    }
+    return id;
+  }
+
+  /// Polls the cloud until the relayed webhook reaches a terminal state or
+  /// [timeout] elapses. The daemon polls for requests every 60s, so results
+  /// typically appear within one interval.
+  Future<MaidCafeWebhookResult> waitForWebhookResult({
+    required String daemonId,
+    required String requestId,
+    Duration timeout = const Duration(minutes: 5),
+    Duration interval = const Duration(seconds: 5),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (true) {
+      final data = await _cloudRequest(
+        (token) => _dio.get<dynamic>(
+          '$_apiBase/daemons/${_pathPart(daemonId)}/webhook-requests/${_pathPart(requestId)}',
+          options: _cloudOptions(token),
+        ),
+      );
+      final result = _responseMap(data);
+      if (result['status'] == 'done') {
+        return MaidCafeWebhookResult(
+          statusCode: (result['result_code'] as num?)?.toInt() ?? 0,
+          body: Uint8List.fromList(
+            base64Decode(result['result_body']?.toString() ?? ''),
+          ),
+          headers: const {},
+          error: result['result_error']?.toString(),
+        );
+      }
+      if (DateTime.now().isAfter(deadline)) {
+        throw const MaidCafeException(
+          'Timed out waiting for the relayed webhook.',
+          kind: MaidCafeErrorKind.http,
+        );
+      }
+      await Future<void>.delayed(interval);
+    }
   }
 
   Future<String?> storedCloudSecret(String daemonId) =>

@@ -145,6 +145,61 @@ void main() {
     },
   );
 
+  test(
+    'webhook relay enqueues signed request and polls for the result',
+    () async {
+      final requests = <RequestOptions>[];
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          requests.add(options);
+          if (options.method == 'POST') {
+            return _json({'id': 'req-1', 'status': 'pending'}, 201);
+          }
+          return _json({
+            'status': 'done',
+            'result_code': 200,
+            'result_body': base64Encode(utf8.encode('relayed-ok')),
+            'result_error': '',
+          }, 200);
+        });
+      final service = MaidCafeService(
+        baseUrl: 'https://mk.solsynth.dev',
+        cloudSync: CloudSyncService(vaultId: 'test'),
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+      final payload = utf8.encode('{"job":"incremental"}');
+      final id = await service.enqueueWebhookRequest(
+        daemonId: 'daemon-1',
+        webhookName: 'backup',
+        webhookSecret: 'local-secret',
+        payload: payload,
+      );
+      expect(id, 'req-1');
+      final post = requests.first;
+      expect(post.uri.path, '/api/daemons/daemon-1/webhook-requests');
+      final body = post.data as Map;
+      expect(body['name'], 'backup');
+      expect(body['body'], base64Encode(payload));
+      expect(
+        body['signature'],
+        await maidCafeHmacSignature('local-secret', payload),
+      );
+      final result = await service.waitForWebhookResult(
+        daemonId: 'daemon-1',
+        requestId: id,
+        timeout: const Duration(seconds: 2),
+        interval: const Duration(milliseconds: 10),
+      );
+      expect(result.text, 'relayed-ok');
+      expect(result.statusCode, 200);
+      expect(
+        requests.last.uri.path,
+        '/api/daemons/daemon-1/webhook-requests/req-1',
+      );
+    },
+  );
+
   test('HMAC signature matches the RFC 4231 test vector', () async {
     expect(
       await maidCafeHmacSignature(
