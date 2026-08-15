@@ -753,6 +753,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         ),
       );
       await _cacheMaidCafePort(port);
+      await ref
+          .read(serverRepositoryProvider)
+          .updateMaidCafeConfig(
+            widget.server,
+            daemonUrl: 'http://127.0.0.1:$port',
+            metricsSecret: apiSecret,
+          );
       final opened = await _openStream(port: port);
       if (!opened) return;
       if (mounted) {

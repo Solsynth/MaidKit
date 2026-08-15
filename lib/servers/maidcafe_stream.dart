@@ -55,7 +55,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
   required Server server,
 }) => manager.withClient(server.id, (client) async {
   final session = await client.execute(
-    r'''sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml /etc/maidcafe/config.stdio.toml 2>/dev/null || true''',
+    r'''sed -n '/^\[daemon\]/,/^\[/p' /etc/maidcafe/config.toml 2>/dev/null || true''',
   );
   try {
     final config = await utf8.decoder.bind(session.stdout).join();
