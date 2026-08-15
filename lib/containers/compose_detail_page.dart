@@ -16,6 +16,7 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
+import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/theme.dart';
 import 'compose_project_actions.dart';
 import 'container_list_tile.dart';
@@ -931,17 +932,17 @@ class _ComposeDetailTabs extends StatelessWidget {
             tabAlignment: TabAlignment.start,
             dividerColor: scheme.outlineVariant,
             tabs: [
-              Tab(
+              IconLabelTab(
                 icon: const Icon(Symbols.deployed_code, size: 18),
-                text: 'composeDetailServices'.tr(),
+                label: 'composeDetailServices'.tr(),
               ),
-              Tab(
+              IconLabelTab(
                 icon: const Icon(Symbols.terminal, size: 18),
-                text: 'containerLogs'.tr(),
+                label: 'containerLogs'.tr(),
               ),
-              Tab(
+              IconLabelTab(
                 icon: const Icon(Symbols.description, size: 18),
-                text: 'composeDetailComposeFile'.tr(),
+                label: 'composeDetailComposeFile'.tr(),
               ),
             ],
           ),

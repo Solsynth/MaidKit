@@ -12,6 +12,9 @@ import 'container_models.dart';
 import 'container_runtime_install.dart';
 import 'image_actions.dart';
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
+import 'package:maid_kit/servers/maidcafe_session_registry.dart';
+import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
@@ -46,9 +49,21 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
   var _loading = false;
   var _hasLoadedEnvironments = false;
 
+  late final MaidCafeSessionRegistry _sessionRegistry;
+  MaidCafeStreamSession? _maidCafeStream;
+
+  /// Whether the visible list came from the MaidCafe daemon (banner).
+  var _imagesFromMaidCafe = false;
+
+  /// The daemon reported no container runtime; stop asking until a manual
+  /// refresh, an explicit action, or a fresh session.
+  var _imagesUnavailable = false;
+
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     if (widget.connected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load());
     }
@@ -58,14 +73,28 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ImageManagementTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected &&
-        (!oldWidget.connected || oldWidget.server.id != widget.server.id)) {
+    final serverChanged = oldWidget.server.id != widget.server.id;
+    if (serverChanged) {
+      _sessionRegistry.release(oldWidget.server);
+      _sessionRegistry.retain(widget.server);
+      _maidCafeStream = null;
+      _imagesUnavailable = false;
+      _imagesFromMaidCafe = false;
+      _hasLoadedEnvironments = false;
+    } else if (!widget.connected && oldWidget.connected) {
+      _sessionRegistry.invalidate(widget.server);
+      _maidCafeStream = null;
+      _imagesFromMaidCafe = false;
+      _hasLoadedEnvironments = false;
+    }
+    if (widget.connected && (!oldWidget.connected || serverChanged)) {
       _load();
     }
     if (oldWidget.refreshInterval != widget.refreshInterval) {
@@ -78,13 +107,39 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
     _refreshTimer = Timer.periodic(widget.refreshInterval, (_) => _load());
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool force = false}) async {
     if (!mounted || !widget.connected || _loading) return;
     _loading = true;
+    if (force) {
+      // An explicit action may have changed what the daemon can see.
+      _imagesUnavailable = false;
+    }
     if (!_hasLoadedEnvironments) {
       setState(() => _environments = const AsyncValue.loading());
     }
     try {
+      if (!_imagesUnavailable) {
+        final session = await _ensureMaidCafeStream();
+        if (session != null) {
+          try {
+            final snapshot = parseMaidCafeImages(await session.images());
+            if (snapshot.hasRuntimes && mounted) {
+              setState(() {
+                _imagesFromMaidCafe = true;
+                _hasLoadedEnvironments = true;
+                _environments = AsyncValue.data(_environmentsFrom(snapshot));
+              });
+              return;
+            }
+            if (!snapshot.hasRuntimes) {
+              // The daemon has no container runtime; stop asking for it.
+              _imagesUnavailable = true;
+            }
+          } catch (_) {
+            // Old daemon without /api/v1/images: fall back to SSH.
+          }
+        }
+      }
       final environments = await ref
           .read(connectionManagerProvider)
           .listImages(
@@ -94,6 +149,7 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
           );
       if (mounted) {
         setState(() {
+          _imagesFromMaidCafe = false;
           _hasLoadedEnvironments = true;
           _environments = AsyncValue.data(environments);
         });
@@ -106,6 +162,45 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
       _loading = false;
     }
   }
+
+  /// Manual refresh: always fetch (the stream path may be silent), and
+  /// re-arm the MaidCafe path when it was previously unavailable.
+  Future<void> _refreshManually() async {
+    if (!_imagesFromMaidCafe) {
+      _imagesUnavailable = false;
+      _maidCafeStream = null;
+      _sessionRegistry.invalidate(widget.server);
+    }
+    await _load(force: true);
+  }
+
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    _maidCafeStream = null;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      _maidCafeStream = session;
+      if (!identical(session, cached)) {
+        // A fresh session (reconnect or daemon restart) warrants a re-probe
+        // of the runtime.
+        _imagesUnavailable = false;
+      }
+    }
+    return session;
+  }
+
+  List<ImageEnvironment> _environmentsFrom(MaidCafeImagesSnapshot snapshot) => [
+    for (final runtime in snapshot.runtimes)
+      ImageEnvironment(
+        runtime: runtime.runtime == 'podman'
+            ? ContainerRuntime.podman
+            : ContainerRuntime.docker,
+        scope: ContainerScope.root,
+        images: runtime.images,
+        error: runtime.error,
+      ),
+  ];
 
   Future<String?> _storedSudoPassword() async {
     final credential = await ref
@@ -147,7 +242,7 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
         icon: Symbols.check_circle,
         accentColor: Theme.of(context).colorScheme.primary,
       );
-      await _load();
+      await _refreshManually();
     } catch (error) {
       if (!mounted) return;
       showStyledSnackBar(
@@ -200,7 +295,7 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
         icon: Symbols.check_circle,
         accentColor: Theme.of(context).colorScheme.primary,
       );
-      await _load();
+      await _refreshManually();
     } catch (error) {
       if (!mounted) return;
       showStyledSnackBar(
@@ -229,7 +324,7 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
         icon: Symbols.check_circle,
         accentColor: Theme.of(context).colorScheme.primary,
       );
-      await _load();
+      await _refreshManually();
     } catch (error) {
       if (!mounted) return;
       showStyledSnackBar(
@@ -261,12 +356,55 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
         actionLabel: 'imagesTryAgain'.tr(),
         onAction: _load,
       ),
-      data: (environments) => _ImageEnvironments(
-        environments: environments,
-        onRefresh: _load,
-        onAction: _runAction,
-        onPrune: _prune,
-        onInstallRuntime: _installRuntime,
+      data: (environments) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Shown only while the list is served by the MaidCafe daemon; the
+          // SSH poller is the default and gets no banner.
+          if (_imagesFromMaidCafe) const _ImageDataSourceBanner(),
+          Expanded(
+            child: _ImageEnvironments(
+              environments: environments,
+              onRefresh: _refreshManually,
+              onAction: _runAction,
+              onPrune: _prune,
+              onInstallRuntime: _installRuntime,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Quiet indicator that the image list is served by the MaidCafe daemon.
+/// Hidden entirely when the SSH poller is the data source.
+class _ImageDataSourceBanner extends StatelessWidget {
+  const _ImageDataSourceBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(color: scheme.secondaryContainer),
+      child: Row(
+        children: [
+          Icon(
+            Symbols.local_cafe,
+            size: 18,
+            color: scheme.onSecondaryContainer,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'imagesDataSourceMaidCafe'.tr(),
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: scheme.onSecondaryContainer,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

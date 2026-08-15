@@ -87,8 +87,39 @@ void main() {
     expect(script, contains('/etc/maidcafe/maidkit-managed'));
     expect(script, contains('base64 -d'));
     expect(script, contains('systemctl restart maidcafe-daemon'));
-    expect(script, isNot(contains('/usr/local/bin/maidcafe-daemon')));
+    // The sync never downloads or installs the daemon binary; the only
+    // reference is the ExecStart line of the reconciled systemd unit.
+    expect(script, isNot(contains('curl --fail')));
+    expect(script, isNot(contains('maidcafe-daemon.tar')));
+    expect(script, contains('systemctl daemon-reload'));
+    expect(script, contains('NoNewPrivileges=true'));
   });
+
+  test(
+    'configuration sync drops NoNewPrivileges when actions run as a user',
+    () {
+      final script = buildMaidCafeDaemonConfigScript(
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        actions: const [
+          MaidCafeActionDefinition(
+            name: 'deploy',
+            script: 'echo hi',
+            user: 'deploy',
+          ),
+        ],
+      );
+
+      expect(
+        script,
+        contains('# NoNewPrivileges: actions run as another user through sudo'),
+      );
+      expect(script, isNot(contains('NoNewPrivileges=true')));
+      expect(script, contains('systemctl daemon-reload'));
+    },
+  );
 
   test('stdio installer writes an SSH-stream daemon without systemd', () {
     final script = buildMaidCafeDaemonInstallScript(
@@ -278,5 +309,236 @@ void main() {
       maidCafeActionTemplateVariables('echo {{my-var}} {{ with spaces }}'),
       ['my-var', 'with spaces'],
     );
+  });
+
+  test(
+    'actions serialize cwd, user and environment into the daemon config',
+    () {
+      final script = buildMaidCafeDaemonConfigScript(
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        actions: const [
+          MaidCafeActionDefinition(
+            name: 'deploy',
+            script: 'systemctl restart myapp',
+            displayName: 'Deploy the web app',
+            workingDirectory: '/srv/myapp',
+            user: 'deploy',
+            environment: {'CI_BUILD': '42', 'NODE_ENV': 'production'},
+          ),
+        ],
+      );
+
+      final config = decodeMaidCafeConfigFromScript(script);
+      expect(config, contains('displayName = "Deploy the web app"'));
+      expect(config, contains('cwd = "/srv/myapp"'));
+      expect(config, contains('user = "deploy"'));
+      expect(config, contains('env = ["CI_BUILD=42", "NODE_ENV=production"]'));
+    },
+  );
+
+  test('actions without a display name omit the field', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      daemonId: 'maidkit-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      transport: 'http',
+      actions: const [
+        MaidCafeActionDefinition(name: 'backup', script: 'echo hi'),
+      ],
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+    expect(config, isNot(contains('displayName')));
+  });
+
+  test('run-as users install a sudoers rule and relax the actions directory', () {
+    final script = buildMaidCafeDaemonInstallScript(
+      daemonId: 'daemon-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+      actions: const [
+        MaidCafeActionDefinition(
+          name: 'deploy',
+          script: 'echo hi',
+          user: 'deploy',
+        ),
+        MaidCafeActionDefinition(
+          name: 'backup',
+          script: 'echo hi',
+          user: 'www-data',
+        ),
+        MaidCafeActionDefinition(name: 'plain', script: 'echo hi'),
+      ],
+    );
+
+    // The daemon renders substituted scripts into the actions directory, so
+    // it must be group-writable; .run is pre-created for it.
+    expect(
+      script,
+      contains('install -d -o root -g maidcafe -m 0770 /etc/maidcafe/actions'),
+    );
+    expect(
+      script,
+      contains(
+        'install -d -o root -g maidcafe -m 0770 /etc/maidcafe/actions/.run',
+      ),
+    );
+    // The sudoers rule names exactly the distinct run-as users, validated
+    // with visudo before install; the rule user is the daemon account.
+    expect(script, contains('rule_user="maidcafe"'));
+    expect(
+      script,
+      contains(
+        '"\$rule_user ALL=(deploy,www-data) NOPASSWD: /etc/maidcafe/actions/*"',
+      ),
+    );
+    expect(script, contains('visudo -cf'));
+    expect(
+      script,
+      contains(
+        'install -o root -g root -m 0440 "\$sudoers_tmp" '
+        '/etc/sudoers.d/maidcafe-actions',
+      ),
+    );
+    // sudo needs its setuid bit for user switching; the unit drops the
+    // NoNewPrivileges hardening when a run-as user is configured.
+    expect(script, isNot(contains('NoNewPrivileges=true')));
+    expect(script, contains('# NoNewPrivileges'));
+  });
+
+  test(
+    'without run-as users the unit keeps NoNewPrivileges and no sudoers',
+    () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        actions: const [
+          MaidCafeActionDefinition(name: 'plain', script: 'echo hi'),
+        ],
+      );
+
+      expect(script, contains('NoNewPrivileges=true'));
+      expect(
+        script,
+        contains('install -d -o root -g root -m 0755 /etc/maidcafe/actions'),
+      );
+      expect(script, isNot(contains('visudo')));
+      expect(script, contains('rm -f /etc/sudoers.d/maidcafe-actions'));
+    },
+  );
+
+  test('stdio run-as rules name the SSH user through SUDO_USER', () {
+    final script = buildMaidCafeDaemonInstallScript(
+      daemonId: 'daemon-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+      transport: 'stdio',
+      actions: const [
+        MaidCafeActionDefinition(
+          name: 'deploy',
+          script: 'echo hi',
+          user: 'deploy',
+        ),
+      ],
+    );
+
+    expect(script, contains('rule_user="\${SUDO_USER:-\$(id -un)}"'));
+    expect(
+      script,
+      contains('"\$rule_user ALL=(deploy) NOPASSWD: /etc/maidcafe/actions/*"'),
+    );
+    // The actions directory belongs to the SSH user, not the maidcafe
+    // service account that does not exist in stdio mode.
+    expect(
+      script,
+      contains('chown "\${SUDO_USER:-\$(id -un)}" /etc/maidcafe/actions'),
+    );
+    expect(
+      script,
+      contains(
+        'install -d -o "\${SUDO_USER:-\$(id -un)}" -g root -m 0770 '
+        '/etc/maidcafe/actions/.run',
+      ),
+    );
+  });
+
+  test(
+    'rejects relative working directories and malformed run-as settings',
+    () {
+      expect(
+        () => buildMaidCafeDaemonConfigScript(
+          daemonId: 'maidkit-1',
+          cloudUrl: '',
+          cloudSecret: '',
+          transport: 'http',
+          actions: const [
+            MaidCafeActionDefinition(
+              name: 'deploy',
+              script: 'echo hi',
+              workingDirectory: 'srv/myapp',
+            ),
+          ],
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => buildMaidCafeDaemonConfigScript(
+          daemonId: 'maidkit-1',
+          cloudUrl: '',
+          cloudSecret: '',
+          transport: 'http',
+          actions: const [
+            MaidCafeActionDefinition(
+              name: 'deploy',
+              script: 'echo hi',
+              user: 'bad user!',
+            ),
+          ],
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => buildMaidCafeDaemonConfigScript(
+          daemonId: 'maidkit-1',
+          cloudUrl: '',
+          cloudSecret: '',
+          transport: 'http',
+          actions: const [
+            MaidCafeActionDefinition(
+              name: 'deploy',
+              script: 'echo hi',
+              environment: {'1BAD': 'value'},
+            ),
+          ],
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test('copyWith clears and sets nullable execution fields', () {
+    const action = MaidCafeActionDefinition(
+      name: 'deploy',
+      script: 'echo hi',
+      workingDirectory: '/srv/app',
+      user: 'deploy',
+      environment: {'A': '1'},
+    );
+    final cleared = action.copyWith(workingDirectory: null, user: null);
+    expect(cleared.workingDirectory, isNull);
+    expect(cleared.user, isNull);
+    expect(cleared.environment, {'A': '1'});
+    final changed = action.copyWith(workingDirectory: '/srv/other');
+    expect(changed.workingDirectory, '/srv/other');
+    expect(changed.user, 'deploy');
+    final envChanged = action.copyWith(environment: {'B': '2'});
+    expect(envChanged.environment, {'B': '2'});
+    expect(envChanged.workingDirectory, '/srv/app');
   });
 }

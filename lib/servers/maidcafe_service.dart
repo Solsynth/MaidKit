@@ -5,6 +5,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../containers/container_list_tile.dart';
 import '../containers/container_models.dart';
 import 'cloud_sync_service.dart';
 import 'server_models.dart';
@@ -985,6 +986,145 @@ ServerContainer? _parseSseContainer(Map<String, dynamic> json) {
     status: _optionalString(json, 'status') ?? '',
     composeProject: _optionalString(json, 'compose_project'),
   );
+}
+
+/// Images for one runtime from an `images` event or endpoint.
+class MaidCafeRuntimeImages {
+  const MaidCafeRuntimeImages({
+    required this.runtime,
+    required this.available,
+    this.error,
+    this.images = const [],
+  });
+
+  /// `"podman"` or `"docker"`.
+  final String runtime;
+  final bool available;
+
+  /// Collection failure message when the runtime exists but could not be
+  /// listed; null when the list is current.
+  final String? error;
+  final List<ServerContainerImage> images;
+}
+
+/// Typed images from an `images` SSE event or `/api/v1/images`.
+///
+/// [runtimes] covers every runtime found on the host (podman first); an empty
+/// list means the daemon found no container runtime at all.
+class MaidCafeImagesSnapshot {
+  const MaidCafeImagesSnapshot({this.runtimes = const []});
+
+  final List<MaidCafeRuntimeImages> runtimes;
+
+  bool get hasRuntimes => runtimes.isNotEmpty;
+}
+
+/// Tolerant parse of an `images` SSE event or `/api/v1/images` payload.
+///
+/// The daemon emits one entry per image with a `tags` array; the entry is
+/// expanded into one [ServerContainerImage] per tag so the rows match the
+/// runtime's own `images` output (one row per repository:tag pair). Dangling
+/// images (no tags) stay a single row via the `<none>` fallback.
+MaidCafeImagesSnapshot parseMaidCafeImages(Map<String, dynamic> json) {
+  final runtimes = <MaidCafeRuntimeImages>[];
+  final rawRuntimes = json['runtimes'];
+  if (rawRuntimes is List) {
+    for (final raw in rawRuntimes) {
+      if (raw is! Map) continue;
+      final entry = Map<String, dynamic>.from(raw);
+      final runtime = _optionalString(entry, 'runtime');
+      if (runtime == null) continue;
+      final images = <ServerContainerImage>[];
+      final rawImages = entry['images'];
+      if (rawImages is List) {
+        for (final rawImage in rawImages) {
+          if (rawImage is! Map) continue;
+          images.addAll(_parseSseImage(Map<String, dynamic>.from(rawImage)));
+        }
+      }
+      runtimes.add(
+        MaidCafeRuntimeImages(
+          runtime: runtime,
+          available: entry['available'] is bool
+              ? entry['available'] as bool
+              : true,
+          error: _optionalString(entry, 'error'),
+          images: images,
+        ),
+      );
+    }
+  }
+  return MaidCafeImagesSnapshot(runtimes: runtimes);
+}
+
+List<ServerContainerImage> _parseSseImage(Map<String, dynamic> json) {
+  final id = _optionalString(json, 'id');
+  if (id == null || id.isEmpty) return const [];
+  final rawTags = json['tags'];
+  final tags = rawTags is List
+      ? [
+          for (final tag in rawTags)
+            if (tag is String && tag.trim().isNotEmpty) tag.trim(),
+        ]
+      : <String>[];
+  final size = formatContainerBytes(_optionalNum(json, 'size')?.toInt() ?? 0);
+  final created = _formatImageAge(_optionalNum(json, 'created')?.toInt());
+  if (tags.isEmpty) {
+    // Dangling image: reference falls back to the id.
+    return [
+      ServerContainerImage(
+        id: id,
+        repository: '<none>',
+        tag: '<none>',
+        size: size,
+        created: created,
+      ),
+    ];
+  }
+  return [
+    for (final tag in tags)
+      ServerContainerImage(
+        id: id,
+        repository: _imageRepository(tag),
+        tag: _imageTag(tag),
+        size: size,
+        created: created,
+      ),
+  ];
+}
+
+/// Repository part of a `repository:tag` reference. The last `:` after the
+/// final `/` separates the tag, so registry hosts with ports
+/// (`localhost:5000/nginx`) do not split incorrectly.
+String _imageRepository(String reference) {
+  final slash = reference.lastIndexOf('/');
+  final colon = reference.lastIndexOf(':');
+  if (colon > slash) return reference.substring(0, colon);
+  return reference;
+}
+
+String _imageTag(String reference) {
+  final slash = reference.lastIndexOf('/');
+  final colon = reference.lastIndexOf(':');
+  if (colon > slash) return reference.substring(colon + 1);
+  return '<none>';
+}
+
+/// Relative age for a unix-seconds created timestamp (e.g. `2w ago`,
+/// `5h ago`); empty for missing or future timestamps.
+String _formatImageAge(int? unixSeconds) {
+  if (unixSeconds == null || unixSeconds <= 0) return '';
+  final age = DateTime.now().toUtc().difference(
+    DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000, isUtc: true),
+  );
+  if (age.isNegative) return '';
+  if (age.inSeconds < 60) return '${age.inSeconds}s ago';
+  if (age.inMinutes < 60) return '${age.inMinutes}m ago';
+  if (age.inHours < 24) return '${age.inHours}h ago';
+  if (age.inDays < 7) return '${age.inDays}d ago';
+  if (age.inDays < 30) return '${age.inDays ~/ 7}w ago';
+  if (age.inDays < 365) return '${age.inDays ~/ 30}mo ago';
+  return '${age.inDays ~/ 365}y ago';
 }
 
 /// Tolerant parse of a `processes` SSE event payload.

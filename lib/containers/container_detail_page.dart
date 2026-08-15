@@ -17,6 +17,7 @@ import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
 import 'container_models.dart';
@@ -1244,17 +1245,17 @@ class _InspectorTabs extends StatelessWidget {
             tabAlignment: TabAlignment.start,
             dividerColor: scheme.outlineVariant,
             tabs: [
-              Tab(
+              IconLabelTab(
                 icon: const Icon(Symbols.terminal, size: 18),
-                text: 'containerLogs'.tr(),
+                label: 'containerLogs'.tr(),
               ),
-              Tab(
+              IconLabelTab(
                 icon: const Icon(Symbols.replay, size: 18),
-                text: 'containerReRunCommand'.tr(),
+                label: 'containerReRunCommand'.tr(),
               ),
-              Tab(
+              IconLabelTab(
                 icon: const Icon(Symbols.info, size: 18),
-                text: 'containerDetails'.tr(),
+                label: 'containerDetails'.tr(),
               ),
             ],
           ),

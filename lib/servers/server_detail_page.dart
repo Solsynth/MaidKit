@@ -13,6 +13,7 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/containers/container_management_tab.dart';
 import 'package:maid_kit/containers/image_management_tab.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
+import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'activity_tab.dart';
 import 'maidcafe_server_tab.dart';
@@ -664,46 +665,49 @@ class _InspectorTabsState extends State<_InspectorTabs>
           tabAlignment: TabAlignment.start,
           dividerColor: scheme.outlineVariant,
           tabs: [
-            Tab(
-              icon: Icon(Symbols.monitoring, size: 18),
-              text: 'detailActivity'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.monitoring, size: 18),
+              label: 'detailActivity'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.terminal, size: 18),
-              text: 'detailProcesses'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.terminal, size: 18),
+              label: 'detailProcesses'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.settings_applications, size: 18),
-              text: 'detailServices'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.settings_applications, size: 18),
+              label: 'detailServices'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.language, size: 18),
-              text: 'detailWebServers'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.language, size: 18),
+              label: 'detailWebServers'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.deployed_code, size: 18),
-              text: 'detailContainers'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.deployed_code, size: 18),
+              label: 'detailContainers'.tr(),
             ),
-            Tab(icon: Icon(Symbols.image, size: 18), text: 'detailImages'.tr()),
-            Tab(
-              icon: Icon(Symbols.schedule, size: 18),
-              text: 'detailCrontab'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.image, size: 18),
+              label: 'detailImages'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.inventory_2, size: 18),
-              text: 'detailPackages'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.schedule, size: 18),
+              label: 'detailCrontab'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.shield, size: 18),
-              text: 'detailFirewall'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.inventory_2, size: 18),
+              label: 'detailPackages'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.swap_horiz, size: 18),
-              text: 'detailPortForwarding'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.shield, size: 18),
+              label: 'detailFirewall'.tr(),
             ),
-            Tab(
-              icon: Icon(Symbols.local_cafe, size: 18),
-              text: 'detailCafe'.tr(),
+            IconLabelTab(
+              icon: const Icon(Symbols.swap_horiz, size: 18),
+              label: 'detailPortForwarding'.tr(),
+            ),
+            IconLabelTab(
+              icon: const Icon(Symbols.local_cafe, size: 18),
+              label: 'detailCafe'.tr(),
             ),
           ],
         ),

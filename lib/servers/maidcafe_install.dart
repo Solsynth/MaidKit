@@ -40,6 +40,11 @@ String generateMaidCafeApiSecret() {
 /// substitutes them verbatim into the script (the SSH-authenticated runner is
 /// a trusted source, so no escaping is applied). Names are free-form; there
 /// is no enforced convention.
+///
+/// [workingDirectory], [user] and [environment] control how the daemon runs
+/// the script. [user] switches the execution account through sudo, so the
+/// daemon needs the sudoers rule MaidKit deploys for it; [environment] holds
+/// KEY=VALUE assignments added to the script's environment.
 class MaidCafeActionDefinition {
   const MaidCafeActionDefinition({
     required this.name,
@@ -47,6 +52,10 @@ class MaidCafeActionDefinition {
     this.enabled = true,
     this.notifyOnSuccess = false,
     this.notifyOnFailure = false,
+    this.displayName,
+    this.workingDirectory,
+    this.user,
+    this.environment = const {},
   });
 
   final String name;
@@ -55,19 +64,61 @@ class MaidCafeActionDefinition {
   final bool notifyOnSuccess;
   final bool notifyOnFailure;
 
+  /// Human-readable label shown in the UI and notifications. [name] stays
+  /// the API slug (route, script file, audit records); null falls back to
+  /// [name] everywhere.
+  final String? displayName;
+
+  /// Absolute directory the script runs in; null keeps the daemon's own.
+  final String? workingDirectory;
+
+  /// Account the script runs as; null keeps the daemon user. Runs through
+  /// sudo, so the daemon needs the sudoers rule MaidKit installs.
+  final String? user;
+
+  /// KEY=VALUE assignments added to the script's environment.
+  final Map<String, String> environment;
+
   MaidCafeActionDefinition copyWith({
     String? name,
     String? script,
     bool? enabled,
     bool? notifyOnSuccess,
     bool? notifyOnFailure,
+    Object? displayName = _unset,
+    Object? workingDirectory = _unset,
+    Object? user = _unset,
+    Map<String, String>? environment,
   }) => MaidCafeActionDefinition(
     name: name ?? this.name,
     script: script ?? this.script,
     enabled: enabled ?? this.enabled,
     notifyOnSuccess: notifyOnSuccess ?? this.notifyOnSuccess,
     notifyOnFailure: notifyOnFailure ?? this.notifyOnFailure,
+    displayName: identical(displayName, _unset)
+        ? this.displayName
+        : displayName as String?,
+    workingDirectory: identical(workingDirectory, _unset)
+        ? this.workingDirectory
+        : workingDirectory as String?,
+    user: identical(user, _unset) ? this.user : user as String?,
+    environment: environment ?? this.environment,
   );
+}
+
+/// Sentinel for [MaidCafeActionDefinition.copyWith]: absent means "keep the
+/// current value", while an explicit null clears a nullable field.
+const _unset = Object();
+
+/// Distinct run-as users across [actions], sorted; empty when no action
+/// switches users. Drives the sudoers rule and the systemd unit hardening.
+List<String> maidCafeActionRunAsUsers(List<MaidCafeActionDefinition> actions) {
+  final users = <String>{
+    for (final action in actions)
+      if (action.user?.trim().isNotEmpty ?? false) action.user!.trim(),
+  }.toList();
+  users.sort();
+  return users;
 }
 
 /// Absolute path where an action's script body is deployed on the server.
@@ -75,6 +126,10 @@ String maidCafeActionScriptPath(MaidCafeActionDefinition action) =>
     '/etc/maidcafe/actions/${action.name}.sh';
 
 final _maidCafeActionNamePattern = RegExp(r'^[A-Za-z0-9._-]+$');
+
+final _maidCafeActionUserPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_.-]*$');
+
+final _maidCafeEnvKeyPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
 
 final _maidCafeTemplateVarPattern = RegExp(r'\{\{\s*([^{}]+?)\s*\}\}');
 
@@ -99,9 +154,17 @@ List<String> maidCafeActionTemplateVariables(String script) {
 /// them. Under systemd the daemon runs as `maidcafe`, so scripts are
 /// group-executable but not world-readable; stdio mode runs as the SSH user,
 /// so they are world-executable instead.
+///
+/// [runAsUsers] lists the distinct accounts the actions run as. When
+/// non-empty the actions directory becomes group-writable for `maidcafe` (the
+/// daemon renders substituted scripts into `/etc/maidcafe/actions/.run` there)
+/// and a sudoers drop-in grants the daemon user the right to run those scripts
+/// as the listed accounts; `visudo` validates the rule before it is installed.
+/// An empty list removes any stale drop-in.
 String buildMaidCafeActionScriptsScript(
   List<MaidCafeActionDefinition> actions, {
   required bool stdio,
+  List<String> runAsUsers = const [],
 }) {
   final writes = <String>[];
   final names = <String>[];
@@ -126,8 +189,43 @@ String buildMaidCafeActionScriptsScript(
             '  fi',
       )
       .join('\n');
+  final runAs = runAsUsers.isNotEmpty;
+  // install -d leaves an existing directory alone, so ownership/mode are
+  // fixed explicitly when the daemon must render scripts into .run. Under
+  // systemd the daemon is in the maidcafe group; in stdio mode it runs as the
+  // SSH user, so the directory is owned by that account instead.
+  final actionsDirInstall = runAs
+      ? '''
+chown ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root:maidcafe'} /etc/maidcafe/actions 2>/dev/null || true
+chmod 0770 /etc/maidcafe/actions
+install -d -o ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root'} -g ${stdio ? 'root' : 'maidcafe'} -m 0770 /etc/maidcafe/actions
+install -d -o ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root'} -g ${stdio ? 'root' : 'maidcafe'} -m 0770 /etc/maidcafe/actions/.run'''
+      : 'install -d -o root -g root -m 0755 /etc/maidcafe/actions';
+  // The daemon runs as the SSH user in stdio mode; sudo sets SUDO_USER when
+  // the install was elevated, so that is the account the rule must name. The
+  // expression is evaluated by the install script, not written literally.
+  final ruleUserExpr = stdio ? '"\${SUDO_USER:-\$(id -un)}"' : '"maidcafe"';
+  final runAsList = runAsUsers.join(',');
+  final sudoersBlock = runAs
+      ? '''
+command -v visudo >/dev/null 2>&1 || {
+  echo "Running actions as another user requires visudo (sudo)." >&2
+  exit 1
+}
+rule_user=$ruleUserExpr
+sudoers_tmp="\$(mktemp "\${TMPDIR:-/tmp}/maidcafe-actions.XXXXXX")"
+printf '%s\\n' "\$rule_user ALL=($runAsList) NOPASSWD: /etc/maidcafe/actions/*" > "\$sudoers_tmp"
+visudo -cf "\$sudoers_tmp" >/dev/null 2>&1 || {
+  echo "MaidCafe rejected its own sudoers rule; no changes were made." >&2
+  rm -f "\$sudoers_tmp"
+  exit 1
+}
+install -o root -g root -m 0440 "\$sudoers_tmp" /etc/sudoers.d/maidcafe-actions
+rm -f "\$sudoers_tmp"
+'''
+      : 'rm -f /etc/sudoers.d/maidcafe-actions';
   return '''
-install -d -o root -g root -m 0755 /etc/maidcafe/actions
+$actionsDirInstall
 ${writes.join('\n')}
 for f in /etc/maidcafe/actions/*.sh; do
   [ -e "\$f" ] || continue
@@ -136,7 +234,8 @@ $keepChecks
   if [ "\$keep" != true ]; then
     rm -f "\$f"
   fi
-done''';
+done
+$sudoersBlock''';
 }
 
 class _MaidCafeArtifact {
@@ -365,6 +464,28 @@ Future<void> _installMaidCafeDaemon({
       );
 }
 
+/// The systemd unit MaidKit owns for the daemon. sudo needs its setuid bit
+/// for user-switching actions, so `NoNewPrivileges` is dropped only when a
+/// run-as user is configured; the install and config-sync scripts keep this
+/// in lockstep with the sudoers rule.
+String _maidCafeSystemdUnit(List<String> runAsUsers) =>
+    '''
+[Unit]
+Description=MaidCafe daemon
+After=network-online.target
+
+[Service]
+User=maidcafe
+Group=maidcafe
+ExecStart=/usr/local/bin/maidcafe-daemon --config /etc/maidcafe/config.toml
+Restart=on-failure
+${runAsUsers.isEmpty ? 'NoNewPrivileges=true' : '# NoNewPrivileges: actions run as another user through sudo'}
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+''';
+
 String buildMaidCafeDaemonInstallScript({
   required String daemonId,
   required String cloudUrl,
@@ -395,6 +516,7 @@ String buildMaidCafeDaemonInstallScript({
     maxConcurrentRuns: maxConcurrentRuns,
     actions: actions,
   );
+  final runAsUsers = maidCafeActionRunAsUsers(actions);
   final resolvedApiSecret = apiSecret.trim().isEmpty
       ? generateMaidCafeApiSecret()
       : apiSecret.trim();
@@ -410,20 +532,7 @@ String buildMaidCafeDaemonInstallScript({
       ? ''
       : '''
 cat > "\$work_dir/maidcafe-daemon.service" <<'EOF'
-[Unit]
-Description=MaidCafe daemon
-After=network-online.target
-
-[Service]
-User=maidcafe
-Group=maidcafe
-ExecStart=/usr/local/bin/maidcafe-daemon --config /etc/maidcafe/config.toml
-Restart=on-failure
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
+${_maidCafeSystemdUnit(runAsUsers)}
 EOF
 install -o root -g root -m 0644 "\$work_dir/maidcafe-daemon.service" /etc/systemd/system/maidcafe-daemon.service
 systemctl daemon-reload
@@ -497,7 +606,7 @@ install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidk
 printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
 
 $configInstall "\$work_dir/config.toml" $configPath
-${buildMaidCafeActionScriptsScript(actions, stdio: stdio)}
+${buildMaidCafeActionScriptsScript(actions, stdio: stdio, runAsUsers: runAsUsers)}
 $serviceInstall''';
 }
 
@@ -532,6 +641,7 @@ String buildMaidCafeDaemonConfigScript({
     maxConcurrentRuns: maxConcurrentRuns,
     actions: actions,
   );
+  final runAsUsers = maidCafeActionRunAsUsers(actions);
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
       : '/etc/maidcafe/config.toml';
@@ -540,6 +650,20 @@ String buildMaidCafeDaemonConfigScript({
       : generateMaidCafeApiSecret();
   final installMode = transport == 'stdio' ? '0644' : '0640';
   final installGroup = transport == 'stdio' ? 'root' : 'maidcafe';
+  // The unit must match the sudoers state: NoNewPrivileges blocks sudo, so it
+  // is dropped exactly when a run-as user is configured. Reconcile on every
+  // sync so enabling user-switching on an existing install actually works.
+  final serviceReconcile = transport == 'stdio'
+      ? ''
+      : '''
+unit_tmp="\$(mktemp "\${TMPDIR:-/tmp}/maidcafe-daemon.service.XXXXXX")"
+cat > "\$unit_tmp" <<'EOF'
+${_maidCafeSystemdUnit(runAsUsers)}
+EOF
+install -o root -g root -m 0644 "\$unit_tmp" /etc/systemd/system/maidcafe-daemon.service
+rm -f "\$unit_tmp"
+systemctl daemon-reload
+''';
   final serviceRestart = transport == 'stdio'
       ? ''
       : 'systemctl restart maidcafe-daemon\n';
@@ -567,8 +691,8 @@ String buildMaidCafeDaemonConfigScript({
 install -d -o root -g root -m 0755 /etc/maidcafe
 printf '%s\n' 'maidkit' | install -o root -g root -m 0644 /dev/stdin /etc/maidcafe/maidkit-managed
 printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
-${buildMaidCafeActionScriptsScript(actions, stdio: transport == 'stdio')}
-$serviceRestart''';
+${buildMaidCafeActionScriptsScript(actions, stdio: transport == 'stdio', runAsUsers: runAsUsers)}
+$serviceReconcile$serviceRestart''';
 }
 
 void _validateMaidCafeConfigFields({
@@ -609,6 +733,31 @@ void _validateMaidCafeConfigFields({
         'actions[$i].script',
         'must not be empty',
       );
+    }
+    final workingDirectory = action.workingDirectory?.trim() ?? '';
+    if (workingDirectory.isNotEmpty && !workingDirectory.startsWith('/')) {
+      throw ArgumentError.value(
+        action.name,
+        'actions[$i].workingDirectory',
+        'must be an absolute path',
+      );
+    }
+    final user = action.user?.trim() ?? '';
+    if (user.isNotEmpty && !_maidCafeActionUserPattern.hasMatch(user)) {
+      throw ArgumentError.value(
+        action.name,
+        'actions[$i].user',
+        'must be a valid user name',
+      );
+    }
+    for (final key in action.environment.keys) {
+      if (!_maidCafeEnvKeyPattern.hasMatch(key)) {
+        throw ArgumentError.value(
+          action.name,
+          'actions[$i].environment',
+          'variable name "$key" must match [A-Za-z_][A-Za-z0-9_]*',
+        );
+      }
     }
   }
 }
@@ -795,10 +944,9 @@ String _maidCafeDownloadPackage(PackageManager manager) => switch (manager) {
   PackageManager.brew => 'curl',
 };
 
-String _tomlActions(List<MaidCafeActionDefinition> actions) => actions
-    .map(
-      (action) =>
-          '''[[daemon.actions]]
+String _tomlActions(List<MaidCafeActionDefinition> actions) =>
+    actions.map((action) {
+      final buffer = StringBuffer('''[[daemon.actions]]
 name = ${_tomlString(action.name)}
 command = ${_tomlString(maidCafeActionScriptPath(action))}
 args = []
@@ -806,9 +954,28 @@ script = true
 enabled = ${action.enabled}
 notifyOnSuccess = ${action.notifyOnSuccess}
 notifyOnFailure = ${action.notifyOnFailure}
-''',
-    )
-    .join();
+''');
+      final displayName = action.displayName?.trim() ?? '';
+      if (displayName.isNotEmpty) {
+        buffer.write('displayName = ${_tomlString(displayName)}\n');
+      }
+      final workingDirectory = action.workingDirectory?.trim() ?? '';
+      if (workingDirectory.isNotEmpty) {
+        buffer.write('cwd = ${_tomlString(workingDirectory)}\n');
+      }
+      final user = action.user?.trim() ?? '';
+      if (user.isNotEmpty) {
+        buffer.write('user = ${_tomlString(user)}\n');
+      }
+      if (action.environment.isNotEmpty) {
+        final entries = [
+          for (final entry in action.environment.entries)
+            '${entry.key}=${entry.value}',
+        ]..sort();
+        buffer.write('env = [${entries.map(_tomlString).join(', ')}]\n');
+      }
+      return buffer.toString();
+    }).join();
 
 String _tomlString(String value) =>
     '"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n')}"';

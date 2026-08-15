@@ -44,6 +44,11 @@ void main() {
     required bool updating,
     required void Function(String?) onChosen,
   }) async {
+    // `.tr()` resolves to the raw key in widget tests, so button labels are
+    // long; widen the surface so the sheet's action row lays out on screen.
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       EasyLocalization(
         supportedLocales: const [Locale('en', 'US')],
@@ -67,6 +72,7 @@ void main() {
                         context: context,
                         isScrollControlled: true,
                         useSafeArea: true,
+                        constraints: const BoxConstraints(maxWidth: 1400),
                         builder: (_) => MaidCafeInstallSheet(
                           channels: _testChannels,
                           updating: updating,

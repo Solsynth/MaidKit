@@ -29,6 +29,9 @@ class _FakeSession implements MaidCafeStreamSession {
   Future<Map<String, dynamic>> containers() => throw UnimplementedError();
 
   @override
+  Future<Map<String, dynamic>> images() => throw UnimplementedError();
+
+  @override
   Future<Map<String, dynamic>> processes() => throw UnimplementedError();
 
   @override
@@ -44,6 +47,10 @@ class _FakeSession implements MaidCafeStreamSession {
 
   @override
   Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<MaidCafeAuditEntry>> audit({int limit = 50}) =>
       throw UnimplementedError();
 
   @override

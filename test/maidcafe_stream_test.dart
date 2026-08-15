@@ -52,6 +52,121 @@ void main() {
     });
   });
 
+  group('parseMaidCafeTomlStringArray', () {
+    test('parses single-line arrays', () {
+      expect(parseMaidCafeTomlStringArray('"A=1", "B=two words"'), [
+        'A=1',
+        'B=two words',
+      ]);
+      expect(parseMaidCafeTomlStringArray(''), isEmpty);
+      expect(parseMaidCafeTomlStringArray('"only"'), ['only']);
+    });
+
+    test('parses multi-line arrays with escapes', () {
+      expect(
+        parseMaidCafeTomlStringArray(
+          '"A=1",\n  "B=\\"quoted\\"",\n  "C=line\\nfeed",\n',
+        ),
+        ['A=1', 'B="quoted"', 'C=line\nfeed'],
+      );
+    });
+
+    test('drops empty entries', () {
+      expect(parseMaidCafeTomlStringArray('"A=1", ,  "B=2",'), ['A=1', 'B=2']);
+    });
+  });
+
+  group('parseMaidCafeActionDefinitions', () {
+    test('reads cwd, user and environment from action blocks', () {
+      const config = '''
+[daemon]
+ id = "host-1"
+[[daemon.actions]]
+name = "deploy"
+command = "/etc/maidcafe/actions/deploy.sh"
+script = true
+enabled = true
+notifyOnSuccess = false
+notifyOnFailure = true
+displayName = "Deploy the web app"
+cwd = "/srv/myapp"
+user = "deploy"
+env = ["CI_BUILD=42", "NODE_ENV=production"]
+[[daemon.actions]]
+name = "plain"
+command = "/etc/maidcafe/actions/plain.sh"
+''';
+      final actions = parseMaidCafeActionDefinitions(config);
+      expect(actions, hasLength(2));
+      final deploy = actions.first;
+      expect(deploy.name, 'deploy');
+      expect(deploy.displayName, 'Deploy the web app');
+      expect(deploy.workingDirectory, '/srv/myapp');
+      expect(deploy.user, 'deploy');
+      expect(deploy.environment, {'CI_BUILD': '42', 'NODE_ENV': 'production'});
+      expect(deploy.notifyOnFailure, isTrue);
+      final plain = actions.last;
+      expect(plain.displayName, isNull);
+      expect(plain.workingDirectory, isNull);
+      expect(plain.user, isNull);
+      expect(plain.environment, isEmpty);
+      expect(plain.enabled, isTrue);
+    });
+
+    test('tolerates hand-edited multi-line env arrays', () {
+      const config = '''
+[[daemon.actions]]
+name = "deploy"
+command = "/etc/maidcafe/actions/deploy.sh"
+env = [
+  "A=1",
+  "B=2",
+]
+''';
+      final actions = parseMaidCafeActionDefinitions(config);
+      expect(actions.single.environment, {'A': '1', 'B': '2'});
+    });
+  });
+
+  group('MaidCafeAuditEntry', () {
+    test('parses a daemon audit record', () {
+      final entry = MaidCafeAuditEntry.fromJson({
+        'timestamp': '2026-08-16T01:00:00.000Z',
+        'name': 'deploy',
+        'display_name': 'Deploy the web app',
+        'source': 'relay',
+        'ok': true,
+        'exit_code': 0,
+        'duration_ms': 142,
+      });
+      expect(entry.name, 'deploy');
+      expect(entry.label, 'Deploy the web app');
+      expect(entry.source, 'relay');
+      expect(entry.ok, isTrue);
+      expect(entry.exitCode, 0);
+      expect(entry.durationMs, 142);
+      expect(entry.error, isNull);
+    });
+
+    test(
+      'falls back to the slug for the label and tolerates missing fields',
+      () {
+        final entry = MaidCafeAuditEntry.fromJson({
+          'name': 'cleanup',
+          'ok': false,
+          'exit_code': 2,
+          'error': 'something broke',
+        });
+        expect(entry.label, 'cleanup');
+        expect(entry.ok, isFalse);
+        expect(entry.exitCode, 2);
+        expect(entry.error, 'something broke');
+        expect(entry.source, isEmpty);
+        expect(entry.durationMs, 0);
+      },
+    );
+  });
+
   group('parseMaidCafeSseFrames', () {
     test('parses hello and metric frames from bytes', () async {
       final events = await _frames(
@@ -110,6 +225,16 @@ void main() {
       );
       expect(events, hasLength(1));
       expect(events[0].data['cpu_percent'], 7.5);
+    });
+
+    test('parses images frames', () async {
+      final events = await _frames(
+        'event: images\ndata: {"runtimes":[{"runtime":"podman","available":true,"images":[]}]}\n\n',
+      );
+      expect(events, hasLength(1));
+      expect(events[0].type, MaidCafeStreamEventType.images);
+      final runtimes = events[0].data['runtimes'] as List;
+      expect(runtimes, hasLength(1));
     });
   });
 
@@ -196,6 +321,110 @@ void main() {
       expect(container.state, '');
       expect(container.status, '');
       expect(container.composeProject, isNull);
+    });
+  });
+
+  group('parseMaidCafeImages', () {
+    int unixSecondsAgo(Duration ago) =>
+        DateTime.now().toUtc().subtract(ago).millisecondsSinceEpoch ~/ 1000;
+
+    test('expands one daemon entry into one row per tag', () {
+      final snapshot = parseMaidCafeImages({
+        'runtimes': [
+          {
+            'runtime': 'docker',
+            'available': true,
+            'error': null,
+            'images': [
+              {
+                'id': 'abc123def456',
+                'tags': ['nginx:latest', 'localhost:5000/nginx:1.25'],
+                'size': 192560829,
+                'created': unixSecondsAgo(
+                  const Duration(hours: 2, seconds: 30),
+                ),
+                'digest': 'sha256:aaaa',
+              },
+            ],
+          },
+        ],
+      });
+      expect(snapshot.hasRuntimes, isTrue);
+      final runtime = snapshot.runtimes.single;
+      expect(runtime.runtime, 'docker');
+      expect(runtime.available, isTrue);
+      expect(runtime.error, isNull);
+      final images = runtime.images;
+      expect(images, hasLength(2));
+      final first = images[0];
+      expect(first.id, 'abc123def456');
+      expect(first.reference, 'nginx:latest');
+      expect(first.repository, 'nginx');
+      expect(first.tag, 'latest');
+      expect(first.size, '193 MB');
+      expect(first.created, '2h ago');
+      // A registry host with a port must not split at its colon.
+      final second = images[1];
+      expect(second.reference, 'localhost:5000/nginx:1.25');
+      expect(second.repository, 'localhost:5000/nginx');
+      expect(second.tag, '1.25');
+    });
+
+    test('dangling images fall back to the id reference', () {
+      final snapshot = parseMaidCafeImages({
+        'runtimes': [
+          {
+            'runtime': 'podman',
+            'images': [
+              {'id': 'sha256:deadbeef', 'tags': [], 'size': 0},
+            ],
+          },
+        ],
+      });
+      final image = snapshot.runtimes.single.images.single;
+      expect(image.id, 'sha256:deadbeef');
+      expect(image.reference, 'sha256:deadbeef');
+      expect(image.isDangling, isTrue);
+      expect(image.size, '0 B');
+      expect(image.created, isEmpty);
+    });
+
+    test('skips entries without an id and tolerates missing tags', () {
+      final snapshot = parseMaidCafeImages({
+        'runtimes': [
+          {
+            'runtime': 'docker',
+            'images': [
+              {
+                'tags': ['no-id'],
+              },
+              {
+                'id': '',
+                'tags': ['x'],
+              },
+              {'id': 'ok1'},
+              {'id': 'ok2', 'tags': 'not-a-list'},
+            ],
+          },
+        ],
+      });
+      final images = snapshot.runtimes.single.images;
+      expect(images, hasLength(2));
+      expect(images[0].id, 'ok1');
+      expect(images[0].reference, 'ok1');
+      expect(images[1].id, 'ok2');
+      expect(images[1].reference, 'ok2');
+    });
+
+    test('reports no runtimes when the daemon found no runtime', () {
+      final snapshot = parseMaidCafeImages({'runtimes': []});
+      expect(snapshot.hasRuntimes, isFalse);
+      expect(snapshot.runtimes, isEmpty);
+    });
+
+    test('handles non-list payloads gracefully', () {
+      final snapshot = parseMaidCafeImages({'runtimes': 'nope'});
+      expect(snapshot.hasRuntimes, isFalse);
     });
   });
 

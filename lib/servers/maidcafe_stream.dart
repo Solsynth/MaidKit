@@ -20,13 +20,21 @@ class MaidCafeUnauthorizedException implements Exception {
 /// Event types the daemon may broadcast on `/api/v1/stream`.
 ///
 /// `hello` is always the first frame, regardless of the requested whitelist.
-enum MaidCafeStreamEventType { hello, metric, containers, processes, systemd }
+enum MaidCafeStreamEventType {
+  hello,
+  metric,
+  containers,
+  images,
+  processes,
+  systemd,
+}
 
 /// All streamable event types; the default whitelist for [MaidCafeStreamSession.openStream].
 const Set<MaidCafeStreamEventType> maidCafeStreamAllEvents = {
   MaidCafeStreamEventType.hello,
   MaidCafeStreamEventType.metric,
   MaidCafeStreamEventType.containers,
+  MaidCafeStreamEventType.images,
   MaidCafeStreamEventType.processes,
   MaidCafeStreamEventType.systemd,
 };
@@ -80,6 +88,7 @@ MaidCafeStreamEvent? _dispatchSseFrame(String? eventName, String data) {
     'hello' => MaidCafeStreamEventType.hello,
     'metric' => MaidCafeStreamEventType.metric,
     'containers' => MaidCafeStreamEventType.containers,
+    'images' => MaidCafeStreamEventType.images,
     'processes' => MaidCafeStreamEventType.processes,
     'systemd' => MaidCafeStreamEventType.systemd,
     _ => null,
@@ -94,6 +103,47 @@ MaidCafeStreamEvent? _dispatchSseFrame(String? eventName, String data) {
     );
   } on FormatException {
     return null;
+  }
+}
+
+/// One execution audit record from the daemon. [name] is the API slug;
+/// [displayName] is the configured human-readable label, when present.
+class MaidCafeAuditEntry {
+  const MaidCafeAuditEntry({
+    required this.timestamp,
+    required this.name,
+    required this.source,
+    required this.ok,
+    required this.exitCode,
+    required this.durationMs,
+    this.displayName,
+    this.error,
+  });
+
+  final DateTime timestamp;
+  final String name;
+  final String? displayName;
+  final String source;
+  final bool ok;
+  final int exitCode;
+  final int durationMs;
+  final String? error;
+
+  /// Label to show in the UI: the display name when set, else the slug.
+  String get label => displayName?.isNotEmpty ?? false ? displayName! : name;
+
+  factory MaidCafeAuditEntry.fromJson(Map<String, dynamic> json) {
+    final timestamp = DateTime.tryParse(json['timestamp']?.toString() ?? '');
+    return MaidCafeAuditEntry(
+      timestamp: timestamp?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0),
+      name: json['name']?.toString() ?? '',
+      displayName: json['display_name']?.toString(),
+      source: json['source']?.toString() ?? '',
+      ok: json['ok'] == true,
+      exitCode: (json['exit_code'] as num?)?.toInt() ?? 0,
+      durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
+      error: json['error']?.toString(),
+    );
   }
 }
 
@@ -114,7 +164,6 @@ class MaidCafeDaemonAccess {
     this.maxConcurrentRuns,
     this.actions = const [],
   });
-
   final int? port;
   final String? apiSecret;
   final String? id;
@@ -264,7 +313,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
       _configValue(config, 'maxConcurrentRuns') ?? '',
     ),
     actions: [
-      for (final action in _configActions(config))
+      for (final action in parseMaidCafeActionDefinitions(config))
         scripts[action.name] == null
             ? action
             : action.copyWith(script: scripts[action.name]),
@@ -299,7 +348,14 @@ bool _configBool(String config, String key, {bool fallback = false}) =>
       _ => fallback,
     };
 
-List<MaidCafeActionDefinition> _configActions(String config) {
+/// Parses `[[daemon.actions]]` blocks from the `[daemon]` config section
+/// read back over SSH. Public so round-trip parsing can be unit-tested.
+///
+/// The daemon script bodies are not embedded here; callers merge them from
+/// [parseMaidCafeActionScripts]. `env` arrays may span lines (hand-edited
+/// configs); [parseMaidCafeTomlStringArray] handles basic strings with the
+/// common escapes.
+List<MaidCafeActionDefinition> parseMaidCafeActionDefinitions(String config) {
   final blocks = RegExp(
     r'\[\[daemon\.actions\]\](.*?)(?=\n\[\[daemon\.actions\]\]|$)',
     dotAll: true,
@@ -314,8 +370,71 @@ List<MaidCafeActionDefinition> _configActions(String config) {
           enabled: _configBool(block.group(1)!, 'enabled', fallback: true),
           notifyOnSuccess: _configBool(block.group(1)!, 'notifyOnSuccess'),
           notifyOnFailure: _configBool(block.group(1)!, 'notifyOnFailure'),
+          displayName: _configValue(block.group(1)!, 'displayName'),
+          workingDirectory: _configValue(block.group(1)!, 'cwd'),
+          user: _configValue(block.group(1)!, 'user'),
+          environment: {
+            for (final entry in _configList(block.group(1)!, 'env'))
+              if (entry.contains('='))
+                entry.substring(0, entry.indexOf('=')): entry.substring(
+                  entry.indexOf('=') + 1,
+                ),
+          },
         ),
   ];
+}
+
+List<String> _configList(String config, String key) {
+  final match = RegExp(
+    r'''^\s*''' + RegExp.escape(key) + r'''\s*=\s*\[(.*?)\]''',
+    multiLine: true,
+    dotAll: true,
+  ).firstMatch(config);
+  if (match == null) return const [];
+  return parseMaidCafeTomlStringArray(match.group(1)!);
+}
+
+/// Parses a TOML array of basic strings (single- or multi-line) into its
+/// values, honoring `\"`, `\\`, `\n`, `\t` and `\r` escapes. Values are
+/// trimmed; empty entries are dropped.
+List<String> parseMaidCafeTomlStringArray(String raw) {
+  final result = <String>[];
+  final buffer = StringBuffer();
+  var inString = false;
+  var escaped = false;
+  for (final rune in raw.runes) {
+    final char = String.fromCharCode(rune);
+    if (escaped) {
+      buffer.write(switch (char) {
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        '"' => '"',
+        r'\' => r'\',
+        _ => char,
+      });
+      escaped = false;
+      continue;
+    }
+    if (char == r'\') {
+      escaped = true;
+      continue;
+    }
+    if (char == '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      buffer.write(char);
+      continue;
+    }
+    if (char == ',') {
+      result.add(buffer.toString().trim());
+      buffer.clear();
+    }
+  }
+  if (buffer.isNotEmpty) result.add(buffer.toString().trim());
+  return result.where((value) => value.isNotEmpty).toList();
 }
 
 /// HTTP client for the systemd-managed MaidCafe daemon.
@@ -460,6 +579,10 @@ class MaidCafeStreamSession {
   /// SSE event). Use for first paint; the stream keeps it fresh afterwards.
   Future<Map<String, dynamic>> containers() => _get('/api/v1/containers');
 
+  /// One-shot image list from the daemon (same payload as the `images`
+  /// SSE event).
+  Future<Map<String, dynamic>> images() => _get('/api/v1/images');
+
   /// One-shot top-processes snapshot (same payload as the `processes` event).
   Future<Map<String, dynamic>> processes() => _get('/api/v1/processes');
 
@@ -489,6 +612,23 @@ class MaidCafeStreamSession {
       for (final item in metrics)
         if (item is Map)
           item.map((key, value) => MapEntry(key.toString(), value)),
+    ];
+  }
+
+  /// Recent execution audit entries, newest first, from the daemon's durable
+  /// audit log.
+  Future<List<MaidCafeAuditEntry>> audit({int limit = 50}) async {
+    final result = await _get('/api/v1/audit?limit=$limit');
+    final entries = result['entries'];
+    if (entries is! List) {
+      throw StateError('MaidCafe returned an invalid audit log.');
+    }
+    return [
+      for (final item in entries)
+        if (item is Map)
+          MaidCafeAuditEntry.fromJson(
+            item.map((key, value) => MapEntry(key.toString(), value)),
+          ),
     ];
   }
 
