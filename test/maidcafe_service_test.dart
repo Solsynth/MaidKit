@@ -110,30 +110,49 @@ void main() {
     },
   );
 
-  test('local invocation keeps raw bytes and local bearer only', () async {
-    late RequestOptions request;
-    final dio = Dio()
-      ..httpClientAdapter = _Adapter((options) async {
-        request = options;
-        return ResponseBody.fromBytes(utf8.encode('accepted'), 200);
-      });
-    final service = MaidCafeService(
-      baseUrl: 'https://mk.solsynth.dev',
-      cloudSync: CloudSyncService(vaultId: 'test'),
-      accessToken: () async => 'solar-token',
-      dio: dio,
+  test(
+    'local invocation keeps raw bytes and signs with the local secret',
+    () async {
+      late RequestOptions request;
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          request = options;
+          return ResponseBody.fromBytes(utf8.encode('accepted'), 200);
+        });
+      final service = MaidCafeService(
+        baseUrl: 'https://mk.solsynth.dev',
+        cloudSync: CloudSyncService(vaultId: 'test'),
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+      final payload = utf8.encode('{"job":"incremental"}');
+      final result = await service.invokeWebhook(
+        daemonBaseUrl: 'http://127.0.0.1:8747/',
+        webhookName: 'backup',
+        localWebhookSecret: 'local-secret',
+        payload: payload,
+      );
+      expect(request.method, 'POST');
+      expect(request.uri.path, '/api/v1/webhooks/backup');
+      expect(
+        request.headers['X-MaidCafe-Signature'],
+        await maidCafeHmacSignature('local-secret', payload),
+      );
+      expect(request.headers.containsKey('Authorization'), isFalse);
+      expect(request.headers.containsKey('cloud-token'), isFalse);
+      expect(request.data, payload);
+      expect(result.text, 'accepted');
+    },
+  );
+
+  test('HMAC signature matches the RFC 4231 test vector', () async {
+    expect(
+      await maidCafeHmacSignature(
+        'key',
+        utf8.encode('The quick brown fox jumps over the lazy dog'),
+      ),
+      'f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8',
     );
-    final result = await service.invokeWebhook(
-      daemonBaseUrl: 'http://127.0.0.1:8747/',
-      webhookName: 'backup',
-      localWebhookSecret: 'local-secret',
-      payload: utf8.encode('{"job":"incremental"}'),
-    );
-    expect(request.method, 'POST');
-    expect(request.uri.path, '/api/v1/webhooks/backup');
-    expect(request.headers['Authorization'], 'Bearer local-secret');
-    expect(request.headers.containsKey('cloud-token'), isFalse);
-    expect(result.text, 'accepted');
   });
 
   test('missing Solarpass token fails before network request', () async {

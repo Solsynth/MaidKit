@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -9,6 +10,19 @@ import 'cloud_sync_service.dart';
 const maidCafeMinimumPort = 1024;
 const maidCafeDefaultCloudUrl = 'https://mk.solsynth.dev';
 const maidCafeDefaultLocalDaemonUrl = 'http://127.0.0.1:8747';
+
+/// HMAC-SHA256 signature over [data] keyed by [secret], lowercase hex.
+///
+/// Webhook and action invocations are authenticated with this signature; the
+/// transport (SSH tunnel, Tailscale or the MaidKit cloud relay) provides
+/// confidentiality.
+Future<String> maidCafeHmacSignature(String secret, List<int> data) async {
+  final mac = await Hmac.sha256().calculateMac(
+    data,
+    secretKey: SecretKey(utf8.encode(secret)),
+  );
+  return mac.bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+}
 
 class MaidCafeException implements Exception {
   const MaidCafeException(
@@ -532,13 +546,17 @@ class MaidCafeService {
         kind: MaidCafeErrorKind.validation,
       );
     }
+    final signature = await maidCafeHmacSignature(
+      localWebhookSecret.trim(),
+      payload,
+    );
     final response = await _localRequest(
       () => _dio.post<List<int>>(
         '${normalizeMaidCafeLocalDaemonUrl(daemonBaseUrl)}/api/v1/webhooks/${_pathPart(webhookName)}',
         data: Uint8List.fromList(payload),
         options: Options(
           headers: {
-            'Authorization': 'Bearer ${localWebhookSecret.trim()}',
+            'X-MaidCafe-Signature': signature,
             'Content-Type': 'application/octet-stream',
           },
           responseType: ResponseType.bytes,

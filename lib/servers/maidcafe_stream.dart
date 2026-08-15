@@ -180,9 +180,10 @@ List<MaidCafeActionDefinition> _configActions(String config) {
 
 /// HTTP client for the systemd-managed MaidCafe daemon.
 ///
-/// MaidKit first tries the configured server address directly. If the daemon
-/// is loopback-only or the host is not reachable from this computer, it falls
-/// back to a short-lived SSH local TCP forward.
+/// The daemon's plaintext HTTP endpoint is never contacted directly: every
+/// session goes through a short-lived SSH local TCP forward so requests only
+/// travel inside the encrypted SSH channel (or a Tailscale / MaidKit cloud
+/// relay path set up by the caller).
 class MaidCafeStreamSession {
   MaidCafeStreamSession._(
     this._manager,
@@ -240,14 +241,6 @@ class MaidCafeStreamSession {
     int resolvedPort,
     String? resolvedSecret,
   ) async {
-    final direct = await _tryDirect(
-      manager,
-      server,
-      resolvedPort,
-      resolvedSecret,
-    );
-    if (direct != null) return direct;
-
     Object? lastError;
     for (var attempt = 0; attempt < 3; attempt++) {
       ActivePortForward? forward;
@@ -292,30 +285,6 @@ class MaidCafeStreamSession {
       lastError ?? StateError('MaidCafe connection failed.'),
       StackTrace.current,
     );
-  }
-
-  static Future<MaidCafeStreamSession?> _tryDirect(
-    SshConnectionManager manager,
-    Server server,
-    int port,
-    String? apiSecret,
-  ) async {
-    final host = server.host.contains(':') && !server.host.startsWith('[')
-        ? '[${server.host}]'
-        : server.host;
-    final connection = MaidCafeStreamSession._(
-      manager,
-      null,
-      _newDio('http://$host:$port', apiSecret),
-      apiSecret,
-    );
-    try {
-      await connection.health();
-      return connection;
-    } catch (_) {
-      await connection.close();
-      return null;
-    }
   }
 
   static Dio _newDio(String baseUrl, String? apiSecret) => Dio(
@@ -367,8 +336,18 @@ class MaidCafeStreamSession {
     ];
   }
 
-  Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) =>
-      _post('/api/v1/actions/${Uri.encodeComponent(name)}', body: body);
+  Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) async {
+    final payload = body == null ? '' : jsonEncode(body);
+    final secret = _apiSecret;
+    final signature = secret == null
+        ? null
+        : await maidCafeHmacSignature(secret, utf8.encode(payload));
+    return _post(
+      '/api/v1/actions/${Uri.encodeComponent(name)}',
+      body: payload,
+      headers: {'X-MaidCafe-Signature': ?signature},
+    );
+  }
 
   Future<Map<String, dynamic>> _get(String path) async {
     _throwIfClosed();
@@ -383,12 +362,26 @@ class MaidCafeStreamSession {
     }
   }
 
-  Future<Map<String, dynamic>> _post(String path, {Object? body}) async {
+  Future<Map<String, dynamic>> _post(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) async {
     _throwIfClosed();
     try {
-      final response = await _dio.post<Object?>(path, data: body);
+      final response = await _dio.post<Object?>(
+        path,
+        data: body,
+        options: Options(
+          headers: headers,
+          contentType: Headers.jsonContentType,
+        ),
+      );
       return _responseMap(response);
     } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
       throw StateError(_dioError(error));
     }
   }
