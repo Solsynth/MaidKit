@@ -14,6 +14,7 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_connection_actions.dart';
 import 'server_detail_page.dart';
+import 'maidcafe_server_tab.dart';
 import 'servers_page.dart';
 import 'file_editor_tab.dart';
 import 'file_management_tab.dart';
@@ -895,6 +896,23 @@ class _SessionTabBody extends ConsumerWidget {
     if (tab is FileEditorTab) {
       return FileEditorTabView(key: key, tab: tab as FileEditorTab);
     }
+    if (tab is MaidCafePayloadSessionTab) {
+      final payloadTab = tab as MaidCafePayloadSessionTab;
+      final session = ref
+          .watch(sessionsProvider)
+          .asData
+          ?.value
+          .where((item) => item.serverId == payloadTab.server.id)
+          .firstOrNull;
+      return MaidCafeServerTab(
+        key: key,
+        server: payloadTab.server,
+        connected: session?.status == SessionStatus.connected,
+        connectionError: session?.error,
+        onConnect: () => connectForStatistics(context, ref, payloadTab.server),
+        mode: MaidCafeTabMode.payload,
+      );
+    }
     final terminalTab = tab as TerminalTab;
     return ColoredBox(
       color: ref.watch(transparentTerminalBackgroundProvider)
@@ -1053,11 +1071,11 @@ RelativeRect _relativeMenuPosition(Rect anchor, Size overlaySize) {
 IconData _tabIcon(SessionTab tab) => switch (tab.type) {
   SessionTabType.dashboard => Symbols.dashboard,
   SessionTabType.serverDetail => Symbols.dns,
+  SessionTabType.maidCafePayload => Symbols.code,
   SessionTabType.terminal => Symbols.terminal,
   SessionTabType.fileManagement => Symbols.folder,
   SessionTabType.fileEditor => Symbols.edit_document,
 };
-
 String _tabLabel(SessionTab tab) {
   if (tab is DashboardTab) return 'tabDashboard'.tr();
   if (tab is FileEditorTab) {
@@ -1065,6 +1083,9 @@ String _tabLabel(SessionTab tab) {
   }
   if (tab is FileManagementTab) {
     return 'tabFiles'.tr(args: [tab.serverName]);
+  }
+  if (tab is MaidCafePayloadSessionTab) {
+    return '${'maidCafePayloadTab'.tr()} · ${tab.serverName}';
   }
   return tab.serverName;
 }

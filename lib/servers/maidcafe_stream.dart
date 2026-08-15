@@ -5,15 +5,43 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 
+import 'maidcafe_install.dart';
 import 'maidcafe_service.dart';
 
 const maidCafeDefaultPort = 8747;
 
 class MaidCafeDaemonAccess {
-  const MaidCafeDaemonAccess({required this.port, required this.apiSecret});
+  const MaidCafeDaemonAccess({
+    required this.port,
+    required this.apiSecret,
+    this.id,
+    this.version,
+    this.transport,
+    this.listenHost,
+    this.cloudUrl,
+    this.cloudSecret,
+    this.metricsInterval,
+    this.requestTimeout,
+    this.scriptTimeout,
+    this.maxBodyBytes,
+    this.maxConcurrentRuns,
+    this.actions = const [],
+  });
 
   final int? port;
   final String? apiSecret;
+  final String? id;
+  final String? version;
+  final String? transport;
+  final String? listenHost;
+  final String? cloudUrl;
+  final String? cloudSecret;
+  final String? metricsInterval;
+  final String? requestTimeout;
+  final String? scriptTimeout;
+  final int? maxBodyBytes;
+  final int? maxConcurrentRuns;
+  final List<MaidCafeActionDefinition> actions;
 }
 
 /// Reads the daemon's HTTP endpoint and API secret over SSH.
@@ -27,15 +55,30 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
   try {
     final config = await utf8.decoder.bind(session.stdout).join();
     await session.done.timeout(const Duration(seconds: 5));
-    final port = Uri.tryParse(
-      'http://${_configValue(config, 'listen') ?? ''}',
-    )?.port;
-    final apiSecret = _configValue(config, 'metricsSecret');
+    final listen = _configValue(config, 'listen');
+    final listenUri = listen == null ? null : Uri.tryParse('http://$listen');
     return MaidCafeDaemonAccess(
-      port: port == null || port < maidCafeMinimumPort || port > 65535
-          ? null
-          : port,
-      apiSecret: apiSecret,
+      port:
+          listenUri?.port != null &&
+              listenUri!.port >= maidCafeMinimumPort &&
+              listenUri.port <= 65535
+          ? listenUri.port
+          : null,
+      apiSecret: _configValue(config, 'metricsSecret'),
+      id: _configValue(config, 'id'),
+      version: _configValue(config, 'version'),
+      transport: _configValue(config, 'transport'),
+      listenHost: listenUri?.host,
+      cloudUrl: _configValue(config, 'cloudUrl'),
+      cloudSecret: _configValue(config, 'cloudSecret'),
+      metricsInterval: _configValue(config, 'metricsInterval'),
+      requestTimeout: _configValue(config, 'requestTimeout'),
+      scriptTimeout: _configValue(config, 'scriptTimeout'),
+      maxBodyBytes: int.tryParse(_configValue(config, 'maxBodyBytes') ?? ''),
+      maxConcurrentRuns: int.tryParse(
+        _configValue(config, 'maxConcurrentRuns') ?? '',
+      ),
+      actions: _configActions(config),
     );
   } finally {
     session.close();
@@ -49,9 +92,52 @@ Future<int?> readMaidCafeListenPort({
 
 String? _configValue(String config, String key) {
   final pattern =
-      r'''^\s*''' + RegExp.escape(key) + r'''\s*=\s*["']([^"']+)["']\s*$''';
-  final value = RegExp(pattern, multiLine: true).firstMatch(config)?.group(1);
+      r'''^\s*''' +
+      RegExp.escape(key) +
+      r'''\s*=\s*(?:"([^"]*)"|([^#\s]+))\s*$''';
+  final match = RegExp(pattern, multiLine: true).firstMatch(config);
+  final value = match?.group(1) ?? match?.group(2);
   return value?.trim().isEmpty ?? true ? null : value!.trim();
+}
+
+bool _configBool(String config, String key, {bool fallback = false}) =>
+    switch (_configValue(config, key)?.toLowerCase()) {
+      'true' => true,
+      'false' => false,
+      _ => fallback,
+    };
+
+List<String> _configArray(String config, String key) {
+  final match = RegExp(
+    r'^\s*' + RegExp.escape(key) + r'\s*=\s*\[(.*?)\]\s*$',
+    multiLine: true,
+    dotAll: true,
+  ).firstMatch(config);
+  if (match == null) return const [];
+  return RegExp(r'"((?:\\.|[^"])*)"')
+      .allMatches(match.group(1)!)
+      .map((match) => match.group(1)!.replaceAll(r'\"', '"'))
+      .toList();
+}
+
+List<MaidCafeActionDefinition> _configActions(String config) {
+  final blocks = RegExp(
+    r'\[\[daemon\.actions\]\](.*?)(?=\n\[\[daemon\.actions\]\]|$)',
+    dotAll: true,
+  ).allMatches(config);
+  return [
+    for (final block in blocks)
+      if (_configValue(block.group(1)!, 'name') != null &&
+          _configValue(block.group(1)!, 'command') != null)
+        MaidCafeActionDefinition(
+          name: _configValue(block.group(1)!, 'name')!,
+          command: _configValue(block.group(1)!, 'command')!,
+          arguments: _configArray(block.group(1)!, 'args'),
+          enabled: _configBool(block.group(1)!, 'enabled', fallback: true),
+          notifyOnSuccess: _configBool(block.group(1)!, 'notifyOnSuccess'),
+          notifyOnFailure: _configBool(block.group(1)!, 'notifyOnFailure'),
+        ),
+  ];
 }
 
 /// HTTP client for the systemd-managed MaidCafe daemon.
@@ -187,6 +273,19 @@ class MaidCafeStreamSession {
   }
 
   Future<Map<String, dynamic>> metrics() => _get('/api/v1/metrics');
+
+  Future<List<Map<String, dynamic>>> metricsHistory({int limit = 60}) async {
+    final result = await _get('/api/v1/metrics/history?limit=$limit');
+    final metrics = result['metrics'];
+    if (metrics is! List) {
+      throw StateError('MaidCafe returned an invalid metrics history.');
+    }
+    return [
+      for (final item in metrics)
+        if (item is Map)
+          item.map((key, value) => MapEntry(key.toString(), value)),
+    ];
+  }
 
   Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) =>
       _post('/api/v1/actions/${Uri.encodeComponent(name)}', body: body);

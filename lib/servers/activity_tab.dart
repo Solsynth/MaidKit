@@ -10,6 +10,9 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'activity_models.dart';
 import 'server_providers.dart';
+import 'maidcafe_stream.dart';
+
+enum _ActivityMetricSource { ssh, maidCafe }
 
 /// Live host performance graphs (btop-inspired) for a single connected server.
 class ActivityTab extends ConsumerStatefulWidget {
@@ -40,6 +43,10 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   Timer? _timer;
   var _loading = false;
   var _hasSample = false;
+  MaidCafeStreamSession? _maidCafeStream;
+  var _maidCafeAttempted = false;
+  var _maidCafeHistoryLoaded = false;
+  _ActivityMetricSource? _source;
   String? _error;
 
   @override
@@ -54,14 +61,21 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   @override
   void dispose() {
     _timer?.cancel();
+    _maidCafeStream?.close();
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ActivityTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected &&
-        (!oldWidget.connected || oldWidget.server.id != widget.server.id)) {
+    final serverChanged = oldWidget.server.id != widget.server.id;
+    if (serverChanged || (!widget.connected && oldWidget.connected)) {
+      _maidCafeStream?.close();
+      _maidCafeAttempted = false;
+      _maidCafeHistoryLoaded = false;
+      _source = null;
+    }
+    if (widget.connected && (!oldWidget.connected || serverChanged)) {
       _history.clear();
       _previous = null;
       _hasSample = false;
@@ -82,16 +96,35 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     if (!mounted || !widget.connected || _loading) return;
     _loading = true;
     try {
-      final counters = await ref
-          .read(connectionManagerProvider)
-          .collectActivityCounters(widget.server.id);
-      final sample = counters.toSample(previous: _previous);
+      var source = _ActivityMetricSource.maidCafe;
+      ActivityCounters counters;
+      final maidCafe = await _ensureMaidCafeStream();
+      if (maidCafe != null) {
+        try {
+          await _loadMaidCafeHistory(maidCafe);
+          counters =
+              parseMaidCafeMetrics(await maidCafe.metrics()) ??
+              (throw StateError('MaidCafe metrics response was empty.'));
+        } catch (_) {
+          await _closeMaidCafeStream();
+          source = _ActivityMetricSource.ssh;
+          counters = await _collectSshCounters();
+        }
+      } else {
+        source = _ActivityMetricSource.ssh;
+        counters = await _collectSshCounters();
+      }
+      final sourceChanged = _source != null && _source != source;
+      final sample = counters.toSample(
+        previous: sourceChanged ? null : _previous,
+      );
       _previous = counters;
       if (!mounted) return;
       setState(() {
+        _source = source;
         _hasSample = true;
         _error = null;
-        // First sample often has no CPU/net rates; still keep it for memory/load.
+        if (sourceChanged) _history.clear();
         _history.add(sample);
         while (_history.length > _historyLimit) {
           _history.removeAt(0);
@@ -104,6 +137,52 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     } finally {
       _loading = false;
     }
+  }
+
+  Future<void> _loadMaidCafeHistory(MaidCafeStreamSession stream) async {
+    if (_maidCafeHistoryLoaded) return;
+    _maidCafeHistoryLoaded = true;
+    try {
+      final history = await stream.metricsHistory(limit: _historyLimit);
+      for (final raw in history) {
+        final counters = parseMaidCafeMetrics(raw);
+        if (counters == null) continue;
+        final sample = counters.toSample(previous: _previous);
+        _previous = counters;
+        _history.add(sample);
+      }
+      while (_history.length > _historyLimit) {
+        _history.removeAt(0);
+      }
+    } catch (_) {
+      // Older MaidCafe daemons may not expose history yet; live metrics still work.
+    }
+  }
+
+  Future<ActivityCounters> _collectSshCounters() => ref
+      .read(connectionManagerProvider)
+      .collectActivityCounters(widget.server.id);
+
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    if (_maidCafeStream != null || _maidCafeAttempted) {
+      return _maidCafeStream;
+    }
+    _maidCafeAttempted = true;
+    try {
+      _maidCafeStream = await MaidCafeStreamSession.open(
+        manager: ref.read(connectionManagerProvider),
+        server: widget.server,
+      );
+      return _maidCafeStream;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _closeMaidCafeStream() async {
+    final stream = _maidCafeStream;
+    _maidCafeStream = null;
+    if (stream != null) await stream.close();
   }
 
   @override
@@ -164,6 +243,7 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
             ],
           ),
         ),
+        if (_source != null) _ActivitySourceBanner(source: _source!),
         Divider(height: 1, color: scheme.outlineVariant),
         Expanded(
           child: ListView(
@@ -234,6 +314,47 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     if (s.memoryUsedKb == null || s.memoryTotalKb == null) return '—';
     return '${_formatKb(s.memoryUsedKb!)} / ${_formatKb(s.memoryTotalKb!)}'
         '${s.memoryPercent == null ? '' : ' · ${s.memoryPercent!.toStringAsFixed(0)}%'}';
+  }
+}
+
+class _ActivitySourceBanner extends StatelessWidget {
+  const _ActivitySourceBanner({required this.source});
+
+  final _ActivityMetricSource source;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final maidCafe = source == _ActivityMetricSource.maidCafe;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            maidCafe ? Symbols.local_cafe : Symbols.terminal,
+            size: 18,
+            color: scheme.onSecondaryContainer,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              (maidCafe
+                      ? 'activityDataSourceMaidCafe'
+                      : 'activityDataSourceSsh')
+                  .tr(),
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: scheme.onSecondaryContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -22,7 +22,7 @@ void main() {
 
   group('AppDatabase migrations', () {
     test(
-      'schema 22 database that already has sort_order migrates to 25',
+      'schema 22 database that already has sort_order migrates to 26',
       () async {
         final directory = Directory.systemTemp.createTempSync('migration_test');
         final path = '${directory.path}/stale.sqlite';
@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 25 migrations, which
+        // Opening the database again runs the 22 -> 26 migrations, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 25);
+        expect(version.read<int>('user_version'), 26);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -81,7 +81,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 25);
+        expect(version.read<int>('user_version'), 26);
 
         final column = await database
             .customSelect(

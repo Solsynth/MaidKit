@@ -91,6 +91,8 @@ class ActivityCounters {
     this.diskAvailableKb,
     this.netRxBytes,
     this.netTxBytes,
+    this.netRxBps,
+    this.netTxBps,
     this.uptime,
   });
 
@@ -111,12 +113,16 @@ class ActivityCounters {
   final int? diskTotalKb;
   final int? diskAvailableKb;
   final int? netRxBytes;
+
+  /// Direct rates supplied by MaidCafe when cumulative counters are absent.
+  final double? netRxBps;
+  final double? netTxBps;
   final int? netTxBytes;
   final Duration? uptime;
   ActivitySample toSample({ActivityCounters? previous}) {
     double? cpuPercent = this.cpuPercent;
-    double? netRxBps;
-    double? netTxBps;
+    double? netRxBps = this.netRxBps;
+    double? netTxBps = this.netTxBps;
     if (cpuPercent == null &&
         previous != null &&
         cpuIdle != null &&
@@ -172,3 +178,39 @@ class ActivityCounters {
     );
   }
 }
+
+/// Converts the MaidCafe `/api/v1/metrics` payload into activity counters.
+ActivityCounters? parseMaidCafeMetrics(Map<String, dynamic> response) {
+  final cpuPercent = _metricDouble(response['cpu_percent']);
+  final memoryUsedBytes = _metricInt(response['memory_used_bytes']);
+  final memoryTotalBytes = _metricInt(response['memory_total_bytes']);
+  final uptimeSeconds = _metricInt(response['uptime_seconds']);
+  if (cpuPercent == null &&
+      memoryUsedBytes == null &&
+      memoryTotalBytes == null &&
+      uptimeSeconds == null) {
+    return null;
+  }
+  final memoryTotalKb = memoryTotalBytes == null
+      ? null
+      : memoryTotalBytes ~/ 1024;
+  final memoryAvailableKb = memoryTotalBytes == null || memoryUsedBytes == null
+      ? null
+      : (memoryTotalBytes - memoryUsedBytes) ~/ 1024;
+  return ActivityCounters(
+    at:
+        DateTime.tryParse(response['sent_at']?.toString() ?? '') ??
+        DateTime.now(),
+    cpuPercent: cpuPercent,
+    memoryTotalKb: memoryTotalKb,
+    memoryAvailableKb: memoryAvailableKb,
+    uptime: uptimeSeconds == null ? null : Duration(seconds: uptimeSeconds),
+  );
+}
+
+double? _metricDouble(Object? value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '');
+}
+
+int? _metricInt(Object? value) => _metricDouble(value)?.round();

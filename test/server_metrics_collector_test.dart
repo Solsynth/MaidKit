@@ -112,4 +112,20 @@ DiskAvailable: 26214400
     expect(sample.cpuPercent, 37.5);
     expect(sample.memoryUsedKb, 75);
   });
+  test('parses MaidCafe metrics into activity counters', () {
+    final counters = parseMaidCafeMetrics({
+      'sent_at': '2026-08-15T12:00:00Z',
+      'cpu_percent': 37.5,
+      'memory_used_bytes': 768000,
+      'memory_total_bytes': 1024000,
+      'uptime_seconds': 60,
+    });
+
+    expect(counters, isNotNull);
+    expect(counters!.cpuPercent, 37.5);
+    expect(counters.memoryTotalKb, 1000);
+    expect(counters.memoryAvailableKb, 250);
+    expect(counters.uptime, const Duration(minutes: 1));
+    expect(counters.toSample().memoryUsedKb, 750);
+  });
 }

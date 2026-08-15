@@ -515,8 +515,20 @@ class AppDatabase extends _$AppDatabase {
         }
       }
       if (from < 26) {
-        await m.addColumn(servers, servers.encryptedMaidCafeMetricsSecret);
-        await m.addColumn(servers, servers.maidCafeMetricsSecretNonce);
+        final maidCafeMetricsColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name IN ('encrypted_maid_cafe_metrics_secret', "
+          "'maid_cafe_metrics_secret_nonce')",
+        ).get();
+        final existing = maidCafeMetricsColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('encrypted_maid_cafe_metrics_secret')) {
+          await m.addColumn(servers, servers.encryptedMaidCafeMetricsSecret);
+        }
+        if (!existing.contains('maid_cafe_metrics_secret_nonce')) {
+          await m.addColumn(servers, servers.maidCafeMetricsSecretNonce);
+        }
       }
     },
   );

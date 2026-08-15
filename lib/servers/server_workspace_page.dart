@@ -127,10 +127,10 @@ class _ServerTabsShell extends ConsumerWidget {
                           ),
                           label: Text('tabProjects').tr(),
                         ),
-                        const NavigationRailDestination(
-                          icon: Icon(Symbols.smart_toy),
-                          selectedIcon: Icon(Symbols.smart_toy, fill: 1),
-                          label: Text('Agent'),
+                        NavigationRailDestination(
+                          icon: const Icon(Symbols.smart_toy),
+                          selectedIcon: const Icon(Symbols.smart_toy, fill: 1),
+                          label: Text('tabAgent').tr(),
                         ),
                       ],
                     ),
@@ -190,10 +190,10 @@ class _ServerTabsShell extends ConsumerWidget {
                         ),
                         label: 'tabProjects'.tr(),
                       ),
-                      const NavigationDestination(
-                        icon: Icon(Symbols.smart_toy),
-                        selectedIcon: Icon(Symbols.smart_toy, fill: 1),
-                        label: 'Agent',
+                      NavigationDestination(
+                        icon: const Icon(Symbols.smart_toy),
+                        selectedIcon: const Icon(Symbols.smart_toy, fill: 1),
+                        label: 'tabAgent'.tr(),
                       ),
                       NavigationDestination(
                         icon: const Icon(Symbols.settings, fill: 1),
@@ -246,7 +246,7 @@ class _PortForwardRailIndicator extends ConsumerWidget {
     final forwards = ref.watch(portForwardsProvider).asData?.value ?? const [];
     if (forwards.isEmpty) return const SizedBox.shrink();
     return Badge(
-      label: Text('portForwardCount').tr(args: ['${forwards.length}']),
+      label: Text('portForwardCount'.tr(args: ['${forwards.length}'])),
       child: PopupMenuButton<ActivePortForward>(
         tooltip: 'activePortForwards'.plural(forwards.length),
         icon: const Icon(Symbols.swap_horiz),

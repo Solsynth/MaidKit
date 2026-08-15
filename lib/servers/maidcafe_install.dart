@@ -32,11 +32,17 @@ class MaidCafeActionDefinition {
     required this.name,
     required this.command,
     required this.arguments,
+    this.enabled = true,
+    this.notifyOnSuccess = false,
+    this.notifyOnFailure = false,
   });
 
   final String name;
   final String command;
   final List<String> arguments;
+  final bool enabled;
+  final bool notifyOnSuccess;
+  final bool notifyOnFailure;
 }
 
 class _MaidCafeArtifact {
@@ -130,14 +136,30 @@ Future<void> installMaidCafeApplication({
   List<MaidCafeActionDefinition> actions = const [],
   int port = 8747,
   String? apiSecret,
+  String daemonId = '',
+  String cloudUrl = '',
+  String cloudSecret = '',
+  String transport = 'http',
+  String listenHost = '127.0.0.1',
+  String metricsInterval = '1m',
+  String requestTimeout = '10s',
+  String scriptTimeout = '30s',
+  int maxBodyBytes = 65536,
+  int maxConcurrentRuns = 4,
 }) => _installMaidCafeDaemon(
   ref: ref,
   server: server,
-  daemonId: 'maidkit-${server.id}',
-  cloudUrl: '',
-  cloudSecret: '',
+  daemonId: daemonId.isEmpty ? 'maidkit-${server.id}' : daemonId,
+  cloudUrl: cloudUrl,
+  cloudSecret: cloudSecret,
   sudoPassword: sudoPassword,
-  transport: 'http',
+  transport: transport,
+  listenHost: listenHost,
+  metricsInterval: metricsInterval,
+  requestTimeout: requestTimeout,
+  scriptTimeout: scriptTimeout,
+  maxBodyBytes: maxBodyBytes,
+  maxConcurrentRuns: maxConcurrentRuns,
   actions: actions,
   title: 'maidCafeInstallApplicationRunning'.tr(),
   channel: channel,
@@ -153,6 +175,12 @@ Future<void> _installMaidCafeDaemon({
   required String cloudSecret,
   required String? sudoPassword,
   required String transport,
+  String listenHost = '127.0.0.1',
+  String metricsInterval = '1m',
+  String requestTimeout = '10s',
+  String scriptTimeout = '30s',
+  int maxBodyBytes = 65536,
+  int maxConcurrentRuns = 4,
   required String title,
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
@@ -205,8 +233,14 @@ Future<void> _installMaidCafeDaemon({
           artifactUrl: artifact.url,
           version: artifact.version,
           transport: transport,
+          listenHost: listenHost,
           port: port,
           apiSecret: apiSecret,
+          metricsInterval: metricsInterval,
+          requestTimeout: requestTimeout,
+          scriptTimeout: scriptTimeout,
+          maxBodyBytes: maxBodyBytes,
+          maxConcurrentRuns: maxConcurrentRuns,
           actions: actions,
         ),
         sshUserIsRoot: server.username == 'root',
@@ -220,7 +254,7 @@ Future<void> _installMaidCafeDaemon({
       .read(serverRepositoryProvider)
       .updateMaidCafeConfig(
         server,
-        daemonUrl: 'http://127.0.0.1:$port',
+        daemonUrl: 'http://$listenHost:$port',
         metricsSecret: apiSecret,
       );
 }
@@ -232,8 +266,14 @@ String buildMaidCafeDaemonInstallScript({
   required String artifactUrl,
   String version = '',
   String transport = 'http',
+  String listenHost = '127.0.0.1',
   int port = 8747,
   String apiSecret = '',
+  String metricsInterval = '1m',
+  String requestTimeout = '10s',
+  String scriptTimeout = '30s',
+  int maxBodyBytes = 65536,
+  int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
@@ -243,10 +283,15 @@ String buildMaidCafeDaemonInstallScript({
       'must be between $maidCafeMinimumPort and 65535',
     );
   }
+  _validateMaidCafeConfigFields(
+    listenHost: listenHost,
+    maxBodyBytes: maxBodyBytes,
+    maxConcurrentRuns: maxConcurrentRuns,
+  );
   final resolvedApiSecret = apiSecret.trim().isEmpty
       ? generateMaidCafeApiSecret()
       : apiSecret.trim();
-  final healthUrl = 'http://127.0.0.1:$port/health';
+  final healthUrl = 'http://$listenHost:$port/health';
   final stdio = transport == 'stdio';
   final configPath = stdio
       ? '/etc/maidcafe/config.stdio.toml'
@@ -307,6 +352,12 @@ fi
         version: version,
         port: port,
         transport: transport,
+        listenHost: listenHost,
+        metricsInterval: metricsInterval,
+        requestTimeout: requestTimeout,
+        scriptTimeout: scriptTimeout,
+        maxBodyBytes: maxBodyBytes,
+        maxConcurrentRuns: maxConcurrentRuns,
         actions: actions,
       ),
     ),
@@ -350,8 +401,14 @@ String buildMaidCafeDaemonConfigScript({
   required String cloudSecret,
   String version = '',
   String transport = 'stdio',
+  String listenHost = '127.0.0.1',
   int port = 8747,
   String apiSecret = '',
+  String metricsInterval = '1m',
+  String requestTimeout = '10s',
+  String scriptTimeout = '30s',
+  int maxBodyBytes = 65536,
+  int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
@@ -361,6 +418,11 @@ String buildMaidCafeDaemonConfigScript({
       'must be between $maidCafeMinimumPort and 65535',
     );
   }
+  _validateMaidCafeConfigFields(
+    listenHost: listenHost,
+    maxBodyBytes: maxBodyBytes,
+    maxConcurrentRuns: maxConcurrentRuns,
+  );
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
       : '/etc/maidcafe/config.toml';
@@ -382,6 +444,12 @@ String buildMaidCafeDaemonConfigScript({
         metricsSecret: resolvedApiSecret,
         port: port,
         transport: transport,
+        listenHost: listenHost,
+        metricsInterval: metricsInterval,
+        requestTimeout: requestTimeout,
+        scriptTimeout: scriptTimeout,
+        maxBodyBytes: maxBodyBytes,
+        maxConcurrentRuns: maxConcurrentRuns,
         actions: actions,
       ),
     ),
@@ -393,6 +461,30 @@ printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $
 $serviceRestart''';
 }
 
+void _validateMaidCafeConfigFields({
+  required String listenHost,
+  required int maxBodyBytes,
+  required int maxConcurrentRuns,
+}) {
+  if (!RegExp(r'^[A-Za-z0-9_.:-]+$').hasMatch(listenHost)) {
+    throw ArgumentError.value(
+      listenHost,
+      'listenHost',
+      'contains invalid characters',
+    );
+  }
+  if (maxBodyBytes <= 0) {
+    throw ArgumentError.value(maxBodyBytes, 'maxBodyBytes', 'must be positive');
+  }
+  if (maxConcurrentRuns <= 0) {
+    throw ArgumentError.value(
+      maxConcurrentRuns,
+      'maxConcurrentRuns',
+      'must be positive',
+    );
+  }
+}
+
 String _maidCafeConfig({
   required String daemonId,
   required String cloudUrl,
@@ -401,6 +493,12 @@ String _maidCafeConfig({
   String version = '',
   int port = 8747,
   required String transport,
+  String listenHost = '127.0.0.1',
+  String metricsInterval = '1m',
+  String requestTimeout = '10s',
+  String scriptTimeout = '30s',
+  int maxBodyBytes = 65536,
+  int maxConcurrentRuns = 4,
   required List<MaidCafeActionDefinition> actions,
 }) {
   final versionLine = version.trim().isEmpty
@@ -408,7 +506,7 @@ String _maidCafeConfig({
       : ' version = ${_tomlString(version.trim())}\n';
   final listenLine = transport == 'stdio'
       ? ''
-      : ' listen = "127.0.0.1:$port"\n';
+      : ' listen = ${_tomlString('$listenHost:$port')}\n';
   final metricsSecretLine = metricsSecret.trim().isEmpty
       ? ''
       : ' metricsSecret = ${_tomlString(metricsSecret.trim())}\n';
@@ -417,11 +515,11 @@ String _maidCafeConfig({
 $versionLine transport = ${_tomlString(transport)}
 $listenLine$metricsSecretLine cloudUrl = ${_tomlString(cloudUrl)}
  cloudSecret = ${_tomlString(cloudSecret)}
- metricsInterval = "1m"
- requestTimeout = "10s"
- scriptTimeout = "30s"
- maxBodyBytes = 65536
- maxConcurrentRuns = 4
+ metricsInterval = ${_tomlString(metricsInterval)}
+ requestTimeout = ${_tomlString(requestTimeout)}
+ scriptTimeout = ${_tomlString(scriptTimeout)}
+ maxBodyBytes = $maxBodyBytes
+ maxConcurrentRuns = $maxConcurrentRuns
 ${_tomlActions(actions)}'''
       .replaceAll('\n ', '\n');
 }
@@ -562,9 +660,9 @@ String _tomlActions(List<MaidCafeActionDefinition> actions) => actions
 name = ${_tomlString(action.name)}
 command = ${_tomlString(action.command)}
 args = [${action.arguments.map(_tomlString).join(', ')}]
-enabled = true
-notifyOnSuccess = false
-notifyOnFailure = false
+enabled = ${action.enabled}
+notifyOnSuccess = ${action.notifyOnSuccess}
+notifyOnFailure = ${action.notifyOnFailure}
 ''',
     )
     .join();

@@ -31,6 +31,7 @@ void _releaseSessionTabViewKey(String tabId) {
 enum SessionTabType {
   dashboard,
   serverDetail,
+  maidCafePayload,
   terminal,
   fileManagement,
   fileEditor,
@@ -124,6 +125,17 @@ class ServerDetailTab extends SessionTab {
 
   @override
   SessionTabType get type => SessionTabType.serverDetail;
+}
+
+/// The server-scoped MaidCafe payload and live action workspace.
+class MaidCafePayloadSessionTab extends SessionTab {
+  MaidCafePayloadSessionTab({required super.id, required this.server})
+    : super(serverId: server.id, serverName: server.name);
+
+  final Server server;
+
+  @override
+  SessionTabType get type => SessionTabType.maidCafePayload;
 }
 
 /// A pane owns a tab strip and shows one selected tab at a time.
@@ -396,6 +408,25 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         server: server,
         initialTab: initialTab,
         initialComposeProject: initialComposeProject,
+      ),
+      targetPaneId: paneId,
+    );
+  }
+
+  void openMaidCafePayload(Server server, {String? paneId}) {
+    final existing = state.tabs
+        .whereType<MaidCafePayloadSessionTab>()
+        .where((tab) => tab.serverId == server.id)
+        .firstOrNull;
+    if (existing != null) {
+      select(existing.id);
+      return;
+    }
+    if (paneId != null) focusPane(paneId);
+    _insertTab(
+      MaidCafePayloadSessionTab(
+        id: 'maidcafe-payload-${server.id}',
+        server: server,
       ),
       targetPaneId: paneId,
     );
