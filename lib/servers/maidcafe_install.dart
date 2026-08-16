@@ -648,9 +648,9 @@ fi
   // `version` line is touched) so /health reports the new build; the value
   // is base64-embedded to keep arbitrary version strings out of the shell
   // and sed-escaped so the replacement cannot be misread.
-  final sedEscapedVersion = _tomlString(version.trim())
-      .replaceAll('\\', '\\\\')
-      .replaceAll('&', '\\&');
+  final sedEscapedVersion = _tomlString(
+    version.trim(),
+  ).replaceAll('\\', '\\\\').replaceAll('&', '\\&');
   final versionBump = version.trim().isEmpty
       ? ''
       : '''
