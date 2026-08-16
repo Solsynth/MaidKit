@@ -6,6 +6,11 @@ set -e
 # The default execution directory is macos/ci_scripts/. Move to the repository root.
 cd "$CI_PRIMARY_REPOSITORY_PATH"
 
+# Xcode Cloud's default PATH omits Homebrew's prefix, so `brew`, `go`, and
+# `pod` would otherwise be unresolvable on Apple Silicon (/opt/homebrew) and
+# Intel (/usr/local) runners.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 echo "=== Installing Flutter SDK ==="
 # Clone the stable Flutter SDK from Git into the home folder.
 git clone https://github.com/flutter/flutter.git --depth 1 -b stable "$HOME/flutter"
@@ -15,6 +20,8 @@ echo "=== Installing Go ==="
 # tailscale's native-assets hook compiles its embedded runtime during the Xcode
 # archive and requires Go 1.26+ (or Go 1.25+ with automatic toolchain setup).
 HOMEBREW_NO_AUTO_UPDATE=1 brew install go
+# Fail fast on stale runner taps that would install an outdated toolchain.
+go version
 
 # Pre-cache macOS artifacts and fetch dependencies
 flutter precache --macos
