@@ -1266,7 +1266,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   }
 
   Widget _payloadTabs(BuildContext context) => DefaultTabController(
-    length: 3,
+    length: 4,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1275,6 +1275,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             IconLabelTab(
               icon: const Icon(Symbols.settings, size: 18),
               label: 'maidCafeConfigTab'.tr(),
+            ),
+            IconLabelTab(
+              icon: const Icon(Symbols.speed, size: 18),
+              label: 'maidCafeAlarms'.tr(),
             ),
             IconLabelTab(
               icon: const Icon(Symbols.play_arrow, size: 18),
@@ -1290,6 +1294,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           child: TabBarView(
             children: [
               _configEditor(context),
+              _alarmsTab(context),
               _actionsTab(context),
               _auditTab(context),
             ],
@@ -1887,7 +1892,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           ),
         ],
       ),
-      _alarmsEditor(context),
       const SizedBox(height: 4),
       Align(
         alignment: Alignment.centerLeft,
@@ -1900,50 +1904,110 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     ],
   );
 
-  /// Alarm thresholds are declared here, in the daemon's own config: the
+  /// Alarm thresholds are edited here, in the daemon's own config: the
   /// daemon evaluates each metric sample locally and reports `daemon.alarm.*`
-  /// notifications to the cloud, so nothing here calls the cloud API.
-  Widget _alarmsEditor(BuildContext context) {
+  /// notifications to the cloud, so nothing here calls the cloud API. Saving
+  /// deploys the `<kind>.toml` fragments and restarts the daemon.
+  Widget _alarmsTab(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'maidCafeAlarmsHint'.tr(),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_alarms.isEmpty)
           Text(
-            'maidCafeAlarms'.tr(),
-            style: theme.textTheme.titleSmall?.copyWith(
+            'maidCafeNoAlarms'.tr(),
+            style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final alarm in _alarms) _alarmChip(context, alarm)],
           ),
-          const SizedBox(height: 8),
-          if (_alarms.isEmpty)
-            Text(
-              'maidCafeNoAlarms'.tr(),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final alarm in _alarms) _alarmChip(context, alarm),
-              ],
-            ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: _busy ? null : () => _editAlarm(context),
-              icon: const Icon(Symbols.add),
-              label: Text('maidCafeAddAlarm'.tr()),
-            ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : () => _editAlarm(context),
+            icon: const Icon(Symbols.add),
+            label: Text('maidCafeAddAlarm'.tr()),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: _busy ? null : _saveAlarms,
+            icon: const Icon(Symbols.save),
+            label: Text('maidCafeSaveAlarms'.tr()),
+          ),
+        ),
+      ],
     );
+  }
+
+  Future<void> _saveAlarms() async {
+    if (_busy || _stream == null || _state != _MaidCafeState.running) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    _stream = null;
+    _sessionRegistry.invalidate(widget.server);
+    try {
+      final credential = await ref
+          .read(serverRepositoryProvider)
+          .credentialFor(widget.server);
+      final sudoPassword = credential.type == CredentialType.password
+          ? credential.password
+          : null;
+      final manager = ref.read(connectionManagerProvider);
+      final stdio = _transport == 'stdio';
+      await runWithDeployTerminal(
+        ref: ref,
+        title: 'maidCafeAlarms'.tr(),
+        subtitle: widget.server.name,
+        command: stdio
+            ? 'write alarm fragments'
+            : 'write alarm fragments · restart systemd service',
+        run: (onOutput) => manager.runPrivilegedScriptSnippet(
+          widget.server.id,
+          script:
+              buildMaidCafeAlarmFragmentsScript(
+                List.unmodifiable(_alarms),
+                stdio: stdio,
+              ) +
+              (stdio ? '' : '\nsystemctl restart maidcafe-daemon\n'),
+          onOutput: onOutput,
+          sshUserIsRoot: widget.server.username == 'root',
+          sudoPassword: sudoPassword,
+        ),
+      );
+      final port = await _resolveMaidCafePort();
+      final opened = await _openStream(port: port, force: true);
+      if (!opened) return;
+      if (mounted) {
+        setState(() => _message = 'maidCafeAlarmsSaved'.tr());
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _state = _MaidCafeState.notInstalled;
+          _message = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Widget _alarmChip(BuildContext context, MaidCafeAlarmDefinition alarm) {

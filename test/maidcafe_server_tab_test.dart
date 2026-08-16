@@ -306,12 +306,19 @@ Future<void> pumpRunningPayloadTab(
               length: 2,
               child: TabBarView(
                 children: [
-                  MaidCafeServerTab(
-                    server: server,
-                    connected: true,
-                    connectionError: null,
-                    onConnect: () async {},
-                    mode: MaidCafeTabMode.payload,
+                  // The outer TabBarView is a theme LookupBoundary, so the
+                  // payload TabBar inside MaidCafeServerTab would not see the
+                  // Scaffold's Material when its tabs rebuild during a
+                  // switch. A page-local Material mirrors the real detail
+                  // page and keeps the inner TabBar's lookup satisfied.
+                  Material(
+                    child: MaidCafeServerTab(
+                      server: server,
+                      connected: true,
+                      connectionError: null,
+                      onConnect: () async {},
+                      mode: MaidCafeTabMode.payload,
+                    ),
                   ),
                   const SizedBox.shrink(),
                 ],
@@ -564,4 +571,33 @@ void main() {
       expect(find.text('maidCafeInstallApplication'.tr()), findsOneWidget);
     },
   );
+
+  testWidgets('alarms are edited in their own payload tab', (
+    WidgetTester tester,
+  ) async {
+    await pumpRunningPayloadTab(tester);
+
+    await tester.tap(find.text('maidCafeAlarms'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeNoAlarms'.tr()), findsOneWidget);
+    expect(find.text('maidCafeAddAlarm'.tr()), findsOneWidget);
+    expect(find.text('maidCafeSaveAlarms'.tr()), findsOneWidget);
+
+    await tester.tap(find.text('maidCafeAddAlarm'.tr()));
+    await tester.pumpAndSettle();
+
+    final dialogField = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(dialogField.first, '85');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'maidCafeSave'.tr()));
+    await tester.pumpAndSettle();
+
+    // The chip shows the metric and threshold (labels resolve to raw keys in
+    // this harness, so only the numbers are asserted).
+    expect(find.textContaining('85%'), findsOneWidget);
+  });
 }

@@ -11,7 +11,7 @@ import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:styled_widget/styled_widget.dart';
-import 'port_forwarding_models.dart';
+import 'port_forward_sheet.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
 
@@ -250,45 +250,10 @@ class _PortForwardRailIndicator extends ConsumerWidget {
     if (forwards.isEmpty) return const SizedBox.shrink();
     return Badge(
       label: Text('portForwardCount'.tr(args: ['${forwards.length}'])),
-      child: PopupMenuButton<ActivePortForward>(
+      child: IconButton(
         tooltip: 'activePortForwards'.plural(forwards.length),
-        // Match the rail's plain IconButton (e.g. Settings): material_ui's
-        // fork renders 40x40 without the padded tap target, so shrink the
-        // popup's inner IconButton to the same box.
-        padding: const EdgeInsets.all(8),
-        iconSize: 24,
-        style: IconButton.styleFrom(
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
         icon: const Icon(Symbols.swap_horiz),
-        onSelected: (forward) =>
-            ref.read(connectionManagerProvider).stopPortForward(forward.id),
-        itemBuilder: (context) => [
-          for (final forward in forwards)
-            PopupMenuItem(
-              value: forward,
-              enabled: !forward.isManaged,
-              child: SizedBox(
-                width: 260,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    forward.isManaged ? Symbols.lock : Symbols.swap_horiz,
-                  ),
-                  title: Text(forward.serverName),
-                  subtitle: Text(
-                    forward.isManaged
-                        ? '${forward.summary}\n'
-                              '${'portForwardingManagedByMaidCafe'.tr()}'
-                        : forward.summary,
-                  ),
-                  trailing: forward.isManaged
-                      ? null
-                      : const Icon(Symbols.stop_circle),
-                ),
-              ),
-            ),
-        ],
+        onPressed: () => showPortForwardSheet(context, forwards),
       ),
     );
   }

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// A [Tab] rendered as a horizontal `[icon] label` row instead of the
 /// built-in vertically stacked icon/text composition.

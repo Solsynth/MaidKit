@@ -21,8 +21,19 @@ import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_metoer.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
+
+/// Records stop requests instead of touching SSH.
+class _RecordingConnectionManager extends SshConnectionManager {
+  _RecordingConnectionManager() : super(() => throw UnimplementedError());
+
+  final stoppedIds = <String>[];
+
+  @override
+  Future<void> stopPortForward(String id) async => stoppedIds.add(id);
+}
 
 /// Navigation rail button state: settings icon fill on selection and
 /// port-forward indicator sizing.
@@ -51,7 +62,23 @@ void main() {
     );
   });
 
-  Future<void> pumpApp(WidgetTester tester) async {
+  Future<void> pumpApp(
+    WidgetTester tester, {
+    SshConnectionManager? connectionManager,
+    List<ActivePortForward> forwards = const [
+      ActivePortForward(
+        id: 'f1',
+        serverId: 1,
+        serverName: 'test-server',
+        direction: PortForwardDirection.local,
+        kind: PortForwardKind.tcp,
+        bindHost: '127.0.0.1',
+        bindPort: 8080,
+        targetHost: 'example.com',
+        targetPort: 80,
+      ),
+    ],
+  }) async {
     final router = AppRouter();
     addTearDown(router.dispose);
     tester.view.physicalSize = const Size(1200, 800);
@@ -85,21 +112,10 @@ void main() {
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),
             ),
-            portForwardsProvider.overrideWith(
-              (ref) => Stream.value([
-                ActivePortForward(
-                  id: 'f1',
-                  serverId: 1,
-                  serverName: 'test-server',
-                  direction: PortForwardDirection.local,
-                  kind: PortForwardKind.tcp,
-                  bindHost: '127.0.0.1',
-                  bindPort: 8080,
-                  targetHost: 'example.com',
-                  targetPort: 80,
-                ),
-              ]),
+            connectionManagerProvider.overrideWithValue(
+              connectionManager ?? _RecordingConnectionManager(),
             ),
+            portForwardsProvider.overrideWith((ref) => Stream.value(forwards)),
           ],
           child: MaterialApp.router(
             theme: createMaidKitTheme(Brightness.light),
@@ -166,12 +182,58 @@ void main() {
 
     final settingsBox = tester.getSize(find.byTooltip('tabSettings'.tr()));
     final forwardBox = tester.getSize(
-      find.byType(PopupMenuButton<ActivePortForward>),
+      find.byTooltip('activePortForwards'.plural(1)),
     );
     expect(forwardBox, settingsBox);
     expect(forwardBox, const Size(40, 40));
 
     // Badge shows the active count next to the button.
     expect(find.text('1'), findsOneWidget);
+  });
+
+  testWidgets(
+    'port-forward rail button opens a status sheet that stops a forward',
+    (tester) async {
+      final manager = _RecordingConnectionManager();
+      await pumpApp(tester, connectionManager: manager);
+
+      await tester.tap(find.byTooltip('activePortForwards'.plural(1)));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SheetScaffold), findsOneWidget);
+      expect(find.text('test-server'), findsOneWidget);
+      expect(find.byTooltip('portForwardingStop'.tr()), findsOneWidget);
+
+      await tester.tap(find.byTooltip('portForwardingStop'.tr()));
+      await tester.pumpAndSettle();
+
+      expect(manager.stoppedIds, ['f1']);
+      expect(find.byType(SheetScaffold), findsNothing);
+    },
+  );
+
+  testWidgets('managed port forwards show locked in the sheet', (tester) async {
+    await pumpApp(
+      tester,
+      forwards: const [
+        ActivePortForward(
+          id: 'm1',
+          serverId: 1,
+          serverName: 'test-server',
+          direction: PortForwardDirection.local,
+          kind: PortForwardKind.socks5,
+          bindHost: '127.0.0.1',
+          bindPort: 1080,
+          owner: PortForwardOwner.maidCafe,
+        ),
+      ],
+    );
+
+    await tester.tap(find.byTooltip('activePortForwards'.plural(1)));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SheetScaffold), findsOneWidget);
+    expect(find.byIcon(Symbols.lock), findsOneWidget);
+    expect(find.byTooltip('portForwardingStop'.tr()), findsNothing);
   });
 }
