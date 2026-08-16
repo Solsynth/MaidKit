@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "332533411625",
+    "project_id": "maidkit-0x001",
+    "storage_bucket": "maidkit-0x001.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:332533411625:android:baa94650006989571b1138",
+        "android_client_info": {
+          "package_name": "dev.solsynth.maid"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9hEQqRR-bwS5_tGnHBB8GxQTqQKI06gs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

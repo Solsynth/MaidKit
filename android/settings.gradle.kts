@@ -23,6 +23,9 @@ plugins {
     // Project.exec(), which Gradle 9 removed. Stay on the latest AGP 8 release
     // compatible with our plugins until CargoKit publishes a Gradle 9 update.
     id("com.android.application") version "8.12.1" apply false
+    // START: FlutterFire Configuration
+    id("com.google.gms.google-services") version("4.4.4") apply false
+    // END: FlutterFire Configuration
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
 }
 
