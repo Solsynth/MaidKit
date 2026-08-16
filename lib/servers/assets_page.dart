@@ -19,70 +19,178 @@ import 'server_models.dart';
 import 'server_providers.dart';
 import 'servers_page.dart';
 
-/// A home for saved, reusable connection resources.
+/// A home for saved, reusable connection resources: server connections,
+/// GitHub, credentials and snippets, each in its own tab. The primary
+/// create action lives on a floating action button that adapts to the
+/// active tab.
 @RoutePage()
-class AssetsPage extends StatelessWidget {
+class AssetsPage extends ConsumerStatefulWidget {
   const AssetsPage({super.key});
 
   @override
-  Widget build(BuildContext context) => MaidKitAppScaffold(
-    body: DefaultTabController(
-      length: 4,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TabBar(
-            tabs: [
-              IconLabelTab(
-                icon: const Icon(Symbols.dns, size: 18),
-                label: 'assetsConnections'.tr(),
-              ),
-              IconLabelTab(
-                icon: const Icon(Symbols.rocket_launch, size: 18),
-                label: 'tabGithub'.tr(),
-              ),
-              IconLabelTab(
-                icon: const Icon(Symbols.key, size: 18),
-                label: 'assetsCredentialsTitle'.tr(),
-              ),
-              IconLabelTab(
-                icon: const Icon(Symbols.code, size: 18),
-                label: 'tabSnippets'.tr(),
-              ),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                  children: const [ServerAssetsSection(showHeader: false)],
+  ConsumerState<AssetsPage> createState() => _AssetsPageState();
+}
+
+class _AssetsPageState extends ConsumerState<AssetsPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController = TabController(
+    length: 4,
+    vsync: this,
+  )..addListener(_onTabChanged);
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaidKitAppScaffold(
+      body: DefaultTabController(
+        length: 4,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TabBar(
+              controller: _tabController,
+              tabs: [
+                IconLabelTab(
+                  icon: const Icon(Symbols.dns, size: 18),
+                  label: 'assetsConnections'.tr(),
                 ),
-                ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                  children: const [GitHubSection(showHeader: false)],
+                IconLabelTab(
+                  icon: const Icon(Symbols.rocket_launch, size: 18),
+                  label: 'tabGithub'.tr(),
                 ),
-                ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                  children: const [CredentialsPage(showHeader: false)],
+                IconLabelTab(
+                  icon: const Icon(Symbols.key, size: 18),
+                  label: 'assetsCredentialsTitle'.tr(),
                 ),
-                ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                  children: const [SnippetsSection()],
+                IconLabelTab(
+                  icon: const Icon(Symbols.code, size: 18),
+                  label: 'tabSnippets'.tr(),
                 ),
               ],
             ),
-          ),
-        ],
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  ListView(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                    children: const [ServerAssetsSection()],
+                  ),
+                  ListView(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                    children: const [GitHubSection(showHeader: false)],
+                  ),
+                  ListView(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                    children: const [CredentialsPage(showHeader: false)],
+                  ),
+                  ListView(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                    children: const [SnippetsSection()],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+      floatingActionButton: _fabForTab(_tabController.index),
+    );
+  }
+
+  /// The unified create action: one floating button whose label and target
+  /// follow the active tab. The GitHub tab keeps its in-content sign-in and
+  /// pin-repo controls, so no FAB there.
+  Widget? _fabForTab(int index) {
+    return switch (index) {
+      0 => FloatingActionButton.extended(
+        heroTag: 'assets-create-fab',
+        onPressed: () => _addServer(context, ref),
+        icon: const Icon(Symbols.add),
+        label: Text('serversAddServer'.tr()),
+      ),
+      2 => FloatingActionButton.extended(
+        heroTag: 'assets-create-fab',
+        onPressed: () => _addCredential(context, ref),
+        icon: const Icon(Symbols.add),
+        label: Text('settingsCredentialAdd'.tr()),
+      ),
+      3 => FloatingActionButton.extended(
+        heroTag: 'assets-create-fab',
+        onPressed: () => _newSnippet(context, ref),
+        icon: const Icon(Symbols.add),
+        label: Text('snippetsNew'.tr()),
+      ),
+      _ => null,
+    };
+  }
+
+  Future<void> _addServer(BuildContext context, WidgetRef ref) async {
+    final repository = ref.read(serverRepositoryProvider);
+    final credentials = await repository.credentials();
+    final snippets = await ref.read(snippetRepositoryProvider).all();
+    final servers = await repository.all();
+    if (!context.mounted) return;
+    final draft = await showModalBottomSheet<ServerDraft>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => ServerEditorDialog(
+        credentials: credentials,
+        snippets: snippets,
+        servers: servers,
+      ),
+    );
+    if (draft == null) return;
+    try {
+      await ref.read(serverRepositoryProvider).create(draft);
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _addCredential(BuildContext context, WidgetRef ref) async {
+    final draft = await showCredentialEditorSheet(context);
+    if (draft == null) return;
+    try {
+      await ref.read(serverRepositoryProvider).createCredential(draft);
+    } catch (error) {
+      if (context.mounted) _showError(context, error);
+    }
+  }
+
+  Future<void> _newSnippet(BuildContext context, WidgetRef ref) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _SnippetEditor(
+        title: 'snippetsNew'.tr(),
+        onSave: (name, script) async {
+          await ref
+              .read(snippetRepositoryProvider)
+              .save(id: null, name: name, script: script);
+          if (context.mounted) Navigator.pop(context, true);
+        },
+      ),
+    );
+    if (saved == true && context.mounted) {
+      showSnackBar('snippetsSaved'.tr());
+    }
+  }
 }
 
 class ServerAssetsSection extends ConsumerWidget {
-  const ServerAssetsSection({super.key, this.showHeader = true});
-
-  final bool showHeader;
+  const ServerAssetsSection({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -90,32 +198,6 @@ class ServerAssetsSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final header = Text(
-              'assetsConnections'.tr(),
-              style: Theme.of(context).textTheme.titleLarge,
-            );
-            final addButton = FilledButton.icon(
-              onPressed: () => _add(context, ref),
-              icon: const Icon(Symbols.add),
-              label: Text('serversAddServer'.tr()),
-            );
-            if (!showHeader) {
-              return Align(alignment: Alignment.centerRight, child: addButton);
-            }
-            return constraints.maxWidth < 600
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [header, const SizedBox(height: 8), addButton],
-                  )
-                : Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [header, addButton],
-                  );
-          },
-        ),
-        const SizedBox(height: 4),
         Text(
           'assetsConnectionsDescription'.tr(),
           style: Theme.of(context).textTheme.bodyMedium,
@@ -144,30 +226,6 @@ class ServerAssetsSection extends ConsumerWidget {
         ),
       ],
     );
-  }
-
-  Future<void> _add(BuildContext context, WidgetRef ref) async {
-    final repository = ref.read(serverRepositoryProvider);
-    final credentials = await repository.credentials();
-    final snippets = await ref.read(snippetRepositoryProvider).all();
-    final servers = await repository.all();
-    if (!context.mounted) return;
-    final draft = await showModalBottomSheet<ServerDraft>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => ServerEditorDialog(
-        credentials: credentials,
-        snippets: snippets,
-        servers: servers,
-      ),
-    );
-    if (draft == null) return;
-    try {
-      await ref.read(serverRepositoryProvider).create(draft);
-    } catch (error) {
-      if (context.mounted) _showError(context, error);
-    }
   }
 
   Future<void> _edit(BuildContext context, WidgetRef ref, Server server) async {
@@ -407,15 +465,6 @@ class SnippetsSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: () => _edit(context, ref),
-            icon: const Icon(Symbols.add),
-            label: Text('snippetsNew'.tr()),
-          ),
-        ),
-        const SizedBox(height: 12),
         snippets.when(
           loading: () => const LinearProgressIndicator(),
           error: (error, _) => Text(error.toString()),

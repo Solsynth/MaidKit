@@ -175,6 +175,9 @@ void main() {
     WidgetTester tester, {
     bool signedIn = true,
     _FakeMaidCafeService? service,
+    List<MaidCafeMetric> metrics = const [],
+    Future<List<MaidCafeMetric>> Function(Ref ref, String daemonId)?
+    metricsLoader,
   }) async {
     tester.view.physicalSize = const Size(1200, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -203,7 +206,7 @@ void main() {
         (ref, workspaceId) async => [_daemon()],
       ),
       maidCafeMetricsProvider.overrideWith(
-        (ref, daemonId) async => const <MaidCafeMetric>[],
+        metricsLoader ?? ((Ref ref, String daemonId) async => metrics),
       ),
       maidCafeCloudActionsProvider.overrideWith(
         (ref, daemonId) async => [_cloudAction()],
@@ -258,13 +261,77 @@ void main() {
     await pumpPage(tester);
 
     expect(find.text('host-1'), findsOneWidget);
-    // The unread count appears twice: as a fleet-summary pill in the page
-    // header and as the feed section header's badge.
-    expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsNWidgets(2));
-    expect(find.text('Webhook backup failed'), findsOneWidget);
-    expect(find.text('exit code 1'), findsOneWidget);
     // Actions the daemon reported to the cloud render as invocable chips.
     expect(find.text('Backup data'), findsOneWidget);
+
+    // The feed lives on the notifications tab.
+    await tester.tap(find.text('maidCafeNotifications'.tr()));
+    await tester.pumpAndSettle();
+    expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
+    expect(find.text('Webhook backup failed'), findsOneWidget);
+    expect(find.text('exit code 1'), findsOneWidget);
+  });
+
+  testWidgets('daemon card surfaces load, disk and uptime from samples', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    await pumpPage(
+      tester,
+      metrics: [
+        for (var i = 0; i < 5; i++)
+          MaidCafeMetric(
+            id: 'm$i',
+            daemonId: 'daemon-1',
+            sentAt: now.subtract(Duration(minutes: 5 * (4 - i))),
+            receivedAt: now,
+            uptimeSeconds: 3 * 86400 + 4 * 3600,
+            processMemoryBytes: 1 << 30,
+            cpuPercent: 30,
+            cpuCount: 8,
+            load1: 2.5,
+            load5: 2.0,
+            load15: 1.5,
+            memoryUsedPercent: 40,
+            memoryUsedBytes: (4 * (1 << 30) * 40) ~/ 100,
+            memoryTotalBytes: 4 * (1 << 30),
+            diskTotalKb: 102400,
+            diskAvailableKb: 25600,
+            webhookExecutions: 12,
+            webhookFailures: 0,
+          ),
+      ],
+    );
+
+    expect(find.text('LOAD'), findsOneWidget);
+    expect(find.text('2.50'), findsOneWidget);
+    expect(find.text('DISK'), findsOneWidget);
+    // (102400 - 25600) / 102400 = 75% used.
+    expect(find.text('75%'), findsOneWidget);
+    expect(find.text('CPU'), findsOneWidget);
+    expect(find.text('30%'), findsOneWidget);
+    expect(
+      find.textContaining('maidCafeUptime'.tr(args: ['3d 4h'])),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('cloud page polls the cloud for fresh daemon metrics', (
+    tester,
+  ) async {
+    var fetches = 0;
+    await pumpPage(
+      tester,
+      metricsLoader: (ref, daemonId) async {
+        fetches++;
+        return const <MaidCafeMetric>[];
+      },
+    );
+    expect(fetches, 1); // initial load of the fleet tab
+
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pumpAndSettle();
+    expect(fetches, greaterThan(1));
   });
 
   testWidgets('cloud action chips invoke through the relay', (tester) async {
@@ -282,6 +349,10 @@ void main() {
   ) async {
     final service = _FakeMaidCafeService();
     await pumpPage(tester, service: service);
+
+    // Credentials live on their own tab.
+    await tester.tap(find.text('maidCafeCredentials'.tr()));
+    await tester.pumpAndSettle();
 
     expect(find.text('ci-backup'), findsOneWidget);
 

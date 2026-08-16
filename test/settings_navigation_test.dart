@@ -131,14 +131,18 @@ void main() {
     await tester.tap(find.byIcon(Symbols.inventory_2));
     await tester.pumpAndSettle();
 
+    expect(find.byType(TabBar), findsOneWidget);
     expect(find.text('assetsConnections'.tr()), findsOneWidget);
+    expect(find.text('tabGithub'.tr()), findsOneWidget);
     expect(find.text('assetsCredentialsTitle'.tr()), findsOneWidget);
+    expect(find.text('tabSnippets'.tr()), findsOneWidget);
 
     expect(find.text('assetsConnectionsDescription'.tr()), findsOneWidget);
 
-    await tester.tap(find.text('assetsConnections'.tr()));
+    await tester.tap(find.text('assetsCredentialsTitle'.tr()));
     await tester.pumpAndSettle();
     expect(find.text('assetsConnectionsDescription'.tr()), findsNothing);
+    expect(find.text('assetsCredentialsDescription'.tr()), findsOneWidget);
 
     await tester.tap(find.text('assetsConnections'.tr()));
     await tester.pumpAndSettle();
@@ -154,6 +158,34 @@ void main() {
 
     expect(find.byType(MaidCafeCloudPage), findsOneWidget);
   });
+
+  testWidgets(
+    'MaidCafe cloud connection lives in Settings with a self-hosted push hint',
+    (tester) async {
+      await pumpApp(tester);
+
+      await tester.tap(find.byTooltip('tabSettings'.tr()));
+      await tester.pumpAndSettle();
+
+      final solarCategory = find.text('settingsSolarNetwork'.tr());
+      await tester.ensureVisible(solarCategory);
+      await tester.tap(solarCategory);
+      await tester.pumpAndSettle();
+
+      expect(find.text('maidCafeCloudUrl'.tr()), findsOneWidget);
+      // The default cloud (mk.solsynth.dev) is a supported Ring publisher.
+      expect(find.text('maidCafeSelfHostedPushHint'.tr()), findsNothing);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'maidCafeCloudUrl'.tr()),
+        'https://cloud.local:8080',
+      );
+      await tester.tap(find.text('maidCafeApply'.tr()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('maidCafeSelfHostedPushHint'.tr()), findsOneWidget);
+    },
+  );
   testWidgets('hides MaidCafe Cloud from Assets on mobile', (
     WidgetTester tester,
   ) async {

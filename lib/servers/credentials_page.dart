@@ -10,6 +10,17 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 
+/// Opens the credential editor sheet; returns the draft when saved.
+Future<SavedCredentialDraft?> showCredentialEditorSheet(
+  BuildContext context, {
+  SavedCredentialDraft? initial,
+}) => showModalBottomSheet<SavedCredentialDraft>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  builder: (_) => _CredentialEditorSheet(initial: initial),
+);
+
 class CredentialsPage extends ConsumerWidget {
   const CredentialsPage({super.key, this.showHeader = true});
 
@@ -42,15 +53,6 @@ class CredentialsPage extends ConsumerWidget {
                       children: [header, addButton],
                     );
             },
-          )
-        else
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed: () => _addCredential(context, ref),
-              icon: const Icon(Symbols.add),
-              label: Text('settingsCredentialAdd'.tr()),
-            ),
           ),
         Text(
           'assetsCredentialsDescription'.tr(),
@@ -102,12 +104,7 @@ class CredentialsPage extends ConsumerWidget {
   }
 
   Future<void> _addCredential(BuildContext context, WidgetRef ref) async {
-    final draft = await showModalBottomSheet<SavedCredentialDraft>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => const _CredentialEditorSheet(),
-    );
+    final draft = await showCredentialEditorSheet(context);
     if (draft == null) return;
     try {
       await ref.read(serverRepositoryProvider).createCredential(draft);
@@ -126,16 +123,9 @@ class CredentialsPage extends ConsumerWidget {
           .read(serverRepositoryProvider)
           .decryptCredential(credential);
       if (!context.mounted) return;
-      final draft = await showModalBottomSheet<SavedCredentialDraft>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        builder: (_) => _CredentialEditorSheet(
-          initial: SavedCredentialDraft(
-            name: credential.name,
-            credential: value,
-          ),
-        ),
+      final draft = await showCredentialEditorSheet(
+        context,
+        initial: SavedCredentialDraft(name: credential.name, credential: value),
       );
       if (draft != null) {
         await ref

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
@@ -9,6 +10,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/services/analytics_service.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
@@ -20,10 +22,10 @@ import 'server_providers.dart';
 /// workspace selection, daemon registration (the one-time `[daemon]` config
 /// snippet), and the Metoer notification feed.
 ///
-/// Wide windows get a two-pane console: a fixed control rail (cloud
-/// connection, account, credentials) beside a fluid fleet region (daemon
-/// cards with a live metric strip, then the notification feed). Narrow
-/// windows stack the same sections as cards.
+/// The page is a tabbed console — fleet (daemon cards with a live metric
+/// strip), credentials and notifications — with the account and workspace
+/// selection in a terminal-style bottom status bar that also carries a
+/// manual refresh and a last-refreshed readout.
 @RoutePage()
 class MaidCafeCloudPage extends ConsumerStatefulWidget {
   const MaidCafeCloudPage({super.key});
@@ -32,168 +34,137 @@ class MaidCafeCloudPage extends ConsumerStatefulWidget {
   ConsumerState<MaidCafeCloudPage> createState() => _MaidCafeCloudPageState();
 }
 
-class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
-  late final TextEditingController _cloudUrlController;
-  String? _message;
-  String? _cloudHealth;
-  String? _busy;
+class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
+    with SingleTickerProviderStateMixin {
+  static const _daemonsOp = 'daemons';
+  static const _credentialsOp = 'credentials';
+  static const _notificationsOp = 'notifications';
 
-  @override
-  void initState() {
-    super.initState();
-    _cloudUrlController = TextEditingController(
-      text: ref.read(maidCafeCloudUrlProvider),
-    );
+  late final TabController _tabController = TabController(
+    length: 3,
+    vsync: this,
+  )..addListener(_onTabChanged);
+
+  void _onTabChanged() {
+    if (mounted) setState(() {});
   }
 
-  @override
-  void dispose() {
-    _cloudUrlController.dispose();
-    super.dispose();
-  }
+  /// Operations currently in flight. Only the control that started an
+  /// operation is disabled while it runs; the rest of the page stays live.
+  final Set<String> _busyOps = {};
+
+  Timer? _refreshTimer;
+  DateTime? _lastRefreshed;
+
+  bool _isBusy(String op) => _busyOps.contains(op);
+
+  static String _daemonOp(String daemonId) => 'daemon:$daemonId';
 
   String? get _effectiveWorkspaceId =>
       ref.read(maidCafeWorkspaceIdProvider) ??
       ref.read(cloudWorkspacesProvider).asData?.value.firstOrNull?.id;
 
   @override
+  void initState() {
+    super.initState();
+    // Daemons report metrics roughly every minute; poll the cloud at the
+    // same cadence so the metric strip and last-seen stay current.
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _refreshCloudData(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  /// Re-fetches the daemon records (last-seen) and each daemon's metric
+  /// history and reported actions from the cloud.
+  void _refreshCloudData() {
+    if (!mounted) return;
+    final workspaceId = _effectiveWorkspaceId;
+    if (workspaceId == null) return;
+    ref.invalidate(maidCafeDaemonsProvider(workspaceId));
+    final daemons = ref
+        .read(maidCafeDaemonsProvider(workspaceId))
+        .asData
+        ?.value;
+    if (daemons == null) return;
+    for (final daemon in daemons) {
+      ref.invalidate(maidCafeMetricsProvider(daemon.id));
+      ref.invalidate(maidCafeCloudActionsProvider(daemon.id));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final cloudUrl = ref.watch(maidCafeCloudUrlProvider);
     final cloudUser = ref.watch(cloudUserProvider);
     final workspaces = ref.watch(cloudWorkspacesProvider);
     final selectedWorkspaceId = ref.watch(maidCafeWorkspaceIdProvider);
     final effectiveWorkspaceId =
         selectedWorkspaceId ?? workspaces.asData?.value.firstOrNull?.id;
-    if (_cloudUrlController.text != cloudUrl && _busy == null) {
-      _cloudUrlController.text = cloudUrl;
-    }
     // The Metoer list endpoint marks the fetched page viewed server-side, so
     // the unread count follows each feed refresh.
     ref.listen(maidCafeMetoerNotificationsProvider, (previous, next) {
       if (next.hasValue) ref.invalidate(maidCafeMetoerUnreadCountProvider);
     });
+    // Track when the fleet data was last fetched: on the initial load, each
+    // poll tick, and after a manual refresh.
+    if (effectiveWorkspaceId != null) {
+      ref.listen(maidCafeDaemonsProvider(effectiveWorkspaceId), (
+        previous,
+        next,
+      ) {
+        if (next.hasValue) _lastRefreshed = DateTime.now();
+      });
+    }
     return MaidKitAppScaffold(
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 1000) {
-            return _narrowLayout(context, cloudUser, effectiveWorkspaceId);
-          }
-          return _wideLayout(context, cloudUser, effectiveWorkspaceId);
-        },
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _cloudTabs(context, effectiveWorkspaceId)),
+          _cloudStatusBar(context, cloudUser, effectiveWorkspaceId),
+        ],
       ),
+      floatingActionButton: _fabForTab(effectiveWorkspaceId),
     );
   }
 
   // ----------------------------------------------------------------- layout
 
-  /// Stacked single-column layout for narrow windows.
-  Widget _narrowLayout(
-    BuildContext context,
-    AsyncValue<CloudUser?> cloudUser,
-    String? workspaceId,
-  ) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      children: [
-        const _MaidCafeCloudHeader(),
-        const SizedBox(height: 24),
-        _SettingsSectionCard(child: _connectionGroup(context)),
-        const SizedBox(height: 24),
-        _SettingsSectionCard(
-          child: cloudUser.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.all(16),
-              child: LinearProgressIndicator(),
-            ),
-            error: (_, _) => _accountSignedOut(context),
-            data: (user) => user == null
-                ? _accountSignedOut(context)
-                : _accountSignedIn(context, user),
-          ),
-        ),
-        const SizedBox(height: 24),
-        _credentialsCard(context),
-        const SizedBox(height: 24),
-        _daemonsCard(context, workspaceId),
-        const SizedBox(height: 24),
-        _notificationsCard(context),
-      ],
-    );
-  }
-
-  /// Two-pane console for wide windows: fixed control rail beside the fleet.
-  Widget _wideLayout(
-    BuildContext context,
-    AsyncValue<CloudUser?> cloudUser,
-    String? workspaceId,
-  ) {
+  /// Tabbed main region: the fleet, credentials, and the notification feed.
+  Widget _cloudTabs(BuildContext context, String? workspaceId) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _MaidCafeCloudHeader(),
+        TabBar(
+          controller: _tabController,
+          tabs: [
+            IconLabelTab(
+              icon: const Icon(Symbols.dns, size: 18),
+              label: 'assetsConnections'.tr(),
+            ),
+            IconLabelTab(
+              icon: const Icon(Symbols.key, size: 18),
+              label: 'maidCafeCredentials'.tr(),
+            ),
+            IconLabelTab(
+              icon: const Icon(Symbols.notifications, size: 18),
+              label: 'maidCafeNotifications'.tr(),
+            ),
+          ],
+        ),
         Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: TabBarView(
+            controller: _tabController,
             children: [
-              _CloudControlRail(
-                children: [
-                  _RailSection(
-                    label: 'maidCafeCloudConnection'.tr(),
-                    child: _connectionGroup(context),
-                  ),
-                  const SizedBox(height: 24),
-                  _RailSection(
-                    label: 'settingsAccount'.tr(),
-                    child: cloudUser.when(
-                      loading: () => const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: LinearProgressIndicator(),
-                      ),
-                      error: (_, _) => _accountSignedOut(context),
-                      data: (user) => user == null
-                          ? _accountSignedOut(context)
-                          : _accountSignedIn(context, user),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  _RailSection(
-                    label: 'maidCafeCredentials'.tr(),
-                    action: FilledButton.tonalIcon(
-                      onPressed: _busy == null
-                          ? () => _createCredential(context)
-                          : null,
-                      style: FilledButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                      ),
-                      icon: const Icon(Symbols.add, size: 18),
-                      label: Text(
-                        'maidCafeCredentialCreate'.tr(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    child: _credentialsBody(context),
-                  ),
-                ],
-              ),
-              Expanded(
-                child: CustomScrollView(
-                  slivers: [
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                      sliver: SliverToBoxAdapter(
-                        child: _daemonsSection(context, workspaceId),
-                      ),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.all(24),
-                      sliver: SliverToBoxAdapter(
-                        child: _notificationsCard(context),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _fleetTab(context, workspaceId),
+              _credentialsTab(context),
+              _notificationsTab(context),
             ],
           ),
         ),
@@ -201,105 +172,162 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     );
   }
 
-  /// Cloud URL editor, health check and inline operation feedback.
-  Widget _connectionGroup(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      _urlEditor(
-        context,
-        controller: _cloudUrlController,
-        label: 'maidCafeCloudUrl'.tr(),
-        hint: 'maidCafeCloudUrlHint'.tr(),
-        onSave: () => _saveCloudUrl(context),
-        onReset: () => _resetCloudUrl(context),
+  /// The unified create action: one floating button that follows the active
+  /// tab. The notifications tab has no create action, so no FAB there.
+  Widget? _fabForTab(String? workspaceId) {
+    if (workspaceId == null) return null;
+    return switch (_tabController.index) {
+      0 => FloatingActionButton.extended(
+        heroTag: 'maidcafe-create-fab',
+        onPressed: _isBusy(_daemonsOp)
+            ? null
+            : () => _registerDaemon(context, workspaceId),
+        icon: const Icon(Symbols.add),
+        label: Text('maidCafeRegister'.tr()),
       ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            OutlinedButton.icon(
-              onPressed: _busy == null
-                  ? () => _checkCloudHealth(context)
-                  : null,
-              icon: const Icon(Symbols.health_and_safety),
-              label: Text('maidCafeCheckCloudHealth'.tr()),
-            ),
-            if (_cloudHealth != null) _healthStatus(context),
-          ],
-        ),
+      1 => FloatingActionButton.extended(
+        heroTag: 'maidcafe-create-fab',
+        onPressed: _isBusy(_credentialsOp)
+            ? null
+            : () => _createCredential(context),
+        icon: const Icon(Symbols.add),
+        label: Text('maidCafeCredentialCreate'.tr()),
       ),
-      if (_message != null)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: Text(_message!),
-        ),
-    ],
-  );
+      _ => null,
+    };
+  }
 
-  // ---------------------------------------------------------------- account
+  /// Terminal-style bottom status strip: account, workspace selector,
+  /// manual refresh and the last-refreshed readout.
+  Widget _cloudStatusBar(
+    BuildContext context,
+    AsyncValue<CloudUser?> cloudUser,
+    String? workspaceId,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        border: Border(top: BorderSide(color: colors.outlineVariant)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 4, 8, 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final showTimestamp = constraints.maxWidth >= 600;
+          return Row(
+            children: [
+              cloudUser.when(
+                loading: () => const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                error: (_, _) => _statusSignIn(context),
+                data: (user) => user == null
+                    ? _statusSignIn(context)
+                    : _statusAccount(context, user),
+              ),
+              const Spacer(),
+              if (_lastRefreshed != null && showTimestamp) ...[
+                Text(
+                  'maidCafeLastRefreshed'.tr(
+                    args: [DateFormat('HH:mm:ss').format(_lastRefreshed!)],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              IconButton(
+                tooltip: 'maidCafeRefresh'.tr(),
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Symbols.refresh, size: 18),
+                onPressed: _refreshCloudData,
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 
-  Widget _accountSignedOut(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(16),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+  /// Compact sign-in entry for the status bar.
+  Widget _statusSignIn(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text('maidCafeSignInRequired'.tr()),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton(
-            onPressed: () => _signInCloud(context),
-            child: Text('settingsCloudSignIn'.tr()),
-          ),
+        Icon(Symbols.person, size: 16, color: colors.onSurfaceVariant),
+        const SizedBox(width: 8),
+        TextButton(
+          onPressed: () => _signInCloud(context),
+          child: Text('settingsCloudSignIn'.tr()),
         ),
       ],
-    ),
-  );
+    );
+  }
 
-  Widget _accountSignedIn(BuildContext context, CloudUser user) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      ListTile(
-        leading: CircleAvatar(
+  /// Compact account chip for the status bar: avatar, name, workspace
+  /// selector and sign-out.
+  Widget _statusAccount(BuildContext context, CloudUser user) {
+    final textTheme = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CircleAvatar(
+          radius: 10,
           foregroundImage: user.avatarUrl == null
               ? null
               : NetworkImage(user.avatarUrl!),
-          child: Text(user.initials),
+          child: Text(user.initials, style: textTheme.labelSmall),
         ),
-        title: Text(user.name),
-        subtitle: user.handle.isEmpty ? null : Text(user.handle),
-        trailing: TextButton(
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            user.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.labelMedium,
+          ),
+        ),
+        const SizedBox(width: 12),
+        _statusWorkspaceSelector(context),
+        IconButton(
+          tooltip: 'settingsCloudSignOut'.tr(),
+          visualDensity: VisualDensity.compact,
+          icon: Icon(Symbols.logout, size: 18, color: colors.onSurfaceVariant),
           onPressed: () => _signOutCloud(context),
-          child: Text('settingsCloudSignOut'.tr()),
         ),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        child: _workspaceDropdown(context),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 
-  Widget _workspaceDropdown(BuildContext context) {
+  /// Compact workspace selector for the status bar.
+  Widget _statusWorkspaceSelector(BuildContext context) {
     final workspaces = ref.watch(cloudWorkspacesProvider);
     return workspaces.when(
-      loading: () => const LinearProgressIndicator(),
-      error: (error, _) => _recoverableError(
-        context,
-        error,
-        () => ref.invalidate(cloudWorkspacesProvider),
+      loading: () => const SizedBox(
+        width: 96,
+        height: 14,
+        child: LinearProgressIndicator(),
       ),
+      error: (_, _) => const SizedBox.shrink(),
       data: (items) {
-        if (items.isEmpty) return Text('maidCafeNoWorkspaces'.tr());
+        if (items.isEmpty) return const SizedBox.shrink();
         final selected = ref.watch(maidCafeWorkspaceIdProvider);
-        return DropdownButtonFormField<String?>(
-          initialValue: items.any((workspace) => workspace.id == selected)
+        return DropdownButton<String?>(
+          value: items.any((workspace) => workspace.id == selected)
               ? selected
               : null,
-          decoration: InputDecoration(labelText: 'maidCafeWorkspace'.tr()),
+          underline: const SizedBox.shrink(),
+          isDense: true,
+          style: Theme.of(context).textTheme.labelMedium,
           items: [
             for (final workspace in items)
               DropdownMenuItem<String?>(
@@ -313,6 +341,8 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       },
     );
   }
+
+  // ---------------------------------------------------------------- account
 
   Future<void> _signInCloud(BuildContext context) async {
     try {
@@ -348,43 +378,27 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
   // ----------------------------------------------------------------- daemons
 
   /// Bare fleet section for the wide layout; sits directly on the surface.
-  Widget _daemonsSection(BuildContext context, String? workspaceId) {
+  /// Fleet tab: the daemon grid with the register action.
+  Widget _fleetTab(BuildContext context, String? workspaceId) {
     if (workspaceId == null) {
-      return _SettingsSectionCard(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('maidCafeNoWorkspaces'.tr()),
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+        child: _SettingsSectionCard(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('maidCafeNoWorkspaces'.tr()),
+          ),
         ),
       );
     }
     final daemons = ref.watch(maidCafeDaemonsProvider(workspaceId));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'maidCafeDaemons'.tr(),
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            FilledButton.icon(
-              onPressed: _busy == null
-                  ? () => _registerDaemon(context, workspaceId)
-                  : null,
-              icon: const Icon(Symbols.add),
-              label: Text('maidCafeRegister'.tr()),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
         daemons.when(
-          loading: () => const _SettingsSectionCard(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: LinearProgressIndicator(),
-            ),
+          loading: () => const Padding(
+            padding: EdgeInsets.all(16),
+            child: LinearProgressIndicator(),
           ),
           error: (error, _) => _SettingsSectionCard(
             child: _recoverableError(
@@ -405,66 +419,10 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     );
   }
 
-  /// Card-wrapped fleet section for the narrow layout.
-  Widget _daemonsCard(BuildContext context, String? workspaceId) {
-    if (workspaceId == null) {
-      return _SettingsSectionCard(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('maidCafeNoWorkspaces'.tr()),
-        ),
-      );
-    }
-    final daemons = ref.watch(maidCafeDaemonsProvider(workspaceId));
-    return _SettingsSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'maidCafeDaemons'.tr(),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: _busy == null
-                      ? () => _registerDaemon(context, workspaceId)
-                      : null,
-                  icon: const Icon(Symbols.add),
-                  label: Text('maidCafeRegister'.tr()),
-                ),
-              ],
-            ),
-          ),
-          daemons.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.all(16),
-              child: LinearProgressIndicator(),
-            ),
-            error: (error, _) => _recoverableError(
-              context,
-              error,
-              () => ref.invalidate(maidCafeDaemonsProvider(workspaceId)),
-            ),
-            data: (items) => items.isEmpty
-                ? _EmptyDaemons(
-                    onRegister: () => _registerDaemon(context, workspaceId),
-                  )
-                : _daemonGrid(context, items),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _daemonGrid(BuildContext context, List<MaidCafeDaemon> items) =>
       _DaemonGrid(
         items: items,
-        busy: _busy != null,
+        isBusy: (daemon) => _isBusy(_daemonOp(daemon.id)),
         onRename: (daemon) => _renameDaemon(context, daemon),
         onToggleEnabled: (daemon) =>
             _setDaemonEnabled(context, daemon, !daemon.enabled),
@@ -511,7 +469,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       builder: (context) => const _RegisterDaemonDialog(),
     );
     if (name == null || !context.mounted) return;
-    await _run(context, 'maidCafeRegister', () async {
+    await _run(_daemonsOp, () async {
       final credential = await ref
           .read(maidCafeServiceProvider)
           .createDaemon(name: name, workspaceId: workspaceId);
@@ -536,7 +494,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     MaidCafeDaemon daemon,
     MaidCafeCloudAction action,
   ) async {
-    await _run(context, 'maidCafeInvokeAction', () async {
+    await _run(_daemonOp(daemon.id), () async {
       final result = await ref
           .read(maidCafeServiceProvider)
           .invokeActionViaCloud(daemonId: daemon.id, actionName: action.name);
@@ -563,7 +521,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       builder: (context) => const _RequestPushNotificationDialog(),
     );
     if (requested == null || !context.mounted) return;
-    await _run(context, 'maidCafeRequest', () async {
+    await _run(_daemonOp(daemon.id), () async {
       await ref
           .read(maidCafeServiceProvider)
           .requestPushNotification(
@@ -588,7 +546,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     if (name == null || name.trim().isEmpty || !context.mounted) return;
     final normalizedName = name.trim();
     final workspaceId = _effectiveWorkspaceId;
-    await _run(context, 'maidCafeSave', () async {
+    await _run(_daemonOp(daemon.id), () async {
       await ref
           .read(maidCafeServiceProvider)
           .updateDaemon(daemon.id, name: normalizedName);
@@ -604,25 +562,21 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     bool enabled,
   ) async {
     final workspaceId = _effectiveWorkspaceId;
-    await _run(
-      context,
-      enabled ? 'maidCafeEnable' : 'maidCafeDisable',
-      () async {
-        await ref
-            .read(maidCafeServiceProvider)
-            .updateDaemon(daemon.id, enabled: enabled);
-        if (workspaceId != null) {
-          ref.invalidate(maidCafeDaemonsProvider(workspaceId));
-        }
-      },
-    );
+    await _run(_daemonOp(daemon.id), () async {
+      await ref
+          .read(maidCafeServiceProvider)
+          .updateDaemon(daemon.id, enabled: enabled);
+      if (workspaceId != null) {
+        ref.invalidate(maidCafeDaemonsProvider(workspaceId));
+      }
+    });
   }
 
   Future<void> _rotateSecret(
     BuildContext context,
     MaidCafeDaemon daemon,
   ) async {
-    await _run(context, 'maidCafeRotateSecret', () async {
+    await _run(_daemonOp(daemon.id), () async {
       final secret = await ref
           .read(maidCafeServiceProvider)
           .rotateDaemonSecret(daemon.id);
@@ -655,7 +609,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       ),
     );
     if (confirmed != true || !context.mounted) return;
-    await _run(context, 'maidCafeDisable', () async {
+    await _run(_daemonOp(daemon.id), () async {
       await ref.read(maidCafeServiceProvider).disableDaemon(daemon.id);
       if (workspaceId != null) {
         ref.invalidate(maidCafeDaemonsProvider(workspaceId));
@@ -718,34 +672,11 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
 
   // ------------------------------------------------------------- credentials
 
-  Widget _credentialsCard(BuildContext context) {
-    return _SettingsSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'maidCafeCredentials'.tr(),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: _busy == null
-                      ? () => _createCredential(context)
-                      : null,
-                  icon: const Icon(Symbols.add),
-                  label: Text('maidCafeCredentialCreate'.tr()),
-                ),
-              ],
-            ),
-          ),
-          _credentialsBody(context),
-        ],
-      ),
+  /// Credentials tab: create button above the credential list.
+  Widget _credentialsTab(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+      children: [_credentialsBody(context)],
     );
   }
 
@@ -800,9 +731,9 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       trailing: IconButton(
         tooltip: 'maidCafeCredentialDelete'.tr(),
         icon: const Icon(Symbols.delete_outline),
-        onPressed: _busy == null
-            ? () => _deleteCredential(context, credential)
-            : null,
+        onPressed: _isBusy(_credentialsOp)
+            ? null
+            : () => _deleteCredential(context, credential),
       ),
       textColor: colors.onSurface,
     );
@@ -842,7 +773,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       ),
     );
     if (confirmed != true || !context.mounted) return;
-    await _run(context, 'maidCafeCredentialDelete', () async {
+    await _run(_credentialsOp, () async {
       await ref.read(maidCafeServiceProvider).deleteCredential(credential.id);
       ref.invalidate(maidCafeCredentialsProvider);
     });
@@ -896,70 +827,65 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
 
   // ------------------------------------------------------------- notifications
 
-  Widget _notificationsCard(BuildContext context) {
+  /// Notifications tab: feed actions above the Metoer feed.
+  Widget _notificationsTab(BuildContext context) {
     final unread = ref.watch(maidCafeMetoerUnreadCountProvider).asData?.value;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            if (unread != null && unread > 0) ...[
+              Text(
+                'maidCafeUnreadCount'.tr(args: ['$unread']),
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              TextButton(
+                onPressed: () => _markAllRead(context),
+                child: Text('maidCafeMarkAllRead'.tr()),
+              ),
+            ],
+            IconButton(
+              tooltip: 'maidCafeRefresh'.tr(),
+              icon: const Icon(Symbols.refresh),
+              onPressed: () {
+                ref.invalidate(maidCafeMetoerNotificationsProvider);
+                ref.invalidate(maidCafeMetoerUnreadCountProvider);
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        _notificationsBody(context),
+      ],
+    );
+  }
+
+  Widget _notificationsBody(BuildContext context) {
     final notifications = ref.watch(maidCafeMetoerNotificationsProvider);
-    return _SettingsSectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-            child: Row(
+    return notifications.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: LinearProgressIndicator(),
+      ),
+      error: (error, _) => _recoverableError(
+        context,
+        error,
+        () => ref.invalidate(maidCafeMetoerNotificationsProvider),
+      ),
+      data: (items) => items.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('maidCafeNoNotifications'.tr()),
+            )
+          : Column(
               children: [
-                Expanded(
-                  child: Text(
-                    'maidCafeNotifications'.tr(),
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                if (unread != null && unread > 0) ...[
-                  Text(
-                    'maidCafeUnreadCount'.tr(args: ['$unread']),
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => _markAllRead(context),
-                    child: Text('maidCafeMarkAllRead'.tr()),
-                  ),
-                ],
-                IconButton(
-                  tooltip: 'maidCafeRefresh'.tr(),
-                  icon: const Icon(Symbols.refresh),
-                  onPressed: () {
-                    ref.invalidate(maidCafeMetoerNotificationsProvider);
-                    ref.invalidate(maidCafeMetoerUnreadCountProvider);
-                  },
-                ),
+                for (final item in items) _notificationTile(context, item),
               ],
             ),
-          ),
-          notifications.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.all(16),
-              child: LinearProgressIndicator(),
-            ),
-            error: (error, _) => _recoverableError(
-              context,
-              error,
-              () => ref.invalidate(maidCafeMetoerNotificationsProvider),
-            ),
-            data: (items) => items.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text('maidCafeNoNotifications'.tr()),
-                  )
-                : Column(
-                    children: [
-                      for (final item in items)
-                        _notificationTile(context, item),
-                    ],
-                  ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -990,112 +916,11 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
   }
 
   Future<void> _markAllRead(BuildContext context) async {
-    await _run(context, 'maidCafeMarkAllRead', () async {
+    await _run(_notificationsOp, () async {
       await ref.read(maidCafeMetoerClientProvider).markAllRead();
       ref.invalidate(maidCafeMetoerNotificationsProvider);
       ref.invalidate(maidCafeMetoerUnreadCountProvider);
     });
-  }
-
-  // -------------------------------------------------------------------- url
-
-  Widget _urlEditor(
-    BuildContext context, {
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required VoidCallback onSave,
-    required VoidCallback onReset,
-  }) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: controller,
-          decoration: InputDecoration(labelText: label, helperText: hint),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          children: [
-            FilledButton(
-              onPressed: _busy == null ? onSave : null,
-              child: Text('maidCafeApply'.tr()),
-            ),
-            TextButton(
-              onPressed: _busy == null ? onReset : null,
-              child: Text('maidCafeReset'.tr()),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
-
-  Future<void> _saveCloudUrl(BuildContext context) async {
-    await _run(context, 'maidCafeSave', () async {
-      await ref
-          .read(maidCafeCloudUrlProvider.notifier)
-          .save(_cloudUrlController.text);
-      final workspaceId = _effectiveWorkspaceId;
-      if (workspaceId != null) {
-        ref.invalidate(maidCafeDaemonsProvider(workspaceId));
-      }
-      _cloudUrlController.text = ref.read(maidCafeCloudUrlProvider);
-    });
-  }
-
-  Future<void> _resetCloudUrl(BuildContext context) async {
-    _cloudUrlController.text = maidCafeDefaultCloudUrl;
-    await _saveCloudUrl(context);
-  }
-
-  Future<void> _checkCloudHealth(BuildContext context) async {
-    await _run(context, 'maidCafeCheckCloudHealth', () async {
-      final health = await ref.read(maidCafeServiceProvider).checkCloudHealth();
-      if (mounted) {
-        setState(
-          () => _cloudHealth = health.ok
-              ? 'OK (${health.mode ?? 'cloud'})'
-              : 'Not healthy',
-        );
-      }
-    });
-  }
-
-  Widget _healthStatus(BuildContext context) {
-    final isHealthy = _cloudHealth!.startsWith('OK');
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: isHealthy ? colors.secondaryContainer : colors.errorContainer,
-        border: Border.all(color: isHealthy ? colors.secondary : colors.error),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isHealthy ? Symbols.check_circle : Symbols.warning,
-            size: 18,
-            color: isHealthy
-                ? colors.onSecondaryContainer
-                : colors.onErrorContainer,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            _cloudHealth!,
-            style: TextStyle(
-              color: isHealthy
-                  ? colors.onSecondaryContainer
-                  : colors.onErrorContainer,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   // ------------------------------------------------------------------ shared
@@ -1121,258 +946,35 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     );
   }
 
-  Future<void> _run(
-    BuildContext context,
-    String operation,
-    Future<void> Function() action,
-  ) async {
-    if (mounted) {
-      setState(() {
-        _busy = operation;
-        _message = null;
-      });
-    }
+  /// Runs [action] with only its own busy key set, so the rest of the page
+  /// stays interactive while it is in flight. Failures surface as a snackbar.
+  Future<void> _run(String op, Future<void> Function() action) async {
+    if (mounted) setState(() => _busyOps.add(op));
     try {
       await action();
     } on MaidCafeException catch (error) {
-      _showError(error.message);
+      showSnackBar(error.message);
     } on MaidCafeMetoerException catch (error) {
-      _showError(error.message);
+      showSnackBar(error.message);
     } catch (error) {
-      _showError(error.toString());
+      showSnackBar(error.toString());
     } finally {
-      if (mounted) setState(() => _busy = null);
+      if (mounted) setState(() => _busyOps.remove(op));
     }
   }
-
-  void _showError(String message) {
-    if (mounted) setState(() => _message = message);
-  }
 }
 
-/// Page identity band: cloud mark, title and description, plus a quiet state
-/// cluster (daemon count, unread notifications) when a workspace is known.
-/// Shares the recessed console tone with the control rail.
-class _MaidCafeCloudHeader extends ConsumerWidget {
-  const _MaidCafeCloudHeader();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final unread = ref.watch(maidCafeMetoerUnreadCountProvider).asData?.value;
-    final workspaceId = ref.watch(maidCafeWorkspaceIdProvider);
-    final workspaces = ref.watch(cloudWorkspacesProvider).asData?.value;
-    final effectiveWorkspaceId = workspaceId ?? workspaces?.firstOrNull?.id;
-    final daemonCount = effectiveWorkspaceId == null
-        ? null
-        : ref
-              .watch(maidCafeDaemonsProvider(effectiveWorkspaceId))
-              .asData
-              ?.value
-              .length;
-    final pills = <Widget>[
-      if (daemonCount != null)
-        _HeaderPill(
-          icon: Symbols.dns,
-          label: 'maidCafeDaemonCount'.plural(daemonCount),
-        ),
-      if (unread != null && unread > 0)
-        _HeaderPill(
-          icon: Symbols.notifications,
-          label: 'maidCafeUnreadCount'.tr(args: ['$unread']),
-        ),
-    ];
-    final identity = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'maidCafeCloudEyebrow'.tr(),
-          style: textTheme.labelMedium?.copyWith(
-            color: colors.primary,
-            letterSpacing: 1.1,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text('maidCafeCloudTitle'.tr(), style: textTheme.headlineSmall),
-        const SizedBox(height: 6),
-        Text(
-          'maidCafePageDescription'.tr(),
-          style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
-        ),
-      ],
-    );
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        border: Border(bottom: BorderSide(color: colors.outlineVariant)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 720 || pills.isEmpty) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const _CloudHeaderIcon(),
-                    const SizedBox(width: 16),
-                    Expanded(child: identity),
-                  ],
-                ),
-                if (pills.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Wrap(spacing: 8, runSpacing: 8, children: pills),
-                ],
-              ],
-            );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _CloudHeaderIcon(),
-              const SizedBox(width: 16),
-              Expanded(child: identity),
-              const SizedBox(width: 24),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.end,
-                children: pills,
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _CloudHeaderIcon extends StatelessWidget {
-  const _CloudHeaderIcon();
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: colors.primaryContainer,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Icon(Symbols.cloud_sync, color: colors.onPrimaryContainer),
-    );
-  }
-}
-
-class _HeaderPill extends StatelessWidget {
-  const _HeaderPill({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border.all(color: colors.outlineVariant),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: colors.onSurfaceVariant),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: colors.onSurface,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+/// Fixed-width control rail: the recessed panel holding the account and
+/// credential groups. Scrolls independently of the fleet.
 
 /// Fixed-width control rail: the recessed panel holding the connection,
 /// account and credential groups. Scrolls independently of the fleet.
-class _CloudControlRail extends StatelessWidget {
-  const _CloudControlRail({required this.children});
-
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      width: 336,
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        border: Border(right: BorderSide(color: colors.outlineVariant)),
-      ),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(0, 24, 0, 32),
-        children: children,
-      ),
-    );
-  }
-}
-
-/// Labeled group inside the control rail; the eyebrow matches the page
-/// header's label treatment so the rail reads as one instrument panel.
-class _RailSection extends StatelessWidget {
-  const _RailSection({required this.label, this.action, required this.child});
-
-  final String label;
-  final Widget? action;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final labelStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
-      color: colors.primary,
-      letterSpacing: 1.1,
-      fontWeight: FontWeight.w700,
-    );
-    final action = this.action;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: action == null
-              ? Text(label, style: labelStyle)
-              : Wrap(
-                  spacing: 16,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(label, style: labelStyle),
-                    action,
-                  ],
-                ),
-        ),
-        child,
-      ],
-    );
-  }
-}
-
 /// Left-packed fleet grid with natural card heights; each row is as tall as
 /// its tallest card so cloud-action chips never clip.
 class _DaemonGrid extends StatelessWidget {
   const _DaemonGrid({
     required this.items,
-    required this.busy,
+    required this.isBusy,
     required this.onRename,
     required this.onToggleEnabled,
     required this.onRotateSecret,
@@ -1382,7 +984,9 @@ class _DaemonGrid extends StatelessWidget {
   });
 
   final List<MaidCafeDaemon> items;
-  final bool busy;
+
+  /// Per-daemon busy state: only the card whose operation is running locks.
+  final bool Function(MaidCafeDaemon daemon) isBusy;
   final ValueChanged<MaidCafeDaemon> onRename;
   final ValueChanged<MaidCafeDaemon> onToggleEnabled;
   final ValueChanged<MaidCafeDaemon> onRotateSecret;
@@ -1410,7 +1014,7 @@ class _DaemonGrid extends StatelessWidget {
                 width: cardWidth,
                 child: _DaemonFleetCard(
                   daemon: daemon,
-                  busy: busy,
+                  busy: isBusy(daemon),
                   onRename: () => onRename(daemon),
                   onToggleEnabled: () => onToggleEnabled(daemon),
                   onRotateSecret: () => onRotateSecret(daemon),
@@ -1466,6 +1070,10 @@ class _DaemonFleetCard extends ConsumerWidget {
         const <MaidCafeCloudAction>[];
     final enabled = daemon.enabled;
     final lastSeen = daemon.lastSeenAt;
+    final uptime = samples.isEmpty ? null : samples.last.uptimeSeconds;
+    final uptimeLabel = uptime != null && uptime > 0
+        ? 'maidCafeUptime'.tr(args: [_formatUptime(uptime)])
+        : null;
 
     return Card(
       margin: EdgeInsets.zero,
@@ -1535,7 +1143,19 @@ class _DaemonFleetCard extends ConsumerWidget {
               padding: const EdgeInsets.only(right: 8),
               child: Text(
                 enabled
-                    ? '${'maidCafeEnabled'.tr()} · ${lastSeen == null ? 'maidCafeNeverSeen'.tr() : 'maidCafeLastSeen'.tr(args: [DateFormat('yyyy-MM-dd HH:mm').format(lastSeen.toLocal())])}'
+                    ? [
+                        'maidCafeEnabled'.tr(),
+                        lastSeen == null
+                            ? 'maidCafeNeverSeen'.tr()
+                            : 'maidCafeLastSeen'.tr(
+                                args: [
+                                  DateFormat(
+                                    'yyyy-MM-dd HH:mm',
+                                  ).format(lastSeen.toLocal()),
+                                ],
+                              ),
+                        ?uptimeLabel,
+                      ].join(' · ')
                     : 'maidCafeDisabled'.tr(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -1585,9 +1205,11 @@ class _DaemonFleetCard extends ConsumerWidget {
   }
 }
 
-/// The fleet card's signature: the last five CPU/RAM samples as a threshold
-/// colored bar strip with tabular values. Values follow the dashboard's load
-/// colors (tertiary ≥ 75%, error ≥ 90%).
+/// The fleet card's signature: the last five samples of the daemon's four
+/// host signals (CPU, RAM, load, disk) as threshold-colored bar strips with
+/// tabular values. Percent series follow the dashboard's load colors
+/// (tertiary ≥ 75%, error ≥ 90%); load is colored by the dashboard's
+/// absolute load thresholds (busy ≥ 2, high ≥ 4).
 class _MetricBars extends StatelessWidget {
   const _MetricBars({required this.samples, required this.unavailable});
 
@@ -1614,9 +1236,43 @@ class _MetricBars extends StatelessWidget {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _barRow(context, 'CPU', (sample) => sample.cpuPercent),
+                _barRow(
+                  context,
+                  'CPU',
+                  (sample) => sample.cpuPercent / 100,
+                  (sample) => '${sample.cpuPercent.round()}%',
+                  (sample, colors) =>
+                      _percentColor(sample.cpuPercent / 100, colors),
+                ),
                 const SizedBox(height: 6),
-                _barRow(context, 'RAM', (sample) => sample.memoryUsedPercent),
+                _barRow(
+                  context,
+                  'RAM',
+                  (sample) => sample.memoryUsedPercent / 100,
+                  (sample) => '${sample.memoryUsedPercent.round()}%',
+                  (sample, colors) =>
+                      _percentColor(sample.memoryUsedPercent / 100, colors),
+                ),
+                const SizedBox(height: 6),
+                _barRow(
+                  context,
+                  'LOAD',
+                  (sample) => sample.cpuCount > 0
+                      ? (sample.load1 / sample.cpuCount).clamp(0.0, 1.0)
+                      : 0,
+                  (sample) => sample.load1.toStringAsFixed(2),
+                  (sample, colors) => _loadColor(sample.load1, colors),
+                ),
+                const SizedBox(height: 6),
+                _barRow(
+                  context,
+                  'DISK',
+                  (sample) => _diskRatio(sample),
+                  (sample) => sample.diskTotalKb <= 0
+                      ? '—'
+                      : '${(_diskRatio(sample) * 100).round()}%',
+                  (sample, colors) => _percentColor(_diskRatio(sample), colors),
+                ),
               ],
             ),
     );
@@ -1625,11 +1281,13 @@ class _MetricBars extends StatelessWidget {
   Widget _barRow(
     BuildContext context,
     String label,
-    double Function(MaidCafeMetric) valueOf,
+    double Function(MaidCafeMetric) ratioOf,
+    String Function(MaidCafeMetric) labelOf,
+    Color Function(MaidCafeMetric sample, ColorScheme colors) colorOf,
   ) {
     final colors = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final latest = samples.isEmpty ? null : valueOf(samples.last);
+    final latest = samples.isEmpty ? null : samples.last;
     return Row(
       children: [
         SizedBox(
@@ -1655,16 +1313,13 @@ class _MetricBars extends StatelessWidget {
                       child: Align(
                         alignment: Alignment.bottomLeft,
                         child: FractionallySizedBox(
-                          heightFactor: (valueOf(sample) / 100).clamp(
-                            0.04,
-                            1.0,
-                          ),
+                          heightFactor: ratioOf(sample).clamp(0.04, 1.0),
                           // FractionallySizedBox lays its child out loosely;
                           // a bare DecoratedBox would collapse to zero size.
                           child: SizedBox.expand(
                             child: DecoratedBox(
                               decoration: BoxDecoration(
-                                color: _barColor(valueOf(sample), colors),
+                                color: colorOf(sample, colors),
                                 borderRadius: const BorderRadius.vertical(
                                   top: Radius.circular(2),
                                 ),
@@ -1683,7 +1338,7 @@ class _MetricBars extends StatelessWidget {
         SizedBox(
           width: 42,
           child: Text(
-            latest == null ? '—' : '${latest.toStringAsFixed(0)}%',
+            latest == null ? '—' : labelOf(latest),
             textAlign: TextAlign.right,
             style: textTheme.labelMedium?.copyWith(
               color: colors.onSurface,
@@ -1695,11 +1350,31 @@ class _MetricBars extends StatelessWidget {
     );
   }
 
-  Color _barColor(double percent, ColorScheme colors) {
-    if (percent >= 90) return colors.error;
-    if (percent >= 75) return colors.tertiary;
+  static double _diskRatio(MaidCafeMetric sample) => sample.diskTotalKb <= 0
+      ? 0
+      : ((sample.diskTotalKb - sample.diskAvailableKb) / sample.diskTotalKb)
+            .clamp(0.0, 1.0);
+
+  static Color _percentColor(double ratio, ColorScheme colors) {
+    if (ratio >= 0.9) return colors.error;
+    if (ratio >= 0.75) return colors.tertiary;
     return colors.primary;
   }
+
+  static Color _loadColor(double load, ColorScheme colors) {
+    if (load >= 4) return colors.error;
+    if (load >= 2) return colors.tertiary;
+    return colors.primary;
+  }
+}
+
+String _formatUptime(int seconds) {
+  final days = seconds ~/ 86400;
+  final hours = (seconds % 86400) ~/ 3600;
+  final minutes = (seconds % 3600) ~/ 60;
+  if (days > 0) return '${days}d ${hours}h';
+  if (hours > 0) return '${hours}h ${minutes}m';
+  return '${minutes}m';
 }
 
 /// Empty fleet state: invite to register the first daemon.

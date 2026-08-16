@@ -31,6 +31,9 @@ import 'connection_export_service.dart';
 import 'connection_import_service.dart';
 import 'connection_import_sheet.dart';
 import 'local_connection_manager.dart';
+import 'maidcafe_push.dart';
+import 'maidcafe_metoer.dart';
+import 'maidcafe_service.dart';
 import 'server_providers.dart';
 import 'tailscale_settings_section.dart';
 import 'terminal_adapter_preferences.dart';
@@ -769,6 +772,12 @@ class SettingsPage extends HookConsumerWidget {
                                 ],
                               ),
                       ),
+                    ),
+                    const SizedBox(height: 24),
+                    _SettingsSection(
+                      titleKey: 'maidCafeCloudConnection',
+                      padding: EdgeInsets.zero,
+                      child: const _MaidCafeCloudConnectionSection(),
                     ),
                     const SizedBox(height: 24),
                   ],
@@ -2854,6 +2863,210 @@ class _SettingsSection extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// MaidCafe cloud endpoint configuration: the server URL MaidKit's cloud
+/// features (daemons, credentials, notifications) talk to, plus a health
+/// check. Self-hosted clouds get a note that push notifications are
+/// unavailable there.
+class _MaidCafeCloudConnectionSection extends ConsumerStatefulWidget {
+  const _MaidCafeCloudConnectionSection();
+
+  @override
+  ConsumerState<_MaidCafeCloudConnectionSection> createState() =>
+      _MaidCafeCloudConnectionSectionState();
+}
+
+class _MaidCafeCloudConnectionSectionState
+    extends ConsumerState<_MaidCafeCloudConnectionSection> {
+  static const _urlOp = 'cloudUrl';
+  static const _healthOp = 'cloudHealth';
+
+  late final TextEditingController _cloudUrlController;
+  String? _message;
+  String? _cloudHealth;
+  final Set<String> _busyOps = {};
+
+  bool _isBusy(String op) => _busyOps.contains(op);
+
+  @override
+  void initState() {
+    super.initState();
+    _cloudUrlController = TextEditingController(
+      text: ref.read(maidCafeCloudUrlProvider),
+    );
+  }
+
+  @override
+  void dispose() {
+    _cloudUrlController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cloudUrl = ref.watch(maidCafeCloudUrlProvider);
+    if (_cloudUrlController.text != cloudUrl && !_isBusy(_urlOp)) {
+      _cloudUrlController.text = cloudUrl;
+    }
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: _cloudUrlController,
+          decoration: InputDecoration(
+            labelText: 'maidCafeCloudUrl'.tr(),
+            helperText: 'maidCafeCloudUrlHint'.tr(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilledButton(
+              onPressed: _isBusy(_urlOp) ? null : _saveCloudUrl,
+              child: Text('maidCafeApply'.tr()),
+            ),
+            TextButton(
+              onPressed: _isBusy(_urlOp) ? null : _resetCloudUrl,
+              child: Text('maidCafeReset'.tr()),
+            ),
+            OutlinedButton.icon(
+              onPressed: _isBusy(_healthOp) ? null : _checkCloudHealth,
+              icon: const Icon(Symbols.health_and_safety),
+              label: Text('maidCafeCheckCloudHealth'.tr()),
+            ),
+            if (_cloudHealth != null) _healthStatus(context),
+          ],
+        ),
+        if (_message != null) ...[const SizedBox(height: 8), Text(_message!)],
+        if (!maidCafeCloudSupportsPush(cloudUrl)) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              border: Border.all(color: colors.outlineVariant),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Symbols.notifications_off,
+                  size: 20,
+                  color: colors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'maidCafeSelfHostedPushHint'.tr(),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _saveCloudUrl() async {
+    await _run(_urlOp, () async {
+      await ref
+          .read(maidCafeCloudUrlProvider.notifier)
+          .save(_cloudUrlController.text);
+      final workspaceId =
+          ref.read(maidCafeWorkspaceIdProvider) ??
+          ref.read(cloudWorkspacesProvider).asData?.value.firstOrNull?.id;
+      if (workspaceId != null) {
+        ref.invalidate(maidCafeDaemonsProvider(workspaceId));
+      }
+      _cloudUrlController.text = ref.read(maidCafeCloudUrlProvider);
+    });
+  }
+
+  Future<void> _resetCloudUrl() async {
+    _cloudUrlController.text = maidCafeDefaultCloudUrl;
+    await _saveCloudUrl();
+  }
+
+  Future<void> _checkCloudHealth() async {
+    await _run(_healthOp, () async {
+      final health = await ref.read(maidCafeServiceProvider).checkCloudHealth();
+      if (mounted) {
+        setState(
+          () => _cloudHealth = health.ok
+              ? 'OK (${health.mode ?? 'cloud'})'
+              : 'Not healthy',
+        );
+      }
+    });
+  }
+
+  Widget _healthStatus(BuildContext context) {
+    final isHealthy = _cloudHealth!.startsWith('OK');
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isHealthy ? colors.secondaryContainer : colors.errorContainer,
+        border: Border.all(color: isHealthy ? colors.secondary : colors.error),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isHealthy ? Symbols.check_circle : Symbols.warning,
+            size: 18,
+            color: isHealthy
+                ? colors.onSecondaryContainer
+                : colors.onErrorContainer,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _cloudHealth!,
+            style: TextStyle(
+              color: isHealthy
+                  ? colors.onSecondaryContainer
+                  : colors.onErrorContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _run(String op, Future<void> Function() action) async {
+    if (mounted) {
+      setState(() {
+        _busyOps.add(op);
+        _message = null;
+      });
+    }
+    try {
+      await action();
+    } on MaidCafeException catch (error) {
+      _showError(error.message);
+    } on MaidCafeMetoerException catch (error) {
+      _showError(error.message);
+    } catch (error) {
+      _showError(error.toString());
+    } finally {
+      if (mounted) setState(() => _busyOps.remove(op));
+    }
+  }
+
+  void _showError(String message) {
+    if (mounted) setState(() => _message = message);
   }
 }
 
