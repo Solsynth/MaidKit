@@ -380,10 +380,25 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       }
       await _loadDaemonConfig();
       final port = await _resolveMaidCafePort(refreshRemote: true);
-      final opened = await _openStream(port: port, force: true);
+      // The session registry swallows open failures into a null session, so
+      // a down daemon makes _openStream return false instead of throwing;
+      // without this branch the tab would stay on `checking` forever. The
+      // timeout only guards a hung SSH forward, never the happy path.
+      final opened = await _openStream(
+        port: port,
+        force: true,
+      ).timeout(const Duration(seconds: 45));
       if (opened && mounted) {
         setState(() => _state = _MaidCafeState.running);
         Future<void>.microtask(_refreshMetrics);
+      } else if (mounted) {
+        _closeStream();
+        setState(() {
+          _state = _MaidCafeState.notInstalled;
+          _message = managed
+              ? 'maidCafeInstallationUnavailable'.tr()
+              : 'maidCafeInstallationCheckFailed'.tr();
+        });
       }
     } catch (error) {
       _closeStream();
@@ -399,10 +414,16 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   }
 
   void _stageAction(MaidCafeActionDefinition action) {
+    // Cards pass copyWith instances, so identity never matches the stored
+    // list; the slug is the stable key (uniqueness is enforced on add).
     ref.read(maidCafeActionsProvider.notifier).setForServer(widget.server.id, [
       for (final current in _actions)
-        identical(current, action) ? action : current,
+        current.name == action.name ? action : current,
     ]);
+    // The provider is read (not watched) so changes only land on screen when
+    // the widget rebuilds; without this, toggle chips and the dirty footer
+    // never reflect a staged edit.
+    setState(() {});
   }
 
   void _addAction() {
@@ -1237,7 +1258,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   }
 
   Widget _payloadTabs(BuildContext context) => DefaultTabController(
-    length: 2,
+    length: 3,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1251,11 +1272,19 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
               icon: const Icon(Symbols.play_arrow, size: 18),
               label: 'maidCafeActions'.tr(),
             ),
+            IconLabelTab(
+              icon: const Icon(Symbols.receipt_long, size: 18),
+              label: 'maidCafeAuditTab'.tr(),
+            ),
           ],
         ),
         Expanded(
           child: TabBarView(
-            children: [_configEditor(context), _actionsTab(context)],
+            children: [
+              _configEditor(context),
+              _actionsTab(context),
+              _auditTab(context),
+            ],
           ),
         ),
       ],
@@ -1265,9 +1294,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   Widget _actionsTab(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    if (_stream != null && !_auditLoaded && !_auditLoading) {
-      Future<void>.microtask(_loadAudit);
-    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1275,13 +1301,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Text(
-                'maidCafeActionsHint'.tr(),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
@@ -1299,8 +1318,11 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
               if (_showComposer) ...[
                 const SizedBox(height: 8),
                 _actionComposer(context),
-                const SizedBox(height: 16),
               ],
+              // Stable gap between the composer block and the list: when the
+              // composer closes after an add, the first card keeps the same
+              // 16px breathing room instead of abutting the add button.
+              const SizedBox(height: 16),
               if (_actions.isEmpty && !_showComposer)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
@@ -1324,94 +1346,101 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                 ),
                 const SizedBox(height: 12),
               ],
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'maidCafeAuditTitle'.tr(),
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  if (_auditEntries.isNotEmpty)
-                    DropdownButtonHideUnderline(
-                      child: DropdownButton<String?>(
-                        value: _auditFilter,
-                        hint: Text('maidCafeAuditFilter'.tr()),
-                        items: [
-                          DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text('maidCafeAuditAll'.tr()),
-                          ),
-                          for (final name in _auditEntryNames)
-                            DropdownMenuItem<String?>(
-                              value: name,
-                              child: Text(name),
-                            ),
-                        ],
-                        onChanged: _busy
-                            ? null
-                            : (value) => setState(() => _auditFilter = value),
-                      ),
-                    ),
-                  IconButton(
-                    tooltip: 'maidCafeAuditClear'.tr(),
-                    onPressed: _busy || _auditEntries.isEmpty
-                        ? null
-                        : _confirmClearAudit,
-                    icon: const Icon(Symbols.delete_outline),
-                  ),
-                  IconButton(
-                    tooltip: 'commonRefresh'.tr(),
-                    onPressed: _busy ? null : _loadAudit,
-                    icon: const Icon(Symbols.refresh),
-                  ),
-                ],
-              ),
-              if (_auditLoading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: LinearProgressIndicator(),
-                )
-              else if (_auditError != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    _auditError!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.error,
-                    ),
-                  ),
-                )
-              else if (_auditEntries.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    'maidCafeAuditEmpty'.tr(),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                )
-              else if (_visibleAuditEntries.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    'maidCafeAuditNoMatches'.tr(),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                )
-              else
-                for (final entry in _visibleAuditEntries)
-                  _MaidCafeAuditRow(entry: entry),
             ],
           ),
         ),
         _actionsFooter(context),
+      ],
+    );
+  }
+
+  Widget _auditTab(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    if (_stream != null && !_auditLoaded && !_auditLoading) {
+      Future<void>.microtask(_loadAudit);
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'maidCafeAuditTitle'.tr(),
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (_auditEntries.isNotEmpty)
+              DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _auditFilter,
+                  hint: Text('maidCafeAuditFilter'.tr()),
+                  items: [
+                    DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('maidCafeAuditAll'.tr()),
+                    ),
+                    for (final name in _auditEntryNames)
+                      DropdownMenuItem<String?>(value: name, child: Text(name)),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() => _auditFilter = value),
+                ),
+              ),
+            IconButton(
+              tooltip: 'maidCafeAuditClear'.tr(),
+              onPressed: _busy || _auditEntries.isEmpty
+                  ? null
+                  : _confirmClearAudit,
+              icon: const Icon(Symbols.delete_outline),
+            ),
+            IconButton(
+              tooltip: 'commonRefresh'.tr(),
+              onPressed: _busy ? null : _loadAudit,
+              icon: const Icon(Symbols.refresh),
+            ),
+          ],
+        ),
+        if (_auditLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: LinearProgressIndicator(),
+          )
+        else if (_auditError != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              _auditError!,
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+            ),
+          )
+        else if (_auditEntries.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'maidCafeAuditEmpty'.tr(),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else if (_visibleAuditEntries.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'maidCafeAuditNoMatches'.tr(),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else
+          for (final entry in _visibleAuditEntries)
+            _MaidCafeAuditRow(entry: entry),
       ],
     );
   }
@@ -2299,6 +2328,10 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
   late final TextEditingController _cwdController;
   late final TextEditingController _userController;
   late final TextEditingController _timeoutController;
+  // The whole card configuration — display name, script body, execution
+  // settings and notify toggles — folds away so a configured action reads as
+  // a compact run surface. The run result stays visible either way.
+  var _configExpanded = false;
 
   @override
   void initState() {
@@ -2370,6 +2403,20 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
           children: [
             Row(
               children: [
+                IconButton(
+                  tooltip: _configExpanded
+                      ? 'maidCafeActionConfigCollapse'.tr()
+                      : 'maidCafeActionConfigExpand'.tr(),
+                  onPressed: () =>
+                      setState(() => _configExpanded = !_configExpanded),
+                  icon: AnimatedRotation(
+                    turns: _configExpanded ? 0.5 : 0,
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 150),
+                    child: const Icon(Symbols.expand_more),
+                  ),
+                ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2439,74 +2486,81 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _displayNameController,
-              enabled: !widget.busy,
-              onChanged: (text) => widget.onChanged(
-                action.copyWith(
-                  displayName: text.trim().isEmpty ? null : text.trim(),
+            if (_configExpanded) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _displayNameController,
+                enabled: !widget.busy,
+                onChanged: (text) => widget.onChanged(
+                  action.copyWith(
+                    displayName: text.trim().isEmpty ? null : text.trim(),
+                  ),
+                ),
+                decoration: InputDecoration(
+                  labelText: 'maidCafeActionDisplayName'.tr(),
+                  isDense: true,
                 ),
               ),
-              decoration: InputDecoration(
-                labelText: 'maidCafeActionDisplayName'.tr(),
-                isDense: true,
+              const SizedBox(height: 12),
+              _MaidCafeScriptField(
+                controller: _scriptController,
+                onChanged: (text) =>
+                    widget.onChanged(action.copyWith(script: text)),
               ),
-            ),
-            const SizedBox(height: 12),
-            _MaidCafeScriptField(
-              controller: _scriptController,
-              onChanged: (text) =>
-                  widget.onChanged(action.copyWith(script: text)),
-            ),
-            const SizedBox(height: 16),
-            _MaidCafeExecutionSection(
-              cwdController: _cwdController,
-              userController: _userController,
-              timeoutController: _timeoutController,
-              environment: action.environment,
-              enabled: !widget.busy,
-              onCwdChanged: (text) => widget.onChanged(
-                action.copyWith(
-                  workingDirectory: text.trim().isEmpty ? null : text.trim(),
+              const SizedBox(height: 16),
+              _MaidCafeExecutionSection(
+                cwdController: _cwdController,
+                userController: _userController,
+                timeoutController: _timeoutController,
+                environment: action.environment,
+                enabled: !widget.busy,
+                // Configured actions collapse to a compact run surface; the
+                // composer (the definition moment) stays expanded.
+                initiallyExpanded: false,
+                onCwdChanged: (text) => widget.onChanged(
+                  action.copyWith(
+                    workingDirectory: text.trim().isEmpty ? null : text.trim(),
+                  ),
                 ),
+                onUserChanged: (text) => widget.onChanged(
+                  action.copyWith(
+                    user: text.trim().isEmpty ? null : text.trim(),
+                  ),
+                ),
+                onTimeoutChanged: (text) => widget.onChanged(
+                  action.copyWith(
+                    scriptTimeout: text.trim().isEmpty ? null : text.trim(),
+                  ),
+                ),
+                onEnvironmentChanged: (environment) =>
+                    widget.onChanged(action.copyWith(environment: environment)),
               ),
-              onUserChanged: (text) => widget.onChanged(
-                action.copyWith(user: text.trim().isEmpty ? null : text.trim()),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: Text('maidCafeNotifyOnSuccess'.tr()),
+                    selected: action.notifyOnSuccess,
+                    onSelected: widget.busy
+                        ? null
+                        : (value) => widget.onChanged(
+                            action.copyWith(notifyOnSuccess: value),
+                          ),
+                  ),
+                  FilterChip(
+                    label: Text('maidCafeNotifyOnFailure'.tr()),
+                    selected: action.notifyOnFailure,
+                    onSelected: widget.busy
+                        ? null
+                        : (value) => widget.onChanged(
+                            action.copyWith(notifyOnFailure: value),
+                          ),
+                  ),
+                ],
               ),
-              onTimeoutChanged: (text) => widget.onChanged(
-                action.copyWith(
-                  scriptTimeout: text.trim().isEmpty ? null : text.trim(),
-                ),
-              ),
-              onEnvironmentChanged: (environment) =>
-                  widget.onChanged(action.copyWith(environment: environment)),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilterChip(
-                  label: Text('maidCafeNotifyOnSuccess'.tr()),
-                  selected: action.notifyOnSuccess,
-                  onSelected: widget.busy
-                      ? null
-                      : (value) => widget.onChanged(
-                          action.copyWith(notifyOnSuccess: value),
-                        ),
-                ),
-                FilterChip(
-                  label: Text('maidCafeNotifyOnFailure'.tr()),
-                  selected: action.notifyOnFailure,
-                  onSelected: widget.busy
-                      ? null
-                      : (value) => widget.onChanged(
-                          action.copyWith(notifyOnFailure: value),
-                        ),
-                ),
-              ],
-            ),
+            ],
             if (widget.result != null) ...[
               const SizedBox(height: 12),
               _MaidCafeActionResultView(result: widget.result!),
@@ -2519,8 +2573,9 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
 }
 
 /// Working directory, run-as user, timeout and environment inputs for an
-/// action.
-class _MaidCafeExecutionSection extends StatelessWidget {
+/// action. Collapsible so a configured action's card stays compact; the
+/// composer keeps it expanded while a new action is being defined.
+class _MaidCafeExecutionSection extends StatefulWidget {
   const _MaidCafeExecutionSection({
     required this.cwdController,
     required this.userController,
@@ -2531,6 +2586,7 @@ class _MaidCafeExecutionSection extends StatelessWidget {
     this.onUserChanged,
     this.onTimeoutChanged,
     this.enabled = true,
+    this.initiallyExpanded = true,
   });
 
   final TextEditingController cwdController;
@@ -2542,6 +2598,15 @@ class _MaidCafeExecutionSection extends StatelessWidget {
   final ValueChanged<String>? onUserChanged;
   final ValueChanged<String>? onTimeoutChanged;
   final bool enabled;
+  final bool initiallyExpanded;
+
+  @override
+  State<_MaidCafeExecutionSection> createState() =>
+      _MaidCafeExecutionSectionState();
+}
+
+class _MaidCafeExecutionSectionState extends State<_MaidCafeExecutionSection> {
+  late var _expanded = widget.initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -2550,66 +2615,91 @@ class _MaidCafeExecutionSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'maidCafeActionExecution'.tr(),
-          style: theme.textTheme.titleSmall?.copyWith(
-            color: scheme.onSurfaceVariant,
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Text(
+                  'maidCafeActionExecution'.tr(),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const Spacer(),
+                AnimatedRotation(
+                  turns: _expanded ? 0.5 : 0,
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 150),
+                  child: Icon(
+                    Symbols.expand_more,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: TextField(
-                controller: cwdController,
-                enabled: enabled,
-                onChanged: onCwdChanged,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeActionCwd'.tr(),
-                  hintText: '/srv/myapp',
+        if (_expanded) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: widget.cwdController,
+                  enabled: widget.enabled,
+                  onChanged: widget.onCwdChanged,
+                  decoration: InputDecoration(
+                    labelText: 'maidCafeActionCwd'.tr(),
+                    hintText: '/srv/myapp',
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: userController,
-                enabled: enabled,
-                onChanged: onUserChanged,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeActionUser'.tr(),
-                  hintText: 'deploy',
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: widget.userController,
+                  enabled: widget.enabled,
+                  onChanged: widget.onUserChanged,
+                  decoration: InputDecoration(
+                    labelText: 'maidCafeActionUser'.tr(),
+                    hintText: 'deploy',
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: timeoutController,
-                enabled: enabled,
-                onChanged: onTimeoutChanged,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeActionTimeout'.tr(),
-                  hintText: '30s',
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: widget.timeoutController,
+                  enabled: widget.enabled,
+                  onChanged: widget.onTimeoutChanged,
+                  decoration: InputDecoration(
+                    labelText: 'maidCafeActionTimeout'.tr(),
+                    hintText: '30s',
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _MaidCafeEnvEditor(
-          environment: environment,
-          enabled: enabled,
-          onChanged: onEnvironmentChanged,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'maidCafeActionExecutionHint'.tr(),
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
+            ],
           ),
-        ),
+          const SizedBox(height: 12),
+          _MaidCafeEnvEditor(
+            environment: widget.environment,
+            enabled: widget.enabled,
+            onChanged: widget.onEnvironmentChanged,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'maidCafeActionExecutionHint'.tr(),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     );
   }
