@@ -8643,6 +8643,656 @@ class GitHubTokensCompanion extends UpdateCompanion<GitHubToken> {
   }
 }
 
+class $PortForwardConfigsTable extends PortForwardConfigs
+    with TableInfo<$PortForwardConfigsTable, PortForwardConfig> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $PortForwardConfigsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _serverIdMeta = const VerificationMeta(
+    'serverId',
+  );
+  @override
+  late final GeneratedColumn<int> serverId = GeneratedColumn<int>(
+    'server_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _directionMeta = const VerificationMeta(
+    'direction',
+  );
+  @override
+  late final GeneratedColumn<String> direction = GeneratedColumn<String>(
+    'direction',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _bindHostMeta = const VerificationMeta(
+    'bindHost',
+  );
+  @override
+  late final GeneratedColumn<String> bindHost = GeneratedColumn<String>(
+    'bind_host',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _bindPortMeta = const VerificationMeta(
+    'bindPort',
+  );
+  @override
+  late final GeneratedColumn<int> bindPort = GeneratedColumn<int>(
+    'bind_port',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetHostMeta = const VerificationMeta(
+    'targetHost',
+  );
+  @override
+  late final GeneratedColumn<String> targetHost = GeneratedColumn<String>(
+    'target_host',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetPortMeta = const VerificationMeta(
+    'targetPort',
+  );
+  @override
+  late final GeneratedColumn<int> targetPort = GeneratedColumn<int>(
+    'target_port',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _autoStartMeta = const VerificationMeta(
+    'autoStart',
+  );
+  @override
+  late final GeneratedColumn<bool> autoStart = GeneratedColumn<bool>(
+    'auto_start',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("auto_start" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    serverId,
+    direction,
+    kind,
+    bindHost,
+    bindPort,
+    targetHost,
+    targetPort,
+    autoStart,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'port_forward_configs';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<PortForwardConfig> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('server_id')) {
+      context.handle(
+        _serverIdMeta,
+        serverId.isAcceptableOrUnknown(data['server_id']!, _serverIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_serverIdMeta);
+    }
+    if (data.containsKey('direction')) {
+      context.handle(
+        _directionMeta,
+        direction.isAcceptableOrUnknown(data['direction']!, _directionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_directionMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('bind_host')) {
+      context.handle(
+        _bindHostMeta,
+        bindHost.isAcceptableOrUnknown(data['bind_host']!, _bindHostMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_bindHostMeta);
+    }
+    if (data.containsKey('bind_port')) {
+      context.handle(
+        _bindPortMeta,
+        bindPort.isAcceptableOrUnknown(data['bind_port']!, _bindPortMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_bindPortMeta);
+    }
+    if (data.containsKey('target_host')) {
+      context.handle(
+        _targetHostMeta,
+        targetHost.isAcceptableOrUnknown(data['target_host']!, _targetHostMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_targetHostMeta);
+    }
+    if (data.containsKey('target_port')) {
+      context.handle(
+        _targetPortMeta,
+        targetPort.isAcceptableOrUnknown(data['target_port']!, _targetPortMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_targetPortMeta);
+    }
+    if (data.containsKey('auto_start')) {
+      context.handle(
+        _autoStartMeta,
+        autoStart.isAcceptableOrUnknown(data['auto_start']!, _autoStartMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  PortForwardConfig map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return PortForwardConfig(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      serverId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}server_id'],
+      )!,
+      direction: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}direction'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      bindHost: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}bind_host'],
+      )!,
+      bindPort: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}bind_port'],
+      )!,
+      targetHost: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_host'],
+      )!,
+      targetPort: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}target_port'],
+      )!,
+      autoStart: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}auto_start'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $PortForwardConfigsTable createAlias(String alias) {
+    return $PortForwardConfigsTable(attachedDatabase, alias);
+  }
+}
+
+class PortForwardConfig extends DataClass
+    implements Insertable<PortForwardConfig> {
+  final int id;
+  final int serverId;
+  final String direction;
+  final String kind;
+  final String bindHost;
+  final int bindPort;
+  final String targetHost;
+  final int targetPort;
+  final bool autoStart;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const PortForwardConfig({
+    required this.id,
+    required this.serverId,
+    required this.direction,
+    required this.kind,
+    required this.bindHost,
+    required this.bindPort,
+    required this.targetHost,
+    required this.targetPort,
+    required this.autoStart,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['server_id'] = Variable<int>(serverId);
+    map['direction'] = Variable<String>(direction);
+    map['kind'] = Variable<String>(kind);
+    map['bind_host'] = Variable<String>(bindHost);
+    map['bind_port'] = Variable<int>(bindPort);
+    map['target_host'] = Variable<String>(targetHost);
+    map['target_port'] = Variable<int>(targetPort);
+    map['auto_start'] = Variable<bool>(autoStart);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  PortForwardConfigsCompanion toCompanion(bool nullToAbsent) {
+    return PortForwardConfigsCompanion(
+      id: Value(id),
+      serverId: Value(serverId),
+      direction: Value(direction),
+      kind: Value(kind),
+      bindHost: Value(bindHost),
+      bindPort: Value(bindPort),
+      targetHost: Value(targetHost),
+      targetPort: Value(targetPort),
+      autoStart: Value(autoStart),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory PortForwardConfig.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return PortForwardConfig(
+      id: serializer.fromJson<int>(json['id']),
+      serverId: serializer.fromJson<int>(json['serverId']),
+      direction: serializer.fromJson<String>(json['direction']),
+      kind: serializer.fromJson<String>(json['kind']),
+      bindHost: serializer.fromJson<String>(json['bindHost']),
+      bindPort: serializer.fromJson<int>(json['bindPort']),
+      targetHost: serializer.fromJson<String>(json['targetHost']),
+      targetPort: serializer.fromJson<int>(json['targetPort']),
+      autoStart: serializer.fromJson<bool>(json['autoStart']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'serverId': serializer.toJson<int>(serverId),
+      'direction': serializer.toJson<String>(direction),
+      'kind': serializer.toJson<String>(kind),
+      'bindHost': serializer.toJson<String>(bindHost),
+      'bindPort': serializer.toJson<int>(bindPort),
+      'targetHost': serializer.toJson<String>(targetHost),
+      'targetPort': serializer.toJson<int>(targetPort),
+      'autoStart': serializer.toJson<bool>(autoStart),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  PortForwardConfig copyWith({
+    int? id,
+    int? serverId,
+    String? direction,
+    String? kind,
+    String? bindHost,
+    int? bindPort,
+    String? targetHost,
+    int? targetPort,
+    bool? autoStart,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => PortForwardConfig(
+    id: id ?? this.id,
+    serverId: serverId ?? this.serverId,
+    direction: direction ?? this.direction,
+    kind: kind ?? this.kind,
+    bindHost: bindHost ?? this.bindHost,
+    bindPort: bindPort ?? this.bindPort,
+    targetHost: targetHost ?? this.targetHost,
+    targetPort: targetPort ?? this.targetPort,
+    autoStart: autoStart ?? this.autoStart,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  PortForwardConfig copyWithCompanion(PortForwardConfigsCompanion data) {
+    return PortForwardConfig(
+      id: data.id.present ? data.id.value : this.id,
+      serverId: data.serverId.present ? data.serverId.value : this.serverId,
+      direction: data.direction.present ? data.direction.value : this.direction,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      bindHost: data.bindHost.present ? data.bindHost.value : this.bindHost,
+      bindPort: data.bindPort.present ? data.bindPort.value : this.bindPort,
+      targetHost: data.targetHost.present
+          ? data.targetHost.value
+          : this.targetHost,
+      targetPort: data.targetPort.present
+          ? data.targetPort.value
+          : this.targetPort,
+      autoStart: data.autoStart.present ? data.autoStart.value : this.autoStart,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('PortForwardConfig(')
+          ..write('id: $id, ')
+          ..write('serverId: $serverId, ')
+          ..write('direction: $direction, ')
+          ..write('kind: $kind, ')
+          ..write('bindHost: $bindHost, ')
+          ..write('bindPort: $bindPort, ')
+          ..write('targetHost: $targetHost, ')
+          ..write('targetPort: $targetPort, ')
+          ..write('autoStart: $autoStart, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    serverId,
+    direction,
+    kind,
+    bindHost,
+    bindPort,
+    targetHost,
+    targetPort,
+    autoStart,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is PortForwardConfig &&
+          other.id == this.id &&
+          other.serverId == this.serverId &&
+          other.direction == this.direction &&
+          other.kind == this.kind &&
+          other.bindHost == this.bindHost &&
+          other.bindPort == this.bindPort &&
+          other.targetHost == this.targetHost &&
+          other.targetPort == this.targetPort &&
+          other.autoStart == this.autoStart &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class PortForwardConfigsCompanion extends UpdateCompanion<PortForwardConfig> {
+  final Value<int> id;
+  final Value<int> serverId;
+  final Value<String> direction;
+  final Value<String> kind;
+  final Value<String> bindHost;
+  final Value<int> bindPort;
+  final Value<String> targetHost;
+  final Value<int> targetPort;
+  final Value<bool> autoStart;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  const PortForwardConfigsCompanion({
+    this.id = const Value.absent(),
+    this.serverId = const Value.absent(),
+    this.direction = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.bindHost = const Value.absent(),
+    this.bindPort = const Value.absent(),
+    this.targetHost = const Value.absent(),
+    this.targetPort = const Value.absent(),
+    this.autoStart = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  PortForwardConfigsCompanion.insert({
+    this.id = const Value.absent(),
+    required int serverId,
+    required String direction,
+    required String kind,
+    required String bindHost,
+    required int bindPort,
+    required String targetHost,
+    required int targetPort,
+    this.autoStart = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+  }) : serverId = Value(serverId),
+       direction = Value(direction),
+       kind = Value(kind),
+       bindHost = Value(bindHost),
+       bindPort = Value(bindPort),
+       targetHost = Value(targetHost),
+       targetPort = Value(targetPort),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<PortForwardConfig> custom({
+    Expression<int>? id,
+    Expression<int>? serverId,
+    Expression<String>? direction,
+    Expression<String>? kind,
+    Expression<String>? bindHost,
+    Expression<int>? bindPort,
+    Expression<String>? targetHost,
+    Expression<int>? targetPort,
+    Expression<bool>? autoStart,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (serverId != null) 'server_id': serverId,
+      if (direction != null) 'direction': direction,
+      if (kind != null) 'kind': kind,
+      if (bindHost != null) 'bind_host': bindHost,
+      if (bindPort != null) 'bind_port': bindPort,
+      if (targetHost != null) 'target_host': targetHost,
+      if (targetPort != null) 'target_port': targetPort,
+      if (autoStart != null) 'auto_start': autoStart,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  PortForwardConfigsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? serverId,
+    Value<String>? direction,
+    Value<String>? kind,
+    Value<String>? bindHost,
+    Value<int>? bindPort,
+    Value<String>? targetHost,
+    Value<int>? targetPort,
+    Value<bool>? autoStart,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+  }) {
+    return PortForwardConfigsCompanion(
+      id: id ?? this.id,
+      serverId: serverId ?? this.serverId,
+      direction: direction ?? this.direction,
+      kind: kind ?? this.kind,
+      bindHost: bindHost ?? this.bindHost,
+      bindPort: bindPort ?? this.bindPort,
+      targetHost: targetHost ?? this.targetHost,
+      targetPort: targetPort ?? this.targetPort,
+      autoStart: autoStart ?? this.autoStart,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (serverId.present) {
+      map['server_id'] = Variable<int>(serverId.value);
+    }
+    if (direction.present) {
+      map['direction'] = Variable<String>(direction.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (bindHost.present) {
+      map['bind_host'] = Variable<String>(bindHost.value);
+    }
+    if (bindPort.present) {
+      map['bind_port'] = Variable<int>(bindPort.value);
+    }
+    if (targetHost.present) {
+      map['target_host'] = Variable<String>(targetHost.value);
+    }
+    if (targetPort.present) {
+      map['target_port'] = Variable<int>(targetPort.value);
+    }
+    if (autoStart.present) {
+      map['auto_start'] = Variable<bool>(autoStart.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('PortForwardConfigsCompanion(')
+          ..write('id: $id, ')
+          ..write('serverId: $serverId, ')
+          ..write('direction: $direction, ')
+          ..write('kind: $kind, ')
+          ..write('bindHost: $bindHost, ')
+          ..write('bindPort: $bindPort, ')
+          ..write('targetHost: $targetHost, ')
+          ..write('targetPort: $targetPort, ')
+          ..write('autoStart: $autoStart, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -8670,6 +9320,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $GitHubConnectionsTable(this);
   late final $GitHubRepoPinsTable gitHubRepoPins = $GitHubRepoPinsTable(this);
   late final $GitHubTokensTable gitHubTokens = $GitHubTokensTable(this);
+  late final $PortForwardConfigsTable portForwardConfigs =
+      $PortForwardConfigsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -8691,6 +9343,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     gitHubConnections,
     gitHubRepoPins,
     gitHubTokens,
+    portForwardConfigs,
   ];
 }
 
@@ -13268,6 +13921,331 @@ typedef $$GitHubTokensTableProcessedTableManager =
       GitHubToken,
       PrefetchHooks Function()
     >;
+typedef $$PortForwardConfigsTableCreateCompanionBuilder =
+    PortForwardConfigsCompanion Function({
+      Value<int> id,
+      required int serverId,
+      required String direction,
+      required String kind,
+      required String bindHost,
+      required int bindPort,
+      required String targetHost,
+      required int targetPort,
+      Value<bool> autoStart,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+    });
+typedef $$PortForwardConfigsTableUpdateCompanionBuilder =
+    PortForwardConfigsCompanion Function({
+      Value<int> id,
+      Value<int> serverId,
+      Value<String> direction,
+      Value<String> kind,
+      Value<String> bindHost,
+      Value<int> bindPort,
+      Value<String> targetHost,
+      Value<int> targetPort,
+      Value<bool> autoStart,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+    });
+
+class $$PortForwardConfigsTableFilterComposer
+    extends Composer<_$AppDatabase, $PortForwardConfigsTable> {
+  $$PortForwardConfigsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get serverId => $composableBuilder(
+    column: $table.serverId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get direction => $composableBuilder(
+    column: $table.direction,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get bindHost => $composableBuilder(
+    column: $table.bindHost,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get bindPort => $composableBuilder(
+    column: $table.bindPort,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetHost => $composableBuilder(
+    column: $table.targetHost,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get targetPort => $composableBuilder(
+    column: $table.targetPort,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get autoStart => $composableBuilder(
+    column: $table.autoStart,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$PortForwardConfigsTableOrderingComposer
+    extends Composer<_$AppDatabase, $PortForwardConfigsTable> {
+  $$PortForwardConfigsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get serverId => $composableBuilder(
+    column: $table.serverId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get direction => $composableBuilder(
+    column: $table.direction,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get bindHost => $composableBuilder(
+    column: $table.bindHost,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get bindPort => $composableBuilder(
+    column: $table.bindPort,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get targetHost => $composableBuilder(
+    column: $table.targetHost,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get targetPort => $composableBuilder(
+    column: $table.targetPort,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get autoStart => $composableBuilder(
+    column: $table.autoStart,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$PortForwardConfigsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $PortForwardConfigsTable> {
+  $$PortForwardConfigsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get serverId =>
+      $composableBuilder(column: $table.serverId, builder: (column) => column);
+
+  GeneratedColumn<String> get direction =>
+      $composableBuilder(column: $table.direction, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get bindHost =>
+      $composableBuilder(column: $table.bindHost, builder: (column) => column);
+
+  GeneratedColumn<int> get bindPort =>
+      $composableBuilder(column: $table.bindPort, builder: (column) => column);
+
+  GeneratedColumn<String> get targetHost => $composableBuilder(
+    column: $table.targetHost,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get targetPort => $composableBuilder(
+    column: $table.targetPort,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get autoStart =>
+      $composableBuilder(column: $table.autoStart, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$PortForwardConfigsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $PortForwardConfigsTable,
+          PortForwardConfig,
+          $$PortForwardConfigsTableFilterComposer,
+          $$PortForwardConfigsTableOrderingComposer,
+          $$PortForwardConfigsTableAnnotationComposer,
+          $$PortForwardConfigsTableCreateCompanionBuilder,
+          $$PortForwardConfigsTableUpdateCompanionBuilder,
+          (
+            PortForwardConfig,
+            BaseReferences<
+              _$AppDatabase,
+              $PortForwardConfigsTable,
+              PortForwardConfig
+            >,
+          ),
+          PortForwardConfig,
+          PrefetchHooks Function()
+        > {
+  $$PortForwardConfigsTableTableManager(
+    _$AppDatabase db,
+    $PortForwardConfigsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$PortForwardConfigsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$PortForwardConfigsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$PortForwardConfigsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> serverId = const Value.absent(),
+                Value<String> direction = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String> bindHost = const Value.absent(),
+                Value<int> bindPort = const Value.absent(),
+                Value<String> targetHost = const Value.absent(),
+                Value<int> targetPort = const Value.absent(),
+                Value<bool> autoStart = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => PortForwardConfigsCompanion(
+                id: id,
+                serverId: serverId,
+                direction: direction,
+                kind: kind,
+                bindHost: bindHost,
+                bindPort: bindPort,
+                targetHost: targetHost,
+                targetPort: targetPort,
+                autoStart: autoStart,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int serverId,
+                required String direction,
+                required String kind,
+                required String bindHost,
+                required int bindPort,
+                required String targetHost,
+                required int targetPort,
+                Value<bool> autoStart = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+              }) => PortForwardConfigsCompanion.insert(
+                id: id,
+                serverId: serverId,
+                direction: direction,
+                kind: kind,
+                bindHost: bindHost,
+                bindPort: bindPort,
+                targetHost: targetHost,
+                targetPort: targetPort,
+                autoStart: autoStart,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$PortForwardConfigsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $PortForwardConfigsTable,
+      PortForwardConfig,
+      $$PortForwardConfigsTableFilterComposer,
+      $$PortForwardConfigsTableOrderingComposer,
+      $$PortForwardConfigsTableAnnotationComposer,
+      $$PortForwardConfigsTableCreateCompanionBuilder,
+      $$PortForwardConfigsTableUpdateCompanionBuilder,
+      (
+        PortForwardConfig,
+        BaseReferences<
+          _$AppDatabase,
+          $PortForwardConfigsTable,
+          PortForwardConfig
+        >,
+      ),
+      PortForwardConfig,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -13304,4 +14282,6 @@ class $AppDatabaseManager {
       $$GitHubRepoPinsTableTableManager(_db, _db.gitHubRepoPins);
   $$GitHubTokensTableTableManager get gitHubTokens =>
       $$GitHubTokensTableTableManager(_db, _db.gitHubTokens);
+  $$PortForwardConfigsTableTableManager get portForwardConfigs =>
+      $$PortForwardConfigsTableTableManager(_db, _db.portForwardConfigs);
 }

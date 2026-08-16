@@ -246,6 +246,24 @@ class GitHubTokens extends Table {
   DateTimeColumn get updatedAt => dateTime()();
 }
 
+/// A saved port-forwarding preset (Termius-style). A preset is metadata only:
+/// it reuses the server's existing SSH connection and contains no credentials.
+/// When [autoStart] is set, the forward is started automatically every time
+/// the server connects.
+class PortForwardConfigs extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get serverId => integer()();
+  TextColumn get direction => text()();
+  TextColumn get kind => text()();
+  TextColumn get bindHost => text()();
+  IntColumn get bindPort => integer()();
+  TextColumn get targetHost => text()();
+  IntColumn get targetPort => integer()();
+  BoolColumn get autoStart => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+}
+
 /// Links a deployment project to a GitHub workflow whose latest run is shown
 /// on the project detail page.
 @DriftDatabase(
@@ -266,6 +284,7 @@ class GitHubTokens extends Table {
     GitHubConnections,
     GitHubRepoPins,
     GitHubTokens,
+    PortForwardConfigs,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -282,7 +301,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 27;
+  int get schemaVersion => 28;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -552,6 +571,9 @@ class AppDatabase extends _$AppDatabase {
         // key, which is only available after unlock).
         await m.createTable(gitHubTokens);
       }
+      if (from < 28) {
+        await m.createTable(portForwardConfigs);
+      }
     },
   );
 
@@ -608,4 +630,16 @@ class AppDatabase extends _$AppDatabase {
 
   Stream<List<GitHubRepoPin>> watchGitHubRepoPins() =>
       select(gitHubRepoPins).watch();
+
+  Stream<List<PortForwardConfig>> watchPortForwardConfigs(int serverId) =>
+      (select(portForwardConfigs)
+            ..where((table) => table.serverId.equals(serverId))
+            ..orderBy([(table) => OrderingTerm.asc(table.createdAt)]))
+          .watch();
+
+  Future<List<PortForwardConfig>> portForwardConfigsForServer(int serverId) =>
+      (select(portForwardConfigs)
+            ..where((table) => table.serverId.equals(serverId))
+            ..orderBy([(table) => OrderingTerm.asc(table.createdAt)]))
+          .get();
 }

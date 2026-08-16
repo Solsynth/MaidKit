@@ -31,12 +31,18 @@ class SshConnectionManager {
     this._terminalAdapterFactory, {
     bool Function()? brandingEnvironmentEnabled,
     ServerMetricsCollector? metricsCollector,
+    this.onConnected,
   }) : _brandingEnvironmentEnabled = brandingEnvironmentEnabled ?? (() => true),
        _metricsCollector = metricsCollector ?? AutoServerMetricsCollector();
 
   final TerminalSessionAdapterFactory Function() _terminalAdapterFactory;
   final bool Function() _brandingEnvironmentEnabled;
   final ServerMetricsCollector _metricsCollector;
+
+  /// Fired after a server's SSH session becomes connected. Used to start
+  /// saved port-forwarding presets that opted into auto-start. Failures are
+  /// handled by the caller; the connection itself is unaffected.
+  final void Function(Server server)? onConnected;
 
   /// These clients are used exclusively for collecting server information.
   /// Terminal shells keep their own clients so reconnecting statistics never
@@ -3655,6 +3661,7 @@ uname -r
       _sessions[server.id] = client;
       _sessionJumpHosts[server.id] = server.jumpHostServerId;
       _set(_states[server.id]!.copyWith(status: SessionStatus.connected));
+      onConnected?.call(server);
       // Listen before issuing probes: a transport can fail while the first
       // command is being opened, and [SSHClient.done] completes with that
       // transport error.

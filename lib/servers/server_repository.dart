@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'port_forwarding_models.dart';
 import 'server_models.dart';
 import 'maidcafe_service.dart';
 import 'vault_service.dart';
@@ -262,6 +263,81 @@ class ServerRepository {
   Stream<List<SavedCredential>> watchCredentials() => (_database.select(
     _database.savedCredentials,
   )..orderBy([(table) => OrderingTerm.asc(table.name)])).watch();
+
+  Stream<List<PortForwardConfig>> watchPortForwardConfigs(int serverId) =>
+      _database.watchPortForwardConfigs(serverId);
+
+  Future<List<PortForwardConfig>> portForwardConfigsForServer(int serverId) =>
+      _database.portForwardConfigsForServer(serverId);
+
+  /// Persists a port-forwarding preset. Saving the same forward (same server,
+  /// direction, kind and endpoints) again updates the existing preset instead
+  /// of creating a duplicate; [autoStart] can only turn auto-start on.
+  Future<void> savePortForwardConfig({
+    required int serverId,
+    required PortForwardDirection direction,
+    required PortForwardKind kind,
+    required String bindHost,
+    required int bindPort,
+    required String targetHost,
+    required int targetPort,
+    bool autoStart = false,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final existing =
+        await (_database.select(_database.portForwardConfigs)..where(
+              (table) =>
+                  table.serverId.equals(serverId) &
+                  table.direction.equals(direction.name) &
+                  table.kind.equals(kind.name) &
+                  table.bindHost.equals(bindHost) &
+                  table.bindPort.equals(bindPort) &
+                  table.targetHost.equals(targetHost) &
+                  table.targetPort.equals(targetPort),
+            ))
+            .getSingleOrNull();
+    if (existing == null) {
+      await _database
+          .into(_database.portForwardConfigs)
+          .insert(
+            PortForwardConfigsCompanion.insert(
+              serverId: serverId,
+              direction: direction.name,
+              kind: kind.name,
+              bindHost: bindHost,
+              bindPort: bindPort,
+              targetHost: targetHost,
+              targetPort: targetPort,
+              autoStart: Value(autoStart),
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
+    } else {
+      await (_database.update(
+        _database.portForwardConfigs,
+      )..where((table) => table.id.equals(existing.id))).write(
+        PortForwardConfigsCompanion(
+          autoStart: Value(existing.autoStart || autoStart),
+          updatedAt: Value(now),
+        ),
+      );
+    }
+  }
+
+  Future<void> setPortForwardConfigAutoStart(int id, bool autoStart) =>
+      (_database.update(
+        _database.portForwardConfigs,
+      )..where((table) => table.id.equals(id))).write(
+        PortForwardConfigsCompanion(
+          autoStart: Value(autoStart),
+          updatedAt: Value(DateTime.now().toUtc()),
+        ),
+      );
+
+  Future<void> deletePortForwardConfig(int id) => (_database.delete(
+    _database.portForwardConfigs,
+  )..where((table) => table.id.equals(id))).go();
 
   Future<List<SavedCredential>> credentials() => (_database.select(
     _database.savedCredentials,

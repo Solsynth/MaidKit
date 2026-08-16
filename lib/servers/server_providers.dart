@@ -1056,6 +1056,7 @@ final connectionManagerProvider = Provider<SshConnectionManager>((ref) {
     () => ref.read(terminalSessionAdapterFactoryProvider),
     brandingEnvironmentEnabled: () =>
         ref.read(terminalBrandingEnvironmentEnabledProvider),
+    onConnected: (server) => unawaited(_startAutoPortForwards(ref, server)),
   );
   ref.onDispose(manager.dispose);
   return manager;
@@ -1142,6 +1143,44 @@ Stream<List<ActivePortForward>> _watchPortForwards(
 ) async* {
   yield manager.currentPortForwards;
   yield* manager.portForwards;
+}
+
+/// Saved port-forwarding presets for one server, oldest first.
+final portForwardConfigsProvider =
+    StreamProvider.family<List<PortForwardConfig>, int>((ref, serverId) {
+      return ref
+          .watch(serverRepositoryProvider)
+          .watchPortForwardConfigs(serverId);
+    });
+
+/// Starts every preset marked auto-start for [server] after its SSH session
+/// becomes connected. A preset that fails to start (e.g. its port is already
+/// in use) is skipped so the remaining presets still start. Best-effort: a
+/// database or start failure never breaks the connection itself.
+Future<void> _startAutoPortForwards(Ref ref, Server server) async {
+  try {
+    final configs = await ref
+        .read(serverRepositoryProvider)
+        .portForwardConfigsForServer(server.id);
+    final manager = ref.read(connectionManagerProvider);
+    for (final config in configs.where((config) => config.autoStart)) {
+      try {
+        await manager.startPortForward(
+          server: server,
+          direction: PortForwardDirection.values.byName(config.direction),
+          kind: PortForwardKind.values.byName(config.kind),
+          bindHost: config.bindHost,
+          bindPort: config.bindPort,
+          targetHost: config.targetHost,
+          targetPort: config.targetPort,
+        );
+      } catch (_) {
+        // Skip this preset; the rest still start.
+      }
+    }
+  } catch (_) {
+    // Auto-start is best-effort and must not break the connection.
+  }
 }
 
 Stream<List<SshSessionInfo>> _watchSessions(

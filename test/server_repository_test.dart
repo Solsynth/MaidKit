@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_repository.dart';
 import 'package:maid_kit/servers/vault_service.dart';
@@ -205,6 +206,128 @@ void main() {
       expect((await repository.all()).map((s) => s.id), expected);
       final watched = await database.watchServers().first;
       expect(watched.map((s) => s.id), expected);
+    });
+  });
+
+  group('ServerRepository port-forward presets', () {
+    late AppDatabase database;
+    late ServerRepository repository;
+    late int serverId;
+
+    setUp(() async {
+      final directory = Directory.systemTemp.createTempSync(
+        'preset_config_test',
+      );
+      database = AppDatabase(filePath: '${directory.path}/test.sqlite');
+      repository = ServerRepository(database, VaultService(database));
+      serverId = await repository
+          .create(
+            const ServerDraft(
+              name: 'tunnel',
+              host: '10.0.0.9',
+              port: 22,
+              username: 'root',
+            ),
+          )
+          .then((server) => server.id);
+    });
+
+    tearDown(() => database.close());
+
+    Future<void> saveTcp({
+      String bindHost = '127.0.0.1',
+      int bindPort = 8080,
+      String targetHost = '127.0.0.1',
+      int targetPort = 80,
+      bool autoStart = false,
+    }) => repository.savePortForwardConfig(
+      serverId: serverId,
+      direction: PortForwardDirection.local,
+      kind: PortForwardKind.tcp,
+      bindHost: bindHost,
+      bindPort: bindPort,
+      targetHost: targetHost,
+      targetPort: targetPort,
+      autoStart: autoStart,
+    );
+
+    test('save persists a preset and exposes it to watchers', () async {
+      await saveTcp();
+
+      final configs = await repository.portForwardConfigsForServer(serverId);
+      expect(configs, hasLength(1));
+      expect(configs.single.bindHost, '127.0.0.1');
+      expect(configs.single.bindPort, 8080);
+      expect(configs.single.targetPort, 80);
+      expect(configs.single.direction, PortForwardDirection.local.name);
+      expect(configs.single.kind, PortForwardKind.tcp.name);
+      expect(configs.single.autoStart, isFalse);
+
+      final watched = await repository.watchPortForwardConfigs(serverId).first;
+      expect(watched.map((c) => c.id), [configs.single.id]);
+    });
+
+    test('saving the same forward updates instead of duplicating', () async {
+      await saveTcp();
+      await saveTcp(autoStart: true);
+
+      final configs = await repository.portForwardConfigsForServer(serverId);
+      expect(configs, hasLength(1));
+      // Auto-start can only be turned on by a repeated save.
+      expect(configs.single.autoStart, isTrue);
+    });
+
+    test('presets are scoped per server', () async {
+      final other = await repository.create(
+        const ServerDraft(
+          name: 'other',
+          host: '10.0.0.10',
+          port: 22,
+          username: 'root',
+        ),
+      );
+      await saveTcp();
+
+      expect(await repository.portForwardConfigsForServer(other.id), isEmpty);
+      expect(
+        await repository.portForwardConfigsForServer(serverId),
+        hasLength(1),
+      );
+    });
+
+    test('socks5 presets round-trip with empty target fields', () async {
+      await repository.savePortForwardConfig(
+        serverId: serverId,
+        direction: PortForwardDirection.local,
+        kind: PortForwardKind.socks5,
+        bindHost: '127.0.0.1',
+        bindPort: 1080,
+        targetHost: '',
+        targetPort: 0,
+      );
+
+      final configs = await repository.portForwardConfigsForServer(serverId);
+      expect(configs.single.kind, PortForwardKind.socks5.name);
+      expect(configs.single.targetHost, '');
+      expect(configs.single.targetPort, 0);
+    });
+
+    test('autoStart toggle and delete remove the preset', () async {
+      await saveTcp();
+      final config = (await repository.portForwardConfigsForServer(
+        serverId,
+      )).single;
+
+      await repository.setPortForwardConfigAutoStart(config.id, true);
+      expect(
+        (await repository.portForwardConfigsForServer(
+          serverId,
+        )).single.autoStart,
+        isTrue,
+      );
+
+      await repository.deletePortForwardConfig(config.id);
+      expect(await repository.portForwardConfigsForServer(serverId), isEmpty);
     });
   });
 }

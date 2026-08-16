@@ -30,6 +30,7 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
   final _targetPort = TextEditingController();
   var _direction = PortForwardDirection.local;
   var _kind = PortForwardKind.tcp;
+  var _saveConfig = false;
   var _starting = false;
 
   @override
@@ -51,17 +52,60 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
     final targetPort = kind == PortForwardKind.tcp
         ? int.parse(_targetPort.text)
         : 0;
+    final direction = _direction;
+    final bindHost = _bindHost.text.trim();
+    final bindPort = int.parse(_bindPort.text);
     try {
       await ref
           .read(connectionManagerProvider)
           .startPortForward(
             server: widget.server,
-            direction: _direction,
+            direction: direction,
             kind: kind,
-            bindHost: _bindHost.text.trim(),
-            bindPort: int.parse(_bindPort.text),
+            bindHost: bindHost,
+            bindPort: bindPort,
             targetHost: targetHost,
             targetPort: targetPort,
+          );
+      if (_saveConfig) {
+        await ref
+            .read(serverRepositoryProvider)
+            .savePortForwardConfig(
+              serverId: widget.server.id,
+              direction: direction,
+              kind: kind,
+              bindHost: bindHost,
+              bindPort: bindPort,
+              targetHost: targetHost,
+              targetPort: targetPort,
+            );
+      }
+      if (mounted) {
+        showSnackBar('portForwardingStarted'.tr());
+      }
+    } catch (error) {
+      if (mounted) {
+        showSnackBar('portForwardingStartError'.tr(args: ['$error']));
+      }
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  Future<void> _startConfig(PortForwardConfig config) async {
+    if (_starting) return;
+    setState(() => _starting = true);
+    try {
+      await ref
+          .read(connectionManagerProvider)
+          .startPortForward(
+            server: widget.server,
+            direction: PortForwardDirection.values.byName(config.direction),
+            kind: PortForwardKind.values.byName(config.kind),
+            bindHost: config.bindHost,
+            bindPort: config.bindPort,
+            targetHost: config.targetHost,
+            targetPort: config.targetPort,
           );
       if (mounted) {
         showSnackBar('portForwardingStarted'.tr());
@@ -81,6 +125,9 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
         (ref.watch(portForwardsProvider).asData?.value ??
                 const <ActivePortForward>[])
             .where((forward) => forward.serverId == widget.server.id);
+    final savedConfigs =
+        ref.watch(portForwardConfigsProvider(widget.server.id)).asData?.value ??
+        const <PortForwardConfig>[];
     final scheme = Theme.of(context).colorScheme;
     final directionDescription = switch ((_kind, _direction)) {
       (PortForwardKind.tcp, PortForwardDirection.local) =>
@@ -169,6 +216,16 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
                     port: _bindPort,
                   ),
                 const SizedBox(height: 16),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  dense: true,
+                  value: _saveConfig,
+                  onChanged: (value) =>
+                      setState(() => _saveConfig = value ?? false),
+                  title: Text('portForwardingSaveConfig').tr(),
+                  subtitle: Text('portForwardingSaveConfigHint').tr(),
+                ),
                 FilledButton.icon(
                   onPressed: _starting ? null : _start,
                   icon: _starting
@@ -183,6 +240,25 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
               ],
             ),
           ),
+        const SizedBox(height: 24),
+        Text(
+          'portForwardingSaved',
+          style: Theme.of(context).textTheme.titleSmall,
+        ).tr(),
+        const SizedBox(height: 8),
+        if (savedConfigs.isEmpty)
+          Text(
+            'portForwardingSavedEmpty',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ).tr()
+        else
+          for (final config in savedConfigs)
+            _SavedForwardTile(
+              config: config,
+              onStart: () => _startConfig(config),
+            ),
         const SizedBox(height: 24),
         Text(
           'portForwardingActive',
@@ -285,6 +361,56 @@ class _HostPortFields extends StatelessWidget {
       ],
     ),
   );
+}
+
+class _SavedForwardTile extends ConsumerWidget {
+  const _SavedForwardTile({required this.config, required this.onStart});
+
+  final PortForwardConfig config;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final direction = PortForwardDirection.values.byName(config.direction);
+    final kind = PortForwardKind.values.byName(config.kind);
+    final summary = kind == PortForwardKind.tcp
+        ? '${config.bindHost}:${config.bindPort} → '
+              '${config.targetHost}:${config.targetPort}'
+        : 'socks5://${config.bindHost}:${config.bindPort}';
+    final repository = ref.read(serverRepositoryProvider);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        kind == PortForwardKind.socks5
+            ? Symbols.vpn_lock
+            : direction == PortForwardDirection.local
+            ? Symbols.laptop_mac
+            : Symbols.dns,
+      ),
+      title: Text(summary),
+      subtitle: config.autoStart ? Text('portForwardingAutoStart'.tr()) : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Switch(
+            value: config.autoStart,
+            onChanged: (value) =>
+                repository.setPortForwardConfigAutoStart(config.id, value),
+          ),
+          IconButton(
+            tooltip: 'portForwardingStart'.tr(),
+            onPressed: onStart,
+            icon: const Icon(Symbols.play_arrow),
+          ),
+          IconButton(
+            tooltip: 'portForwardingDelete'.tr(),
+            onPressed: () => repository.deletePortForwardConfig(config.id),
+            icon: const Icon(Symbols.delete_outline),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ForwardTile extends ConsumerWidget {
