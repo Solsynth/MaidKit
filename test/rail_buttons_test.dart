@@ -19,6 +19,7 @@ import 'package:maid_kit/routing/app_router.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
 import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_metoer.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
@@ -108,6 +109,9 @@ void main() {
             ),
             maidCafeMetoerUnreadCountProvider.overrideWith(
               (ref) => Future.value(0),
+            ),
+            maidCafeCredentialsProvider.overrideWith(
+              (ref) => Future.value(const <MaidCafeCredential>[]),
             ),
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),

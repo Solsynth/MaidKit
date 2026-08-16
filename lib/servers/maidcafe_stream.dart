@@ -118,6 +118,9 @@ class MaidCafeAuditEntry {
     required this.durationMs,
     this.displayName,
     this.error,
+    this.stdout = '',
+    this.stderr = '',
+    this.invokedBy,
   });
 
   final DateTime timestamp;
@@ -128,6 +131,14 @@ class MaidCafeAuditEntry {
   final int exitCode;
   final int durationMs;
   final String? error;
+
+  /// Full captured run output, bounded by the daemon's per-run buffer.
+  final String stdout;
+  final String stderr;
+
+  /// Who asked for the run: a Solarpass handle, a labeled credential, or
+  /// null when the transport carries no identity.
+  final String? invokedBy;
 
   /// Label to show in the UI: the display name when set, else the slug.
   String get label => displayName?.isNotEmpty ?? false ? displayName! : name;
@@ -143,6 +154,9 @@ class MaidCafeAuditEntry {
       exitCode: (json['exit_code'] as num?)?.toInt() ?? 0,
       durationMs: (json['duration_ms'] as num?)?.toInt() ?? 0,
       error: json['error']?.toString(),
+      stdout: json['stdout']?.toString() ?? '',
+      stderr: json['stderr']?.toString() ?? '',
+      invokedBy: json['invoked_by']?.toString(),
     );
   }
 }
@@ -845,7 +859,11 @@ class MaidCafeStreamSession {
     return controller.stream;
   }
 
-  Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) async {
+  Future<Map<String, dynamic>> invokeAction(
+    String name, {
+    Object? body,
+    String? invokedBy,
+  }) async {
     final payload = body == null ? '' : jsonEncode(body);
     final secret = _apiSecret;
     final signature = secret == null
@@ -854,7 +872,10 @@ class MaidCafeStreamSession {
     return _post(
       '/api/v1/actions/${Uri.encodeComponent(name)}',
       body: payload,
-      headers: {'X-MaidCafe-Signature': ?signature},
+      headers: {
+        'X-MaidCafe-Signature': ?signature,
+        'X-MaidCafe-Invoked-By': ?invokedBy,
+      },
     );
   }
 

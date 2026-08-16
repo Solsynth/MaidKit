@@ -264,6 +264,67 @@ void main() {
     },
   );
 
+  test('cloud credentials create, list and delete', () async {
+    final requests = <RequestOptions>[];
+    final dio = Dio()
+      ..httpClientAdapter = _Adapter((options) async {
+        requests.add(options);
+        if (options.method == 'POST') {
+          return _json({
+            'id': 'cred-1',
+            'label': 'ci-backup',
+            'daemon_ids': <String>[],
+            'host_ids': ['h1'],
+            'action_names': ['backup'],
+            'created_at': '2026-08-13T00:00:00Z',
+            'token': 'mk_abc',
+          }, 201);
+        }
+        if (options.method == 'DELETE') {
+          return ResponseBody.fromString('', 204);
+        }
+        return _json([
+          {
+            'id': 'cred-1',
+            'label': 'ci-backup',
+            'daemon_ids': <String>[],
+            'host_ids': ['h1'],
+            'action_names': ['backup'],
+            'created_at': '2026-08-13T00:00:00Z',
+          },
+        ], 200);
+      });
+    final service = MaidCafeService(
+      baseUrl: 'https://mk.solsynth.dev',
+      cloudSync: CloudSyncService(vaultId: 'test'),
+      accessToken: () async => 'solar-token',
+      dio: dio,
+    );
+
+    final created = await service.createCredential(
+      label: 'ci-backup',
+      hostIds: ['h1'],
+      actionNames: ['backup'],
+    );
+    expect(created.token, 'mk_abc');
+    expect(created.hostIds, ['h1']);
+    final post = requests.first;
+    expect(post.uri.path, '/api/credentials');
+    expect(post.headers['Authorization'], 'Bearer solar-token');
+    expect((post.data as Map)['label'], 'ci-backup');
+    expect((post.data as Map)['host_ids'], ['h1']);
+    expect((post.data as Map)['action_names'], ['backup']);
+
+    final listed = await service.listCredentials();
+    expect(listed, hasLength(1));
+    expect(listed.single.label, 'ci-backup');
+    expect(listed.single.token, isEmpty);
+
+    await service.deleteCredential('cred-1');
+    expect(requests.last.method, 'DELETE');
+    expect(requests.last.uri.path, '/api/credentials/cred-1');
+  });
+
   test('HMAC signature matches the RFC 4231 test vector', () async {
     expect(
       await maidCafeHmacSignature(

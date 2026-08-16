@@ -696,6 +696,13 @@ install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidk
 printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
 
 $configInstall "\$work_dir/config.toml" $configPath
+# The stable machine identity: written once and never touched again, so the
+# cloud can link the host across daemon reinstalls and credential scopes.
+if [ ! -f /etc/maidcafe/host-id ]; then
+  host_id="\$(cat /proc/sys/kernel/random/uuid 2>/dev/null || printf '%s-%s' "\$(date +%s)" "\$\$")"
+  printf '%s\\n' "\$host_id" > /etc/maidcafe/host-id
+  chmod 0644 /etc/maidcafe/host-id
+fi
 ${buildMaidCafeActionScriptsScript(actions, stdio: stdio, runAsUsers: runAsUsers)}
 ${buildMaidCafeAlarmFragmentsScript(alarms, stdio: stdio)}
 $serviceInstall''';

@@ -135,17 +135,23 @@ env = [
         'name': 'deploy',
         'display_name': 'Deploy the web app',
         'source': 'relay',
+        'invoked_by': 'ci-backup',
         'ok': true,
         'exit_code': 0,
         'duration_ms': 142,
+        'stdout': 'deploy-ok',
+        'stderr': '',
       });
       expect(entry.name, 'deploy');
       expect(entry.label, 'Deploy the web app');
       expect(entry.source, 'relay');
+      expect(entry.invokedBy, 'ci-backup');
       expect(entry.ok, isTrue);
       expect(entry.exitCode, 0);
       expect(entry.durationMs, 142);
       expect(entry.error, isNull);
+      expect(entry.stdout, 'deploy-ok');
+      expect(entry.stderr, isEmpty);
     });
 
     test(

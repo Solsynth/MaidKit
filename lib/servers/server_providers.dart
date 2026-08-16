@@ -180,6 +180,12 @@ final maidCafeCloudActionsProvider =
       return ref.watch(maidCafeServiceProvider).listActions(daemonId);
     });
 
+final maidCafeCredentialsProvider = FutureProvider<List<MaidCafeCredential>>((
+  ref,
+) {
+  return ref.watch(maidCafeServiceProvider).listCredentials();
+});
+
 final personalityBillingPolicyProvider = FutureProvider<BillingPolicy?>((
   ref,
 ) async {

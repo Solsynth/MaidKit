@@ -191,6 +191,52 @@ class MaidCafeCloudAction {
       );
 }
 
+/// A user-level API credential for CI/CD: a labeled token scoped to a
+/// subset of daemons, hosts and action names. The plain token is returned
+/// once at creation ([token] is empty on list responses).
+class MaidCafeCredential {
+  const MaidCafeCredential({
+    required this.id,
+    required this.label,
+    required this.daemonIds,
+    required this.hostIds,
+    required this.actionNames,
+    required this.createdAt,
+    this.lastUsedAt,
+    this.token = '',
+  });
+
+  final String id;
+  final String label;
+  final List<String> daemonIds;
+  final List<String> hostIds;
+  final List<String> actionNames;
+  final DateTime createdAt;
+  final DateTime? lastUsedAt;
+
+  /// One-time plain token, present only on the create response.
+  final String token;
+
+  factory MaidCafeCredential.fromJson(Map<String, dynamic> json) =>
+      MaidCafeCredential(
+        id: _requiredString(json, 'id'),
+        label: json['label']?.toString() ?? '',
+        daemonIds: _stringList(json['daemon_ids']),
+        hostIds: _stringList(json['host_ids']),
+        actionNames: _stringList(json['action_names']),
+        createdAt:
+            _optionalDate(json, 'created_at') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        lastUsedAt: _optionalDate(json, 'last_used_at'),
+        token: json['token']?.toString() ?? '',
+      );
+}
+
+List<String> _stringList(Object? value) {
+  if (value is! List) return const [];
+  return [for (final entry in value) entry.toString()];
+}
+
 class MaidCafeMetric {
   const MaidCafeMetric({
     required this.id,
@@ -553,6 +599,54 @@ class MaidCafeService {
       );
     }
     return id;
+  }
+
+  /// Creates a labeled API credential with optional scope lists; the
+  /// one-time plain token is returned in [MaidCafeCredential.token].
+  Future<MaidCafeCredential> createCredential({
+    required String label,
+    List<String> daemonIds = const [],
+    List<String> hostIds = const [],
+    List<String> actionNames = const [],
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.post<dynamic>(
+        '$_apiBase/credentials',
+        data: {
+          'label': label,
+          'daemon_ids': daemonIds,
+          'host_ids': hostIds,
+          'action_names': actionNames,
+        },
+        options: _cloudOptions(token),
+      ),
+    );
+    return MaidCafeCredential.fromJson(_responseMap(response));
+  }
+
+  Future<List<MaidCafeCredential>> listCredentials() async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/credentials',
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseJson(response);
+    if (data is! List) {
+      throw _invalidResponse('Expected a credential list.');
+    }
+    return data
+        .map((item) => MaidCafeCredential.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+
+  Future<void> deleteCredential(String credentialId) async {
+    await _cloudRequest(
+      (token) => _dio.delete<dynamic>(
+        '$_apiBase/credentials/${_pathPart(credentialId)}',
+        options: _cloudOptions(token),
+      ),
+    );
   }
 
   /// Lists the actions the daemon reported to the cloud (see the daemon's

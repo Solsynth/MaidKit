@@ -46,8 +46,11 @@ class _FakeSession implements MaidCafeStreamSession {
   }) => throw UnimplementedError();
 
   @override
-  Future<Map<String, dynamic>> invokeAction(String name, {Object? body}) =>
-      throw UnimplementedError();
+  Future<Map<String, dynamic>> invokeAction(
+    String name, {
+    Object? body,
+    String? invokedBy,
+  }) => throw UnimplementedError();
 
   @override
   Future<void> sendTestNotification() => throw UnimplementedError();

@@ -130,6 +130,8 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
               const SizedBox(height: 24),
               _daemonsCard(context, effectiveWorkspaceId),
               const SizedBox(height: 24),
+              _credentialsCard(context),
+              const SizedBox(height: 24),
               _notificationsCard(context),
             ],
           ),
@@ -662,6 +664,180 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     );
   }
 
+  // ------------------------------------------------------------- credentials
+
+  Widget _credentialsCard(BuildContext context) {
+    final credentials = ref.watch(maidCafeCredentialsProvider);
+    return _SettingsSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'maidCafeCredentials'.tr(),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy == null
+                      ? () => _createCredential(context)
+                      : null,
+                  icon: const Icon(Symbols.add),
+                  label: Text('maidCafeCredentialCreate'.tr()),
+                ),
+              ],
+            ),
+          ),
+          credentials.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(16),
+              child: LinearProgressIndicator(),
+            ),
+            error: (error, _) => _recoverableError(
+              context,
+              error,
+              () => ref.invalidate(maidCafeCredentialsProvider),
+            ),
+            data: (items) => items.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('maidCafeNoCredentials'.tr()),
+                  )
+                : Column(
+                    children: [
+                      for (final credential in items)
+                        _credentialTile(context, credential),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _credentialTile(BuildContext context, MaidCafeCredential credential) {
+    final colors = Theme.of(context).colorScheme;
+    final scopes = <String>[
+      if (credential.daemonIds.isNotEmpty)
+        'daemons: ${credential.daemonIds.join(', ')}',
+      if (credential.hostIds.isNotEmpty)
+        'hosts: ${credential.hostIds.join(', ')}',
+      if (credential.actionNames.isNotEmpty)
+        'actions: ${credential.actionNames.join(', ')}',
+    ].join(' · ');
+    final lastUsed = credential.lastUsedAt == null
+        ? 'maidCafeCredentialNeverUsed'.tr()
+        : '${'maidCafeCredentialLastUsed'.tr()} ${DateFormat('yyyy-MM-dd HH:mm').format(credential.lastUsedAt!.toLocal())}';
+    return ListTile(
+      title: Text(credential.label),
+      subtitle: Text(
+        scopes.isEmpty
+            ? '$lastUsed · ${'maidCafeCredentialUnrestricted'.tr()}'
+            : '$lastUsed\n$scopes',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: IconButton(
+        tooltip: 'maidCafeCredentialDelete'.tr(),
+        icon: const Icon(Symbols.delete_outline),
+        onPressed: _busy == null
+            ? () => _deleteCredential(context, credential)
+            : null,
+      ),
+      textColor: colors.onSurface,
+    );
+  }
+
+  Future<void> _createCredential(BuildContext context) async {
+    final created = await showDialog<MaidCafeCredential>(
+      context: context,
+      builder: (context) => const _CreateCredentialDialog(),
+    );
+    if (created == null || !context.mounted) return;
+    ref.invalidate(maidCafeCredentialsProvider);
+    await _showCredentialToken(context, created);
+  }
+
+  Future<void> _deleteCredential(
+    BuildContext context,
+    MaidCafeCredential credential,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('maidCafeCredentialDelete'.tr()),
+        content: Text(
+          'maidCafeCredentialDeleteConfirm'.tr(args: [credential.label]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('maidCafeCancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('maidCafeCredentialDelete'.tr()),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await _run(context, 'maidCafeCredentialDelete', () async {
+      await ref.read(maidCafeServiceProvider).deleteCredential(credential.id);
+      ref.invalidate(maidCafeCredentialsProvider);
+    });
+  }
+
+  Future<void> _showCredentialToken(
+    BuildContext context,
+    MaidCafeCredential credential,
+  ) async {
+    final token = credential.token;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('maidCafeCredentialToken'.tr()),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('maidCafeCredentialTokenHint'.tr()),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SelectableText(
+                  token,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Clipboard.setData(ClipboardData(text: token)),
+            child: Text('maidCafeCredentialCopy'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('maidCafeDone'.tr()),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ------------------------------------------------------------- notifications
 
   Widget _notificationsCard(BuildContext context) {
@@ -988,6 +1164,142 @@ class _SettingsSectionCard extends StatelessWidget {
 
 /// Register-daemon dialog. Owns its text controller so the field stays valid
 /// through the route's exit animation.
+/// Create-credential dialog: label plus optional comma-separated scopes.
+/// Creates through the cloud service so the one-time token can be returned.
+class _CreateCredentialDialog extends ConsumerStatefulWidget {
+  const _CreateCredentialDialog();
+
+  @override
+  ConsumerState<_CreateCredentialDialog> createState() =>
+      _CreateCredentialDialogState();
+}
+
+class _CreateCredentialDialogState
+    extends ConsumerState<_CreateCredentialDialog> {
+  final TextEditingController _labelController = TextEditingController();
+  final TextEditingController _actionsController = TextEditingController();
+  final TextEditingController _hostsController = TextEditingController();
+  final TextEditingController _daemonsController = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _labelController.dispose();
+    _actionsController.dispose();
+    _hostsController.dispose();
+    _daemonsController.dispose();
+    super.dispose();
+  }
+
+  List<String> _split(String value) => [
+    for (final part in value.split(','))
+      if (part.trim().isNotEmpty) part.trim(),
+  ];
+
+  Future<void> _submit() async {
+    final label = _labelController.text.trim();
+    if (label.isEmpty) {
+      setState(() => _error = 'maidCafeCredentialLabelRequired'.tr());
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final created = await ref
+          .read(maidCafeServiceProvider)
+          .createCredential(
+            label: label,
+            actionNames: _split(_actionsController.text),
+            hostIds: _split(_hostsController.text),
+            daemonIds: _split(_daemonsController.text),
+          );
+      if (mounted) Navigator.pop(context, created);
+    } on MaidCafeException catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = error.message;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = error.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text('maidCafeCredentialCreate'.tr()),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: _labelController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'maidCafeCredentialLabel'.tr(),
+                  errorText: _error,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _actionsController,
+                decoration: InputDecoration(
+                  labelText: 'maidCafeCredentialActionsScope'.tr(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _hostsController,
+                decoration: InputDecoration(
+                  labelText: 'maidCafeCredentialHostsScope'.tr(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _daemonsController,
+                decoration: InputDecoration(
+                  labelText: 'maidCafeCredentialDaemonsScope'.tr(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'maidCafeCredentialScopesHint'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context),
+          child: Text('maidCafeCancel'.tr()),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: Text('maidCafeCredentialCreate'.tr()),
+        ),
+      ],
+    );
+  }
+}
+
 class _RegisterDaemonDialog extends StatefulWidget {
   const _RegisterDaemonDialog();
 

@@ -1067,6 +1067,16 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
+  /// Opens the full captured log for one audit entry.
+  void _showAuditLog(BuildContext context, MaidCafeAuditEntry entry) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => _MaidCafeAuditLogSheet(entry: entry),
+    );
+  }
+
   Future<void> _confirmClearAudit() async {
     final stream = _stream;
     if (stream == null || _busy) return;
@@ -1119,7 +1129,11 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       _runningActionName = action.name;
     });
     try {
-      final result = await stream.invokeAction(action.name, body: body);
+      final result = await stream.invokeAction(
+        action.name,
+        body: body,
+        invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+      );
       if (mounted) {
         setState(() => _actionResults[action.name] = result);
       }
@@ -1485,7 +1499,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           )
         else
           for (final entry in _visibleAuditEntries)
-            _MaidCafeAuditRow(entry: entry),
+            _MaidCafeAuditRow(
+              entry: entry,
+              onTap: () => _showAuditLog(context, entry),
+            ),
       ],
     );
   }
@@ -3121,73 +3138,91 @@ class _MaidCafeScriptField extends StatelessWidget {
   }
 }
 
-/// Compact one-line execution record from the daemon audit log.
+/// Compact one-line execution record from the daemon audit log. Tapping
+/// opens the full captured output in a sheet.
 class _MaidCafeAuditRow extends StatelessWidget {
-  const _MaidCafeAuditRow({required this.entry});
+  const _MaidCafeAuditRow({required this.entry, required this.onTap});
 
   final MaidCafeAuditEntry entry;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final ok = entry.ok;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Icon(
-            ok ? Symbols.check_circle : Symbols.error,
-            size: 18,
-            color: ok ? scheme.primary : scheme.error,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  entry.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                if (entry.error?.isNotEmpty ?? false)
+    final invokedBy = entry.invokedBy;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(
+              ok ? Symbols.check_circle : Symbols.error,
+              size: 18,
+              color: ok ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    entry.error!,
-                    maxLines: 2,
+                    entry.label,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.error,
-                    ),
+                    style: theme.textTheme.bodyMedium,
                   ),
-              ],
+                  if (entry.error?.isNotEmpty ?? false)
+                    Text(
+                      entry.error!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            entry.source,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontFamily: MaidKitFonts.mono,
+            const SizedBox(width: 8),
+            if (invokedBy != null && invokedBy.isNotEmpty)
+              Text(
+                invokedBy,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontFamily: MaidKitFonts.mono,
+                ),
+              ),
+            const SizedBox(width: 8),
+            Text(
+              entry.source,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontFamily: MaidKitFonts.mono,
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '${entry.exitCode} · ${entry.durationMs}ms',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontFamily: MaidKitFonts.mono,
+            const SizedBox(width: 8),
+            Text(
+              '${entry.exitCode} · ${entry.durationMs}ms',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontFamily: MaidKitFonts.mono,
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            _formatAuditTime(entry.timestamp),
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
+            const SizedBox(width: 8),
+            Text(
+              _formatAuditTime(entry.timestamp),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 4),
+            const Icon(Symbols.chevron_right, size: 16),
+          ],
+        ),
       ),
     );
   }
@@ -3276,6 +3311,116 @@ class _MaidCafeActionResultView extends StatelessWidget {
               const SizedBox(height: 4),
               SizedBox(height: 120, child: AnsiLogView(text: stderr)),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full captured log for one audit entry: metadata, then the run's stdout
+/// and stderr as recorded by the daemon.
+class _MaidCafeAuditLogSheet extends StatelessWidget {
+  const _MaidCafeAuditLogSheet({required this.entry});
+
+  final MaidCafeAuditEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final metadata = [
+      entry.source,
+      if (entry.invokedBy != null && entry.invokedBy!.isNotEmpty)
+        entry.invokedBy!,
+      'exit ${entry.exitCode}',
+      '${entry.durationMs}ms',
+      _formatAuditTime(entry.timestamp),
+    ].join(' · ');
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * 0.78,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(entry.label, style: theme.textTheme.titleLarge),
+                ),
+                IconButton(
+                  tooltip: 'commonCancel'.tr(),
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Symbols.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              metadata,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontFamily: MaidKitFonts.mono,
+              ),
+            ),
+            if (entry.error?.isNotEmpty ?? false) ...[
+              const SizedBox(height: 8),
+              Text(
+                entry.error!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Expanded(
+              child: entry.stdout.isEmpty && entry.stderr.isEmpty
+                  ? Center(
+                      child: Text(
+                        'maidCafeAuditNoOutput'.tr(),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (entry.stdout.isNotEmpty) ...[
+                          Text(
+                            'maidCafeActionStdout'.tr(),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Expanded(
+                            child: AnsiLogView(
+                              text: entry.stdout,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ],
+                        if (entry.stderr.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'maidCafeActionStderr'.tr(),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Expanded(
+                            child: AnsiLogView(
+                              text: entry.stderr,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+            ),
           ],
         ),
       ),

@@ -53,6 +53,15 @@ MaidCafeCloudAction _cloudAction() => const MaidCafeCloudAction(
   updatedAt: null,
 );
 
+MaidCafeCredential _credential() => MaidCafeCredential(
+  id: 'cred-1',
+  label: 'ci-backup',
+  daemonIds: const [],
+  hostIds: const ['host-42'],
+  actionNames: const ['backup'],
+  createdAt: DateTime.utc(2026, 8, 13),
+);
+
 class _FakeMaidCafeService extends MaidCafeService {
   _FakeMaidCafeService()
     : super(
@@ -91,6 +100,27 @@ class _FakeMaidCafeService extends MaidCafeService {
       statusCode: 200,
       body: Uint8List(0),
       headers: const {},
+    );
+  }
+
+  String? createdCredentialLabel;
+
+  @override
+  Future<MaidCafeCredential> createCredential({
+    required String label,
+    List<String> daemonIds = const [],
+    List<String> hostIds = const [],
+    List<String> actionNames = const [],
+  }) async {
+    createdCredentialLabel = label;
+    return MaidCafeCredential(
+      id: 'cred-new',
+      label: label,
+      daemonIds: daemonIds,
+      hostIds: hostIds,
+      actionNames: actionNames,
+      createdAt: DateTime.utc(2026, 8, 13),
+      token: 'mk_test-token',
     );
   }
 }
@@ -178,6 +208,7 @@ void main() {
       maidCafeCloudActionsProvider.overrideWith(
         (ref, daemonId) async => [_cloudAction()],
       ),
+      maidCafeCredentialsProvider.overrideWith((ref) async => [_credential()]),
       maidCafeServiceProvider.overrideWithValue(
         service ?? _FakeMaidCafeService(),
       ),
@@ -242,6 +273,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(service.invokedActionName, 'backup');
+  });
+
+  testWidgets('credentials card creates and shows the one-time token', (
+    tester,
+  ) async {
+    final service = _FakeMaidCafeService();
+    await pumpPage(tester, service: service);
+
+    expect(find.text('ci-backup'), findsOneWidget);
+
+    await tester.tap(find.text('maidCafeCredentialCreate'.tr()));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          )
+          .first,
+      'ci-deploy',
+    );
+    await tester.pump();
+    await tester.tap(
+      find.widgetWithText(FilledButton, 'maidCafeCredentialCreate'.tr()).last,
+    );
+    await tester.pumpAndSettle();
+
+    expect(service.createdCredentialLabel, 'ci-deploy');
+    expect(find.text('maidCafeCredentialToken'.tr()), findsOneWidget);
+    expect(find.text('mk_test-token'), findsOneWidget);
   });
 
   testWidgets('manual register flow shows the one-time config snippet', (
@@ -319,6 +381,12 @@ void main() {
               (ref, workspaceId) async => [_daemon()],
             ),
             maidCafeServiceProvider.overrideWithValue(_FakeMaidCafeService()),
+            maidCafeCloudActionsProvider.overrideWith(
+              (ref, daemonId) async => [_cloudAction()],
+            ),
+            maidCafeCredentialsProvider.overrideWith(
+              (ref) async => [_credential()],
+            ),
             maidCafeServerProbeProvider.overrideWith(
               (ref, serverId) async => const MaidCafeServerProbe(
                 MaidCafeServerProbeStatus.installed,
