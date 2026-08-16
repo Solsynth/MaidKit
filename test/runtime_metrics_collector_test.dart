@@ -85,17 +85,18 @@ void main() {
         hasThreads: true,
       );
       final groups = groupRuntimeProcesses(processes);
-      expect(groups.map((g) => g.kind).toList(), [
-        RuntimeKind.java,
-        RuntimeKind.dotnet,
-        RuntimeKind.python,
-      ]);
+      expect(groups, hasLength(RuntimeKind.values.length));
+      expect(groups.map((g) => g.kind).toList(), RuntimeKind.values);
       expect(groups[0].available, isTrue);
       expect(groups[0].processes.single.pid, 123);
       expect(groups[1].available, isTrue);
       expect(groups[1].processes.single.pid, 8901);
       expect(groups[2].available, isTrue);
       expect(groups[2].processes.single.pid, 4567);
+      // The extended runtimes (node/deno/go/ruby/php) are absent on this host.
+      for (final group in groups.skip(3)) {
+        expect(group.available, isFalse);
+      }
     });
 
     test('marks absent runtimes unavailable with an error', () {

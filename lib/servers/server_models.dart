@@ -349,9 +349,10 @@ class ServerProcess {
   final String command;
 }
 
-/// The fixed runtime set the Runtimes tab monitors. Wire names equal `.name`
-/// ('java', 'dotnet', 'python').
-enum RuntimeKind { java, dotnet, python }
+/// The runtime set the Runtimes tab can render. Wire names equal `.name`
+/// ('java', 'dotnet', 'python', ...); the daemon's configured list may carry
+/// fewer entries and unknown names are skipped by [RuntimeKindFromWire].
+enum RuntimeKind { java, dotnet, python, node, deno, go, ruby, php }
 
 /// Tolerant wire lookup: returns null for unknown runtime names so future
 /// daemon additions degrade gracefully instead of throwing.
@@ -438,11 +439,35 @@ class RuntimeGroup {
   final JavaRuntimeInfo? java;
 }
 
+/// One user-defined process watcher (daemon-side `watched` list). Processes
+/// match by comm-token prefix; only the MaidCafe channel provides these, the
+/// SSH fallback has no watched list.
+class WatchedProcessGroup {
+  const WatchedProcessGroup({
+    required this.name,
+    required this.available,
+    required this.processes,
+    this.error,
+  });
+
+  final String name;
+  final bool available;
+  final String? error;
+  final List<RuntimeProcessInfo> processes;
+}
+
 class RuntimeSnapshot {
-  const RuntimeSnapshot({required this.groups, required this.collectedAt});
+  const RuntimeSnapshot({
+    required this.groups,
+    required this.collectedAt,
+    this.watched = const [],
+  });
 
   final List<RuntimeGroup> groups;
   final DateTime collectedAt;
+
+  /// Watched-process groups from the daemon; empty on the SSH fallback.
+  final List<WatchedProcessGroup> watched;
 }
 
 class ServerSystemInfo {

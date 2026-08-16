@@ -15,6 +15,7 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/collapsible_section.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_connection_actions.dart';
+import 'dashboard_runtimes_section.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'serial_port_client.dart';
@@ -451,6 +452,7 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
           Expanded(
             child: CustomScrollView(
               slivers: [
+                const SliverToBoxAdapter(child: DashboardRuntimesSection()),
                 const SliverToBoxAdapter(child: GithubWorkflowStatusStrip()),
                 SliverPadding(
                   padding: const EdgeInsets.all(24),

@@ -468,6 +468,23 @@ void main() {
           ],
         },
       ],
+      'watched': [
+        {
+          'name': 'nginx',
+          'available': true,
+          'error': null,
+          'processes': [
+            {
+              'pid': 789,
+              'user': 'www',
+              'cpu_percent': 0.5,
+              'memory_percent': 0.1,
+              'rss_kb': 8192,
+              'command': 'nginx: worker process',
+            },
+          ],
+        },
+      ],
     });
     expect(snapshot.groups, hasLength(3));
     final java = snapshot.groups[0];
@@ -494,6 +511,32 @@ void main() {
     final python = snapshot.groups[2];
     expect(python.kind, RuntimeKind.python);
     expect(python.processes[0].threads, isNull);
+    expect(snapshot.watched, hasLength(1));
+    expect(snapshot.watched[0].name, 'nginx');
+    expect(snapshot.watched[0].available, isTrue);
+    expect(
+      snapshot.watched[0].processes.single.command,
+      'nginx: worker process',
+    );
+  });
+
+  test('parseMaidCafeRuntimes parses unavailable watched groups', () {
+    final snapshot = parseMaidCafeRuntimes({
+      'runtimes': [],
+      'watched': [
+        {
+          'name': 'redis',
+          'available': false,
+          'error': 'no redis processes found',
+          'processes': [],
+        },
+        'not-a-map',
+      ],
+    });
+    expect(snapshot.groups, isEmpty);
+    expect(snapshot.watched, hasLength(1));
+    expect(snapshot.watched[0].available, isFalse);
+    expect(snapshot.watched[0].error, 'no redis processes found');
   });
 
   test(

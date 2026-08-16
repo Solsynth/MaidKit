@@ -1209,6 +1209,13 @@ final runtimeWatchConfigsProvider =
           .watchRuntimeWatchConfigs(serverId);
     });
 
+/// Every dashboard-pinned runtime/watched-process card across all servers.
+final pinnedRuntimeConfigsProvider = StreamProvider<List<RuntimeWatchConfig>>((
+  ref,
+) {
+  return ref.watch(serverRepositoryProvider).watchPinnedRuntimeConfigs();
+});
+
 final serverMetricsRefreshSchedulerProvider =
     Provider<ServerMetricsRefreshScheduler>((ref) {
       final scheduler = ServerMetricsRefreshScheduler(

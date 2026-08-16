@@ -721,6 +721,18 @@ class MaidCafeStreamSession {
   /// One-shot runtime snapshot (same payload as the `runtimes` event).
   Future<Map<String, dynamic>> runtimes() => _get('/api/v1/runtimes');
 
+  /// The daemon-side watched-process list.
+  Future<Map<String, dynamic>> watchedProcesses() =>
+      _get('/api/v1/watched-processes');
+
+  /// Registers a watched process name on the daemon (persisted host-side).
+  Future<Map<String, dynamic>> addWatchedProcess(String name) =>
+      _post('/api/v1/watched-processes', body: {'name': name});
+
+  /// Removes a watched process name from the daemon.
+  Future<Map<String, dynamic>> removeWatchedProcess(String name) =>
+      _delete('/api/v1/watched-processes/$name');
+
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,
     DateTime? from,

@@ -264,12 +264,15 @@ class PortForwardConfigs extends Table {
   DateTimeColumn get updatedAt => dateTime()();
 }
 
-/// Per-server enable/disable toggles for the Runtimes tab, keyed by the
-/// fixed runtime set (java/dotnet/python). Absent rows default to enabled.
+/// Per-server enable/disable toggles and dashboard pins for runtime cards and
+/// watched processes, keyed by the runtime/process name. Absent rows default
+/// to enabled and unpinned.
 class RuntimeWatchConfigs extends Table {
   IntColumn get serverId => integer()();
-  TextColumn get runtime => text()(); // 'java' | 'dotnet' | 'python'
+  TextColumn get runtime =>
+      text()(); // 'java' | 'dotnet' | 'python' | watched name
   BoolColumn get enabled => boolean().withDefault(const Constant(true))();
+  BoolColumn get pinned => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column<Object>> get primaryKey => {serverId, runtime};
@@ -313,7 +316,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 29;
+  int get schemaVersion => 30;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -589,6 +592,15 @@ class AppDatabase extends _$AppDatabase {
       if (from < 29) {
         await m.createTable(runtimeWatchConfigs);
       }
+      if (from < 30) {
+        final hasPinned = await customSelect(
+          "SELECT 1 FROM pragma_table_info('runtime_watch_configs') "
+          "WHERE name = 'pinned'",
+        ).get();
+        if (hasPinned.isEmpty) {
+          await m.addColumn(runtimeWatchConfigs, runtimeWatchConfigs.pinned);
+        }
+      }
     },
   );
 
@@ -656,6 +668,11 @@ class AppDatabase extends _$AppDatabase {
       (select(
         runtimeWatchConfigs,
       )..where((table) => table.serverId.equals(serverId))).watch();
+
+  /// Every dashboard-pinned runtime/watched-process config across all servers.
+  Stream<List<RuntimeWatchConfig>> watchPinnedRuntimeConfigs() => (select(
+    runtimeWatchConfigs,
+  )..where((table) => table.pinned.equals(true))).watch();
 
   Future<List<PortForwardConfig>> portForwardConfigsForServer(int serverId) =>
       (select(portForwardConfigs)

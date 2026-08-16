@@ -1,17 +1,20 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'maidcafe_stream.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 
-/// Runtimes tab on the server detail page: per-runtime cards (java/dotnet/
-/// python) with process summaries and Java JVM/GC detail, plus per-runtime
-/// enable toggles persisted in Drift. The snapshot arrives via the MaidCafe
-/// SSE/one-shot channel or the direct-SSH fallback; the page owns that
-/// plumbing, this tab only renders.
+/// Runtimes tab on the server detail page: per-runtime cards (configured
+/// daemon runtime list) with process summaries and Java JVM/GC detail, plus
+/// the daemon-side watched-process section. Runtime cards can be pinned to
+/// the dashboard; toggles and pins persist in Drift. The snapshot arrives via
+/// the MaidCafe SSE/one-shot channel or the direct-SSH fallback; watched
+/// processes and their add/remove require the MaidCafe daemon.
 class RuntimeMonitoringTab extends ConsumerStatefulWidget {
   const RuntimeMonitoringTab({
     super.key,
@@ -36,16 +39,102 @@ class RuntimeMonitoringTab extends ConsumerStatefulWidget {
 }
 
 class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
-  String _runtimeLabel(RuntimeKind kind) => switch (kind) {
-    RuntimeKind.java => 'Java',
-    RuntimeKind.dotnet => '.NET',
-    RuntimeKind.python => 'Python',
-  };
-
   Future<void> _setRuntimeEnabled(RuntimeKind kind, bool enabled) {
     return ref
         .read(serverRepositoryProvider)
         .setRuntimeEnabled(widget.server.id, kind, enabled);
+  }
+
+  Future<void> _setPinned(String name, bool pinned) {
+    return ref
+        .read(serverRepositoryProvider)
+        .setRuntimePinned(widget.server.id, name, pinned);
+  }
+
+  Future<MaidCafeStreamSession?> _daemonSession() {
+    final registry = ref.read(maidCafeSessionRegistryProvider);
+    return registry.sessionFor(widget.server);
+  }
+
+  Future<void> _addWatchedProcess() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('runtimeAddWatched'.tr()),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'runtimeWatchedName'.tr(),
+            hintText: 'nginx',
+          ),
+          onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('commonCancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: Text('commonAdd'.tr()),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty || !mounted) return;
+    final session = await _daemonSession();
+    if (session == null) {
+      if (!mounted) return;
+      showStyledSnackBar(
+        message: 'runtimeRequiresDaemon'.tr(),
+        title: 'runtimeAddWatched'.tr(),
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
+    try {
+      await session.addWatchedProcess(name);
+      await widget.onRefresh();
+    } catch (error) {
+      if (mounted) {
+        showStyledSnackBar(
+          message: '$error',
+          title: 'runtimeAddWatchedError'.tr(args: [name]),
+          icon: Symbols.error,
+          accentColor: Theme.of(context).colorScheme.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _removeWatchedProcess(String name) async {
+    final session = await _daemonSession();
+    if (session == null) {
+      if (!mounted) return;
+      showStyledSnackBar(
+        message: 'runtimeRequiresDaemon'.tr(),
+        title: 'runtimeRemoveWatched'.tr(),
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
+    try {
+      await session.removeWatchedProcess(name);
+      await widget.onRefresh();
+    } catch (error) {
+      if (mounted) {
+        showStyledSnackBar(
+          message: '$error',
+          title: 'runtimeRemoveWatchedError'.tr(args: [name]),
+          icon: Symbols.error,
+          accentColor: Theme.of(context).colorScheme.error,
+        );
+      }
+    }
   }
 
   @override
@@ -66,9 +155,11 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
     final enabledByKind = <RuntimeKind, bool>{
       for (final kind in RuntimeKind.values) kind: true,
     };
+    final pinnedNames = <String>{};
     for (final config in configs) {
       final kind = RuntimeKindFromWire(config.runtime);
       if (kind != null) enabledByKind[kind] = config.enabled;
+      if (config.pinned) pinnedNames.add(config.runtime);
     }
     final enabledKinds = RuntimeKind.values
         .where((kind) => enabledByKind[kind] ?? true)
@@ -88,7 +179,7 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
                   children: [
                     for (final kind in RuntimeKind.values)
                       _RuntimeToggle(
-                        label: _runtimeLabel(kind),
+                        label: runtimeIdentity(kind).label,
                         enabled: enabledByKind[kind] ?? true,
                         onChanged: (value) => _setRuntimeEnabled(kind, value),
                       ),
@@ -121,24 +212,40 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
                   if (byKind[kind] != null)
                     _RuntimeCard(
                       group: byKind[kind]!,
+                      pinned: pinnedNames.contains(kind.name),
+                      onTogglePin: (pinned) => _setPinned(kind.name, pinned),
                       onRefresh: widget.onRefresh,
                     ),
               ];
-              if (cards.isEmpty) {
-                return _RuntimeEmptyPanel(
-                  icon: Symbols.code_blocks,
-                  message: 'runtimeNoDetectedRuntimes'.tr(),
-                  actionLabel: 'commonRefresh'.tr(),
-                  onAction: widget.onRefresh,
-                );
-              }
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final card in cards) SizedBox(width: 440, child: card),
+                    if (cards.isNotEmpty)
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          for (final card in cards)
+                            SizedBox(width: 440, child: card),
+                        ],
+                      )
+                    else
+                      _RuntimeEmptyPanel(
+                        icon: Symbols.code_blocks,
+                        message: 'runtimeNoDetectedRuntimes'.tr(),
+                        actionLabel: 'commonRefresh'.tr(),
+                        onAction: widget.onRefresh,
+                      ),
+                    const SizedBox(height: 16),
+                    _WatchedSection(
+                      watched: snapshot.watched,
+                      pinnedNames: pinnedNames,
+                      onAdd: _addWatchedProcess,
+                      onRemove: _removeWatchedProcess,
+                      onTogglePin: _setPinned,
+                    ),
                   ],
                 ),
               );
@@ -149,6 +256,19 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
     );
   }
 }
+
+/// Display identity for a runtime kind: human label + icon.
+({String label, IconData icon}) runtimeIdentity(RuntimeKind kind) =>
+    switch (kind) {
+      RuntimeKind.java => (label: 'Java', icon: Symbols.coffee),
+      RuntimeKind.dotnet => (label: '.NET', icon: Symbols.deployed_code),
+      RuntimeKind.python => (label: 'Python', icon: Symbols.code),
+      RuntimeKind.node => (label: 'Node.js', icon: Symbols.javascript),
+      RuntimeKind.deno => (label: 'Deno', icon: Symbols.code_blocks),
+      RuntimeKind.go => (label: 'Go', icon: Symbols.directions_run),
+      RuntimeKind.ruby => (label: 'Ruby', icon: Symbols.diamond),
+      RuntimeKind.php => (label: 'PHP', icon: Symbols.data_object),
+    };
 
 /// One compact enable/disable switch in the header row.
 class _RuntimeToggle extends StatelessWidget {
@@ -188,15 +308,23 @@ class _RuntimeToggle extends StatelessWidget {
 /// One runtime's card: availability state, summary tiles, per-process rows and
 /// (java only) JDK badge + JVM rows.
 class _RuntimeCard extends StatelessWidget {
-  const _RuntimeCard({required this.group, required this.onRefresh});
+  const _RuntimeCard({
+    required this.group,
+    required this.pinned,
+    required this.onTogglePin,
+    required this.onRefresh,
+  });
 
   final RuntimeGroup group;
+  final bool pinned;
+  final ValueChanged<bool> onTogglePin;
   final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final identity = runtimeIdentity(group.kind);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
@@ -208,14 +336,20 @@ class _RuntimeCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _RuntimeCardHeader(group: group),
+            _RuntimeCardHeader(
+              icon: identity.icon,
+              title: identity.label,
+              available: group.available,
+              pinned: pinned,
+              onTogglePin: onTogglePin,
+            ),
             const SizedBox(height: 10),
-            _RuntimeSummaryTiles(group: group),
+            _RuntimeSummaryTiles(processes: group.processes),
             const SizedBox(height: 10),
             if (!group.available)
-              _RuntimeUnavailable(group: group)
+              _RuntimeUnavailable(error: group.error, hasProcesses: false)
             else ...[
-              _ProcessHeaderRow(),
+              const _ProcessHeaderRow(),
               const SizedBox(height: 4),
               for (final process in group.processes)
                 _RuntimeProcessRow(process: process),
@@ -231,32 +365,47 @@ class _RuntimeCard extends StatelessWidget {
   }
 }
 
+/// Card header: icon + title, optional pin toggle and trailing actions, and
+/// the availability indicator.
 class _RuntimeCardHeader extends StatelessWidget {
-  const _RuntimeCardHeader({required this.group});
+  const _RuntimeCardHeader({
+    required this.icon,
+    required this.title,
+    required this.available,
+    this.pinned = false,
+    this.onTogglePin,
+    this.trailing,
+  });
 
-  final RuntimeGroup group;
+  final IconData icon;
+  final String title;
+  final bool available;
+  final bool pinned;
+  final ValueChanged<bool>? onTogglePin;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final icon = switch (group.kind) {
-      RuntimeKind.java => Symbols.coffee,
-      RuntimeKind.dotnet => Symbols.deployed_code,
-      RuntimeKind.python => Symbols.code,
-    };
-    final label = switch (group.kind) {
-      RuntimeKind.java => 'Java',
-      RuntimeKind.dotnet => '.NET',
-      RuntimeKind.python => 'Python',
-    };
     return Row(
       children: [
         Icon(icon, size: 20, color: scheme.primary),
         const SizedBox(width: 8),
-        Text(label, style: theme.textTheme.titleSmall),
-        const Spacer(),
-        if (group.available)
+        Expanded(child: Text(title, style: theme.textTheme.titleSmall)),
+        if (trailing != null) ...[trailing!, const SizedBox(width: 4)],
+        if (onTogglePin != null)
+          IconButton(
+            tooltip: pinned ? 'runtimeUnpin'.tr() : 'runtimePin'.tr(),
+            onPressed: () => onTogglePin!(!pinned),
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              Symbols.push_pin,
+              color: pinned ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ),
+        if (available)
           Icon(Symbols.check_circle, size: 18, color: scheme.primary)
         else
           Icon(
@@ -271,13 +420,12 @@ class _RuntimeCardHeader extends StatelessWidget {
 
 /// Summary row: process count, Σcpu%, ΣRSS, Σthreads.
 class _RuntimeSummaryTiles extends StatelessWidget {
-  const _RuntimeSummaryTiles({required this.group});
+  const _RuntimeSummaryTiles({required this.processes});
 
-  final RuntimeGroup group;
+  final List<RuntimeProcessInfo> processes;
 
   @override
   Widget build(BuildContext context) {
-    final processes = group.processes;
     final cpuTotal = processes.fold<double>(
       0,
       (sum, process) => sum + process.cpuPercent,
@@ -329,9 +477,10 @@ class _RuntimeSummaryTiles extends StatelessWidget {
 }
 
 class _RuntimeUnavailable extends StatelessWidget {
-  const _RuntimeUnavailable({required this.group});
+  const _RuntimeUnavailable({required this.error, required this.hasProcesses});
 
-  final RuntimeGroup group;
+  final String? error;
+  final bool hasProcesses;
 
   @override
   Widget build(BuildContext context) {
@@ -346,9 +495,9 @@ class _RuntimeUnavailable extends StatelessWidget {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                group.processes.isEmpty
-                    ? 'runtimeNotDetected'.tr()
-                    : 'runtimeUnavailable'.tr(),
+                hasProcesses
+                    ? 'runtimeUnavailable'.tr()
+                    : 'runtimeNotDetected'.tr(),
                 style: theme.textTheme.labelMedium?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
@@ -356,10 +505,10 @@ class _RuntimeUnavailable extends StatelessWidget {
             ),
           ],
         ),
-        if (group.error != null) ...[
+        if (error != null) ...[
           const SizedBox(height: 2),
           Text(
-            group.error!,
+            error!,
             style: theme.textTheme.labelSmall?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
@@ -371,6 +520,8 @@ class _RuntimeUnavailable extends StatelessWidget {
 }
 
 class _ProcessHeaderRow extends StatelessWidget {
+  const _ProcessHeaderRow();
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -459,6 +610,143 @@ class _RuntimeProcessRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Daemon-side watched-process section: one card per watched name with
+/// add/remove controls. Only the MaidCafe channel provides these.
+class _WatchedSection extends StatelessWidget {
+  const _WatchedSection({
+    required this.watched,
+    required this.pinnedNames,
+    required this.onAdd,
+    required this.onRemove,
+    required this.onTogglePin,
+  });
+
+  final List<WatchedProcessGroup> watched;
+  final Set<String> pinnedNames;
+  final Future<void> Function() onAdd;
+  final Future<void> Function(String name) onRemove;
+  final Future<void> Function(String name, bool pinned) onTogglePin;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Symbols.track_changes, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'runtimeWatchedProcesses'.tr(),
+                style: theme.textTheme.titleSmall,
+              ),
+            ),
+            IconButton(
+              tooltip: 'runtimeAddWatched'.tr(),
+              onPressed: onAdd,
+              icon: const Icon(Symbols.add, size: 18),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
+        if (watched.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'runtimeWatchedHint'.tr(),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final group in watched)
+                SizedBox(
+                  width: 440,
+                  child: _WatchedCard(
+                    group: group,
+                    pinned: pinnedNames.contains(group.name),
+                    onRemove: () => onRemove(group.name),
+                    onTogglePin: (pinned) => onTogglePin(group.name, pinned),
+                  ),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+class _WatchedCard extends StatelessWidget {
+  const _WatchedCard({
+    required this.group,
+    required this.pinned,
+    required this.onRemove,
+    required this.onTogglePin,
+  });
+
+  final WatchedProcessGroup group;
+  final bool pinned;
+  final Future<void> Function() onRemove;
+  final ValueChanged<bool> onTogglePin;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _RuntimeCardHeader(
+              icon: Symbols.visibility,
+              title: group.name,
+              available: group.available,
+              pinned: pinned,
+              onTogglePin: onTogglePin,
+              trailing: IconButton(
+                tooltip: 'runtimeRemoveWatched'.tr(),
+                onPressed: onRemove,
+                iconSize: 18,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Symbols.delete_outline,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _RuntimeSummaryTiles(processes: group.processes),
+            const SizedBox(height: 10),
+            if (!group.available)
+              _RuntimeUnavailable(error: group.error, hasProcesses: false)
+            else ...[
+              const _ProcessHeaderRow(),
+              const SizedBox(height: 4),
+              for (final process in group.processes)
+                _RuntimeProcessRow(process: process),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -389,5 +389,43 @@ void main() {
           .then((server) => server.id);
       expect(await repository.watchRuntimeWatchConfigs(otherId).first, isEmpty);
     });
+
+    test(
+      'setRuntimePinned persists and watchPinnedRuntimeConfigs sees it',
+      () async {
+        await repository.setRuntimePinned(serverId, 'java', true);
+        final pinned = await repository.watchPinnedRuntimeConfigs().first;
+        expect(pinned, hasLength(1));
+        expect(pinned.single.serverId, serverId);
+        expect(pinned.single.runtime, 'java');
+        expect(pinned.single.pinned, isTrue);
+      },
+    );
+
+    test('unpinning removes the row from the pinned watcher', () async {
+      await repository.setRuntimePinned(serverId, 'nginx', true);
+      await repository.setRuntimePinned(serverId, 'nginx', false);
+      expect(await repository.watchPinnedRuntimeConfigs().first, isEmpty);
+    });
+
+    test('pins are scoped per server', () async {
+      await repository.setRuntimePinned(serverId, 'java', true);
+      final otherId = await repository
+          .create(
+            const ServerDraft(
+              name: 'other',
+              host: '10.0.0.11',
+              port: 22,
+              username: 'u',
+            ),
+          )
+          .then((server) => server.id);
+      final pinned = await repository.watchPinnedRuntimeConfigs().first;
+      expect(pinned, hasLength(1));
+      expect(pinned.single.serverId, serverId);
+      expect(await repository.watchPinnedRuntimeConfigs().first, hasLength(1));
+      // Unpinning server A must not affect server B (no rows exist there).
+      expect(await repository.watchRuntimeWatchConfigs(otherId).first, isEmpty);
+    });
   });
 }

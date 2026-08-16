@@ -270,6 +270,9 @@ class ServerRepository {
   Stream<List<RuntimeWatchConfig>> watchRuntimeWatchConfigs(int serverId) =>
       _database.watchRuntimeWatchConfigs(serverId);
 
+  Stream<List<RuntimeWatchConfig>> watchPinnedRuntimeConfigs() =>
+      _database.watchPinnedRuntimeConfigs();
+
   /// Persists the enable/disable toggle for one runtime on a server. Absent
   /// rows default to enabled, so toggling back on inserts a row.
   Future<void> setRuntimeEnabled(
@@ -284,6 +287,25 @@ class ServerRepository {
             serverId: serverId,
             runtime: kind.name,
             enabled: Value(enabled),
+          ),
+        );
+  }
+
+  /// Pins or unpins a runtime/watched-process card on the server detail page
+  /// for the dashboard. [runtime] is the wire runtime name or watched-process
+  /// name; absent rows are created with the enabled default.
+  Future<void> setRuntimePinned(
+    int serverId,
+    String runtime,
+    bool pinned,
+  ) async {
+    await _database
+        .into(_database.runtimeWatchConfigs)
+        .insertOnConflictUpdate(
+          RuntimeWatchConfigsCompanion.insert(
+            serverId: serverId,
+            runtime: runtime,
+            pinned: Value(pinned),
           ),
         );
   }

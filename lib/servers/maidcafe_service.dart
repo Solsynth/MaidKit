@@ -1281,7 +1281,44 @@ RuntimeSnapshot parseMaidCafeRuntimes(Map<String, dynamic> json) {
       if (group != null) groups.add(group);
     }
   }
-  return RuntimeSnapshot(groups: groups, collectedAt: DateTime.now());
+  final watched = <WatchedProcessGroup>[];
+  final rawWatched = json['watched'];
+  if (rawWatched is List) {
+    for (final raw in rawWatched) {
+      if (raw is! Map) continue;
+      final group = _parseSseWatchedGroup(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (group != null) watched.add(group);
+    }
+  }
+  return RuntimeSnapshot(
+    groups: groups,
+    watched: watched,
+    collectedAt: DateTime.now(),
+  );
+}
+
+WatchedProcessGroup? _parseSseWatchedGroup(Map<String, dynamic> json) {
+  final name = _optionalString(json, 'name');
+  if (name == null || name.isEmpty) return null;
+  final processes = <RuntimeProcessInfo>[];
+  final rawProcesses = json['processes'];
+  if (rawProcesses is List) {
+    for (final raw in rawProcesses) {
+      if (raw is! Map) continue;
+      final process = _parseSseRuntimeProcess(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (process != null) processes.add(process);
+    }
+  }
+  return WatchedProcessGroup(
+    name: name,
+    available: json['available'] is bool ? json['available'] as bool : true,
+    error: _optionalString(json, 'error'),
+    processes: processes,
+  );
 }
 
 RuntimeGroup? _parseSseRuntimeGroup(Map<String, dynamic> json) {

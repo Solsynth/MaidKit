@@ -9336,8 +9336,21 @@ class $RuntimeWatchConfigsTable extends RuntimeWatchConfigs
     ),
     defaultValue: const Constant(true),
   );
+  static const VerificationMeta _pinnedMeta = const VerificationMeta('pinned');
   @override
-  List<GeneratedColumn> get $columns => [serverId, runtime, enabled];
+  late final GeneratedColumn<bool> pinned = GeneratedColumn<bool>(
+    'pinned',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("pinned" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [serverId, runtime, enabled, pinned];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -9372,6 +9385,12 @@ class $RuntimeWatchConfigsTable extends RuntimeWatchConfigs
         enabled.isAcceptableOrUnknown(data['enabled']!, _enabledMeta),
       );
     }
+    if (data.containsKey('pinned')) {
+      context.handle(
+        _pinnedMeta,
+        pinned.isAcceptableOrUnknown(data['pinned']!, _pinnedMeta),
+      );
+    }
     return context;
   }
 
@@ -9393,6 +9412,10 @@ class $RuntimeWatchConfigsTable extends RuntimeWatchConfigs
         DriftSqlType.bool,
         data['${effectivePrefix}enabled'],
       )!,
+      pinned: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}pinned'],
+      )!,
     );
   }
 
@@ -9407,10 +9430,12 @@ class RuntimeWatchConfig extends DataClass
   final int serverId;
   final String runtime;
   final bool enabled;
+  final bool pinned;
   const RuntimeWatchConfig({
     required this.serverId,
     required this.runtime,
     required this.enabled,
+    required this.pinned,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -9418,6 +9443,7 @@ class RuntimeWatchConfig extends DataClass
     map['server_id'] = Variable<int>(serverId);
     map['runtime'] = Variable<String>(runtime);
     map['enabled'] = Variable<bool>(enabled);
+    map['pinned'] = Variable<bool>(pinned);
     return map;
   }
 
@@ -9426,6 +9452,7 @@ class RuntimeWatchConfig extends DataClass
       serverId: Value(serverId),
       runtime: Value(runtime),
       enabled: Value(enabled),
+      pinned: Value(pinned),
     );
   }
 
@@ -9438,6 +9465,7 @@ class RuntimeWatchConfig extends DataClass
       serverId: serializer.fromJson<int>(json['serverId']),
       runtime: serializer.fromJson<String>(json['runtime']),
       enabled: serializer.fromJson<bool>(json['enabled']),
+      pinned: serializer.fromJson<bool>(json['pinned']),
     );
   }
   @override
@@ -9447,6 +9475,7 @@ class RuntimeWatchConfig extends DataClass
       'serverId': serializer.toJson<int>(serverId),
       'runtime': serializer.toJson<String>(runtime),
       'enabled': serializer.toJson<bool>(enabled),
+      'pinned': serializer.toJson<bool>(pinned),
     };
   }
 
@@ -9454,16 +9483,19 @@ class RuntimeWatchConfig extends DataClass
     int? serverId,
     String? runtime,
     bool? enabled,
+    bool? pinned,
   }) => RuntimeWatchConfig(
     serverId: serverId ?? this.serverId,
     runtime: runtime ?? this.runtime,
     enabled: enabled ?? this.enabled,
+    pinned: pinned ?? this.pinned,
   );
   RuntimeWatchConfig copyWithCompanion(RuntimeWatchConfigsCompanion data) {
     return RuntimeWatchConfig(
       serverId: data.serverId.present ? data.serverId.value : this.serverId,
       runtime: data.runtime.present ? data.runtime.value : this.runtime,
       enabled: data.enabled.present ? data.enabled.value : this.enabled,
+      pinned: data.pinned.present ? data.pinned.value : this.pinned,
     );
   }
 
@@ -9472,37 +9504,42 @@ class RuntimeWatchConfig extends DataClass
     return (StringBuffer('RuntimeWatchConfig(')
           ..write('serverId: $serverId, ')
           ..write('runtime: $runtime, ')
-          ..write('enabled: $enabled')
+          ..write('enabled: $enabled, ')
+          ..write('pinned: $pinned')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(serverId, runtime, enabled);
+  int get hashCode => Object.hash(serverId, runtime, enabled, pinned);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is RuntimeWatchConfig &&
           other.serverId == this.serverId &&
           other.runtime == this.runtime &&
-          other.enabled == this.enabled);
+          other.enabled == this.enabled &&
+          other.pinned == this.pinned);
 }
 
 class RuntimeWatchConfigsCompanion extends UpdateCompanion<RuntimeWatchConfig> {
   final Value<int> serverId;
   final Value<String> runtime;
   final Value<bool> enabled;
+  final Value<bool> pinned;
   final Value<int> rowid;
   const RuntimeWatchConfigsCompanion({
     this.serverId = const Value.absent(),
     this.runtime = const Value.absent(),
     this.enabled = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   RuntimeWatchConfigsCompanion.insert({
     required int serverId,
     required String runtime,
     this.enabled = const Value.absent(),
+    this.pinned = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : serverId = Value(serverId),
        runtime = Value(runtime);
@@ -9510,12 +9547,14 @@ class RuntimeWatchConfigsCompanion extends UpdateCompanion<RuntimeWatchConfig> {
     Expression<int>? serverId,
     Expression<String>? runtime,
     Expression<bool>? enabled,
+    Expression<bool>? pinned,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (serverId != null) 'server_id': serverId,
       if (runtime != null) 'runtime': runtime,
       if (enabled != null) 'enabled': enabled,
+      if (pinned != null) 'pinned': pinned,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -9524,12 +9563,14 @@ class RuntimeWatchConfigsCompanion extends UpdateCompanion<RuntimeWatchConfig> {
     Value<int>? serverId,
     Value<String>? runtime,
     Value<bool>? enabled,
+    Value<bool>? pinned,
     Value<int>? rowid,
   }) {
     return RuntimeWatchConfigsCompanion(
       serverId: serverId ?? this.serverId,
       runtime: runtime ?? this.runtime,
       enabled: enabled ?? this.enabled,
+      pinned: pinned ?? this.pinned,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -9546,6 +9587,9 @@ class RuntimeWatchConfigsCompanion extends UpdateCompanion<RuntimeWatchConfig> {
     if (enabled.present) {
       map['enabled'] = Variable<bool>(enabled.value);
     }
+    if (pinned.present) {
+      map['pinned'] = Variable<bool>(pinned.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -9558,6 +9602,7 @@ class RuntimeWatchConfigsCompanion extends UpdateCompanion<RuntimeWatchConfig> {
           ..write('serverId: $serverId, ')
           ..write('runtime: $runtime, ')
           ..write('enabled: $enabled, ')
+          ..write('pinned: $pinned, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -14525,6 +14570,7 @@ typedef $$RuntimeWatchConfigsTableCreateCompanionBuilder =
       required int serverId,
       required String runtime,
       Value<bool> enabled,
+      Value<bool> pinned,
       Value<int> rowid,
     });
 typedef $$RuntimeWatchConfigsTableUpdateCompanionBuilder =
@@ -14532,6 +14578,7 @@ typedef $$RuntimeWatchConfigsTableUpdateCompanionBuilder =
       Value<int> serverId,
       Value<String> runtime,
       Value<bool> enabled,
+      Value<bool> pinned,
       Value<int> rowid,
     });
 
@@ -14556,6 +14603,11 @@ class $$RuntimeWatchConfigsTableFilterComposer
 
   ColumnFilters<bool> get enabled => $composableBuilder(
     column: $table.enabled,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get pinned => $composableBuilder(
+    column: $table.pinned,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -14583,6 +14635,11 @@ class $$RuntimeWatchConfigsTableOrderingComposer
     column: $table.enabled,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get pinned => $composableBuilder(
+    column: $table.pinned,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$RuntimeWatchConfigsTableAnnotationComposer
@@ -14602,6 +14659,9 @@ class $$RuntimeWatchConfigsTableAnnotationComposer
 
   GeneratedColumn<bool> get enabled =>
       $composableBuilder(column: $table.enabled, builder: (column) => column);
+
+  GeneratedColumn<bool> get pinned =>
+      $composableBuilder(column: $table.pinned, builder: (column) => column);
 }
 
 class $$RuntimeWatchConfigsTableTableManager
@@ -14650,11 +14710,13 @@ class $$RuntimeWatchConfigsTableTableManager
                 Value<int> serverId = const Value.absent(),
                 Value<String> runtime = const Value.absent(),
                 Value<bool> enabled = const Value.absent(),
+                Value<bool> pinned = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => RuntimeWatchConfigsCompanion(
                 serverId: serverId,
                 runtime: runtime,
                 enabled: enabled,
+                pinned: pinned,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -14662,11 +14724,13 @@ class $$RuntimeWatchConfigsTableTableManager
                 required int serverId,
                 required String runtime,
                 Value<bool> enabled = const Value.absent(),
+                Value<bool> pinned = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => RuntimeWatchConfigsCompanion.insert(
                 serverId: serverId,
                 runtime: runtime,
                 enabled: enabled,
+                pinned: pinned,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

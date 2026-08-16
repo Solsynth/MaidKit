@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 29 migrations, which
+        // Opening the database again runs the 22 -> 30 migrations, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 29);
+        expect(version.read<int>('user_version'), 30);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -87,6 +87,15 @@ void main() {
             )
             .get();
         expect(runtimeTable, isNotEmpty);
+
+        // The pinned column for dashboard pins is added in schema 30.
+        final pinnedColumn = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('runtime_watch_configs') "
+              "WHERE name = 'pinned'",
+            )
+            .get();
+        expect(pinnedColumn, isNotEmpty);
         await database.close();
       },
     );
@@ -108,7 +117,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 29);
+        expect(version.read<int>('user_version'), 30);
 
         final column = await database
             .customSelect(

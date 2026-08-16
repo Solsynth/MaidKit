@@ -50,13 +50,14 @@ Future<RuntimeSnapshot?> collectRuntimeMetricsOverSsh(SSHClient client) async {
   return RuntimeSnapshot(groups: groups, collectedAt: DateTime.now());
 }
 
-/// Partitions runtime processes into the fixed java, dotnet, python groups in
-/// CPU order, capping each at [runtimeGroupLimit]. A group with no matching
-/// process reports available:false.
+/// Partitions runtime processes into one group per [RuntimeKind] in enum
+/// order, capping each at [runtimeGroupLimit]. A group with no matching
+/// process reports available:false. Mirrors the daemon's default runtime
+/// list so the SSH fallback payload matches the daemon channel.
 List<RuntimeGroup> groupRuntimeProcesses(List<RuntimeProcessInfo> entries) {
-  const names = ['java', 'dotnet', 'python'];
   final groups = <RuntimeGroup>[];
-  for (final name in names) {
+  for (final kind in RuntimeKind.values) {
+    final name = kind.name;
     final matching = <RuntimeProcessInfo>[];
     for (final entry in entries) {
       if (matching.length >= runtimeGroupLimit) break;
@@ -65,7 +66,7 @@ List<RuntimeGroup> groupRuntimeProcesses(List<RuntimeProcessInfo> entries) {
     }
     groups.add(
       RuntimeGroup(
-        kind: RuntimeKindFromWire(name)!,
+        kind: kind,
         available: matching.isNotEmpty,
         error: matching.isEmpty ? 'no $name processes found' : null,
         processes: matching,
