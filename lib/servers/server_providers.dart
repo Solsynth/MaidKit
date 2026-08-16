@@ -1216,10 +1216,11 @@ final pinnedRuntimeConfigsProvider = StreamProvider<List<RuntimeWatchConfig>>((
   return ref.watch(serverRepositoryProvider).watchPinnedRuntimeConfigs();
 });
 
-const _runtimeDetectedOnlyPreference = 'runtime_detected_only';
+const _runtimeDetectedOnlyKey = 'runtime_detected_only';
 
 /// Hides undetected (available:false) cards on the Runtimes tab. On by
-/// default; persisted in shared preferences.
+/// default; persisted in the vault's Drift database (AppSettings) so the
+/// preference syncs with the vault like every other table.
 final runtimeDetectedOnlyProvider =
     NotifierProvider<RuntimeDetectedOnlyNotifier, bool>(
       RuntimeDetectedOnlyNotifier.new,
@@ -1233,15 +1234,17 @@ class RuntimeDetectedOnlyNotifier extends Notifier<bool> {
   }
 
   Future<void> _restore() async {
-    final preferences = await SharedPreferences.getInstance();
-    final value = preferences.getBool(_runtimeDetectedOnlyPreference);
-    if (value != null) state = value;
+    final value = await ref
+        .read(serverRepositoryProvider)
+        .getAppSetting(_runtimeDetectedOnlyKey);
+    if (value != null) state = value == 'true';
   }
 
   Future<void> setDetectedOnly(bool value) async {
     state = value;
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setBool(_runtimeDetectedOnlyPreference, value);
+    await ref
+        .read(serverRepositoryProvider)
+        .setAppSetting(_runtimeDetectedOnlyKey, '$value');
   }
 }
 

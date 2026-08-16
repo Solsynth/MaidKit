@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 30 migrations, which
+        // Opening the database again runs the 22 -> 31 migrations, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 30);
+        expect(version.read<int>('user_version'), 31);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -96,6 +96,15 @@ void main() {
             )
             .get();
         expect(pinnedColumn, isNotEmpty);
+
+        // Vault-synced app preferences are created in schema 31.
+        final settingsTable = await database
+            .customSelect(
+              "SELECT name FROM sqlite_master "
+              "WHERE type = 'table' AND name = 'app_settings'",
+            )
+            .get();
+        expect(settingsTable, isNotEmpty);
         await database.close();
       },
     );
@@ -117,7 +126,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 30);
+        expect(version.read<int>('user_version'), 31);
 
         final column = await database
             .customSelect(

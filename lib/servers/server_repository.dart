@@ -273,6 +273,13 @@ class ServerRepository {
   Stream<List<RuntimeWatchConfig>> watchPinnedRuntimeConfigs() =>
       _database.watchPinnedRuntimeConfigs();
 
+  Stream<String?> watchAppSetting(String key) => _database.watchAppSetting(key);
+
+  Future<String?> getAppSetting(String key) => _database.getAppSetting(key);
+
+  Future<void> setAppSetting(String key, String value) =>
+      _database.setAppSetting(key, value);
+
   /// Persists the enable/disable toggle for one runtime on a server. Absent
   /// rows default to enabled, so toggling back on inserts a row.
   Future<void> setRuntimeEnabled(

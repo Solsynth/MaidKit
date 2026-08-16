@@ -184,6 +184,20 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
     final enabledKinds = RuntimeKind.values
         .where((kind) => enabledByKind[kind] ?? true)
         .toList();
+    // The toggle row only lists runtimes detected in the snapshot; until the
+    // first snapshot arrives every runtime is offered so nothing disappears
+    // transiently.
+    final hasSnapshotData =
+        widget.snapshot.hasValue && widget.snapshot.value!.groups.isNotEmpty;
+    final toggleKinds = hasSnapshotData
+        ? [
+            for (final kind in RuntimeKind.values)
+              if (widget.snapshot.value!.groups.any(
+                (group) => group.kind == kind && group.available,
+              ))
+                kind,
+          ]
+        : RuntimeKind.values;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -197,11 +211,13 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
                   runSpacing: 4,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    for (final kind in RuntimeKind.values)
-                      _RuntimeToggle(
-                        label: runtimeIdentity(kind).label,
-                        enabled: enabledByKind[kind] ?? true,
-                        onChanged: (value) => _setRuntimeEnabled(kind, value),
+                    for (final kind in toggleKinds)
+                      FilterChip(
+                        avatar: Icon(runtimeIdentity(kind).icon, size: 16),
+                        label: Text(runtimeIdentity(kind).label),
+                        visualDensity: VisualDensity.compact,
+                        selected: enabledByKind[kind] ?? true,
+                        onSelected: (value) => _setRuntimeEnabled(kind, value),
                       ),
                   ],
                 ),
@@ -342,41 +358,6 @@ class _DataSourceBanner extends StatelessWidget {
           style: theme.textTheme.labelSmall?.copyWith(
             color: scheme.onSurfaceVariant,
           ),
-        ),
-      ],
-    );
-  }
-}
-
-/// One compact enable/disable switch in the header row.
-class _RuntimeToggle extends StatelessWidget {
-  const _RuntimeToggle({
-    required this.label,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  final String label;
-  final bool enabled;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: theme.textTheme.labelLarge?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(width: 2),
-        Switch(
-          value: enabled,
-          onChanged: onChanged,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ],
     );

@@ -427,5 +427,22 @@ void main() {
       // Unpinning server A must not affect server B (no rows exist there).
       expect(await repository.watchRuntimeWatchConfigs(otherId).first, isEmpty);
     });
+
+    test('app settings round-trip through the vault database', () async {
+      expect(await repository.getAppSetting('runtime_detected_only'), isNull);
+      await repository.setAppSetting('runtime_detected_only', 'false');
+      expect(await repository.getAppSetting('runtime_detected_only'), 'false');
+      expect(
+        await repository.watchAppSetting('runtime_detected_only').first,
+        'false',
+      );
+      // Upsert overwrites.
+      await repository.setAppSetting('runtime_detected_only', 'true');
+      expect(await repository.getAppSetting('runtime_detected_only'), 'true');
+      expect(
+        await repository.watchAppSetting('runtime_detected_only').first,
+        'true',
+      );
+    });
   });
 }

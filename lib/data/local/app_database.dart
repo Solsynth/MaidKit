@@ -278,6 +278,16 @@ class RuntimeWatchConfigs extends Table {
   Set<Column<Object>> get primaryKey => {serverId, runtime};
 }
 
+/// Vault-synced app preferences (key-value). Rows travel with the vault file
+/// like every other table, so preferences follow the user across devices.
+class AppSettings extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {key};
+}
+
 /// Links a deployment project to a GitHub workflow whose latest run is shown
 /// on the project detail page.
 @DriftDatabase(
@@ -300,6 +310,7 @@ class RuntimeWatchConfigs extends Table {
     GitHubTokens,
     PortForwardConfigs,
     RuntimeWatchConfigs,
+    AppSettings,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -316,7 +327,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 31;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -601,6 +612,9 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(runtimeWatchConfigs, runtimeWatchConfigs.pinned);
         }
       }
+      if (from < 31) {
+        await m.createTable(appSettings);
+      }
     },
   );
 
@@ -673,6 +687,21 @@ class AppDatabase extends _$AppDatabase {
   Stream<List<RuntimeWatchConfig>> watchPinnedRuntimeConfigs() => (select(
     runtimeWatchConfigs,
   )..where((table) => table.pinned.equals(true))).watch();
+
+  Stream<String?> watchAppSetting(String key) =>
+      (select(appSettings)..where((table) => table.key.equals(key)))
+          .watchSingleOrNull()
+          .map((row) => row?.value);
+
+  Future<String?> getAppSetting(String key) async => (await (select(
+    appSettings,
+  )..where((table) => table.key.equals(key))).getSingleOrNull())?.value;
+
+  Future<void> setAppSetting(String key, String value) async {
+    await into(appSettings).insertOnConflictUpdate(
+      AppSettingsCompanion.insert(key: key, value: value),
+    );
+  }
 
   Future<List<PortForwardConfig>> portForwardConfigsForServer(int serverId) =>
       (select(portForwardConfigs)
