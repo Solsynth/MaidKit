@@ -140,6 +140,9 @@ final _maidCafeActionUserPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_.-]*$');
 
 final _maidCafeEnvKeyPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
 
+/// Go-style duration: one or more number+unit pairs, e.g. `30s`, `2m`, `1h30m`.
+final _maidCafeDurationPattern = RegExp(r'^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$');
+
 final _maidCafeTemplateVarPattern = RegExp(r'\{\{\s*([^{}]+?)\s*\}\}');
 
 /// Extracts the `{{ name }}` template variables [script] references, in first
@@ -858,6 +861,15 @@ void _validateMaidCafeConfigFields({
         action.name,
         'actions[$i].user',
         'must be a valid user name',
+      );
+    }
+    final scriptTimeout = action.scriptTimeout?.trim() ?? '';
+    if (scriptTimeout.isNotEmpty &&
+        !_maidCafeDurationPattern.hasMatch(scriptTimeout)) {
+      throw ArgumentError.value(
+        action.name,
+        'actions[$i].scriptTimeout',
+        'must be a duration like 30s or 2m',
       );
     }
     for (final key in action.environment.keys) {

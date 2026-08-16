@@ -426,6 +426,51 @@ command = "/bin/true"
     expect(fragment, isNot(contains('displayName')));
   });
 
+  test('empty cwd, user and timeout are omitted and accepted', () {
+    // Empty strings behave exactly like unset fields: no keys in the
+    // fragment, and the save accepts them.
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: _baseConfig,
+      daemonId: 'maidkit-1',
+      cloudUrl: '',
+      cloudSecret: '',
+      transport: 'http',
+      actions: const [
+        MaidCafeActionDefinition(
+          name: 'backup',
+          script: 'echo hi',
+          workingDirectory: '',
+          user: '',
+          scriptTimeout: '',
+        ),
+      ],
+    );
+    final fragment = decodeFragmentFromScript(script, 'backup');
+    expect(fragment, isNot(contains('cwd =')));
+    expect(fragment, isNot(contains('user =')));
+    expect(fragment, isNot(contains('timeout =')));
+  });
+
+  test('rejects malformed per-action timeouts on save', () {
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        currentConfig: _baseConfig,
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        actions: const [
+          MaidCafeActionDefinition(
+            name: 'deploy',
+            script: 'echo hi',
+            scriptTimeout: '2 minutes',
+          ),
+        ],
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test('script deploy prepends a shebang and removes stale files', () {
     const body = 'printf "%s" ok\n';
     final snippet = buildMaidCafeActionScriptsScript(const [
