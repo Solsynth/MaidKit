@@ -19,6 +19,11 @@ import 'server_providers.dart';
 /// Desktop workspace page for the MaidCafe cloud: Solarpass account and
 /// workspace selection, daemon registration (the one-time `[daemon]` config
 /// snippet), and the Metoer notification feed.
+///
+/// Wide windows get a two-pane console: a fixed control rail (cloud
+/// connection, account, credentials) beside a fluid fleet region (daemon
+/// cards with a live metric strip, then the notification feed). Narrow
+/// windows stack the same sections as cards.
 @RoutePage()
 class MaidCafeCloudPage extends ConsumerStatefulWidget {
   const MaidCafeCloudPage({super.key});
@@ -68,78 +73,171 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       if (next.hasValue) ref.invalidate(maidCafeMetoerUnreadCountProvider);
     });
     return MaidKitAppScaffold(
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 920),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-            children: [
-              const _MaidCafeCloudHeader(),
-              const SizedBox(height: 24),
-              _SettingsSectionCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _urlEditor(
-                      context,
-                      controller: _cloudUrlController,
-                      label: 'maidCafeCloudUrl'.tr(),
-                      hint: 'maidCafeCloudUrlHint'.tr(),
-                      onSave: () => _saveCloudUrl(context),
-                      onReset: () => _resetCloudUrl(context),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: _busy == null
-                                ? () => _checkCloudHealth(context)
-                                : null,
-                            icon: const Icon(Symbols.health_and_safety),
-                            label: Text('maidCafeCheckCloudHealth'.tr()),
-                          ),
-                          if (_cloudHealth != null) _healthStatus(context),
-                        ],
-                      ),
-                    ),
-                    if (_message != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                        child: Text(_message!),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              _SettingsSectionCard(
-                child: cloudUser.when(
-                  loading: () => const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: LinearProgressIndicator(),
-                  ),
-                  error: (_, _) => _accountSignedOut(context),
-                  data: (user) => user == null
-                      ? _accountSignedOut(context)
-                      : _accountSignedIn(context, user),
-                ),
-              ),
-              const SizedBox(height: 24),
-              _daemonsCard(context, effectiveWorkspaceId),
-              const SizedBox(height: 24),
-              _credentialsCard(context),
-              const SizedBox(height: 24),
-              _notificationsCard(context),
-            ],
-          ),
-        ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 1000) {
+            return _narrowLayout(context, cloudUser, effectiveWorkspaceId);
+          }
+          return _wideLayout(context, cloudUser, effectiveWorkspaceId);
+        },
       ),
     );
   }
+
+  // ----------------------------------------------------------------- layout
+
+  /// Stacked single-column layout for narrow windows.
+  Widget _narrowLayout(
+    BuildContext context,
+    AsyncValue<CloudUser?> cloudUser,
+    String? workspaceId,
+  ) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+      children: [
+        const _MaidCafeCloudHeader(),
+        const SizedBox(height: 24),
+        _SettingsSectionCard(child: _connectionGroup(context)),
+        const SizedBox(height: 24),
+        _SettingsSectionCard(
+          child: cloudUser.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.all(16),
+              child: LinearProgressIndicator(),
+            ),
+            error: (_, _) => _accountSignedOut(context),
+            data: (user) => user == null
+                ? _accountSignedOut(context)
+                : _accountSignedIn(context, user),
+          ),
+        ),
+        const SizedBox(height: 24),
+        _credentialsCard(context),
+        const SizedBox(height: 24),
+        _daemonsCard(context, workspaceId),
+        const SizedBox(height: 24),
+        _notificationsCard(context),
+      ],
+    );
+  }
+
+  /// Two-pane console for wide windows: fixed control rail beside the fleet.
+  Widget _wideLayout(
+    BuildContext context,
+    AsyncValue<CloudUser?> cloudUser,
+    String? workspaceId,
+  ) {
+    return Column(
+      children: [
+        const _MaidCafeCloudHeader(),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _CloudControlRail(
+                children: [
+                  _RailSection(
+                    label: 'maidCafeCloudConnection'.tr(),
+                    child: _connectionGroup(context),
+                  ),
+                  const SizedBox(height: 24),
+                  _RailSection(
+                    label: 'settingsAccount'.tr(),
+                    child: cloudUser.when(
+                      loading: () => const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: LinearProgressIndicator(),
+                      ),
+                      error: (_, _) => _accountSignedOut(context),
+                      data: (user) => user == null
+                          ? _accountSignedOut(context)
+                          : _accountSignedIn(context, user),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  _RailSection(
+                    label: 'maidCafeCredentials'.tr(),
+                    action: FilledButton.tonalIcon(
+                      onPressed: _busy == null
+                          ? () => _createCredential(context)
+                          : null,
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      icon: const Icon(Symbols.add, size: 18),
+                      label: Text(
+                        'maidCafeCredentialCreate'.tr(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    child: _credentialsBody(context),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: CustomScrollView(
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                      sliver: SliverToBoxAdapter(
+                        child: _daemonsSection(context, workspaceId),
+                      ),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.all(24),
+                      sliver: SliverToBoxAdapter(
+                        child: _notificationsCard(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Cloud URL editor, health check and inline operation feedback.
+  Widget _connectionGroup(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _urlEditor(
+        context,
+        controller: _cloudUrlController,
+        label: 'maidCafeCloudUrl'.tr(),
+        hint: 'maidCafeCloudUrlHint'.tr(),
+        onSave: () => _saveCloudUrl(context),
+        onReset: () => _resetCloudUrl(context),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _busy == null
+                  ? () => _checkCloudHealth(context)
+                  : null,
+              icon: const Icon(Symbols.health_and_safety),
+              label: Text('maidCafeCheckCloudHealth'.tr()),
+            ),
+            if (_cloudHealth != null) _healthStatus(context),
+          ],
+        ),
+      ),
+      if (_message != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Text(_message!),
+        ),
+    ],
+  );
 
   // ---------------------------------------------------------------- account
 
@@ -249,6 +347,65 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
 
   // ----------------------------------------------------------------- daemons
 
+  /// Bare fleet section for the wide layout; sits directly on the surface.
+  Widget _daemonsSection(BuildContext context, String? workspaceId) {
+    if (workspaceId == null) {
+      return _SettingsSectionCard(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text('maidCafeNoWorkspaces'.tr()),
+        ),
+      );
+    }
+    final daemons = ref.watch(maidCafeDaemonsProvider(workspaceId));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'maidCafeDaemons'.tr(),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _busy == null
+                  ? () => _registerDaemon(context, workspaceId)
+                  : null,
+              icon: const Icon(Symbols.add),
+              label: Text('maidCafeRegister'.tr()),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        daemons.when(
+          loading: () => const _SettingsSectionCard(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: LinearProgressIndicator(),
+            ),
+          ),
+          error: (error, _) => _SettingsSectionCard(
+            child: _recoverableError(
+              context,
+              error,
+              () => ref.invalidate(maidCafeDaemonsProvider(workspaceId)),
+            ),
+          ),
+          data: (items) => items.isEmpty
+              ? _SettingsSectionCard(
+                  child: _EmptyDaemons(
+                    onRegister: () => _registerDaemon(context, workspaceId),
+                  ),
+                )
+              : _daemonGrid(context, items),
+        ),
+      ],
+    );
+  }
+
+  /// Card-wrapped fleet section for the narrow layout.
   Widget _daemonsCard(BuildContext context, String? workspaceId) {
     if (workspaceId == null) {
       return _SettingsSectionCard(
@@ -294,20 +451,30 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
               () => ref.invalidate(maidCafeDaemonsProvider(workspaceId)),
             ),
             data: (items) => items.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text('maidCafeNoDaemons'.tr()),
+                ? _EmptyDaemons(
+                    onRegister: () => _registerDaemon(context, workspaceId),
                   )
-                : Column(
-                    children: [
-                      for (final daemon in items) _daemonTile(context, daemon),
-                    ],
-                  ),
+                : _daemonGrid(context, items),
           ),
         ],
       ),
     );
   }
+
+  Widget _daemonGrid(BuildContext context, List<MaidCafeDaemon> items) =>
+      _DaemonGrid(
+        items: items,
+        busy: _busy != null,
+        onRename: (daemon) => _renameDaemon(context, daemon),
+        onToggleEnabled: (daemon) =>
+            _setDaemonEnabled(context, daemon, !daemon.enabled),
+        onRotateSecret: (daemon) => _rotateSecret(context, daemon),
+        onDisable: (daemon) => _disableDaemon(context, daemon),
+        onRequestNotification: (daemon) =>
+            _requestPushNotification(context, daemon),
+        onInvokeAction: (daemon, action) =>
+            _invokeCloudAction(context, daemon, action),
+      );
 
   Future<void> _registerDaemon(BuildContext context, String workspaceId) async {
     final result = await showDialog<MaidCafeConnectServerResult>(
@@ -361,131 +528,9 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     });
   }
 
-  Widget _daemonTile(BuildContext context, MaidCafeDaemon daemon) => Container(
-    margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-    decoration: BoxDecoration(
-      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Column(
-      children: [
-        ListTile(
-          title: Text(daemon.name),
-          subtitle: Text(
-            daemon.enabled
-                ? '${'maidCafeEnabled'.tr()} · ${daemon.lastSeenAt?.toLocal() ?? 'maidCafeNeverSeen'.tr()}'
-                : 'maidCafeDisabled'.tr(),
-          ),
-          trailing: Wrap(
-            spacing: 2,
-            children: [
-              IconButton(
-                tooltip: 'maidCafeRename'.tr(),
-                icon: const Icon(Symbols.edit),
-                onPressed: _busy == null
-                    ? () => _renameDaemon(context, daemon)
-                    : null,
-              ),
-              IconButton(
-                tooltip: daemon.enabled
-                    ? 'maidCafeDisable'.tr()
-                    : 'maidCafeEnable'.tr(),
-                icon: Icon(daemon.enabled ? Symbols.pause : Symbols.play_arrow),
-                onPressed: _busy == null
-                    ? () => _setDaemonEnabled(context, daemon, !daemon.enabled)
-                    : null,
-              ),
-              IconButton(
-                tooltip: 'maidCafeRotateSecret'.tr(),
-                icon: const Icon(Symbols.key),
-                onPressed: _busy == null
-                    ? () => _rotateSecret(context, daemon)
-                    : null,
-              ),
-              IconButton(
-                tooltip: 'maidCafeDisable'.tr(),
-                icon: const Icon(Symbols.delete_outline),
-                onPressed: _busy == null
-                    ? () => _disableDaemon(context, daemon)
-                    : null,
-              ),
-            ],
-          ),
-        ),
-        _daemonHistory(context, daemon),
-      ],
-    ),
-  );
-
-  Widget _daemonHistory(BuildContext context, MaidCafeDaemon daemon) {
-    final metrics = ref.watch(maidCafeMetricsProvider(daemon.id));
-    final history = metrics.asData?.value ?? const <MaidCafeMetric>[];
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final sample in history.take(5))
-            Text(
-              '${sample.sentAt.toLocal()} · CPU ${sample.cpuPercent.toStringAsFixed(1)}% · RAM ${sample.memoryUsedPercent.toStringAsFixed(1)}%',
-            ),
-          if (metrics.hasError) Text('maidCafeHistoryUnavailable'.tr()),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              OutlinedButton(
-                onPressed: _busy == null
-                    ? () => _requestPushNotification(context, daemon)
-                    : null,
-                child: Text('maidCafeRequestNotification'.tr()),
-              ),
-            ],
-          ),
-          _cloudActions(context, daemon),
-        ],
-      ),
-    );
-  }
-
   /// Actions the daemon reported to the cloud, invoked through the relay:
   /// the cloud page asks the cloud, the cloud queues it, and the daemon
   /// polls and runs it.
-  Widget _cloudActions(BuildContext context, MaidCafeDaemon daemon) {
-    final actions = ref.watch(maidCafeCloudActionsProvider(daemon.id));
-    return actions.when(
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
-      data: (items) {
-        if (items.isEmpty) return const SizedBox.shrink();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 8),
-            Text(
-              'maidCafeActions'.tr(),
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final action in items)
-                  ActionChip(
-                    label: Text(action.label),
-                    onPressed: _busy == null
-                        ? () => _invokeCloudAction(context, daemon, action)
-                        : null,
-                  ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _invokeCloudAction(
     BuildContext context,
     MaidCafeDaemon daemon,
@@ -674,7 +719,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
   // ------------------------------------------------------------- credentials
 
   Widget _credentialsCard(BuildContext context) {
-    final credentials = ref.watch(maidCafeCredentialsProvider);
     return _SettingsSectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -699,30 +743,35 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
               ],
             ),
           ),
-          credentials.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.all(16),
-              child: LinearProgressIndicator(),
-            ),
-            error: (error, _) => _recoverableError(
-              context,
-              error,
-              () => ref.invalidate(maidCafeCredentialsProvider),
-            ),
-            data: (items) => items.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text('maidCafeNoCredentials'.tr()),
-                  )
-                : Column(
-                    children: [
-                      for (final credential in items)
-                        _credentialTile(context, credential),
-                    ],
-                  ),
-          ),
+          _credentialsBody(context),
         ],
       ),
+    );
+  }
+
+  Widget _credentialsBody(BuildContext context) {
+    final credentials = ref.watch(maidCafeCredentialsProvider);
+    return credentials.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: LinearProgressIndicator(),
+      ),
+      error: (error, _) => _recoverableError(
+        context,
+        error,
+        () => ref.invalidate(maidCafeCredentialsProvider),
+      ),
+      data: (items) => items.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('maidCafeNoCredentials'.tr()),
+            )
+          : Column(
+              children: [
+                for (final credential in items)
+                  _credentialTile(context, credential),
+              ],
+            ),
     );
   }
 
@@ -1101,57 +1150,588 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
   }
 }
 
-class _MaidCafeCloudHeader extends StatelessWidget {
+/// Page identity band: cloud mark, title and description, plus a quiet state
+/// cluster (daemon count, unread notifications) when a workspace is known.
+/// Shares the recessed console tone with the control rail.
+class _MaidCafeCloudHeader extends ConsumerWidget {
   const _MaidCafeCloudHeader();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final unread = ref.watch(maidCafeMetoerUnreadCountProvider).asData?.value;
+    final workspaceId = ref.watch(maidCafeWorkspaceIdProvider);
+    final workspaces = ref.watch(cloudWorkspacesProvider).asData?.value;
+    final effectiveWorkspaceId = workspaceId ?? workspaces?.firstOrNull?.id;
+    final daemonCount = effectiveWorkspaceId == null
+        ? null
+        : ref
+              .watch(maidCafeDaemonsProvider(effectiveWorkspaceId))
+              .asData
+              ?.value
+              .length;
+    final pills = <Widget>[
+      if (daemonCount != null)
+        _HeaderPill(
+          icon: Symbols.dns,
+          label: 'maidCafeDaemonCount'.plural(daemonCount),
+        ),
+      if (unread != null && unread > 0)
+        _HeaderPill(
+          icon: Symbols.notifications,
+          label: 'maidCafeUnreadCount'.tr(args: ['$unread']),
+        ),
+    ];
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'maidCafeCloudEyebrow'.tr(),
+          style: textTheme.labelMedium?.copyWith(
+            color: colors.primary,
+            letterSpacing: 1.1,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text('maidCafeCloudTitle'.tr(), style: textTheme.headlineSmall),
+        const SizedBox(height: 6),
+        Text(
+          'maidCafePageDescription'.tr(),
+          style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+      ],
+    );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        border: Border(bottom: BorderSide(color: colors.outlineVariant)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 720 || pills.isEmpty) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const _CloudHeaderIcon(),
+                    const SizedBox(width: 16),
+                    Expanded(child: identity),
+                  ],
+                ),
+                if (pills.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Wrap(spacing: 8, runSpacing: 8, children: pills),
+                ],
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _CloudHeaderIcon(),
+              const SizedBox(width: 16),
+              Expanded(child: identity),
+              const SizedBox(width: 24),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.end,
+                children: pills,
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CloudHeaderIcon extends StatelessWidget {
+  const _CloudHeaderIcon();
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.all(20),
+      width: 48,
+      height: 48,
       decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
+        color: colors.primaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(Symbols.cloud_sync, color: colors.onPrimaryContainer),
+    );
+  }
+}
+
+class _HeaderPill extends StatelessWidget {
+  const _HeaderPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors.surface,
         border: Border.all(color: colors.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: colors.primaryContainer,
-              borderRadius: BorderRadius.circular(10),
+          Icon(icon, size: 16, color: colors.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: colors.onSurface,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
-            child: Icon(Symbols.cloud_sync, color: colors.onPrimaryContainer),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ],
+      ),
+    );
+  }
+}
+
+/// Fixed-width control rail: the recessed panel holding the connection,
+/// account and credential groups. Scrolls independently of the fleet.
+class _CloudControlRail extends StatelessWidget {
+  const _CloudControlRail({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: 336,
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        border: Border(right: BorderSide(color: colors.outlineVariant)),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 32),
+        children: children,
+      ),
+    );
+  }
+}
+
+/// Labeled group inside the control rail; the eyebrow matches the page
+/// header's label treatment so the rail reads as one instrument panel.
+class _RailSection extends StatelessWidget {
+  const _RailSection({required this.label, this.action, required this.child});
+
+  final String label;
+  final Widget? action;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final labelStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
+      color: colors.primary,
+      letterSpacing: 1.1,
+      fontWeight: FontWeight.w700,
+    );
+    final action = this.action;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: action == null
+              ? Text(label, style: labelStyle)
+              : Wrap(
+                  spacing: 16,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(label, style: labelStyle),
+                    action,
+                  ],
+                ),
+        ),
+        child,
+      ],
+    );
+  }
+}
+
+/// Left-packed fleet grid with natural card heights; each row is as tall as
+/// its tallest card so cloud-action chips never clip.
+class _DaemonGrid extends StatelessWidget {
+  const _DaemonGrid({
+    required this.items,
+    required this.busy,
+    required this.onRename,
+    required this.onToggleEnabled,
+    required this.onRotateSecret,
+    required this.onDisable,
+    required this.onRequestNotification,
+    required this.onInvokeAction,
+  });
+
+  final List<MaidCafeDaemon> items;
+  final bool busy;
+  final ValueChanged<MaidCafeDaemon> onRename;
+  final ValueChanged<MaidCafeDaemon> onToggleEnabled;
+  final ValueChanged<MaidCafeDaemon> onRotateSecret;
+  final ValueChanged<MaidCafeDaemon> onDisable;
+  final ValueChanged<MaidCafeDaemon> onRequestNotification;
+  final void Function(MaidCafeDaemon daemon, MaidCafeCloudAction action)
+  onInvokeAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 16.0;
+        final columns = ((constraints.maxWidth + gap) / (380 + gap))
+            .floor()
+            .clamp(1, 4);
+        final cardWidth =
+            (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final daemon in items)
+              SizedBox(
+                width: cardWidth,
+                child: _DaemonFleetCard(
+                  daemon: daemon,
+                  busy: busy,
+                  onRename: () => onRename(daemon),
+                  onToggleEnabled: () => onToggleEnabled(daemon),
+                  onRotateSecret: () => onRotateSecret(daemon),
+                  onDisable: () => onDisable(daemon),
+                  onRequestNotification: () => onRequestNotification(daemon),
+                  onInvokeAction: (action) => onInvokeAction(daemon, action),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// One fleet card: status dot and name, the live metric strip, last-seen
+/// line, and the notification/action controls.
+class _DaemonFleetCard extends ConsumerWidget {
+  const _DaemonFleetCard({
+    required this.daemon,
+    required this.busy,
+    required this.onRename,
+    required this.onToggleEnabled,
+    required this.onRotateSecret,
+    required this.onDisable,
+    required this.onRequestNotification,
+    required this.onInvokeAction,
+  });
+
+  final MaidCafeDaemon daemon;
+  final bool busy;
+  final VoidCallback onRename;
+  final VoidCallback onToggleEnabled;
+  final VoidCallback onRotateSecret;
+  final VoidCallback onDisable;
+  final VoidCallback onRequestNotification;
+  final ValueChanged<MaidCafeCloudAction> onInvokeAction;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final textTheme = theme.textTheme;
+    final metrics = ref.watch(maidCafeMetricsProvider(daemon.id));
+    final history = metrics.asData?.value ?? const <MaidCafeMetric>[];
+    // The API returns newest-first; the strip reads oldest → newest.
+    final ordered = [...history]..sort((a, b) => a.sentAt.compareTo(b.sentAt));
+    final samples = ordered.length > 5
+        ? ordered.sublist(ordered.length - 5)
+        : ordered;
+    final actions =
+        ref.watch(maidCafeCloudActionsProvider(daemon.id)).asData?.value ??
+        const <MaidCafeCloudAction>[];
+    final enabled = daemon.enabled;
+    final lastSeen = daemon.lastSeenAt;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
               children: [
-                Text(
-                  'maidCafeCloudEyebrow'.tr(),
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: colors.primary,
-                    letterSpacing: 1.1,
-                    fontWeight: FontWeight.w700,
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: enabled ? colors.primary : colors.outline,
+                    shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'maidCafeCloudTitle'.tr(),
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'maidCafePageDescription'.tr(),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    daemon.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.titleMedium,
                   ),
+                ),
+                IconButton(
+                  tooltip: 'maidCafeRename'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Symbols.edit),
+                  onPressed: busy ? null : onRename,
+                ),
+                IconButton(
+                  tooltip: enabled
+                      ? 'maidCafeDisable'.tr()
+                      : 'maidCafeEnable'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(enabled ? Symbols.pause : Symbols.play_arrow),
+                  onPressed: busy ? null : onToggleEnabled,
+                ),
+                IconButton(
+                  tooltip: 'maidCafeRotateSecret'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Symbols.key),
+                  onPressed: busy ? null : onRotateSecret,
+                ),
+                IconButton(
+                  tooltip: 'maidCafeDisable'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Symbols.delete_outline),
+                  onPressed: busy ? null : onDisable,
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _MetricBars(
+                samples: samples,
+                unavailable: metrics.hasError,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                enabled
+                    ? '${'maidCafeEnabled'.tr()} · ${lastSeen == null ? 'maidCafeNeverSeen'.tr() : 'maidCafeLastSeen'.tr(args: [DateFormat('yyyy-MM-dd HH:mm').format(lastSeen.toLocal())])}'
+                    : 'maidCafeDisabled'.tr(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: OutlinedButton.icon(
+                onPressed: busy ? null : onRequestNotification,
+                icon: const Icon(Symbols.notifications, size: 18),
+                label: Text('maidCafeRequestNotification'.tr()),
+              ),
+            ),
+            if (actions.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  'maidCafeActions'.tr(),
+                  style: textTheme.titleSmall,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final action in actions)
+                      ActionChip(
+                        label: Text(action.label),
+                        onPressed: busy ? null : () => onInvokeAction(action),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The fleet card's signature: the last five CPU/RAM samples as a threshold
+/// colored bar strip with tabular values. Values follow the dashboard's load
+/// colors (tertiary ≥ 75%, error ≥ 90%).
+class _MetricBars extends StatelessWidget {
+  const _MetricBars({required this.samples, required this.unavailable});
+
+  final List<MaidCafeMetric> samples;
+  final bool unavailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: unavailable && samples.isEmpty
+          ? Text(
+              'maidCafeHistoryUnavailable'.tr(),
+              style: textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _barRow(context, 'CPU', (sample) => sample.cpuPercent),
+                const SizedBox(height: 6),
+                _barRow(context, 'RAM', (sample) => sample.memoryUsedPercent),
+              ],
+            ),
+    );
+  }
+
+  Widget _barRow(
+    BuildContext context,
+    String label,
+    double Function(MaidCafeMetric) valueOf,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final latest = samples.isEmpty ? null : valueOf(samples.last);
+    return Row(
+      children: [
+        SizedBox(
+          width: 36,
+          child: Text(
+            label,
+            style: textTheme.labelSmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: SizedBox(
+            height: 18,
+            child: Row(
+              children: [
+                for (final sample in samples)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
+                      child: Align(
+                        alignment: Alignment.bottomLeft,
+                        child: FractionallySizedBox(
+                          heightFactor: (valueOf(sample) / 100).clamp(
+                            0.04,
+                            1.0,
+                          ),
+                          // FractionallySizedBox lays its child out loosely;
+                          // a bare DecoratedBox would collapse to zero size.
+                          child: SizedBox.expand(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: _barColor(valueOf(sample), colors),
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 42,
+          child: Text(
+            latest == null ? '—' : '${latest.toStringAsFixed(0)}%',
+            textAlign: TextAlign.right,
+            style: textTheme.labelMedium?.copyWith(
+              color: colors.onSurface,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _barColor(double percent, ColorScheme colors) {
+    if (percent >= 90) return colors.error;
+    if (percent >= 75) return colors.tertiary;
+    return colors.primary;
+  }
+}
+
+/// Empty fleet state: invite to register the first daemon.
+class _EmptyDaemons extends StatelessWidget {
+  const _EmptyDaemons({required this.onRegister});
+
+  final VoidCallback onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(Symbols.dns, size: 36, color: colors.onSurfaceVariant, fill: 0),
+          const SizedBox(height: 12),
+          Text(
+            'maidCafeNoDaemons'.tr(),
+            textAlign: TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.center,
+            child: FilledButton.icon(
+              onPressed: onRegister,
+              icon: const Icon(Symbols.add),
+              label: Text('maidCafeRegister'.tr()),
             ),
           ),
         ],

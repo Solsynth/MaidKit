@@ -258,7 +258,9 @@ void main() {
     await pumpPage(tester);
 
     expect(find.text('host-1'), findsOneWidget);
-    expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
+    // The unread count appears twice: as a fleet-summary pill in the page
+    // header and as the feed section header's badge.
+    expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsNWidgets(2));
     expect(find.text('Webhook backup failed'), findsOneWidget);
     expect(find.text('exit code 1'), findsOneWidget);
     // Actions the daemon reported to the cloud render as invocable chips.
