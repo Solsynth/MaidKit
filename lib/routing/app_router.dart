@@ -67,7 +67,7 @@ class AppRouter extends RootStackRouter {
           ],
         ),
         AutoRoute(page: AgentRoute.page, path: 'agent'),
-        AutoRoute(page: MaidCafeRoute.page, path: 'maidcafe'),
+        AutoRoute(page: MaidCafeCloudRoute.page, path: 'maidcafe'),
         AutoRoute(page: SettingsRoute.page, path: 'settings'),
       ],
     ),

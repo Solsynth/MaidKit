@@ -30,6 +30,7 @@ import 'ghostty_terminal_session_adapter.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_preferences.dart';
 import 'maidcafe_service.dart';
+import 'maidcafe_metoer.dart';
 import 'maidcafe_session_registry.dart';
 import 'local_connection_manager.dart';
 import 'local_machine_preferences.dart';
@@ -124,6 +125,37 @@ class MaidCafeCloudUrlNotifier extends Notifier<String> {
   }
 }
 
+final maidCafeWorkspaceIdProvider =
+    NotifierProvider<MaidCafeWorkspaceIdNotifier, String?>(
+      MaidCafeWorkspaceIdNotifier.new,
+    );
+
+class MaidCafeWorkspaceIdNotifier extends Notifier<String?> {
+  @override
+  String? build() => ref.watch(maidCafeSettingsProvider).workspaceId;
+
+  Future<void> save(String? value) async {
+    await ref.read(maidCafeSettingsProvider).saveWorkspaceId(value);
+    state = ref.read(maidCafeSettingsProvider).workspaceId;
+  }
+}
+
+final maidCafeMetoerClientProvider = Provider<MaidCafeMetoerClient>((ref) {
+  return MaidCafeMetoerClient(
+    baseUrl: CloudSyncService.apiBase,
+    accessToken: () => ref.watch(cloudSyncServiceProvider).accessToken(),
+  );
+});
+
+final maidCafeMetoerNotificationsProvider =
+    FutureProvider<List<MaidCafeMetoerNotification>>((ref) async {
+      return (await ref.watch(maidCafeMetoerClientProvider).list()).items;
+    });
+
+final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
+  (ref) => ref.watch(maidCafeMetoerClientProvider).unreadCount(),
+);
+
 final maidCafeServiceProvider = Provider<MaidCafeService>((ref) {
   return MaidCafeService(
     baseUrl: ref.watch(maidCafeCloudUrlProvider),
@@ -131,13 +163,11 @@ final maidCafeServiceProvider = Provider<MaidCafeService>((ref) {
   );
 });
 
-final maidCafeDaemonsProvider = FutureProvider<List<MaidCafeDaemon>>((ref) {
-  return ref.watch(maidCafeServiceProvider).listDaemons();
-});
-
-final maidCafeNotificationsProvider =
-    FutureProvider<List<MaidCafeNotification>>((ref) {
-      return ref.watch(maidCafeServiceProvider).listNotifications();
+final maidCafeDaemonsProvider =
+    FutureProvider.family<List<MaidCafeDaemon>, String>((ref, workspaceId) {
+      return ref
+          .watch(maidCafeServiceProvider)
+          .listDaemons(workspaceId: workspaceId);
     });
 
 final maidCafeMetricsProvider =

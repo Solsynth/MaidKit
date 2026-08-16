@@ -16,6 +16,9 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.dart';
+import 'package:maid_kit/servers/cloud_sync_service.dart';
+import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
+import 'package:maid_kit/servers/maidcafe_metoer.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
@@ -70,6 +73,15 @@ void main() {
               (ref) => Stream.value(<ScriptSnippet>[]),
             ),
             cloudUserProvider.overrideWith((ref) => Future.value(null)),
+            cloudWorkspacesProvider.overrideWith(
+              (ref) => Future.value(const <CloudWorkspace>[]),
+            ),
+            maidCafeMetoerNotificationsProvider.overrideWith(
+              (ref) => Future.value(const <MaidCafeMetoerNotification>[]),
+            ),
+            maidCafeMetoerUnreadCountProvider.overrideWith(
+              (ref) => Future.value(0),
+            ),
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),
             ),
@@ -118,13 +130,24 @@ void main() {
 
     expect(tester.widget<Icon>(settingsIcon()).fill, 0);
 
-    await tester.tap(find.byTooltip('settingsAccount'.tr()));
+    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('openAllSettings'.tr()));
     await tester.pumpAndSettle();
     expect(tester.widget<Icon>(settingsIcon()).fill, 1);
 
     await tester.tap(find.byIcon(Symbols.dns));
     await tester.pumpAndSettle();
     expect(tester.widget<Icon>(settingsIcon()).fill, 0);
+  });
+
+  testWidgets('rail avatar opens the MaidCafe Cloud page', (tester) async {
+    await pumpApp(tester);
+
+    await tester.tap(find.byTooltip('maidCafeCloudTitle'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MaidCafeCloudPage), findsOneWidget);
   });
 
   testWidgets('rail gear opens the quick settings sheet', (tester) async {

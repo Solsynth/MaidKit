@@ -21,7 +21,7 @@ import 'package:maid_kit/github/github_models.dart' as _i18;
 import 'package:maid_kit/github/github_run_detail_page.dart' as _i6;
 import 'package:maid_kit/servers/about_page.dart' as _i1;
 import 'package:maid_kit/servers/assets_page.dart' as _i3;
-import 'package:maid_kit/servers/maidcafe_page.dart' as _i7;
+import 'package:maid_kit/servers/maidcafe_cloud_page.dart' as _i7;
 import 'package:maid_kit/servers/server_detail_page.dart' as _i10;
 import 'package:maid_kit/servers/server_workspace_page.dart' as _i11;
 import 'package:maid_kit/servers/servers_page.dart' as _i12;
@@ -344,17 +344,17 @@ class GitHubRunDetailRouteArgs {
 }
 
 /// generated route for
-/// [_i7.MaidCafePage]
-class MaidCafeRoute extends _i14.PageRouteInfo<void> {
-  const MaidCafeRoute({List<_i14.PageRouteInfo>? children})
-    : super(MaidCafeRoute.name, initialChildren: children);
+/// [_i7.MaidCafeCloudPage]
+class MaidCafeCloudRoute extends _i14.PageRouteInfo<void> {
+  const MaidCafeCloudRoute({List<_i14.PageRouteInfo>? children})
+    : super(MaidCafeCloudRoute.name, initialChildren: children);
 
-  static const String name = 'MaidCafeRoute';
+  static const String name = 'MaidCafeCloudRoute';
 
   static _i14.PageInfo page = _i14.PageInfo(
     name,
     builder: (data) {
-      return const _i7.MaidCafePage();
+      return const _i7.MaidCafeCloudPage();
     },
   );
 }

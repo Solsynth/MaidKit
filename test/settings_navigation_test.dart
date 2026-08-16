@@ -7,6 +7,9 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.dart';
+import 'package:maid_kit/servers/cloud_sync_service.dart';
+import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
+import 'package:maid_kit/servers/maidcafe_metoer.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
@@ -49,6 +52,15 @@ void main() {
               (ref) => Stream.value(<ScriptSnippet>[]),
             ),
             cloudUserProvider.overrideWith((ref) => Future.value(null)),
+            cloudWorkspacesProvider.overrideWith(
+              (ref) => Future.value(const <CloudWorkspace>[]),
+            ),
+            maidCafeMetoerNotificationsProvider.overrideWith(
+              (ref) => Future.value(const <MaidCafeMetoerNotification>[]),
+            ),
+            maidCafeMetoerUnreadCountProvider.overrideWith(
+              (ref) => Future.value(0),
+            ),
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),
             ),
@@ -79,8 +91,10 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    final settingsLabel = 'settingsAccount'.tr();
-    await tester.tap(find.byTooltip(settingsLabel));
+    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('openAllSettings'.tr()));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('settingsTerminal'.tr()).first);
@@ -129,15 +143,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('assetsConnectionsDescription'.tr()), findsOneWidget);
   });
-  testWidgets('hides MaidCafe from the desktop navigation rail', (
+  testWidgets('opens MaidCafe Cloud from the profile rail button', (
     WidgetTester tester,
   ) async {
     await pumpApp(tester);
 
-    expect(find.text('maidCafeTitle'.tr()), findsNothing);
-    expect(find.byIcon(Symbols.cloud), findsNothing);
+    await tester.tap(find.byTooltip('maidCafeCloudTitle'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MaidCafeCloudPage), findsOneWidget);
   });
-  testWidgets('hides MaidCafe from Assets on mobile', (
+  testWidgets('hides MaidCafe Cloud from Assets on mobile', (
     WidgetTester tester,
   ) async {
     await pumpApp(tester, size: const Size(500, 800), settle: false);

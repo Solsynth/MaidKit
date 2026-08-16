@@ -300,11 +300,14 @@ class MaidCafeService {
     return MaidCafeDaemonHealth.fromJson(_responseMap(response));
   }
 
-  Future<MaidCafeDaemonCredential> createDaemon({required String name}) async {
+  Future<MaidCafeDaemonCredential> createDaemon({
+    required String name,
+    required String workspaceId,
+  }) async {
     final response = await _cloudRequest(
       (token) => _dio.post<dynamic>(
         '$_apiBase/daemons',
-        data: {'name': name},
+        data: {'workspace_id': workspaceId, 'name': name},
         options: _cloudOptions(token),
       ),
     );
@@ -315,10 +318,15 @@ class MaidCafeService {
     return credential;
   }
 
-  Future<List<MaidCafeDaemon>> listDaemons() async {
+  Future<List<MaidCafeDaemon>> listDaemons({
+    required String workspaceId,
+  }) async {
     final response = await _cloudRequest(
-      (token) =>
-          _dio.get<dynamic>('$_apiBase/daemons', options: _cloudOptions(token)),
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/daemons',
+        queryParameters: {'workspace_id': workspaceId},
+        options: _cloudOptions(token),
+      ),
     );
     final data = _responseJson(response);
     if (data is! List) {
@@ -480,49 +488,6 @@ class MaidCafeService {
       ),
     );
     await _deleteCloudSecret(daemonId);
-  }
-
-  Future<List<MaidCafeNotification>> listNotifications({
-    bool unread = false,
-    String? daemonId,
-    int limit = 50,
-    DateTime? before,
-  }) async {
-    if (limit < 1 || limit > 100) {
-      throw const MaidCafeException(
-        'Notification limit must be between 1 and 100.',
-        kind: MaidCafeErrorKind.validation,
-      );
-    }
-    final query = <String, dynamic>{
-      'unread': unread,
-      'limit': limit,
-      'daemon_id': ?daemonId,
-      if (before != null) 'before': before.toUtc().toIso8601String(),
-    };
-    final response = await _cloudRequest(
-      (token) => _dio.get<dynamic>(
-        '$_apiBase/notifications',
-        queryParameters: query,
-        options: _cloudOptions(token),
-      ),
-    );
-    final data = _responseJson(response);
-    if (data is! List) {
-      throw _invalidResponse('Expected a notification list.');
-    }
-    return data
-        .map((item) => MaidCafeNotification.fromJson(_map(item)))
-        .toList(growable: false);
-  }
-
-  Future<void> markNotificationRead(String notificationId) async {
-    await _cloudRequest(
-      (token) => _dio.post<dynamic>(
-        '$_apiBase/notifications/${_pathPart(notificationId)}/read',
-        options: _cloudOptions(token),
-      ),
-    );
   }
 
   Future<MaidCafeDaemonHealth> checkDaemonHealth({

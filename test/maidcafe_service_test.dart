@@ -101,10 +101,15 @@ void main() {
         dio: dio,
         secureStorage: storage,
       );
-      final daemon = await service.createDaemon(name: 'host');
+      final daemon = await service.createDaemon(
+        name: 'host',
+        workspaceId: 'ws-1',
+      );
       expect(request.method, 'POST');
       expect(request.uri.toString(), 'https://mk.solsynth.dev/api/daemons');
       expect(request.headers['Authorization'], 'Bearer solar-token');
+      expect((request.data as Map)['workspace_id'], 'ws-1');
+      expect((request.data as Map)['name'], 'host');
       expect(daemon.secret, 'cloud-secret');
       expect(storage.values['maidcafe_cloud_secret_daemon-1'], 'cloud-secret');
     },
@@ -223,7 +228,10 @@ void main() {
       accessToken: () async => null,
       dio: dio,
     );
-    expect(() => service.listDaemons(), throwsA(isA<MaidCafeException>()));
+    expect(
+      () => service.listDaemons(workspaceId: 'ws-1'),
+      throwsA(isA<MaidCafeException>()),
+    );
     expect(requests, 0);
   });
 }

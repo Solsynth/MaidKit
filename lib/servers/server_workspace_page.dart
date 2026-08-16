@@ -28,7 +28,7 @@ class ServerWorkspacePage extends StatelessWidget {
         AssetsTab(),
         ProjectsTab(),
         AgentRoute(),
-        MaidCafeRoute(),
+        MaidCafeCloudRoute(),
         SettingsRoute(),
       ],
       duration: const Duration(milliseconds: 180),
@@ -93,7 +93,7 @@ class _ServerTabsShell extends ConsumerWidget {
                             const DeploySessionsRailButton(),
                             const SizedBox(height: 8),
                             _CloudAccountRailButton(
-                              onPressed: () => tabsRouter.setActiveIndex(5),
+                              onPressed: () => tabsRouter.setActiveIndex(4),
                             ),
                             IconButton(
                               tooltip: 'tabSettings'.tr(),
@@ -227,7 +227,7 @@ class _CloudAccountRailButton extends ConsumerWidget {
     final user = ref.watch(cloudUserProvider).asData?.value;
     final scheme = Theme.of(context).colorScheme;
     return IconButton(
-      tooltip: 'settingsAccount'.tr(),
+      tooltip: 'maidCafeCloudTitle'.tr(),
       onPressed: onPressed,
       icon: CircleAvatar(
         radius: 14,
