@@ -35,8 +35,9 @@ Map<String, dynamic> _notification({String id = 'n1', bool unread = true}) => {
   'id': id,
   'topic': 'maidcafe.daemon.alert',
   'title': 'Webhook backup failed',
+  'subtitle': 'Nightly backup',
   'content': 'exit code 1',
-  'meta': {'daemon_id': 'daemon-1'},
+  'meta': {'daemon_id': 'daemon-1', 'daemon_name': 'prod-vps'},
   'viewed_at': unread ? null : '2026-08-14T01:00:00Z',
   'app_id': 'dev.solsynth.maid',
   'account_id': 'acc-1',
@@ -75,8 +76,10 @@ void main() {
     expect(first.id, 'n1');
     expect(first.topic, 'maidcafe.daemon.alert');
     expect(first.title, 'Webhook backup failed');
+    expect(first.subtitle, 'Nightly backup');
     expect(first.body, 'exit code 1');
     expect(first.meta['daemon_id'], 'daemon-1');
+    expect(first.meta['daemon_name'], 'prod-vps');
     expect(first.unread, isTrue);
     expect(first.accountId, 'acc-1');
     final second = page.items.last;

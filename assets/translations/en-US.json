@@ -964,6 +964,7 @@
   "maidCafeEnable": "Enable",
   "maidCafeEnabled": "Enabled",
   "maidCafeExistingInstallation": "An existing MaidCafe installation was detected. Remove it before installing the MaidKit-managed daemon.",
+  "maidCafeFromServer": "From {}",
   "maidCafeGroupIdentity": "Identity",
   "maidCafeGroupNetwork": "Network",
   "maidCafeGroupRuntime": "Runtime",

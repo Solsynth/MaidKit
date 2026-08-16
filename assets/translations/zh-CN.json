@@ -962,6 +962,7 @@
   "maidCafeDone": "完成",
   "maidCafeEnable": "启用",
   "maidCafeEnabled": "已启用",
+  "maidCafeFromServer": "来自 {}",
   "maidCafeGroupIdentity": "标识",
   "maidCafeGroupNetwork": "网络",
   "maidCafeGroupRuntime": "运行时",

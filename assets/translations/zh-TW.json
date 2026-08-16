@@ -931,6 +931,7 @@
   "maidCafeEnable": "啟用",
   "maidCafeEnabled": "已啟用",
   "maidCafeExistingInstallation": "偵測到現有的 MaidCafe 安裝。請先移除舊安裝，再安裝由 MaidKit 管理的守護程式。",
+  "maidCafeFromServer": "來自 {}",
   "maidCafeGroupIdentity": "識別",
   "maidCafeGroupNetwork": "網路",
   "maidCafeGroupRuntime": "執行時",

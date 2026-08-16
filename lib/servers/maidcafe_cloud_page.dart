@@ -879,6 +879,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     MaidCafeMetoerNotification item,
   ) {
     final colors = Theme.of(context).colorScheme;
+    final daemonName = item.meta['daemon_name']?.toString();
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       leading: Container(
@@ -890,7 +891,31 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         ),
       ),
       title: Text(item.title ?? item.topic),
-      subtitle: Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (item.subtitle.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                item.subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+          if (daemonName != null && daemonName.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                'maidCafeFromServer'.tr(args: [daemonName]),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
       trailing: Text(
         DateFormat('yyyy-MM-dd HH:mm').format(item.createdAt.toLocal()),
         style: Theme.of(
