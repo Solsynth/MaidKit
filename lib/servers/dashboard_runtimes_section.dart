@@ -40,7 +40,7 @@ class _DashboardRuntimesSectionState
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
     _timer = Timer.periodic(_refreshInterval, (_) => _refresh());
-    ref.listen(pinnedRuntimeConfigsProvider, (_, _) {
+    ref.listenManual(pinnedRuntimeConfigsProvider, (_, _) {
       // A pin was added or removed elsewhere: re-collect so the section
       // reflects the change without waiting for the next tick.
       _refresh();
