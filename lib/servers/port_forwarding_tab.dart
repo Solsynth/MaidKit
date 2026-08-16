@@ -31,6 +31,7 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
   var _direction = PortForwardDirection.local;
   var _kind = PortForwardKind.tcp;
   var _saveConfig = false;
+  var _autoStartConfig = false;
   var _starting = false;
 
   @override
@@ -78,6 +79,7 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
               bindPort: bindPort,
               targetHost: targetHost,
               targetPort: targetPort,
+              autoStart: _autoStartConfig,
             );
       }
       if (mounted) {
@@ -226,6 +228,16 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
                   title: Text('portForwardingSaveConfig').tr(),
                   subtitle: Text('portForwardingSaveConfigHint').tr(),
                 ),
+                if (_saveConfig)
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                    value: _autoStartConfig,
+                    onChanged: (value) =>
+                        setState(() => _autoStartConfig = value ?? false),
+                    title: Text('portForwardingAutoStart').tr(),
+                  ),
                 FilledButton.icon(
                   onPressed: _starting ? null : _start,
                   icon: _starting

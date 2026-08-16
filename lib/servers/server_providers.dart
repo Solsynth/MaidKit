@@ -1154,16 +1154,27 @@ final portForwardConfigsProvider =
     });
 
 /// Starts every preset marked auto-start for [server] after its SSH session
-/// becomes connected. A preset that fails to start (e.g. its port is already
-/// in use) is skipped so the remaining presets still start. Best-effort: a
-/// database or start failure never breaks the connection itself.
+/// becomes connected. A preset whose bind is already active on the server is
+/// skipped; a preset that fails to start (e.g. its port is already in use) is
+/// also skipped so the remaining presets still start. Best-effort: a database
+/// or start failure never breaks the connection itself.
 Future<void> _startAutoPortForwards(Ref ref, Server server) async {
   try {
     final configs = await ref
         .read(serverRepositoryProvider)
         .portForwardConfigsForServer(server.id);
     final manager = ref.read(connectionManagerProvider);
+    final active = manager.currentPortForwards
+        .where((forward) => forward.serverId == server.id)
+        .toList();
     for (final config in configs.where((config) => config.autoStart)) {
+      final alreadyActive = active.any(
+        (forward) =>
+            forward.kind == PortForwardKind.values.byName(config.kind) &&
+            forward.bindHost == config.bindHost &&
+            forward.bindPort == config.bindPort,
+      );
+      if (alreadyActive) continue;
       try {
         await manager.startPortForward(
           server: server,
