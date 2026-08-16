@@ -18,7 +18,13 @@ class IconLabelTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(
           mainAxisSize: MainAxisSize.min,
-          children: [icon, const SizedBox(width: 8), Text(label)],
+          children: [
+            icon,
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+          ],
         ),
       ),
     );

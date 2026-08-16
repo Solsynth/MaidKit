@@ -10,8 +10,8 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/github/github_section.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
-import 'package:maid_kit/shared/presentation/collapsible_section.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 
 import 'credentials_page.dart';
@@ -26,33 +26,55 @@ class AssetsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaidKitAppScaffold(
-    body: ListView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      children: [
-        MaidKitCollapsibleSection(
-          title: Text('assetsConnections'.tr()),
-          icon: Symbols.dns,
-          children: [const ServerAssetsSection(showHeader: false)],
-        ),
-        const SizedBox(height: 12),
-        MaidKitCollapsibleSection(
-          title: Text('tabGithub'.tr()),
-          icon: Symbols.rocket_launch,
-          children: [const GitHubSection(showHeader: false)],
-        ),
-        const SizedBox(height: 12),
-        MaidKitCollapsibleSection(
-          title: Text('assetsCredentialsTitle'.tr()),
-          icon: Symbols.key,
-          children: [const CredentialsPage(showHeader: false)],
-        ),
-        const SizedBox(height: 12),
-        MaidKitCollapsibleSection(
-          title: Text('tabSnippets'.tr()),
-          icon: Symbols.code,
-          children: [const SnippetsSection()],
-        ),
-      ],
+    body: DefaultTabController(
+      length: 4,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TabBar(
+            tabs: [
+              IconLabelTab(
+                icon: const Icon(Symbols.dns, size: 18),
+                label: 'assetsConnections'.tr(),
+              ),
+              IconLabelTab(
+                icon: const Icon(Symbols.rocket_launch, size: 18),
+                label: 'tabGithub'.tr(),
+              ),
+              IconLabelTab(
+                icon: const Icon(Symbols.key, size: 18),
+                label: 'assetsCredentialsTitle'.tr(),
+              ),
+              IconLabelTab(
+                icon: const Icon(Symbols.code, size: 18),
+                label: 'tabSnippets'.tr(),
+              ),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                  children: const [ServerAssetsSection(showHeader: false)],
+                ),
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                  children: const [GitHubSection(showHeader: false)],
+                ),
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                  children: const [CredentialsPage(showHeader: false)],
+                ),
+                ListView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                  children: const [SnippetsSection()],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
