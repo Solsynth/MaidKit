@@ -149,6 +149,7 @@ class _FakeStreamSession implements MaidCafeStreamSession {
   @override
   Stream<MaidCafeStreamEvent> openStream({
     Set<MaidCafeStreamEventType> events = maidCafeStreamAllEvents,
+    int processesLimit = 0,
   }) => const Stream.empty();
 
   @override

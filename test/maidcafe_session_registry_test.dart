@@ -32,13 +32,17 @@ class _FakeSession implements MaidCafeStreamSession {
   Future<Map<String, dynamic>> images() => throw UnimplementedError();
 
   @override
-  Future<Map<String, dynamic>> processes() => throw UnimplementedError();
+  Future<Map<String, dynamic>> processes({int limit = 0}) =>
+      throw UnimplementedError();
 
   @override
   Future<Map<String, dynamic>> systemd() => throw UnimplementedError();
 
   @override
   Future<Map<String, dynamic>> runtimes() => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> databaseMetrics() => throw UnimplementedError();
 
   @override
   Future<Map<String, dynamic>> watchedProcesses() => throw UnimplementedError();
@@ -82,6 +86,7 @@ class _FakeSession implements MaidCafeStreamSession {
   @override
   Stream<MaidCafeStreamEvent> openStream({
     Set<MaidCafeStreamEventType> events = maidCafeStreamAllEvents,
+    int processesLimit = 0,
   }) => throw UnimplementedError();
 
   @override

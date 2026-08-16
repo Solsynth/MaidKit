@@ -1228,7 +1228,7 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (kind == DeploymentResourceKind.compose) {
       if (!_composeReady) {
         // Missing identity — fall back to the server's container tab.
-        context.router.push(ServerDetailRoute(server: host, initialTab: 4));
+        context.router.push(ServerDetailRoute(server: host, initialTab: 6));
         return;
       }
       context.router.push(
@@ -1989,9 +1989,9 @@ Map<String, Object?> _configuration(String source) {
 }
 
 int _serverTabFor(DeploymentResourceKind kind) => switch (kind) {
-  DeploymentResourceKind.systemdService => 2,
-  DeploymentResourceKind.webServer => 3,
-  DeploymentResourceKind.container || DeploymentResourceKind.compose => 4,
+  DeploymentResourceKind.systemdService => 3,
+  DeploymentResourceKind.webServer => 4,
+  DeploymentResourceKind.container || DeploymentResourceKind.compose => 6,
   DeploymentResourceKind.firewallRule => 8,
   _ => 0,
 };

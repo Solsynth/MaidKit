@@ -9,6 +9,7 @@ import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'activity_models.dart';
 import 'crontab_models.dart';
+import 'database_models.dart';
 import 'firewall_models.dart';
 import 'package_models.dart';
 import 'port_forwarding_models.dart';
@@ -973,6 +974,766 @@ fi
           : Duration(seconds: uptimeSeconds),
     );
   }
+
+  Future<List<DatabaseBackupFile>> listDatabaseBackups(
+    int serverId, {
+    required DatabaseEngine engine,
+    required String directory,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+  }) async {
+    _requireSafeDatabaseDirectory(directory);
+    final script =
+        "find ${_shellSingleQuote(directory)} "
+        "-maxdepth 1 -type f -printf '%f\\t%s\\t%TY-%Tm-%Td %TH:%TM\\n' "
+        '2>/dev/null || true\n';
+    final output = await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+    );
+    return parseDatabaseBackupListing(output, directory);
+  }
+
+  /// Runs a full logical backup of [database] into [directory] and returns
+  /// the saved remote path. PostgreSQL uses `pg_dump -Fc` as the postgres
+  /// superuser (peer auth); MySQL/MariaDB use `mysqldump | gzip` with socket
+  /// / debian.cnf authentication unless [mysqlPassword] is provided.
+  Future<String> runDatabaseBackup(
+    int serverId, {
+    required DatabaseEngine engine,
+    required String database,
+    required String directory,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+    String? mysqlPassword,
+    void Function(String chunk)? onOutput,
+  }) async {
+    _requireSafeDatabaseDirectory(directory);
+    _requireSafeDatabaseName(database);
+    final file = _databaseBackupFileName(engine, database);
+    final script = engine.isPostgres
+        ? _postgresBackupScript(
+            database: database,
+            directory: directory,
+            file: file,
+          )
+        : _mysqlBackupScript(
+            database: database,
+            directory: directory,
+            file: file,
+            password: mysqlPassword,
+          );
+    final output = await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+      onOutput: onOutput,
+    );
+    final match = RegExp(
+      RegExp.escape(databaseBackupPathMarker) + r'(\S+)',
+    ).firstMatch(output);
+    if (match == null) {
+      throw StateError('Backup finished but the saved path was not reported.');
+    }
+    return match.group(1)!;
+  }
+
+  /// Restores a dump file into [database]. PostgreSQL restores `pg_dump -Fc`
+  /// archives with `pg_restore --clean`; MySQL/MariaDB stream a `.sql.gz`
+  /// dump back through the client. Destructive on existing objects.
+  Future<void> restoreDatabaseBackup(
+    int serverId, {
+    required DatabaseEngine engine,
+    required String database,
+    required String file,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+    String? mysqlPassword,
+    void Function(String chunk)? onOutput,
+  }) async {
+    _requireSafeDatabaseName(database);
+    _requireSafeRemoteFile(file);
+    final script = engine.isPostgres
+        ? _postgresRestoreScript(database: database, file: file)
+        : _mysqlRestoreScript(file: file, password: mysqlPassword);
+    await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+      onOutput: onOutput,
+    );
+  }
+
+  /// Deletes a dump file from the remote backup directory.
+  Future<void> deleteDatabaseBackup(
+    int serverId, {
+    required String file,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+  }) async {
+    _requireSafeRemoteFile(file);
+    final script = 'rm -f -- ${_shellSingleQuote(file)}\n';
+    await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+    );
+  }
+
+  /// Runs a quick maintenance operation on [database].
+  Future<void> runDatabaseMaintenance(
+    int serverId, {
+    required DatabaseEngine engine,
+    required String database,
+    required DatabaseMaintenanceAction action,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+    String? mysqlPassword,
+    void Function(String chunk)? onOutput,
+  }) async {
+    _requireSafeDatabaseName(database);
+    final allowed = engine.isPostgres
+        ? postgresMaintenanceActions
+        : mysqlMaintenanceActions;
+    if (!allowed.contains(action)) {
+      throw ArgumentError.value(
+        action,
+        'action',
+        '${action.label} is not supported for ${engine.label}.',
+      );
+    }
+    final script = engine.isPostgres
+        ? _postgresMaintenanceScript(database: database, action: action)
+        : _mysqlMaintenanceScript(
+            database: database,
+            action: action,
+            password: mysqlPassword,
+          );
+    await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+      onOutput: onOutput,
+    );
+  }
+
+  /// Probes PostgreSQL / MySQL / MariaDB installations and pgBackRest in one
+  /// privileged round-trip. The probe only reads state; it never mutates.
+  Future<DatabaseInspectionResult> inspectDatabases(
+    int serverId, {
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+  }) async {
+    return withClient(serverId, (client) async {
+      final script = _databaseInspectionScript;
+      final prefix = _rootPrefix(sshUserIsRoot, sudoPassword);
+      final stdin = sshUserIsRoot || sudoPassword == null
+          ? script
+          : '$sudoPassword\n$script';
+      final result = await _execute(client, '${prefix}sh -s', stdin: stdin);
+      if (!result.stdout.contains(databaseInspectionBeginMarker) &&
+          result.exitCode != 0) {
+        throw StateError(_commandError(result));
+      }
+      return parseDatabaseInspectionOutput(result.stdout);
+    });
+  }
+
+  /// Refreshes the pgBackRest status (version, stanzas, backup sets).
+  Future<PgBackRestStatus> pgBackRestStatus(
+    int serverId, {
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+  }) async {
+    final output = await _runPrivilegedScriptCaptured(
+      serverId,
+      script: _pgBackRestProbeScript,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+    );
+    return parseDatabaseInspectionOutput(
+      '$databaseInspectionBeginMarker\n$output$databaseInspectionEndMarker',
+    ).pgBackRest;
+  }
+
+  /// Runs a pgBackRest backup for [stanza] with the given [type].
+  Future<void> runPgBackRestBackup(
+    int serverId, {
+    required String stanza,
+    required String type,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+    void Function(String chunk)? onOutput,
+  }) async {
+    _requireSafePgBackRestName(stanza);
+    if (!const {'full', 'incr', 'diff'}.contains(type)) {
+      throw ArgumentError.value(type, 'type', 'Unknown pgBackRest type.');
+    }
+    final script =
+        '''
+PBR=\$(command -v pgbackrest 2>/dev/null || true)
+if [ -z "\$PBR" ]; then echo "pgbackrest not found" >&2; exit 1; fi
+su -s /bin/sh postgres -c "\$PBR --stanza=${_shellSingleQuote(stanza)} --type=$type backup"
+RC=\$?
+if [ \$RC -ne 0 ]; then
+  echo "Running as postgres failed (rc=\$RC), retrying as root"
+  "\$PBR" --stanza=${_shellSingleQuote(stanza)} --type=$type backup
+fi
+''';
+    await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+      onOutput: onOutput,
+    );
+  }
+
+  /// Restores the latest (or [set]) pgBackRest backup for [stanza].
+  ///
+  /// Stops [serviceUnit] (when known), restores with `--delta`, and starts
+  /// the service again. Destructive on the current cluster contents.
+  Future<void> runPgBackRestRestore(
+    int serverId, {
+    required String stanza,
+    String? set,
+    String? serviceUnit,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+    void Function(String chunk)? onOutput,
+  }) async {
+    _requireSafePgBackRestName(stanza);
+    if (set != null) _requireSafePgBackRestName(set);
+    if (serviceUnit != null && !isValidSystemdUnitName(serviceUnit)) {
+      throw ArgumentError.value(serviceUnit, 'serviceUnit', 'Invalid unit.');
+    }
+    final setArg = set == null ? '' : ' --set=${_shellSingleQuote(set)}';
+    final unitArg = serviceUnit == null ? '' : _shellSingleQuote(serviceUnit);
+    final script =
+        '''
+PBR=\$(command -v pgbackrest 2>/dev/null || true)
+if [ -z "\$PBR" ]; then echo "pgbackrest not found" >&2; exit 1; fi
+UNIT=$unitArg
+[ -n "\$UNIT" ] && { echo "Stopping \$UNIT..."; systemctl stop "\$UNIT" 2>/dev/null || true; }
+su -s /bin/sh postgres -c "\$PBR --stanza=${_shellSingleQuote(stanza)} --delta restore$setArg"
+RC=\$?
+if [ \$RC -ne 0 ]; then
+  echo "Running as postgres failed (rc=\$RC), retrying as root"
+  "\$PBR" --stanza=${_shellSingleQuote(stanza)} --delta restore$setArg
+  RC=\$?
+fi
+if [ \$RC -ne 0 ]; then
+  echo "Restore failed with exit code \$RC" >&2
+  [ -n "\$UNIT" ] && { echo "Restarting \$UNIT..."; systemctl start "\$UNIT" 2>/dev/null || true; }
+  exit \$RC
+fi
+[ -n "\$UNIT" ] && { echo "Starting \$UNIT..."; systemctl start "\$UNIT" 2>/dev/null || true; }
+echo "pgBackRest restore completed."
+''';
+    await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+      onOutput: onOutput,
+    );
+  }
+
+  /// One-shot engine health snapshot over SSH, used when no daemon stream is
+  /// available. Mirrors the daemon's `databaseMetrics` collector so both
+  /// channels produce the same shape.
+  Future<DatabaseMetricsSnapshot?> refreshDatabaseMetrics(
+    int serverId, {
+    required DatabaseEngine engine,
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+  }) async {
+    final script = engine.isPostgres
+        ? _postgresMetricsProbeScript
+        : _mysqlMetricsProbeScript;
+    final output = await _runPrivilegedScriptCaptured(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+    );
+    final snapshot = parseDatabaseMetricsText(output);
+    return snapshot.engines.isEmpty ? null : snapshot;
+  }
+
+  static const _postgresMetricsProbeScript = r'''
+PGBIN=$(for d in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin /usr/local/pgsql/bin; do
+  [ -d "$d" ] && echo "$d"
+done | sort -V | tail -n 1)
+if [ -z "$PGBIN" ]; then exit 1; fi
+echo '--DB-PG-ROWS--'
+su -s /bin/sh postgres -c "$PGBIN/psql -X -A -t -F '|' -c 'SELECT d.datname, s.numbackends, s.xact_commit, s.xact_rollback, s.blks_read, s.blks_hit, s.deadlocks, s.temp_bytes FROM pg_catalog.pg_stat_database s JOIN pg_catalog.pg_database d ON d.oid = s.datid WHERE d.datallowconn ORDER BY d.datname'"
+echo '--DB-PG-MAXCONN--'
+su -s /bin/sh postgres -c "$PGBIN/psql -X -A -t -c 'SHOW max_connections'"
+echo '--DB-PG-SHARED--'
+su -s /bin/sh postgres -c "$PGBIN/psql -X -A -t -c 'SHOW shared_buffers'"
+echo '--DB-PG-VERSION--'
+"$PGBIN/postgres" --version
+''';
+
+  static const _mysqlMetricsProbeScript = r'''
+MYSQL=$(command -v mysql 2>/dev/null || command -v mariadb 2>/dev/null || true)
+if [ -z "$MYSQL" ]; then exit 1; fi
+AUTH=""
+if "$MYSQL" -N -e 'SELECT 1' >/dev/null 2>&1; then AUTH=""
+elif [ -f /etc/mysql/debian.cnf ]; then AUTH="--defaults-file=/etc/mysql/debian.cnf"
+else exit 1; fi
+echo '--DB-MY-STATUS--'
+"$MYSQL" $AUTH -N -e "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME IN ('Threads_connected','Max_used_connections','Threads_running','Innodb_buffer_pool_pages_total','Innodb_buffer_pool_pages_data','Innodb_buffer_pool_pages_dirty','Innodb_buffer_pool_read_requests','Innodb_buffer_pool_reads','Queries','Slow_queries','Uptime','Innodb_page_size','Bytes_received','Bytes_sent')"
+echo '--DB-MY-VARS--'
+"$MYSQL" $AUTH -N -e "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME IN ('innodb_buffer_pool_size','max_connections')"
+echo '--DB-MY-VERSION--'
+"$MYSQL" $AUTH -N -e "SELECT VERSION()"
+''';
+
+  Future<String> _runPrivilegedScriptCaptured(
+    int serverId, {
+    required String script,
+    required bool sshUserIsRoot,
+    String? sudoPassword,
+    void Function(String chunk)? onOutput,
+  }) async {
+    final buffer = StringBuffer();
+    await runPrivilegedScriptSnippet(
+      serverId,
+      script: script,
+      sshUserIsRoot: sshUserIsRoot,
+      sudoPassword: sudoPassword,
+      onOutput: (chunk) {
+        buffer.write(chunk);
+        onOutput?.call(chunk);
+      },
+    );
+    return buffer.toString();
+  }
+
+  void _requireSafeDatabaseDirectory(String value) {
+    if (!_safeRemoteDirectory(value)) {
+      throw ArgumentError.value(value, 'directory', 'Invalid directory.');
+    }
+  }
+
+  void _requireSafeDatabaseName(String value) {
+    if (!RegExp(r'^[A-Za-z0-9_$.-]+$').hasMatch(value)) {
+      throw ArgumentError.value(value, 'database', 'Invalid database name.');
+    }
+  }
+
+  void _requireSafeRemoteFile(String value) {
+    if (!RegExp(r'^/[A-Za-z0-9_./-]+\.[A-Za-z0-9.]+$').hasMatch(value) ||
+        value.contains('..')) {
+      throw ArgumentError.value(value, 'file', 'Invalid file path.');
+    }
+  }
+
+  void _requireSafePgBackRestName(String value) {
+    if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value)) {
+      throw ArgumentError.value(value, 'name', 'Invalid name.');
+    }
+  }
+
+  String _databaseBackupFileName(DatabaseEngine engine, String database) {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final stamp =
+        '${now.year}${two(now.month)}${two(now.day)}-'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    final extension = engine.isPostgres ? '.dump' : '.sql.gz';
+    return '${engine.name}-$database-$stamp$extension';
+  }
+
+  static const _pgBinDiscovery = r'''
+PGBIN=$(for d in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin /usr/local/pgsql/bin; do
+  [ -d "$d" ] && echo "$d"
+done | sort -V | tail -n 1)
+if [ -z "$PGBIN" ]; then
+  PGBIN=$(dirname "$(command -v pg_dump 2>/dev/null)" 2>/dev/null)
+fi
+''';
+
+  static const _mysqlCliDiscovery = r'''
+MYSQL=$(command -v mysql 2>/dev/null || command -v mariadb 2>/dev/null || true)
+MYSQLDUMP=$(command -v mysqldump 2>/dev/null || command -v mariadb-dump 2>/dev/null || true)
+MYSQLCHECK=$(command -v mysqlcheck 2>/dev/null || command -v mariadb-check 2>/dev/null || true)
+''';
+
+  /// Emits `AUTH` containing mysqldump-compatible client flags, preferring
+  /// passwordless socket auth and debian.cnf. [password] (already shell
+  /// quoted) installs a temporary defaults file when present.
+  static const _mysqlAuthSetup = r'''
+AUTH=""
+CNF=""
+cleanup_cnf() { [ -n "$CNF" ] && rm -f "$CNF"; }
+trap cleanup_cnf EXIT
+if [ -n "$PW" ]; then
+  CNF=$(mktemp /tmp/maidkit-mysql.XXXXXX.cnf) || exit 1
+  chmod 600 "$CNF"
+  printf '[client]\nuser=root\npassword=%s\n' "$PW" > "$CNF"
+  AUTH="--defaults-extra-file=$CNF"
+elif [ -n "$MYSQL" ] && "$MYSQL" -N -e 'SELECT 1' >/dev/null 2>&1; then
+  AUTH=""
+elif [ -f /etc/mysql/debian.cnf ]; then
+  AUTH="--defaults-file=/etc/mysql/debian.cnf"
+else
+  echo "MySQL credentials unavailable: root socket auth failed and /etc/mysql/debian.cnf is missing." >&2
+  exit 1
+fi
+''';
+
+  String _postgresBackupScript({
+    required String database,
+    required String directory,
+    required String file,
+  }) {
+    final path = _shellSingleQuote('$directory/$file');
+    return 'set -e\n'
+        '$_pgBinDiscovery\n'
+        'if [ -z "\$PGBIN" ]; then echo "pg_dump not found" >&2; exit 1; fi\n'
+        'mkdir -p ${_shellSingleQuote(directory)}\n'
+        "chown postgres:postgres ${_shellSingleQuote(directory)} 2>/dev/null || true\n"
+        'su -s /bin/sh postgres -c "\$PGBIN/pg_dump -Fc --no-owner '
+        '--dbname=${_shellSingleQuote(database)}" > $path\n'
+        'echo \'$databaseBackupPathMarker$directory/$file\'\n';
+  }
+
+  String _mysqlBackupScript({
+    required String database,
+    required String directory,
+    required String file,
+    String? password,
+  }) {
+    final path = _shellSingleQuote('$directory/$file');
+    return 'set -e\n'
+        '$_mysqlCliDiscovery\n'
+        'if [ -z "\$MYSQLDUMP" ]; then echo "mysqldump not found" >&2; exit 1; fi\n'
+        'PW=${password == null ? "''" : _shellSingleQuote(password)}\n'
+        '$_mysqlAuthSetup\n'
+        'mkdir -p ${_shellSingleQuote(directory)}\n'
+        "chown mysql:mysql ${_shellSingleQuote(directory)} 2>/dev/null || true\n"
+        '"\$MYSQLDUMP" \$AUTH --single-transaction --routines --triggers '
+        '--databases ${_shellSingleQuote(database)} | gzip > $path\n'
+        'echo \'$databaseBackupPathMarker$directory/$file\'\n';
+  }
+
+  String _postgresRestoreScript({
+    required String database,
+    required String file,
+  }) {
+    return 'set -e\n'
+        '$_pgBinDiscovery\n'
+        'if [ -z "\$PGBIN" ]; then echo "psql not found" >&2; exit 1; fi\n'
+        'su -s /bin/sh postgres -c "\$PGBIN/createdb -O postgres '
+        '${_shellSingleQuote(database)}" 2>/dev/null || true\n'
+        'su -s /bin/sh postgres -c "\$PGBIN/pg_restore --clean --if-exists '
+        '--no-owner -d ${_shellSingleQuote(database)} ${_shellSingleQuote(file)}"\n';
+  }
+
+  String _mysqlRestoreScript({required String file, String? password}) {
+    return 'set -e\n'
+        '$_mysqlCliDiscovery\n'
+        'if [ -z "\$MYSQL" ]; then echo "mysql not found" >&2; exit 1; fi\n'
+        'PW=${password == null ? "''" : _shellSingleQuote(password)}\n'
+        '$_mysqlAuthSetup\n'
+        'gunzip -c ${_shellSingleQuote(file)} | "\$MYSQL" \$AUTH\n';
+  }
+
+  String _postgresMaintenanceScript({
+    required String database,
+    required DatabaseMaintenanceAction action,
+  }) {
+    final flags = switch (action) {
+      DatabaseMaintenanceAction.vacuumAnalyze => '--analyze --verbose',
+      DatabaseMaintenanceAction.analyze => '--analyze-only --verbose',
+      _ => '--verbose',
+    };
+    return 'set -e\n'
+        '$_pgBinDiscovery\n'
+        'if [ -z "\$PGBIN" ]; then echo "vacuumdb not found" >&2; exit 1; fi\n'
+        'su -s /bin/sh postgres -c "\$PGBIN/vacuumdb $flags '
+        '--dbname=${_shellSingleQuote(database)}"\n';
+  }
+
+  String _mysqlMaintenanceScript({
+    required String database,
+    required DatabaseMaintenanceAction action,
+    String? password,
+  }) {
+    final flag = switch (action) {
+      DatabaseMaintenanceAction.check => '--check',
+      DatabaseMaintenanceAction.analyze => '--analyze',
+      DatabaseMaintenanceAction.optimize => '--optimize',
+      DatabaseMaintenanceAction.repair => '--repair',
+      _ => '--check',
+    };
+    return 'set -e\n'
+        '$_mysqlCliDiscovery\n'
+        'if [ -z "\$MYSQLCHECK" ]; then echo "mysqlcheck not found" >&2; exit 1; fi\n'
+        'PW=${password == null ? "''" : _shellSingleQuote(password)}\n'
+        '$_mysqlAuthSetup\n'
+        '"\$MYSQLCHECK" \$AUTH $flag --databases ${_shellSingleQuote(database)}\n';
+  }
+
+  static const _pgBackRestProbeScript = r'''
+PBR=$(command -v pgbackrest 2>/dev/null || true)
+if [ -z "$PBR" ]; then
+  echo 'installed: false'
+else
+  echo "version: $($PBR version 2>/dev/null)"
+  CONF=/etc/pgbackrest.conf
+  if [ -f "$CONF" ]; then echo "config: $CONF"; fi
+  echo "stanzas: $(awk -F'[][]' '/^\[[^]]+\]$/ {gsub(/ /, "", $2); if ($2 != "global") print $2}' "$CONF" 2>/dev/null | paste -sd, -)"
+  JSON=$($PBR info --output=json 2>/dev/null)
+  if [ -n "$JSON" ]; then
+    echo "info-json: $(echo "$JSON" | tr -d '\n')"
+  else
+    echo 'error: pgbackrest info failed (no stanza configured or repository unavailable)'
+  fi
+fi
+''';
+
+  /// One privileged round-trip that probes PostgreSQL, MySQL, MariaDB and
+  /// pgBackRest. Read-only; emits `key: value` sections delimited by markers
+  /// (see [parseDatabaseInspectionOutput]).
+  static const _databaseInspectionScript = r'''
+echo '---MAIDKIT-DB-BEGIN---'
+unit_active() {
+  if [ -z "$1" ] || ! command -v systemctl >/dev/null 2>&1; then
+    echo unknown; return
+  fi
+  case "$(systemctl is-active "$1" 2>/dev/null)" in
+    active) echo true ;;
+    inactive|failed|activating|deactivating) echo false ;;
+    *) echo unknown ;;
+  esac
+}
+unit_enabled() {
+  if [ -z "$1" ] || ! command -v systemctl >/dev/null 2>&1; then
+    echo unknown; return
+  fi
+  case "$(systemctl is-enabled "$1" 2>/dev/null)" in
+    enabled|static|indirect|alias|generated) echo true ;;
+    disabled|masked) echo false ;;
+    *) echo unknown ;;
+  esac
+}
+first_unit() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl list-unit-files --no-pager --no-legend 2>/dev/null | awk -v p="$1" '$1 ~ p {print $1; exit}'
+  fi
+}
+process_running() {
+  command -v pgrep >/dev/null 2>&1 && pgrep -x "$1" >/dev/null 2>&1 && echo true || echo unknown
+}
+
+echo '---MAIDKIT-DB-PG---'
+PGBIN=$(for d in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin /usr/local/pgsql/bin; do
+  [ -d "$d" ] && echo "$d"
+done | sort -V | tail -n 1)
+PGTOOL="$PGBIN/psql"
+if [ -z "$PGBIN" ]; then
+  PGTOOL=$(command -v psql 2>/dev/null || true)
+fi
+if [ -n "$PGBIN" ] || [ -n "$PGTOOL" ]; then
+  PGVER=""
+  if [ -n "$PGBIN" ] && [ -x "$PGBIN/postgres" ]; then
+    PGVER=$("$PGBIN/postgres" --version 2>/dev/null | sed 's/^postgres (PostgreSQL) //')
+  fi
+  [ -z "$PGVER" ] && [ -n "$PGTOOL" ] && PGVER=$("$PGTOOL" --version 2>/dev/null | sed 's/^psql (PostgreSQL) //')
+  [ -n "$PGVER" ] && echo "version: $PGVER"
+  PGUNIT=$(first_unit '^postgresql\.service$')
+  if [ -z "$PGUNIT" ]; then
+    PGUNIT=$(first_unit '^postgresql@')
+    if [ -n "$PGUNIT" ] && command -v systemctl >/dev/null 2>&1; then
+      INST=$(systemctl list-units --type=service --state=active --no-legend --no-pager 2>/dev/null | awk '$1 ~ /^postgresql@/ {print $1; exit}')
+      [ -n "$INST" ] && PGUNIT=$INST
+    fi
+  fi
+  [ -z "$PGUNIT" ] && PGUNIT=$(first_unit '^postgresql-')
+  [ -n "$PGUNIT" ] && echo "service: $PGUNIT"
+  RUNNING=$(unit_active "$PGUNIT")
+  if [ "$RUNNING" = unknown ]; then RUNNING=$(process_running postgres); fi
+  echo "running: $RUNNING"
+  echo "enabled: $(unit_enabled "$PGUNIT")"
+  PORT=""
+  DATADIR=""
+  CONFIG=""
+  if command -v pg_lsclusters >/dev/null 2>&1; then
+    INFO=$(pg_lsclusters -h 2>/dev/null | head -n 1)
+    if [ -n "$INFO" ]; then
+      PORT=$(echo "$INFO" | awk '{print $3}')
+      DATADIR=$(echo "$INFO" | awk '{print $5}')
+      CONFIG=$(echo "$INFO" | awk '{print $6}')
+    fi
+  fi
+  if [ -z "$PORT" ] && [ -n "$PGUNIT" ] && command -v systemctl >/dev/null 2>&1; then
+    EXEC=$(systemctl show "$PGUNIT" -p ExecStart --no-pager 2>/dev/null | sed 's/^ExecStart=//')
+    PORT=$(echo "$EXEC" | grep -oE -- '-p [0-9]+' | head -n 1 | awk '{print $2}')
+    [ -z "$DATADIR" ] && DATADIR=$(echo "$EXEC" | grep -oE -- '(-D|--data-directory) [^ ]+' | awk '{print $2}')
+  fi
+  if [ -z "$PORT" ]; then
+    PORT=$(ss -lntp 2>/dev/null | grep -i postgres | grep -oE ':[0-9]+ ' | head -n 1 | tr -d ' :')
+  fi
+  [ -n "$PORT" ] && echo "port: $PORT" || echo "port: 5432"
+  [ -z "$DATADIR" ] && DATADIR=$(ls -d /var/lib/postgresql/*/main /var/lib/pgsql/data /var/lib/postgresql/data 2>/dev/null | head -n 1)
+  [ -n "$DATADIR" ] && echo "datadir: $DATADIR"
+  if [ -z "$CONFIG" ]; then
+    CONFIG=$(ls /etc/postgresql/*/main/postgresql.conf /etc/postgresql.conf 2>/dev/null | head -n 1)
+  fi
+  [ -n "$CONFIG" ] && echo "config: $CONFIG"
+  echo "bin: $PGBIN"
+  echo "cli: $PGTOOL"
+  if [ -n "$PGTOOL" ]; then
+    DBS=$(su -s /bin/sh postgres -c "$PGTOOL -X -A -t -F '|' -c 'SELECT d.datname, pg_catalog.pg_get_userbyid(d.datdba), pg_catalog.pg_database_size(d.datname), pg_catalog.pg_size_pretty(pg_catalog.pg_database_size(d.datname)), pg_catalog.pg_encoding_to_char(d.encoding) FROM pg_catalog.pg_database d ORDER BY 1'" 2>&1)
+    RC=$?
+    if [ $RC -eq 0 ] && [ -n "$DBS" ]; then
+      echo "databases:"
+      echo "$DBS" | while IFS='|' read -r name owner bytes pretty enc; do
+        [ -z "$name" ] && continue
+        echo "db: $name|$owner|$bytes|$pretty|$enc"
+      done
+      CONNS=$(su -s /bin/sh postgres -c "$PGTOOL -X -A -t -c 'SELECT count(*) FROM pg_catalog.pg_stat_activity'" 2>/dev/null)
+      [ -n "$CONNS" ] && echo "connections: $(echo "$CONNS" | tr -d ' ')"
+    else
+      echo "error: $DBS"
+    fi
+  fi
+fi
+
+echo '---MAIDKIT-DB-MYSQL---'
+MYSQLD=$(command -v mysqld 2>/dev/null || true)
+MYSQLCLI=$(command -v mysql 2>/dev/null || true)
+if [ -n "$MYSQLD" ] || [ -n "$MYSQLCLI" ]; then
+  VER=""
+  if [ -n "$MYSQLD" ]; then VER=$("$MYSQLD" --version 2>/dev/null); fi
+  [ -z "$VER" ] && [ -n "$MYSQLCLI" ] && VER=$("$MYSQLCLI" --version 2>/dev/null)
+  [ -n "$VER" ] && echo "version: $VER"
+  UNIT=$(first_unit '^mysql\.service$')
+  [ -z "$UNIT" ] && UNIT=$(first_unit '^mysqld\.service$')
+  [ -n "$UNIT" ] && echo "service: $UNIT"
+  RUNNING=$(unit_active "$UNIT")
+  if [ "$RUNNING" = unknown ]; then RUNNING=$(process_running mysqld); fi
+  echo "running: $RUNNING"
+  echo "enabled: $(unit_enabled "$UNIT")"
+  PORT=$(ss -lntp 2>/dev/null | grep -iE 'mysqld' | grep -oE ':[0-9]+ ' | head -n 1 | tr -d ' :')
+  [ -n "$PORT" ] && echo "port: $PORT" || echo "port: 3306"
+  SOCK=$(ss -lx 2>/dev/null | grep -iE 'mysqld' | grep -oE '/[^ ]+\.sock' | head -n 1)
+  [ -z "$SOCK" ] && SOCK=$(ls /var/run/mysqld/mysqld.sock /run/mysqld/mysqld.sock /var/lib/mysql/mysql.sock 2>/dev/null | head -n 1)
+  [ -n "$SOCK" ] && echo "socket: $SOCK"
+  DATADIR=$(my_print_defaults mysqld 2>/dev/null | grep '^--datadir=' | tail -n 1 | cut -d= -f2-)
+  [ -z "$DATADIR" ] && DATADIR=$(ls -d /var/lib/mysql 2>/dev/null | head -n 1)
+  [ -n "$DATADIR" ] && echo "datadir: $DATADIR"
+  CONFIG=/etc/my.cnf
+  [ -f /etc/mysql/my.cnf ] && CONFIG=/etc/mysql/my.cnf
+  [ -f "$CONFIG" ] && echo "config: $CONFIG"
+  echo "cli: $MYSQLCLI"
+  if [ -n "$MYSQLCLI" ]; then
+    AUTH=""
+    if "$MYSQLCLI" -N -e 'SELECT 1' >/dev/null 2>&1; then AUTH=plain
+    elif "$MYSQLCLI" --defaults-file=/etc/mysql/debian.cnf -N -e 'SELECT 1' >/dev/null 2>&1; then AUTH=debian
+    fi
+    if [ -n "$AUTH" ]; then
+      EXTRA=""
+      [ "$AUTH" = debian ] && EXTRA="--defaults-file=/etc/mysql/debian.cnf"
+      DBS=$("$MYSQLCLI" $EXTRA -N -e "SELECT s.SCHEMA_NAME, IFNULL(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0), IFNULL(ROUND(SUM(t.DATA_LENGTH + t.INDEX_LENGTH) / 1024 / 1024, 1), 0) FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME" 2>&1)
+      RC=$?
+      if [ $RC -eq 0 ] && [ -n "$DBS" ]; then
+        echo "databases:"
+        echo "$DBS" | while IFS='	' read -r name bytes mb; do
+          [ -z "$name" ] && continue
+          echo "db: $name||$bytes|${mb} MB|"
+        done
+        CONNS=$("$MYSQLCLI" $EXTRA -N -e "SHOW STATUS LIKE 'Threads_connected'" 2>/dev/null | awk '{print $2}')
+        [ -n "$CONNS" ] && echo "connections: $CONNS"
+      else
+        echo "error: $DBS"
+      fi
+    else
+      echo "error: database credentials are not available (root socket auth and /etc/mysql/debian.cnf both failed)"
+    fi
+  fi
+fi
+
+echo '---MAIDKIT-DB-MARIADB---'
+MARIADB=$(command -v mariadbd 2>/dev/null || true)
+if [ -n "$MARIADB" ]; then
+  echo "version: $("$MARIADB" --version 2>/dev/null)"
+  UNIT=$(first_unit '^mariadb\.service$')
+  [ -z "$UNIT" ] && UNIT=$(first_unit '^mysql\.service$')
+  [ -n "$UNIT" ] && echo "service: $UNIT"
+  RUNNING=$(unit_active "$UNIT")
+  if [ "$RUNNING" = unknown ]; then RUNNING=$(process_running mariadbd); fi
+  echo "running: $RUNNING"
+  echo "enabled: $(unit_enabled "$UNIT")"
+  PORT=$(ss -lntp 2>/dev/null | grep -iE 'mariadbd' | grep -oE ':[0-9]+ ' | head -n 1 | tr -d ' :')
+  [ -n "$PORT" ] && echo "port: $PORT" || echo "port: 3306"
+  SOCK=$(ss -lx 2>/dev/null | grep -iE 'mariadb' | grep -oE '/[^ ]+\.sock' | head -n 1)
+  [ -z "$SOCK" ] && SOCK=$(ls /run/mysqld/mysqld.sock /var/run/mysqld/mysqld.sock /var/lib/mysql/mysql.sock 2>/dev/null | head -n 1)
+  [ -n "$SOCK" ] && echo "socket: $SOCK"
+  DATADIR=$(my_print_defaults mariadbd 2>/dev/null | grep '^--datadir=' | tail -n 1 | cut -d= -f2-)
+  [ -z "$DATADIR" ] && DATADIR=$(ls -d /var/lib/mysql /var/lib/mariadb 2>/dev/null | head -n 1)
+  [ -n "$DATADIR" ] && echo "datadir: $DATADIR"
+  CONFIG=/etc/my.cnf
+  [ -f /etc/mysql/my.cnf ] && CONFIG=/etc/mysql/my.cnf
+  [ -f "$CONFIG" ] && echo "config: $CONFIG"
+  MYSQLCLI=$(command -v mariadb 2>/dev/null || command -v mysql 2>/dev/null || true)
+  echo "cli: $MYSQLCLI"
+  if [ -n "$MYSQLCLI" ]; then
+    AUTH=""
+    if "$MYSQLCLI" -N -e 'SELECT 1' >/dev/null 2>&1; then AUTH=plain
+    elif "$MYSQLCLI" --defaults-file=/etc/mysql/debian.cnf -N -e 'SELECT 1' >/dev/null 2>&1; then AUTH=debian
+    fi
+    if [ -n "$AUTH" ]; then
+      EXTRA=""
+      [ "$AUTH" = debian ] && EXTRA="--defaults-file=/etc/mysql/debian.cnf"
+      DBS=$("$MYSQLCLI" $EXTRA -N -e "SELECT s.SCHEMA_NAME, IFNULL(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0), IFNULL(ROUND(SUM(t.DATA_LENGTH + t.INDEX_LENGTH) / 1024 / 1024, 1), 0) FROM information_schema.SCHEMATA s LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME" 2>&1)
+      RC=$?
+      if [ $RC -eq 0 ] && [ -n "$DBS" ]; then
+        echo "databases:"
+        echo "$DBS" | while IFS='	' read -r name bytes mb; do
+          [ -z "$name" ] && continue
+          echo "db: $name||$bytes|${mb} MB|"
+        done
+        CONNS=$("$MYSQLCLI" $EXTRA -N -e "SHOW STATUS LIKE 'Threads_connected'" 2>/dev/null | awk '{print $2}')
+        [ -n "$CONNS" ] && echo "connections: $CONNS"
+      else
+        echo "error: $DBS"
+      fi
+    else
+      echo "error: database credentials are not available (root socket auth and /etc/mysql/debian.cnf both failed)"
+    fi
+  fi
+fi
+
+echo '---MAIDKIT-DB-PGBACKREST---'
+PBR=$(command -v pgbackrest 2>/dev/null || true)
+if [ -z "$PBR" ]; then
+  echo 'installed: false'
+else
+  echo "version: $($PBR version 2>/dev/null)"
+  CONF=/etc/pgbackrest.conf
+  if [ -f "$CONF" ]; then echo "config: $CONF"; fi
+  echo "stanzas: $(awk -F'[][]' '/^\[[^]]+\]$/ {gsub(/ /, "", $2); if ($2 != "global") print $2}' "$CONF" 2>/dev/null | paste -sd, -)"
+  JSON=$($PBR info --output=json 2>/dev/null)
+  if [ -n "$JSON" ]; then
+    echo "info-json: $(echo "$JSON" | tr -d '\n')"
+  else
+    echo 'error: pgbackrest info failed (no stanza configured or repository unavailable)'
+  fi
+fi
+
+echo '---MAIDKIT-DB-END---'
+''';
 
   /// Reads the current user's crontab (`crontab -l`).
   Future<CrontabDocument> listCrontab(int serverId) async {

@@ -28,6 +28,7 @@ enum MaidCafeStreamEventType {
   processes,
   systemd,
   runtimes,
+  databaseMetrics,
 }
 
 /// All streamable event types; the default whitelist for [MaidCafeStreamSession.openStream].
@@ -39,6 +40,7 @@ const Set<MaidCafeStreamEventType> maidCafeStreamAllEvents = {
   MaidCafeStreamEventType.processes,
   MaidCafeStreamEventType.systemd,
   MaidCafeStreamEventType.runtimes,
+  MaidCafeStreamEventType.databaseMetrics,
 };
 
 /// One decoded SSE frame from the daemon stream.
@@ -94,6 +96,7 @@ MaidCafeStreamEvent? _dispatchSseFrame(String? eventName, String data) {
     'processes' => MaidCafeStreamEventType.processes,
     'systemd' => MaidCafeStreamEventType.systemd,
     'runtimes' => MaidCafeStreamEventType.runtimes,
+    'databaseMetrics' => MaidCafeStreamEventType.databaseMetrics,
     _ => null,
   };
   if (type == null) return null;
@@ -713,13 +716,27 @@ class MaidCafeStreamSession {
   Future<Map<String, dynamic>> images() => _get('/api/v1/images');
 
   /// One-shot top-processes snapshot (same payload as the `processes` event).
-  Future<Map<String, dynamic>> processes() => _get('/api/v1/processes');
+  ///
+  /// [limit] caps the returned rows; `0` requests the complete process table.
+  /// Daemons without the `limit` parameter ignore it and return their own
+  /// configured cap.
+  Future<Map<String, dynamic>> processes({int limit = 0}) => _get(
+    Uri(
+      path: '/api/v1/processes',
+      queryParameters: {'limit': '$limit'},
+    ).toString(),
+  );
 
   /// One-shot systemd unit snapshot (same payload as the `systemd` event).
   Future<Map<String, dynamic>> systemd() => _get('/api/v1/systemd');
 
   /// One-shot runtime snapshot (same payload as the `runtimes` event).
   Future<Map<String, dynamic>> runtimes() => _get('/api/v1/runtimes');
+
+  /// One-shot database health snapshot (same payload as the
+  /// `databaseMetrics` event).
+  Future<Map<String, dynamic>> databaseMetrics() =>
+      _get('/api/v1/database-metrics');
 
   /// The daemon-side watched-process list.
   Future<Map<String, dynamic>> watchedProcesses() =>
@@ -793,8 +810,13 @@ class MaidCafeStreamSession {
   /// becomes [MaidCafeUnauthorizedException]). There is no auto-reconnect —
   /// the consumer owns reconnection. The stream ends when the session is
   /// closed.
+  ///
+  /// [processesLimit] caps how many processes `processes` frames carry for
+  /// this subscription; `0` requests the complete process table. Daemons
+  /// without the parameter ignore it and push their configured cap.
   Stream<MaidCafeStreamEvent> openStream({
     Set<MaidCafeStreamEventType> events = maidCafeStreamAllEvents,
+    int processesLimit = 0,
   }) {
     _throwIfClosed();
     final forward = _forward;
@@ -815,6 +837,7 @@ class MaidCafeStreamSession {
           ? null
           : <String, String>{
               'events': requested.map((event) => event.name).join(','),
+              'processesLimit': '$processesLimit',
             },
     );
     final request = http.Request('GET', uri);

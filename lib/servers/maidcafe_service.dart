@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../containers/container_list_tile.dart';
 import '../containers/container_models.dart';
 import 'cloud_sync_service.dart';
+import 'database_models.dart';
 import 'server_models.dart';
 import 'systemd_models.dart';
 
@@ -1442,6 +1443,12 @@ JavaJvmInfo? _parseSseJavaJvm(Map<String, dynamic> json) {
     error: _optionalString(json, 'error'),
   );
 }
+
+/// Tolerant parse of a `databaseMetrics` SSE event or
+/// `/api/v1/database-metrics` payload.
+DatabaseMetricsSnapshot parseMaidCafeDatabaseMetrics(
+  Map<String, dynamic> json,
+) => parseDatabaseMetrics(json);
 
 /// Tolerant parse of a `systemd` SSE event payload.
 MaidCafeSystemdSnapshot parseMaidCafeSystemd(Map<String, dynamic> json) {

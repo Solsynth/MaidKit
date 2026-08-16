@@ -21,6 +21,7 @@ import 'maidcafe_service.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
 import 'crontab_tab.dart';
+import 'database_management_tab.dart';
 import 'firewall_tab.dart';
 import 'package_management_tab.dart';
 import 'port_forwarding_tab.dart';
@@ -53,8 +54,8 @@ class ServerDetailPage extends ConsumerStatefulWidget {
 
 class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   static const _processesTabIndex = 1;
-  static const _runtimesTabIndex = 11;
-  static const _tabCount = 12;
+  static const _runtimesTabIndex = 2;
+  static const _tabCount = 13;
 
   AsyncValue<List<ServerProcess>> _processes = const AsyncValue.data([]);
   Timer? _refreshTimer;
@@ -390,6 +391,9 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     try {
       final events = session.openStream(
         events: const {MaidCafeStreamEventType.processes},
+        // The daemon defaults to its configured processesLimit (50); ask for
+        // the complete table so the tab is never silently truncated.
+        processesLimit: 0,
       );
       final subscription = events.listen(
         _onProcessesEvent,
@@ -814,7 +818,7 @@ class _InspectorTabs extends StatefulWidget {
 
 class _InspectorTabsState extends State<_InspectorTabs>
     with SingleTickerProviderStateMixin {
-  static const _tabCount = 12;
+  static const _tabCount = 13;
   late final TabController _tabController;
 
   @override
@@ -862,12 +866,20 @@ class _InspectorTabsState extends State<_InspectorTabs>
               label: 'detailProcesses'.tr(),
             ),
             IconLabelTab(
+              icon: const Icon(Symbols.code_blocks, size: 18),
+              label: 'detailRuntimes'.tr(),
+            ),
+            IconLabelTab(
               icon: const Icon(Symbols.settings_applications, size: 18),
               label: 'detailServices'.tr(),
             ),
             IconLabelTab(
               icon: const Icon(Symbols.language, size: 18),
               label: 'detailWebServers'.tr(),
+            ),
+            IconLabelTab(
+              icon: const Icon(Symbols.database, size: 18),
+              label: 'detailDatabases'.tr(),
             ),
             IconLabelTab(
               icon: const Icon(Symbols.deployed_code, size: 18),
@@ -897,10 +909,6 @@ class _InspectorTabsState extends State<_InspectorTabs>
               icon: const Icon(Symbols.local_cafe, size: 18),
               label: 'detailCafe'.tr(),
             ),
-            IconLabelTab(
-              icon: const Icon(Symbols.code_blocks, size: 18),
-              label: 'detailRuntimes'.tr(),
-            ),
           ],
         ),
         Expanded(
@@ -926,6 +934,15 @@ class _InspectorTabsState extends State<_InspectorTabs>
                           'detailConnectToCollect'.tr(),
                       onConnect: widget.onConnect,
                     ),
+              RuntimeMonitoringTab(
+                server: widget.server,
+                connected: widget.connected,
+                connectionError: widget.connectionError,
+                onConnect: widget.onConnect,
+                snapshot: widget.runtimes,
+                onRefresh: widget.onRefreshRuntimes,
+                dataSource: widget.runtimesDataSource,
+              ),
               SystemdTab(
                 server: widget.server,
                 connected: widget.connected,
@@ -933,6 +950,12 @@ class _InspectorTabsState extends State<_InspectorTabs>
                 onConnect: widget.onConnect,
               ),
               WebServerTab(
+                server: widget.server,
+                connected: widget.connected,
+                connectionError: widget.connectionError,
+                onConnect: widget.onConnect,
+              ),
+              DatabaseManagementTab(
                 server: widget.server,
                 connected: widget.connected,
                 connectionError: widget.connectionError,
@@ -980,15 +1003,6 @@ class _InspectorTabsState extends State<_InspectorTabs>
                 connected: widget.connected,
                 connectionError: widget.connectionError,
                 onConnect: widget.onConnect,
-              ),
-              RuntimeMonitoringTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-                snapshot: widget.runtimes,
-                onRefresh: widget.onRefreshRuntimes,
-                dataSource: widget.runtimesDataSource,
               ),
             ],
           ),
@@ -1343,6 +1357,19 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
   _ProcessSort? _sort;
   var _ascending = false;
   var _killingPid = false;
+  final _filterController = TextEditingController();
+  var _query = '';
+
+  @override
+  void dispose() {
+    _filterController.dispose();
+    super.dispose();
+  }
+
+  void _clearFilter() {
+    _filterController.clear();
+    setState(() => _query = '');
+  }
 
   void _toggleSort(_ProcessSort column) {
     setState(() {
@@ -1359,10 +1386,26 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
     });
   }
 
-  List<ServerProcess> get _sorted {
+  /// The rows to render: the filter applies first (pid/user/command match,
+  /// case-insensitive), then the user's column sort. With no filter and no
+  /// sort the server's list is returned without copying, so a full table
+  /// costs nothing to rebuild on every SSE frame.
+  List<ServerProcess> get _visible {
+    final query = _query.trim().toLowerCase();
+    var items = widget.items;
+    if (query.isNotEmpty) {
+      items = items
+          .where(
+            (p) =>
+                p.command.toLowerCase().contains(query) ||
+                p.user.toLowerCase().contains(query) ||
+                '${p.pid}'.contains(query),
+          )
+          .toList(growable: false);
+    }
     final sort = _sort;
-    if (sort == null) return widget.items;
-    final items = [...widget.items];
+    if (sort == null) return items;
+    final copy = [...items];
     int compare(ServerProcess a, ServerProcess b) {
       final result = switch (sort) {
         _ProcessSort.pid => a.pid.compareTo(b.pid),
@@ -1379,8 +1422,8 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
       return _ascending ? result : -result;
     }
 
-    items.sort(compare);
-    return items;
+    copy.sort(compare);
+    return copy;
   }
 
   Future<void> _killProcess(ServerProcess process) async {
@@ -1434,7 +1477,8 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final items = _sorted;
+    final items = _visible;
+    final filtering = _query.trim().isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1443,12 +1487,47 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
           child: Row(
             children: [
               Text(
-                'detailProcessCount'.tr(args: ['${items.length}']),
+                filtering
+                    ? 'detailProcessFilteredCount'.tr(
+                        args: ['${items.length}', '${widget.items.length}'],
+                      )
+                    : 'detailProcessCount'.tr(args: ['${items.length}']),
                 style: theme.textTheme.labelLarge?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SizedBox(
+                  height: 32,
+                  child: TextField(
+                    controller: _filterController,
+                    onChanged: (value) => setState(() => _query = value),
+                    style: theme.textTheme.bodySmall,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: 'detailFilterProcesses'.tr(),
+                      prefixIcon: const Icon(Symbols.search, size: 16),
+                      suffixIcon: filtering
+                          ? IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Symbols.close, size: 16),
+                              onPressed: _clearFilter,
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: scheme.outlineVariant),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: scheme.outlineVariant),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               IconButton(
                 tooltip: 'detailRefreshProcesses'.tr(),
                 visualDensity: VisualDensity.compact,

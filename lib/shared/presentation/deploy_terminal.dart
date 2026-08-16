@@ -591,53 +591,28 @@ class DeploySessionsRailButton extends ConsumerWidget {
         message: running
             ? '${primary.title} (running${progressLabel == null ? '' : ' · $progressLabel'} — click to show)'
             : '${primary.title} (click to show)',
-        child: Badge(
-          isLabelVisible: hidden.length > 1 || progressLabel != null,
-          label: Text(
-            hidden.length > 1 ? '${hidden.length}' : (progressLabel ?? ''),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => showDeployTerminal(ref, primary.id),
-            child: SizedBox(
-              width: 56,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Icon(Symbols.terminal, color: color),
-                      if (running)
-                        Positioned(
-                          right: 10,
-                          bottom: 2,
-                          child: SizedBox(
-                            width: 10,
-                            height: 10,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              color: color,
-                              value: primary.progress,
-                            ),
-                          ),
-                        ),
-                    ],
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => showDeployTerminal(ref, primary.id),
+          child: SizedBox(
+            width: 56,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Symbols.terminal, color: color),
+                const SizedBox(height: 4),
+                Text(
+                  running
+                      ? (progressLabel ?? 'deployTaskLabel'.tr())
+                      : 'deployLogLabel'.tr(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: color,
+                    fontSize: 10,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    running
-                        ? (progressLabel ?? 'deployTaskLabel'.tr())
-                        : 'deployLogLabel'.tr(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: color,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

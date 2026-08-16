@@ -12,6 +12,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/services/analytics_service.dart';
+import 'package:styled_widget/styled_widget.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
 import 'maidcafe_metoer.dart';
@@ -184,7 +185,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             : () => _registerDaemon(context, workspaceId),
         icon: const Icon(Symbols.add),
         label: Text('maidCafeRegister'.tr()),
-      ),
+      ).padding(bottom: 40),
       1 => FloatingActionButton.extended(
         heroTag: 'maidcafe-create-fab',
         onPressed: _isBusy(_credentialsOp)
@@ -192,7 +193,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             : () => _createCredential(context),
         icon: const Icon(Symbols.add),
         label: Text('maidCafeCredentialCreate'.tr()),
-      ),
+      ).padding(bottom: 40),
       _ => null,
     };
   }
@@ -276,7 +277,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   /// selector and sign-out.
   Widget _statusAccount(BuildContext context, CloudUser user) {
     final textTheme = Theme.of(context).textTheme;
-    final colors = Theme.of(context).colorScheme;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -288,22 +288,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
           child: Text(user.initials, style: textTheme.labelSmall),
         ),
         const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            user.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: textTheme.labelMedium,
-          ),
-        ),
-        const SizedBox(width: 12),
         _statusWorkspaceSelector(context),
-        IconButton(
-          tooltip: 'settingsCloudSignOut'.tr(),
-          visualDensity: VisualDensity.compact,
-          icon: Icon(Symbols.logout, size: 18, color: colors.onSurfaceVariant),
-          onPressed: () => _signOutCloud(context),
-        ),
       ],
     );
   }
