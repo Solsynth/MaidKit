@@ -2258,7 +2258,16 @@ fi
     ContainerRuntime runtime,
   ) async {
     final result = await _execute(client, 'command -v ${runtime.name}');
-    return result.exitCode == 0;
+    if (result.exitCode != 0) return false;
+    if (runtime != ContainerRuntime.docker) return true;
+    // Distro podman shims install `docker` as a wrapper around podman; the
+    // CLI exists but answers `--version` with podman's version string. Skip
+    // it while the real podman is present so containers/images are not
+    // listed twice.
+    final version = await _execute(client, 'docker --version');
+    if (!version.stdout.toLowerCase().contains('podman')) return true;
+    final podman = await _execute(client, 'command -v podman');
+    return podman.exitCode != 0;
   }
 
   Future<ContainerEnvironment> _listContainerEnvironment(

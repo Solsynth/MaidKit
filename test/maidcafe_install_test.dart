@@ -155,13 +155,14 @@ void main() {
     );
   });
 
-  test('updates replace only the daemon binary, never the configuration', () {
+  test('updates replace only the daemon binary and record the new version', () {
     final script = buildMaidCafeDaemonInstallScript(
       daemonId: 'daemon-1',
       cloudUrl: '',
       cloudSecret: '',
       artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
       transport: 'http',
+      version: 'v1.2.3',
       actions: const [
         MaidCafeActionDefinition(name: 'backup', script: 'echo hi'),
       ],
@@ -170,7 +171,18 @@ void main() {
 
     expect(script, contains('/usr/local/bin/maidcafe-daemon'));
     expect(script, contains('systemctl restart maidcafe-daemon'));
-    // No config, fragment, script, sudoers or unit writes on an update.
+    // The deployed version is recorded in the existing config; only that
+    // line is touched. No full config, fragment, script, sudoers or unit
+    // writes happen on an update.
+    expect(script, contains("version_re='^version[[:space:]]*='"));
+    expect(
+      script,
+      contains(
+        'sed -i "s/\$version_re.*/version = \$new_version/" '
+        '/etc/maidcafe/config.toml',
+      ),
+    );
+    expect(script, contains('base64 -d'));
     expect(
       script,
       isNot(

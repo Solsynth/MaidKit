@@ -571,9 +571,10 @@ String buildMaidCafeDaemonInstallScript({
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
-  // When true the script replaces only the daemon binary and restarts the
-  // service; the configuration, action fragments, scripts, sudoers rule and
-  // systemd unit are left untouched, so an upgrade can never lose settings.
+  // When true the script replaces only the daemon binary, records the new
+  // version in the existing config and restarts the service; everything else
+  // (action fragments, scripts, sudoers rule and systemd unit) is left
+  // untouched, so an upgrade can never lose settings.
   bool updateOnly = false,
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
@@ -643,13 +644,33 @@ then
   exit 1
 fi
 ''';
+  // An update records the deployed version in the existing config (only the
+  // `version` line is touched) so /health reports the new build; the value
+  // is base64-embedded to keep arbitrary version strings out of the shell
+  // and sed-escaped so the replacement cannot be misread.
+  final sedEscapedVersion = _tomlString(version.trim())
+      .replaceAll('\\', '\\\\')
+      .replaceAll('&', '\\&');
+  final versionBump = version.trim().isEmpty
+      ? ''
+      : '''
+new_version="\$(printf '%s' '${base64Encode(utf8.encode(sedEscapedVersion))}' | base64 -d)"
+if [ -n "\$new_version" ]; then
+  version_re='^version[[:space:]]*='
+  if grep -q "\$version_re" /etc/maidcafe/config.toml; then
+    sed -i "s/\$version_re.*/version = \$new_version/" /etc/maidcafe/config.toml
+  else
+    printf '\\nversion = %s\\n' "\$new_version" >> /etc/maidcafe/config.toml
+  fi
+fi
+''';
   if (updateOnly) {
     return '''set -eu
 ${stdio ? '' : '''command -v systemctl >/dev/null 2>&1 || {
   echo "MaidCafe daemon installation requires systemd." >&2
   exit 1
 }
-'''}$binaryInstall$restartHealth''';
+'''}$binaryInstall$versionBump$restartHealth''';
   }
   final serviceInstall = stdio
       ? ''
