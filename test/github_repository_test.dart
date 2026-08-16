@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
@@ -10,6 +11,54 @@ import 'package:maid_kit/github/github_repository.dart';
 import 'package:maid_kit/github/github_token_store.dart';
 import 'package:maid_kit/servers/database_backup_service.dart';
 import 'package:maid_kit/servers/vault_service.dart';
+
+/// In-memory stand-in for the OS keychain so vault creation (which caches the
+/// sync passphrase) works without a platform implementation.
+class _MemoryStorage extends FlutterSecureStorage {
+  final Map<String, String> values = {};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => values[key];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
+}
 
 /// drift_flutter resolves its native database directory through
 /// path_provider; point it at the system temp directory in tests.
@@ -36,6 +85,9 @@ Map<String, Object?> _emptyPayload() => {
   'deploymentProjects': <Object>[],
   'deploymentResources': <Object>[],
   'scriptSnippets': <Object>[],
+  'githubConnections': <Object>[],
+  'githubRepoPins': <Object>[],
+  'githubTokens': <Object>[],
 };
 
 void main() {
@@ -93,7 +145,7 @@ void main() {
       expect(pins, isEmpty);
     });
 
-    test('token stays out of the database', () async {
+    test('token round-trips through the token store', () async {
       final database = _database();
       addTearDown(database.close);
       final storage = InMemoryGitHubTokenStorage();
@@ -125,12 +177,14 @@ void main() {
   });
 
   group('DatabaseBackupService GitHub sync', () {
-    test('exportPayload includes GitHub metadata', () async {
+    test('exportPayload includes GitHub metadata and tokens', () async {
       final database = _database();
       addTearDown(database.close);
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
       final repository = GitHubRepository(
         database,
-        InMemoryGitHubTokenStorage(),
+        VaultGitHubTokenStorage(database, vault),
       );
       await repository.saveConnection(
         const GitHubAccount(
@@ -139,14 +193,58 @@ void main() {
           avatarUrl: 'https://example.com/a.png',
         ),
       );
-      final service = DatabaseBackupService(database, VaultService(database));
+      await repository.saveToken('octocat', 'gho_secret');
+      final service = DatabaseBackupService(database, vault);
       final payload = jsonDecode(await service.exportPayload()) as Map;
       final connections = payload['githubConnections'] as List;
       expect(connections, hasLength(1));
       final connection = connections.single as Map;
       expect(connection['accountLogin'], 'octocat');
-      // Tokens never enter the syncable payload.
+      // Tokens never appear on the connection record.
       expect(connection.containsKey('token'), isFalse);
+      // The vault-encrypted token is decrypted into the syncable payload.
+      final tokens = payload['githubTokens'] as List;
+      expect(tokens, hasLength(1));
+      final token = tokens.single as Map;
+      expect(token['accountLogin'], 'octocat');
+      expect(token['token'], 'gho_secret');
+    });
+
+    test('importPayload restores and re-encrypts GitHub tokens', () async {
+      final database = _database();
+      addTearDown(database.close);
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final service = DatabaseBackupService(database, vault);
+      final payload = {
+        ..._emptyPayload(),
+        'githubConnections': [
+          {
+            'id': 1,
+            'accountLogin': 'octocat',
+            'accountName': 'Octo Cat',
+            'avatarUrl': 'https://example.com/a.png',
+            'createdAt': '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        'githubTokens': [
+          {
+            'id': 1,
+            'accountLogin': 'octocat',
+            'token': 'gho_secret',
+            'updatedAt': '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      };
+      await service.importPayload(jsonEncode(payload));
+
+      final storage = VaultGitHubTokenStorage(database, vault);
+      expect(await storage.read('octocat'), 'gho_secret');
+      // The imported token is re-encrypted with this vault's data key, so
+      // the plaintext never lands in the database.
+      final rows = await database.select(database.gitHubTokens).get();
+      expect(rows, hasLength(1));
+      expect(rows.single.encryptedToken, isNot(contains('gho_secret')));
     });
 
     test('importPayload restores connections and pins', () async {
@@ -197,6 +295,7 @@ void main() {
       );
       expect(await repository.watchConnections().first, isEmpty);
       expect(await repository.watchRepoPins().first, isEmpty);
+      expect(await database.select(database.gitHubTokens).get(), isEmpty);
     });
   });
 }

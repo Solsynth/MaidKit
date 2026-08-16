@@ -107,8 +107,7 @@ class GitHubMcpToolHandlers {
     final cwt = await ref.read(githubTokenForConnectionProvider.future);
     if (cwt == null) {
       throw ArgumentError(
-        'No GitHub account is signed in on this device. Sign in on the '
-        'GitHub tab first.',
+        'No GitHub account is signed in. Sign in on the GitHub tab first.',
       );
     }
     return GithubApi(token: cwt.token);

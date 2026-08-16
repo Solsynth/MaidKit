@@ -13,7 +13,10 @@ import 'github_repository.dart';
 import 'github_token_store.dart';
 
 final githubTokenStoreProvider = Provider<GitHubTokenStorage>((ref) {
-  return SecureGitHubTokenStorage();
+  return VaultGitHubTokenStorage(
+    ref.watch(databaseProvider),
+    ref.watch(vaultServiceProvider),
+  );
 });
 
 final githubRepositoryProvider = Provider<GitHubRepository>((ref) {
@@ -34,8 +37,9 @@ final githubActiveConnectionProvider = Provider<GitHubConnection?>((ref) {
   return connections.first;
 });
 
-/// The active connection paired with its device-local token, or null while
-/// signed out or when the token is missing (e.g. after a vault sync).
+/// The active connection paired with its vault-stored token, or null while
+/// signed out or when no token is stored (e.g. a connection imported from a
+/// backup written before tokens were vault-backed).
 final githubTokenForConnectionProvider =
     FutureProvider<({GitHubConnection connection, String token})?>((ref) async {
       final connection = ref.watch(githubActiveConnectionProvider);

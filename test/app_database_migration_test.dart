@@ -22,7 +22,7 @@ void main() {
 
   group('AppDatabase migrations', () {
     test(
-      'schema 22 database that already has sort_order migrates to 26',
+      'schema 22 database that already has sort_order migrates to 27',
       () async {
         final directory = Directory.systemTemp.createTempSync('migration_test');
         final path = '${directory.path}/stale.sqlite';
@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 26 migrations, which
+        // Opening the database again runs the 22 -> 27 migrations, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 26);
+        expect(version.read<int>('user_version'), 27);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -60,6 +60,15 @@ void main() {
             )
             .getSingle();
         expect(row.read<int>('sort_order'), 1);
+
+        // The GitHub token table is created for vault-backed token storage.
+        final tokenTable = await database
+            .customSelect(
+              "SELECT name FROM sqlite_master "
+              "WHERE type = 'table' AND name = 'github_tokens'",
+            )
+            .get();
+        expect(tokenTable, isNotEmpty);
         await database.close();
       },
     );
@@ -81,7 +90,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 26);
+        expect(version.read<int>('user_version'), 27);
 
         final column = await database
             .customSelect(

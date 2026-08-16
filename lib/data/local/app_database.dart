@@ -207,8 +207,8 @@ class AgentSkills extends Table {
 }
 
 /// A GitHub account the user signed in with. Only non-secret identity is kept
-/// here; the access token lives in the OS keychain under a key derived from
-/// [accountLogin] and never enters the vault database or cloud sync.
+/// here; the access token lives in [GitHubTokens], encrypted with the vault
+/// key, and never enters this table or the portable payload in clear text.
 class GitHubConnections extends Table {
   @override
   String get tableName => 'github_connections';
@@ -232,6 +232,20 @@ class GitHubRepoPins extends Table {
   DateTimeColumn get pinnedAt => dateTime()();
 }
 
+/// GitHub access tokens, encrypted with the vault data key. Tokens live
+/// inside the vault so they sync with it and survive vault migration; only
+/// the ciphertext is stored, keyed by [accountLogin] like the connection.
+class GitHubTokens extends Table {
+  @override
+  String get tableName => 'github_tokens';
+
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get accountLogin => text().unique()();
+  TextColumn get encryptedToken => text()();
+  TextColumn get tokenNonce => text()();
+  DateTimeColumn get updatedAt => dateTime()();
+}
+
 /// Links a deployment project to a GitHub workflow whose latest run is shown
 /// on the project detail page.
 @DriftDatabase(
@@ -251,6 +265,7 @@ class GitHubRepoPins extends Table {
     AgentSkills,
     GitHubConnections,
     GitHubRepoPins,
+    GitHubTokens,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -267,7 +282,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 26;
+  int get schemaVersion => 27;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -529,6 +544,13 @@ class AppDatabase extends _$AppDatabase {
         if (!existing.contains('maid_cafe_metrics_secret_nonce')) {
           await m.addColumn(servers, servers.maidCafeMetricsSecretNonce);
         }
+      }
+      if (from < 27) {
+        // GitHub tokens moved from the OS keychain into the vault so they
+        // sync with it. Existing keychain entries are migrated lazily by
+        // VaultGitHubTokenStorage on first read (encryption needs the vault
+        // key, which is only available after unlock).
+        await m.createTable(gitHubTokens);
       }
     },
   );

@@ -2,7 +2,7 @@
 library;
 
 /// A GitHub account the user signed in with. Identity only: the access token
-/// lives in the OS keychain and never appears in these models.
+/// is stored encrypted in the vault and never appears in these models.
 class GitHubAccount {
   const GitHubAccount({
     required this.login,

@@ -5,9 +5,9 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'github_models.dart';
 import 'github_token_store.dart';
 
-/// Persistence for the GitHub integration. Connections, repo pins, and
-/// project-workflow links are plain vault data (they sync with the vault);
-/// access tokens are handled through [GitHubTokenStorage] and stay on-device.
+/// Persistence for the GitHub integration. Connections, repo pins, tokens,
+/// and project-workflow links are all vault data (they sync with the vault);
+/// tokens are encrypted with the vault key through [GitHubTokenStorage].
 class GitHubRepository {
   GitHubRepository(this._database, this._tokenStore);
 
@@ -59,8 +59,8 @@ class GitHubRepository {
         .firstWhere((row) => row.id == id);
   }
 
-  /// Removes a connection and its pins. The device token must be removed
-  /// separately with [removeToken]; the database never holds it.
+  /// Removes a connection and its pins. The token must be removed separately
+  /// with [removeToken]; it lives in its own vault-encrypted table.
   Future<void> removeConnection(GitHubConnection connection) =>
       _database.transaction(() async {
         await (_database.delete(

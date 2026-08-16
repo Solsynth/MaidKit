@@ -8277,6 +8277,372 @@ class GitHubRepoPinsCompanion extends UpdateCompanion<GitHubRepoPin> {
   }
 }
 
+class $GitHubTokensTable extends GitHubTokens
+    with TableInfo<$GitHubTokensTable, GitHubToken> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $GitHubTokensTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountLoginMeta = const VerificationMeta(
+    'accountLogin',
+  );
+  @override
+  late final GeneratedColumn<String> accountLogin = GeneratedColumn<String>(
+    'account_login',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
+  );
+  static const VerificationMeta _encryptedTokenMeta = const VerificationMeta(
+    'encryptedToken',
+  );
+  @override
+  late final GeneratedColumn<String> encryptedToken = GeneratedColumn<String>(
+    'encrypted_token',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tokenNonceMeta = const VerificationMeta(
+    'tokenNonce',
+  );
+  @override
+  late final GeneratedColumn<String> tokenNonce = GeneratedColumn<String>(
+    'token_nonce',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountLogin,
+    encryptedToken,
+    tokenNonce,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'github_tokens';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<GitHubToken> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_login')) {
+      context.handle(
+        _accountLoginMeta,
+        accountLogin.isAcceptableOrUnknown(
+          data['account_login']!,
+          _accountLoginMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_accountLoginMeta);
+    }
+    if (data.containsKey('encrypted_token')) {
+      context.handle(
+        _encryptedTokenMeta,
+        encryptedToken.isAcceptableOrUnknown(
+          data['encrypted_token']!,
+          _encryptedTokenMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_encryptedTokenMeta);
+    }
+    if (data.containsKey('token_nonce')) {
+      context.handle(
+        _tokenNonceMeta,
+        tokenNonce.isAcceptableOrUnknown(data['token_nonce']!, _tokenNonceMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_tokenNonceMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  GitHubToken map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return GitHubToken(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountLogin: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_login'],
+      )!,
+      encryptedToken: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}encrypted_token'],
+      )!,
+      tokenNonce: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}token_nonce'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $GitHubTokensTable createAlias(String alias) {
+    return $GitHubTokensTable(attachedDatabase, alias);
+  }
+}
+
+class GitHubToken extends DataClass implements Insertable<GitHubToken> {
+  final int id;
+  final String accountLogin;
+  final String encryptedToken;
+  final String tokenNonce;
+  final DateTime updatedAt;
+  const GitHubToken({
+    required this.id,
+    required this.accountLogin,
+    required this.encryptedToken,
+    required this.tokenNonce,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_login'] = Variable<String>(accountLogin);
+    map['encrypted_token'] = Variable<String>(encryptedToken);
+    map['token_nonce'] = Variable<String>(tokenNonce);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  GitHubTokensCompanion toCompanion(bool nullToAbsent) {
+    return GitHubTokensCompanion(
+      id: Value(id),
+      accountLogin: Value(accountLogin),
+      encryptedToken: Value(encryptedToken),
+      tokenNonce: Value(tokenNonce),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory GitHubToken.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return GitHubToken(
+      id: serializer.fromJson<int>(json['id']),
+      accountLogin: serializer.fromJson<String>(json['accountLogin']),
+      encryptedToken: serializer.fromJson<String>(json['encryptedToken']),
+      tokenNonce: serializer.fromJson<String>(json['tokenNonce']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountLogin': serializer.toJson<String>(accountLogin),
+      'encryptedToken': serializer.toJson<String>(encryptedToken),
+      'tokenNonce': serializer.toJson<String>(tokenNonce),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  GitHubToken copyWith({
+    int? id,
+    String? accountLogin,
+    String? encryptedToken,
+    String? tokenNonce,
+    DateTime? updatedAt,
+  }) => GitHubToken(
+    id: id ?? this.id,
+    accountLogin: accountLogin ?? this.accountLogin,
+    encryptedToken: encryptedToken ?? this.encryptedToken,
+    tokenNonce: tokenNonce ?? this.tokenNonce,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  GitHubToken copyWithCompanion(GitHubTokensCompanion data) {
+    return GitHubToken(
+      id: data.id.present ? data.id.value : this.id,
+      accountLogin: data.accountLogin.present
+          ? data.accountLogin.value
+          : this.accountLogin,
+      encryptedToken: data.encryptedToken.present
+          ? data.encryptedToken.value
+          : this.encryptedToken,
+      tokenNonce: data.tokenNonce.present
+          ? data.tokenNonce.value
+          : this.tokenNonce,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('GitHubToken(')
+          ..write('id: $id, ')
+          ..write('accountLogin: $accountLogin, ')
+          ..write('encryptedToken: $encryptedToken, ')
+          ..write('tokenNonce: $tokenNonce, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, accountLogin, encryptedToken, tokenNonce, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is GitHubToken &&
+          other.id == this.id &&
+          other.accountLogin == this.accountLogin &&
+          other.encryptedToken == this.encryptedToken &&
+          other.tokenNonce == this.tokenNonce &&
+          other.updatedAt == this.updatedAt);
+}
+
+class GitHubTokensCompanion extends UpdateCompanion<GitHubToken> {
+  final Value<int> id;
+  final Value<String> accountLogin;
+  final Value<String> encryptedToken;
+  final Value<String> tokenNonce;
+  final Value<DateTime> updatedAt;
+  const GitHubTokensCompanion({
+    this.id = const Value.absent(),
+    this.accountLogin = const Value.absent(),
+    this.encryptedToken = const Value.absent(),
+    this.tokenNonce = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  GitHubTokensCompanion.insert({
+    this.id = const Value.absent(),
+    required String accountLogin,
+    required String encryptedToken,
+    required String tokenNonce,
+    required DateTime updatedAt,
+  }) : accountLogin = Value(accountLogin),
+       encryptedToken = Value(encryptedToken),
+       tokenNonce = Value(tokenNonce),
+       updatedAt = Value(updatedAt);
+  static Insertable<GitHubToken> custom({
+    Expression<int>? id,
+    Expression<String>? accountLogin,
+    Expression<String>? encryptedToken,
+    Expression<String>? tokenNonce,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountLogin != null) 'account_login': accountLogin,
+      if (encryptedToken != null) 'encrypted_token': encryptedToken,
+      if (tokenNonce != null) 'token_nonce': tokenNonce,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  GitHubTokensCompanion copyWith({
+    Value<int>? id,
+    Value<String>? accountLogin,
+    Value<String>? encryptedToken,
+    Value<String>? tokenNonce,
+    Value<DateTime>? updatedAt,
+  }) {
+    return GitHubTokensCompanion(
+      id: id ?? this.id,
+      accountLogin: accountLogin ?? this.accountLogin,
+      encryptedToken: encryptedToken ?? this.encryptedToken,
+      tokenNonce: tokenNonce ?? this.tokenNonce,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountLogin.present) {
+      map['account_login'] = Variable<String>(accountLogin.value);
+    }
+    if (encryptedToken.present) {
+      map['encrypted_token'] = Variable<String>(encryptedToken.value);
+    }
+    if (tokenNonce.present) {
+      map['token_nonce'] = Variable<String>(tokenNonce.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('GitHubTokensCompanion(')
+          ..write('id: $id, ')
+          ..write('accountLogin: $accountLogin, ')
+          ..write('encryptedToken: $encryptedToken, ')
+          ..write('tokenNonce: $tokenNonce, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -8303,6 +8669,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $GitHubConnectionsTable gitHubConnections =
       $GitHubConnectionsTable(this);
   late final $GitHubRepoPinsTable gitHubRepoPins = $GitHubRepoPinsTable(this);
+  late final $GitHubTokensTable gitHubTokens = $GitHubTokensTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -8323,6 +8690,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     agentSkills,
     gitHubConnections,
     gitHubRepoPins,
+    gitHubTokens,
   ];
 }
 
@@ -12700,6 +13068,206 @@ typedef $$GitHubRepoPinsTableProcessedTableManager =
       GitHubRepoPin,
       PrefetchHooks Function({bool connectionId})
     >;
+typedef $$GitHubTokensTableCreateCompanionBuilder =
+    GitHubTokensCompanion Function({
+      Value<int> id,
+      required String accountLogin,
+      required String encryptedToken,
+      required String tokenNonce,
+      required DateTime updatedAt,
+    });
+typedef $$GitHubTokensTableUpdateCompanionBuilder =
+    GitHubTokensCompanion Function({
+      Value<int> id,
+      Value<String> accountLogin,
+      Value<String> encryptedToken,
+      Value<String> tokenNonce,
+      Value<DateTime> updatedAt,
+    });
+
+class $$GitHubTokensTableFilterComposer
+    extends Composer<_$AppDatabase, $GitHubTokensTable> {
+  $$GitHubTokensTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get accountLogin => $composableBuilder(
+    column: $table.accountLogin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get encryptedToken => $composableBuilder(
+    column: $table.encryptedToken,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tokenNonce => $composableBuilder(
+    column: $table.tokenNonce,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$GitHubTokensTableOrderingComposer
+    extends Composer<_$AppDatabase, $GitHubTokensTable> {
+  $$GitHubTokensTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get accountLogin => $composableBuilder(
+    column: $table.accountLogin,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get encryptedToken => $composableBuilder(
+    column: $table.encryptedToken,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tokenNonce => $composableBuilder(
+    column: $table.tokenNonce,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$GitHubTokensTableAnnotationComposer
+    extends Composer<_$AppDatabase, $GitHubTokensTable> {
+  $$GitHubTokensTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get accountLogin => $composableBuilder(
+    column: $table.accountLogin,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get encryptedToken => $composableBuilder(
+    column: $table.encryptedToken,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get tokenNonce => $composableBuilder(
+    column: $table.tokenNonce,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$GitHubTokensTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $GitHubTokensTable,
+          GitHubToken,
+          $$GitHubTokensTableFilterComposer,
+          $$GitHubTokensTableOrderingComposer,
+          $$GitHubTokensTableAnnotationComposer,
+          $$GitHubTokensTableCreateCompanionBuilder,
+          $$GitHubTokensTableUpdateCompanionBuilder,
+          (
+            GitHubToken,
+            BaseReferences<_$AppDatabase, $GitHubTokensTable, GitHubToken>,
+          ),
+          GitHubToken,
+          PrefetchHooks Function()
+        > {
+  $$GitHubTokensTableTableManager(_$AppDatabase db, $GitHubTokensTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$GitHubTokensTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$GitHubTokensTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$GitHubTokensTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> accountLogin = const Value.absent(),
+                Value<String> encryptedToken = const Value.absent(),
+                Value<String> tokenNonce = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => GitHubTokensCompanion(
+                id: id,
+                accountLogin: accountLogin,
+                encryptedToken: encryptedToken,
+                tokenNonce: tokenNonce,
+                updatedAt: updatedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String accountLogin,
+                required String encryptedToken,
+                required String tokenNonce,
+                required DateTime updatedAt,
+              }) => GitHubTokensCompanion.insert(
+                id: id,
+                accountLogin: accountLogin,
+                encryptedToken: encryptedToken,
+                tokenNonce: tokenNonce,
+                updatedAt: updatedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$GitHubTokensTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $GitHubTokensTable,
+      GitHubToken,
+      $$GitHubTokensTableFilterComposer,
+      $$GitHubTokensTableOrderingComposer,
+      $$GitHubTokensTableAnnotationComposer,
+      $$GitHubTokensTableCreateCompanionBuilder,
+      $$GitHubTokensTableUpdateCompanionBuilder,
+      (
+        GitHubToken,
+        BaseReferences<_$AppDatabase, $GitHubTokensTable, GitHubToken>,
+      ),
+      GitHubToken,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -12734,4 +13302,6 @@ class $AppDatabaseManager {
       $$GitHubConnectionsTableTableManager(_db, _db.gitHubConnections);
   $$GitHubRepoPinsTableTableManager get gitHubRepoPins =>
       $$GitHubRepoPinsTableTableManager(_db, _db.gitHubRepoPins);
+  $$GitHubTokensTableTableManager get gitHubTokens =>
+      $$GitHubTokensTableTableManager(_db, _db.gitHubTokens);
 }
