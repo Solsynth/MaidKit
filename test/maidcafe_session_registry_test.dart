@@ -52,6 +52,10 @@ class _FakeSession implements MaidCafeStreamSession {
       throw UnimplementedError();
 
   @override
+  Future<Map<String, dynamic>> processHistory(String name, {int limit = 500}) =>
+      throw UnimplementedError();
+
+  @override
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,
     DateTime? from,

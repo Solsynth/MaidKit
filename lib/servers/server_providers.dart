@@ -1216,6 +1216,35 @@ final pinnedRuntimeConfigsProvider = StreamProvider<List<RuntimeWatchConfig>>((
   return ref.watch(serverRepositoryProvider).watchPinnedRuntimeConfigs();
 });
 
+const _runtimeDetectedOnlyPreference = 'runtime_detected_only';
+
+/// Hides undetected (available:false) cards on the Runtimes tab. On by
+/// default; persisted in shared preferences.
+final runtimeDetectedOnlyProvider =
+    NotifierProvider<RuntimeDetectedOnlyNotifier, bool>(
+      RuntimeDetectedOnlyNotifier.new,
+    );
+
+class RuntimeDetectedOnlyNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    _restore();
+    return true;
+  }
+
+  Future<void> _restore() async {
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getBool(_runtimeDetectedOnlyPreference);
+    if (value != null) state = value;
+  }
+
+  Future<void> setDetectedOnly(bool value) async {
+    state = value;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_runtimeDetectedOnlyPreference, value);
+  }
+}
+
 final serverMetricsRefreshSchedulerProvider =
     Provider<ServerMetricsRefreshScheduler>((ref) {
       final scheduler = ServerMetricsRefreshScheduler(

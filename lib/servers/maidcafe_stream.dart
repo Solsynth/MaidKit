@@ -733,6 +733,10 @@ class MaidCafeStreamSession {
   Future<Map<String, dynamic>> removeWatchedProcess(String name) =>
       _delete('/api/v1/watched-processes/$name');
 
+  /// Recorded usage samples for a watched process (daemon-side history).
+  Future<Map<String, dynamic>> processHistory(String name, {int limit = 500}) =>
+      _get('/api/v1/process-history?name=$name&limit=$limit');
+
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,
     DateTime? from,

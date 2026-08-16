@@ -193,9 +193,16 @@ class _DashboardRuntimeTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final kind = RuntimeKindFromWire(config.runtime);
-    final identity = kind == null
+    final isPidPin = config.runtime.startsWith('pid:');
+    final pid = isPidPin ? int.tryParse(config.runtime.substring(4)) : null;
+    final identity = pid != null
+        ? (label: 'PID $pid', icon: Symbols.push_pin)
+        : kind == null
         ? (label: config.runtime, icon: Symbols.visibility)
         : runtimeIdentity(kind);
+    final processes = pid != null
+        ? _matchingProcess(pid)
+        : _matchingProcesses();
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
@@ -232,14 +239,20 @@ class _DashboardRuntimeTile extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            _buildBody(context, theme, scheme),
+            _buildBody(context, theme, scheme, isPidPin, processes),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildBody(BuildContext context, ThemeData theme, ColorScheme scheme) {
+  Widget _buildBody(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme scheme,
+    bool isPidPin,
+    List<RuntimeProcessInfo>? processes,
+  ) {
     final snap = snapshot;
     if (snap == null || snap.isLoading) {
       return const Center(
@@ -261,13 +274,8 @@ class _DashboardRuntimeTile extends StatelessWidget {
         ),
       );
     }
-    return _tileBody(context, snap.value);
-  }
-
-  Widget _tileBody(BuildContext context, RuntimeSnapshot? snapshot) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    if (snapshot == null) {
+    if (snap.value == null) {
+      // Server not connected: the snapshot is intentionally null.
       return Row(
         children: [
           Icon(Symbols.link_off, size: 14, color: scheme.onSurfaceVariant),
@@ -283,15 +291,23 @@ class _DashboardRuntimeTile extends StatelessWidget {
         ],
       );
     }
-    final processes = _matchingProcesses(snapshot);
     if (processes == null) {
       return Text(
-        'runtimeNotDetected'.tr(),
+        isPidPin
+            ? 'dashboardProcessNotRunning'.tr()
+            : 'runtimeNotDetected'.tr(),
         style: theme.textTheme.labelSmall?.copyWith(
           color: scheme.onSurfaceVariant,
         ),
       );
     }
+    return _tileBody(context, processes);
+  }
+
+  Widget _tileBody(BuildContext context, List<RuntimeProcessInfo> processes) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final command = processes.length == 1 ? processes.first.command : null;
     final cpuTotal = processes.fold<double>(
       0,
       (sum, process) => sum + process.cpuPercent,
@@ -308,50 +324,87 @@ class _DashboardRuntimeTile extends StatelessWidget {
         threadCount++;
       }
     }
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: _DashboardStat(
-            label: 'runtimeProcessCount',
-            value: '${processes.length}',
+        if (command != null && command.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              command,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: _DashboardStat(
-            label: 'runtimeCpuTotal',
-            value: '${cpuTotal.toStringAsFixed(1)}%',
-          ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: _DashboardStat(
-            label: 'runtimeRssTotal',
-            value: _formatKb(rssTotal),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: _DashboardStat(
-            label: 'runtimeThreads',
-            value: threadCount == 0 ? '—' : '$threadTotal',
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: _DashboardStat(
+                label: 'runtimeProcessCount',
+                value: '${processes.length}',
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _DashboardStat(
+                label: 'runtimeCpuTotal',
+                value: '${cpuTotal.toStringAsFixed(1)}%',
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _DashboardStat(
+                label: 'runtimeRssTotal',
+                value: _formatKb(rssTotal),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _DashboardStat(
+                label: 'runtimeThreads',
+                value: threadCount == 0 ? '—' : '$threadTotal',
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
+  /// Returns the pinned pid's process row from any runtime or watched group,
+  /// or null when the process is not in the snapshot.
+  List<RuntimeProcessInfo>? _matchingProcess(int pid) {
+    final snap = snapshot?.value;
+    if (snap == null) return null;
+    for (final group in snap.groups) {
+      for (final process in group.processes) {
+        if (process.pid == pid) return [process];
+      }
+    }
+    for (final group in snap.watched) {
+      for (final process in group.processes) {
+        if (process.pid == pid) return [process];
+      }
+    }
+    return null;
+  }
+
   /// Returns the pinned name's processes from a runtime group or watched
   /// group, or null when the snapshot has no such group.
-  List<RuntimeProcessInfo>? _matchingProcesses(RuntimeSnapshot snapshot) {
+  List<RuntimeProcessInfo>? _matchingProcesses() {
+    final snap = snapshot?.value;
+    if (snap == null) return null;
     final kind = RuntimeKindFromWire(config.runtime);
     if (kind != null) {
-      for (final group in snapshot.groups) {
+      for (final group in snap.groups) {
         if (group.kind == kind) return group.processes;
       }
       return null;
     }
-    for (final group in snapshot.watched) {
+    for (final group in snap.watched) {
       if (group.name == config.runtime) return group.processes;
     }
     return null;

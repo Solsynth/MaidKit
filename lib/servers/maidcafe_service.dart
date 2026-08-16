@@ -1321,6 +1321,42 @@ WatchedProcessGroup? _parseSseWatchedGroup(Map<String, dynamic> json) {
   );
 }
 
+/// Tolerant parse of a `process-history` response: `{name, samples:[...]}`.
+/// Malformed samples are skipped; unknown fields ignored.
+ProcessHistory parseMaidCafeProcessHistory(Map<String, dynamic> json) {
+  final name = _optionalString(json, 'name') ?? '';
+  final samples = <ProcessHistorySample>[];
+  final rawSamples = json['samples'];
+  if (rawSamples is List) {
+    for (final raw in rawSamples) {
+      if (raw is! Map) continue;
+      final sample = _parseProcessHistorySample(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (sample != null) samples.add(sample);
+    }
+  }
+  return ProcessHistory(name: name, samples: samples);
+}
+
+ProcessHistorySample? _parseProcessHistorySample(Map<String, dynamic> json) {
+  final rawTs = json['ts'];
+  final cpu = _optionalNum(json, 'cpu_percent');
+  final rss = _optionalNum(json, 'rss_kb');
+  final count = _optionalNum(json, 'process_count');
+  final ts = rawTs is String ? DateTime.tryParse(rawTs) : null;
+  if (ts == null || cpu == null || rss == null || count == null) return null;
+  final threads = _optionalNum(json, 'threads');
+  return ProcessHistorySample(
+    name: _optionalString(json, 'name') ?? '',
+    timestamp: ts,
+    cpuPercent: cpu.toDouble(),
+    rssKb: rss.toInt(),
+    processCount: count.toInt(),
+    threads: threads?.toInt(),
+  );
+}
+
 RuntimeGroup? _parseSseRuntimeGroup(Map<String, dynamic> json) {
   final rawKind = _optionalString(json, 'runtime');
   final kind = rawKind == null ? null : RuntimeKindFromWire(rawKind);

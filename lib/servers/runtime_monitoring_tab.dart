@@ -5,16 +5,17 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'maidcafe_service.dart';
 import 'maidcafe_stream.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 
 /// Runtimes tab on the server detail page: per-runtime cards (configured
 /// daemon runtime list) with process summaries and Java JVM/GC detail, plus
-/// the daemon-side watched-process section. Runtime cards can be pinned to
-/// the dashboard; toggles and pins persist in Drift. The snapshot arrives via
-/// the MaidCafe SSE/one-shot channel or the direct-SSH fallback; watched
-/// processes and their add/remove require the MaidCafe daemon.
+/// the daemon-side watched-process section with usage history. Runtime cards
+/// and individual processes can be pinned to the dashboard; toggles, pins
+/// and the detected-only filter persist. Watched processes and history
+/// require the MaidCafe daemon.
 class RuntimeMonitoringTab extends ConsumerStatefulWidget {
   const RuntimeMonitoringTab({
     super.key,
@@ -24,6 +25,7 @@ class RuntimeMonitoringTab extends ConsumerStatefulWidget {
     required this.onConnect,
     required this.snapshot,
     required this.onRefresh,
+    this.dataSource,
   });
 
   final Server server;
@@ -32,6 +34,9 @@ class RuntimeMonitoringTab extends ConsumerStatefulWidget {
   final Future<void> Function() onConnect;
   final AsyncValue<RuntimeSnapshot> snapshot;
   final Future<void> Function() onRefresh;
+
+  /// Which channel produced [snapshot]; null until first data arrives.
+  final RuntimeDataSource? dataSource;
 
   @override
   ConsumerState<RuntimeMonitoringTab> createState() =>
@@ -54,6 +59,13 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
   Future<MaidCafeStreamSession?> _daemonSession() {
     final registry = ref.read(maidCafeSessionRegistryProvider);
     return registry.sessionFor(widget.server);
+  }
+
+  Future<List<ProcessHistorySample>> _fetchHistory(String name) async {
+    final session = await _daemonSession();
+    if (session == null) return const [];
+    final json = await session.processHistory(name);
+    return parseMaidCafeProcessHistory(json).samples;
   }
 
   Future<void> _addWatchedProcess() async {
@@ -152,14 +164,22 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
     final configs =
         ref.watch(runtimeWatchConfigsProvider(widget.server.id)).value ??
         const <RuntimeWatchConfig>[];
+    final detectedOnly = ref.watch(runtimeDetectedOnlyProvider);
     final enabledByKind = <RuntimeKind, bool>{
       for (final kind in RuntimeKind.values) kind: true,
     };
     final pinnedNames = <String>{};
+    final pinnedPids = <int>{};
     for (final config in configs) {
       final kind = RuntimeKindFromWire(config.runtime);
       if (kind != null) enabledByKind[kind] = config.enabled;
-      if (config.pinned) pinnedNames.add(config.runtime);
+      if (!config.pinned) continue;
+      if (config.runtime.startsWith('pid:')) {
+        final pid = int.tryParse(config.runtime.substring(4));
+        if (pid != null) pinnedPids.add(pid);
+      } else {
+        pinnedNames.add(config.runtime);
+      }
     }
     final enabledKinds = RuntimeKind.values
         .where((kind) => enabledByKind[kind] ?? true)
@@ -194,6 +214,24 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: Row(
+            children: [
+              if (widget.dataSource != null)
+                _DataSourceBanner(source: widget.dataSource!),
+              const Spacer(),
+              FilterChip(
+                label: Text('runtimeDetectedOnly'.tr()),
+                visualDensity: VisualDensity.compact,
+                selected: detectedOnly,
+                onSelected: (value) => ref
+                    .read(runtimeDetectedOnlyProvider.notifier)
+                    .setDetectedOnly(value),
+              ),
+            ],
+          ),
+        ),
         Expanded(
           child: widget.snapshot.when(
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -209,11 +247,15 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
               };
               final cards = [
                 for (final kind in enabledKinds)
-                  if (byKind[kind] != null)
+                  if (byKind[kind] != null &&
+                      (!detectedOnly || byKind[kind]!.available))
                     _RuntimeCard(
                       group: byKind[kind]!,
                       pinned: pinnedNames.contains(kind.name),
                       onTogglePin: (pinned) => _setPinned(kind.name, pinned),
+                      pinnedPids: pinnedPids,
+                      onTogglePidPin: (pid, pinned) =>
+                          _setPinned('pid:$pid', pinned),
                       onRefresh: widget.onRefresh,
                     ),
               ];
@@ -242,9 +284,14 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
                     _WatchedSection(
                       watched: snapshot.watched,
                       pinnedNames: pinnedNames,
+                      pinnedPids: pinnedPids,
+                      detectedOnly: detectedOnly,
                       onAdd: _addWatchedProcess,
                       onRemove: _removeWatchedProcess,
                       onTogglePin: _setPinned,
+                      onTogglePidPin: (pid, pinned) =>
+                          _setPinned('pid:$pid', pinned),
+                      fetchHistory: _fetchHistory,
                     ),
                   ],
                 ),
@@ -269,6 +316,37 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
       RuntimeKind.ruby => (label: 'Ruby', icon: Symbols.diamond),
       RuntimeKind.php => (label: 'PHP', icon: Symbols.data_object),
     };
+
+/// Small badge showing which channel produced the data.
+class _DataSourceBanner extends StatelessWidget {
+  const _DataSourceBanner({required this.source});
+
+  final RuntimeDataSource source;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final daemon = source == RuntimeDataSource.daemon;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          daemon ? Symbols.dns : Symbols.terminal,
+          size: 14,
+          color: scheme.onSurfaceVariant,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          daemon ? 'runtimeSourceDaemon'.tr() : 'runtimeSourceSsh'.tr(),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 /// One compact enable/disable switch in the header row.
 class _RuntimeToggle extends StatelessWidget {
@@ -312,12 +390,16 @@ class _RuntimeCard extends StatelessWidget {
     required this.group,
     required this.pinned,
     required this.onTogglePin,
+    required this.pinnedPids,
+    required this.onTogglePidPin,
     required this.onRefresh,
   });
 
   final RuntimeGroup group;
   final bool pinned;
   final ValueChanged<bool> onTogglePin;
+  final Set<int> pinnedPids;
+  final void Function(int pid, bool pinned) onTogglePidPin;
   final Future<void> Function() onRefresh;
 
   @override
@@ -352,7 +434,11 @@ class _RuntimeCard extends StatelessWidget {
               const _ProcessHeaderRow(),
               const SizedBox(height: 4),
               for (final process in group.processes)
-                _RuntimeProcessRow(process: process),
+                _RuntimeProcessRow(
+                  process: process,
+                  pinned: pinnedPids.contains(process.pid),
+                  onTogglePin: (value) => onTogglePidPin(process.pid, value),
+                ),
             ],
             if (group.java != null) ...[
               const SizedBox(height: 12),
@@ -519,6 +605,9 @@ class _RuntimeUnavailable extends StatelessWidget {
   }
 }
 
+/// Fixed trailing slot width reserved for per-process pin buttons.
+const _processPinSlotWidth = 28.0;
+
 class _ProcessHeaderRow extends StatelessWidget {
   const _ProcessHeaderRow();
 
@@ -556,19 +645,27 @@ class _ProcessHeaderRow extends StatelessWidget {
             style: style,
           ),
         ),
+        const SizedBox(width: _processPinSlotWidth),
       ],
     );
   }
 }
 
 class _RuntimeProcessRow extends StatelessWidget {
-  const _RuntimeProcessRow({required this.process});
+  const _RuntimeProcessRow({
+    required this.process,
+    this.pinned = false,
+    this.onTogglePin,
+  });
 
   final RuntimeProcessInfo process;
+  final bool pinned;
+  final ValueChanged<bool>? onTogglePin;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final style = theme.textTheme.labelMedium?.copyWith(
       fontFeatures: const [FontFeature.tabularFigures()],
     );
@@ -609,6 +706,25 @@ class _RuntimeProcessRow extends StatelessWidget {
               style: style,
             ),
           ),
+          SizedBox(
+            width: _processPinSlotWidth,
+            child: onTogglePin == null
+                ? null
+                : IconButton(
+                    tooltip: pinned
+                        ? 'runtimeUnpin'.tr()
+                        : 'runtimePinProcess'.tr(),
+                    onPressed: () => onTogglePin!(!pinned),
+                    iconSize: 15,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      Symbols.push_pin,
+                      size: 15,
+                      color: pinned ? scheme.primary : scheme.onSurfaceVariant,
+                    ),
+                  ),
+          ),
         ],
       ),
     );
@@ -616,26 +732,39 @@ class _RuntimeProcessRow extends StatelessWidget {
 }
 
 /// Daemon-side watched-process section: one card per watched name with
-/// add/remove controls. Only the MaidCafe channel provides these.
+/// add/remove controls and usage history. Only the MaidCafe channel provides
+/// these.
 class _WatchedSection extends StatelessWidget {
   const _WatchedSection({
     required this.watched,
     required this.pinnedNames,
+    required this.pinnedPids,
+    required this.detectedOnly,
     required this.onAdd,
     required this.onRemove,
     required this.onTogglePin,
+    required this.onTogglePidPin,
+    required this.fetchHistory,
   });
 
   final List<WatchedProcessGroup> watched;
   final Set<String> pinnedNames;
+  final Set<int> pinnedPids;
+  final bool detectedOnly;
   final Future<void> Function() onAdd;
   final Future<void> Function(String name) onRemove;
   final Future<void> Function(String name, bool pinned) onTogglePin;
+  final void Function(int pid, bool pinned) onTogglePidPin;
+  final Future<List<ProcessHistorySample>> Function(String name) fetchHistory;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final visible = [
+      for (final group in watched)
+        if (!detectedOnly || group.available) group,
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -657,7 +786,7 @@ class _WatchedSection extends StatelessWidget {
             ),
           ],
         ),
-        if (watched.isEmpty)
+        if (visible.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
@@ -672,14 +801,17 @@ class _WatchedSection extends StatelessWidget {
             spacing: 12,
             runSpacing: 12,
             children: [
-              for (final group in watched)
+              for (final group in visible)
                 SizedBox(
                   width: 440,
                   child: _WatchedCard(
                     group: group,
                     pinned: pinnedNames.contains(group.name),
+                    pinnedPids: pinnedPids,
                     onRemove: () => onRemove(group.name),
                     onTogglePin: (pinned) => onTogglePin(group.name, pinned),
+                    onTogglePidPin: onTogglePidPin,
+                    fetchHistory: fetchHistory,
                   ),
                 ),
             ],
@@ -689,23 +821,37 @@ class _WatchedSection extends StatelessWidget {
   }
 }
 
-class _WatchedCard extends StatelessWidget {
+class _WatchedCard extends StatefulWidget {
   const _WatchedCard({
     required this.group,
     required this.pinned,
+    required this.pinnedPids,
     required this.onRemove,
     required this.onTogglePin,
+    required this.onTogglePidPin,
+    required this.fetchHistory,
   });
 
   final WatchedProcessGroup group;
   final bool pinned;
+  final Set<int> pinnedPids;
   final Future<void> Function() onRemove;
   final ValueChanged<bool> onTogglePin;
+  final void Function(int pid, bool pinned) onTogglePidPin;
+  final Future<List<ProcessHistorySample>> Function(String name) fetchHistory;
+
+  @override
+  State<_WatchedCard> createState() => _WatchedCardState();
+}
+
+class _WatchedCardState extends State<_WatchedCard> {
+  var _showHistory = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final group = widget.group;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
@@ -721,17 +867,35 @@ class _WatchedCard extends StatelessWidget {
               icon: Symbols.visibility,
               title: group.name,
               available: group.available,
-              pinned: pinned,
-              onTogglePin: onTogglePin,
-              trailing: IconButton(
-                tooltip: 'runtimeRemoveWatched'.tr(),
-                onPressed: onRemove,
-                iconSize: 18,
-                visualDensity: VisualDensity.compact,
-                icon: Icon(
-                  Symbols.delete_outline,
-                  color: scheme.onSurfaceVariant,
-                ),
+              pinned: widget.pinned,
+              onTogglePin: widget.onTogglePin,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'runtimeHistory'.tr(),
+                    onPressed: () =>
+                        setState(() => _showHistory = !_showHistory),
+                    iconSize: 18,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      Symbols.show_chart,
+                      color: _showHistory
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'runtimeRemoveWatched'.tr(),
+                    onPressed: widget.onRemove,
+                    iconSize: 18,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      Symbols.delete_outline,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 10),
@@ -743,13 +907,197 @@ class _WatchedCard extends StatelessWidget {
               const _ProcessHeaderRow(),
               const SizedBox(height: 4),
               for (final process in group.processes)
-                _RuntimeProcessRow(process: process),
+                _RuntimeProcessRow(
+                  process: process,
+                  pinned: widget.pinnedPids.contains(process.pid),
+                  onTogglePin: (value) =>
+                      widget.onTogglePidPin(process.pid, value),
+                ),
+            ],
+            if (_showHistory) ...[
+              const SizedBox(height: 10),
+              _WatchedHistory(
+                name: group.name,
+                fetchHistory: widget.fetchHistory,
+              ),
             ],
           ],
         ),
       ),
     );
   }
+}
+
+/// Usage history sparklines (CPU% and RSS) for a watched process, fetched
+/// from the daemon's process-history API on mount.
+class _WatchedHistory extends StatefulWidget {
+  const _WatchedHistory({required this.name, required this.fetchHistory});
+
+  final String name;
+  final Future<List<ProcessHistorySample>> Function(String name) fetchHistory;
+
+  @override
+  State<_WatchedHistory> createState() => _WatchedHistoryState();
+}
+
+class _WatchedHistoryState extends State<_WatchedHistory> {
+  late Future<List<ProcessHistorySample>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.fetchHistory(widget.name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return FutureBuilder<List<ProcessHistorySample>>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(8),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        final samples = snapshot.data ?? const <ProcessHistorySample>[];
+        if (snapshot.hasError || samples.isEmpty) {
+          return Text(
+            snapshot.hasError
+                ? 'runtimeHistoryError'.tr()
+                : 'runtimeHistoryEmpty'.tr(),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          );
+        }
+        final cpuValues = [for (final sample in samples) sample.cpuPercent];
+        final rssValues = [
+          for (final sample in samples) sample.rssKb.toDouble(),
+        ];
+        final last = samples.last;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _HistoryLine(
+              label: 'runtimeCpuTotal',
+              value: '${last.cpuPercent.toStringAsFixed(1)}%',
+              values: cpuValues,
+              color: scheme.primary,
+            ),
+            const SizedBox(height: 8),
+            _HistoryLine(
+              label: 'runtimeRssTotal',
+              value: _formatKb(last.rssKb),
+              values: rssValues,
+              color: scheme.tertiary,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _HistoryLine extends StatelessWidget {
+  const _HistoryLine({
+    required this.label,
+    required this.value,
+    required this.values,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final List<double> values;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              label.tr(),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              value,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurface,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        SizedBox(
+          height: 28,
+          child: CustomPaint(
+            size: const Size(double.infinity, 28),
+            painter: _SparklinePainter(values: values, color: color),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  _SparklinePainter({required this.values, required this.color});
+
+  final List<double> values;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2 || size.width <= 0) return;
+    final min = values.reduce((a, b) => a < b ? a : b);
+    final max = values.reduce((a, b) => a > b ? a : b);
+    final range = max - min;
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final normalized = range == 0 ? 0.5 : (values[i] - min) / range;
+      final y = size.height - 2 - normalized * (size.height - 4);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(path, paint);
+    // Last-point dot.
+    final lastX = size.width;
+    final lastValue = values.last;
+    final lastNormalized = range == 0 ? 0.5 : (lastValue - min) / range;
+    final lastY = size.height - 2 - lastNormalized * (size.height - 4);
+    canvas.drawCircle(Offset(lastX, lastY), 2.5, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_SparklinePainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.color != color;
 }
 
 /// JDK badge plus per-JVM rows (pid, main class, old-gen %, YGC/FGC, GCT).

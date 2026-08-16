@@ -83,6 +83,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   var _runtimesSseActive = false;
   var _runtimesSseAttempted = false;
   var _hasLoadedRuntimes = false;
+  RuntimeDataSource? _runtimesDataSource;
 
   /// Last `runtimes` event timestamp and the daemon's announced cadence,
   /// used to detect a stream that stays connected but stops delivering data.
@@ -228,6 +229,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
         if (mounted) {
           setState(() {
             _hasLoadedRuntimes = true;
+            _runtimesDataSource = RuntimeDataSource.daemon;
             _runtimeSnapshot = AsyncValue.data(snapshot);
           });
         }
@@ -243,6 +245,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       if (mounted && snapshot != null) {
         setState(() {
           _hasLoadedRuntimes = true;
+          _runtimesDataSource = RuntimeDataSource.ssh;
           _runtimeSnapshot = AsyncValue.data(snapshot);
         });
       }
@@ -312,6 +315,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     setState(() {
       _runtimesSseActive = true;
       _hasLoadedRuntimes = true;
+      _runtimesDataSource = RuntimeDataSource.daemon;
       _runtimeSnapshot = AsyncValue.data(snapshot);
     });
   }
@@ -475,6 +479,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       connected: connected,
       processes: _processes,
       runtimes: _runtimeSnapshot,
+      runtimesDataSource: _runtimesDataSource,
       refreshInterval: refreshInterval,
       onConnect: _connect,
       onRefreshProcesses: _refreshProcesses,
@@ -547,6 +552,7 @@ class _DetailWorkspace extends StatelessWidget {
     required this.connected,
     required this.processes,
     required this.runtimes,
+    required this.runtimesDataSource,
     required this.refreshInterval,
     required this.onConnect,
     required this.onRefreshProcesses,
@@ -561,6 +567,7 @@ class _DetailWorkspace extends StatelessWidget {
   final bool connected;
   final AsyncValue<List<ServerProcess>> processes;
   final AsyncValue<RuntimeSnapshot> runtimes;
+  final RuntimeDataSource? runtimesDataSource;
   final Duration refreshInterval;
   final Future<void> Function() onConnect;
   final Future<void> Function() onRefreshProcesses;
@@ -577,6 +584,7 @@ class _DetailWorkspace extends StatelessWidget {
       connectionError: session?.error,
       processes: processes,
       runtimes: runtimes,
+      runtimesDataSource: runtimesDataSource,
       server: server,
       refreshInterval: refreshInterval,
       onConnect: onConnect,
@@ -775,6 +783,7 @@ class _InspectorTabs extends StatefulWidget {
     required this.connectionError,
     required this.processes,
     required this.runtimes,
+    required this.runtimesDataSource,
     required this.server,
     required this.refreshInterval,
     required this.onConnect,
@@ -789,6 +798,7 @@ class _InspectorTabs extends StatefulWidget {
   final String? connectionError;
   final AsyncValue<List<ServerProcess>> processes;
   final AsyncValue<RuntimeSnapshot> runtimes;
+  final RuntimeDataSource? runtimesDataSource;
   final Server server;
   final Duration refreshInterval;
   final Future<void> Function() onConnect;
@@ -978,6 +988,7 @@ class _InspectorTabsState extends State<_InspectorTabs>
                 onConnect: widget.onConnect,
                 snapshot: widget.runtimes,
                 onRefresh: widget.onRefreshRuntimes,
+                dataSource: widget.runtimesDataSource,
               ),
             ],
           ),

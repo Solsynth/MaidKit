@@ -349,10 +349,13 @@ class ServerProcess {
   final String command;
 }
 
-/// The runtime set the Runtimes tab can render. Wire names equal `.name`
+/// The fixed runtime set the Runtimes tab can render. Wire names equal `.name`
 /// ('java', 'dotnet', 'python', ...); the daemon's configured list may carry
 /// fewer entries and unknown names are skipped by [RuntimeKindFromWire].
 enum RuntimeKind { java, dotnet, python, node, deno, go, ruby, php }
+
+/// Which channel produced a runtime snapshot.
+enum RuntimeDataSource { daemon, ssh }
 
 /// Tolerant wire lookup: returns null for unknown runtime names so future
 /// daemon additions degrade gracefully instead of throwing.
@@ -468,6 +471,32 @@ class RuntimeSnapshot {
 
   /// Watched-process groups from the daemon; empty on the SSH fallback.
   final List<WatchedProcessGroup> watched;
+}
+
+/// One daemon-recorded usage sample for a watched process.
+class ProcessHistorySample {
+  const ProcessHistorySample({
+    required this.name,
+    required this.timestamp,
+    required this.cpuPercent,
+    required this.rssKb,
+    required this.processCount,
+    this.threads,
+  });
+
+  final String name;
+  final DateTime timestamp;
+  final double cpuPercent;
+  final int rssKb;
+  final int processCount;
+  final int? threads;
+}
+
+class ProcessHistory {
+  const ProcessHistory({required this.name, required this.samples});
+
+  final String name;
+  final List<ProcessHistorySample> samples;
 }
 
 class ServerSystemInfo {

@@ -589,4 +589,51 @@ void main() {
     expect(jvm.ygc, isNull);
     expect(jvm.error, 'jstat -gcutil: exit status 1');
   });
+
+  test(
+    'parseMaidCafeProcessHistory parses samples and skips malformed rows',
+    () {
+      final history = parseMaidCafeProcessHistory({
+        'name': 'nginx',
+        'samples': [
+          {
+            'name': 'nginx',
+            'ts': '2026-08-16T21:00:00Z',
+            'cpu_percent': 1.2,
+            'rss_kb': 1048576,
+            'process_count': 2,
+            'threads': 45,
+          },
+          {
+            'name': 'nginx',
+            'ts': '2026-08-16T21:00:10Z',
+            'cpu_percent': 0.0,
+            'rss_kb': 2048,
+            'process_count': 0,
+          },
+          'not-a-map',
+          {
+            'name': 'nginx',
+            'ts': 'not-a-date',
+            'cpu_percent': 1,
+            'rss_kb': 1,
+            'process_count': 1,
+          },
+        ],
+      });
+      expect(history.name, 'nginx');
+      expect(history.samples, hasLength(2));
+      expect(
+        history.samples[0].timestamp,
+        DateTime.parse('2026-08-16T21:00:00Z'),
+      );
+      expect(history.samples[0].cpuPercent, 1.2);
+      expect(history.samples[0].rssKb, 1048576);
+      expect(history.samples[0].processCount, 2);
+      expect(history.samples[0].threads, 45);
+      // Missing threads stays null.
+      expect(history.samples[1].threads, isNull);
+      expect(history.samples[1].processCount, 0);
+    },
+  );
 }
