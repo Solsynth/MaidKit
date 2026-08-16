@@ -591,11 +591,10 @@ void main() {
     await tester.tap(find.text('maidCafeAddAlarm'.tr()));
     await tester.pumpAndSettle();
 
-    final dialogField = find.descendant(
-      of: find.byType(AlertDialog),
-      matching: find.byType(TextField),
+    await tester.enterText(
+      find.widgetWithText(TextField, 'maidCafeThreshold'.tr()),
+      '85',
     );
-    await tester.enterText(dialogField.first, '85');
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'maidCafeSave'.tr()));
     await tester.pumpAndSettle();

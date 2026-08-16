@@ -501,9 +501,11 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     BuildContext context,
     MaidCafeDaemon daemon,
   ) async {
-    final requested = await showDialog<({String title, String body})>(
+    final requested = await showModalBottomSheet<({String title, String body})>(
       context: context,
-      builder: (context) => const _RequestPushNotificationDialog(),
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => const _RequestNotificationSheet(),
     );
     if (requested == null || !context.mounted) return;
     await _run(_daemonOp(daemon.id), () async {
@@ -725,9 +727,13 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   }
 
   Future<void> _createCredential(BuildContext context) async {
-    final created = await showDialog<MaidCafeCredential>(
+    final workspaceId = _effectiveWorkspaceId;
+    if (workspaceId == null) return;
+    final created = await showModalBottomSheet<MaidCafeCredential>(
       context: context,
-      builder: (context) => const _CreateCredentialDialog(),
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _CreateCredentialSheet(workspaceId: workspaceId),
     );
     if (created == null || !context.mounted) return;
     ref.invalidate(maidCafeCredentialsProvider);
@@ -768,44 +774,13 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     BuildContext context,
     MaidCafeCredential credential,
   ) async {
-    final token = credential.token;
-    await showDialog<void>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('maidCafeCredentialToken'.tr()),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('maidCafeCredentialTokenHint'.tr()),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: SelectableText(
-                  token,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Clipboard.setData(ClipboardData(text: token)),
-            child: Text('maidCafeCredentialCopy'.tr()),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('maidCafeDone'.tr()),
-          ),
-        ],
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _CredentialTokenSheet(
+        token: credential.token,
+        cloudUrl: ref.read(maidCafeCloudUrlProvider),
       ),
     );
   }
@@ -909,9 +884,9 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
               padding: const EdgeInsets.only(top: 2),
               child: Text(
                 'maidCafeFromServer'.tr(args: [daemonName]),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
               ),
             ),
         ],
@@ -1436,30 +1411,31 @@ class _SettingsSectionCard extends StatelessWidget {
 
 /// Register-daemon dialog. Owns its text controller so the field stays valid
 /// through the route's exit animation.
-/// Create-credential dialog: label plus optional comma-separated scopes.
-/// Creates through the cloud service so the one-time token can be returned.
-class _CreateCredentialDialog extends ConsumerStatefulWidget {
-  const _CreateCredentialDialog();
+/// Create-credential sheet: label plus optional scopes picked from the
+/// fleet's known actions and hosts. Creates through the cloud service so the
+/// one-time token can be returned.
+class _CreateCredentialSheet extends ConsumerStatefulWidget {
+  const _CreateCredentialSheet({required this.workspaceId});
+
+  final String workspaceId;
 
   @override
-  ConsumerState<_CreateCredentialDialog> createState() =>
-      _CreateCredentialDialogState();
+  ConsumerState<_CreateCredentialSheet> createState() =>
+      _CreateCredentialSheetState();
 }
 
-class _CreateCredentialDialogState
-    extends ConsumerState<_CreateCredentialDialog> {
+class _CreateCredentialSheetState
+    extends ConsumerState<_CreateCredentialSheet> {
   final TextEditingController _labelController = TextEditingController();
-  final TextEditingController _actionsController = TextEditingController();
-  final TextEditingController _hostsController = TextEditingController();
   final TextEditingController _daemonsController = TextEditingController();
+  final Set<String> _selectedActionNames = {};
+  final Set<String> _selectedHostIds = {};
   bool _busy = false;
   String? _error;
 
   @override
   void dispose() {
     _labelController.dispose();
-    _actionsController.dispose();
-    _hostsController.dispose();
     _daemonsController.dispose();
     super.dispose();
   }
@@ -1468,6 +1444,40 @@ class _CreateCredentialDialogState
     for (final part in value.split(','))
       if (part.trim().isNotEmpty) part.trim(),
   ];
+
+  /// The actions every daemon in the workspace reported, deduplicated by
+  /// name with the most recent label winning.
+  List<({String value, String label})> get _actionOptions {
+    final daemons =
+        ref.watch(maidCafeDaemonsProvider(widget.workspaceId)).asData?.value ??
+        const <MaidCafeDaemon>[];
+    final labels = <String, String>{};
+    for (final daemon in daemons) {
+      final actions =
+          ref.watch(maidCafeCloudActionsProvider(daemon.id)).asData?.value ??
+          const <MaidCafeCloudAction>[];
+      for (final action in actions) {
+        labels[action.name] = action.label;
+      }
+    }
+    final options = [
+      for (final entry in labels.entries)
+        (value: entry.key, label: entry.value),
+    ]..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    return options;
+  }
+
+  /// The stable host ids every daemon reported, deduplicated.
+  List<({String value, String label})> get _hostOptions {
+    final daemons =
+        ref.watch(maidCafeDaemonsProvider(widget.workspaceId)).asData?.value ??
+        const <MaidCafeDaemon>[];
+    final hostIds = <String>{
+      for (final daemon in daemons)
+        if (daemon.hostId != null && daemon.hostId!.isNotEmpty) daemon.hostId!,
+    };
+    return [for (final id in hostIds.toList()..sort()) (value: id, label: id)];
+  }
 
   Future<void> _submit() async {
     final label = _labelController.text.trim();
@@ -1484,8 +1494,8 @@ class _CreateCredentialDialogState
           .read(maidCafeServiceProvider)
           .createCredential(
             label: label,
-            actionNames: _split(_actionsController.text),
-            hostIds: _split(_hostsController.text),
+            actionNames: _selectedActionNames.toList(growable: false),
+            hostIds: _selectedHostIds.toList(growable: false),
             daemonIds: _split(_daemonsController.text),
           );
       if (mounted) Navigator.pop(context, created);
@@ -1509,65 +1519,267 @@ class _CreateCredentialDialogState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return AlertDialog(
-      title: Text('maidCafeCredentialCreate'.tr()),
-      content: SizedBox(
-        width: 440,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _labelController,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeCredentialLabel'.tr(),
-                  errorText: _error,
-                ),
+    return SizedBox(
+      width: 560,
+      child: SheetScaffold(
+        titleText: 'maidCafeCredentialCreate'.tr(),
+        heightFactor: 0.62,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          children: [
+            TextField(
+              controller: _labelController,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'maidCafeCredentialLabel'.tr(),
+                errorText: _error,
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _actionsController,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeCredentialActionsScope'.tr(),
-                ),
+            ),
+            const SizedBox(height: 12),
+            _ScopeMultiSelectField(
+              label: 'maidCafeCredentialActionsScope'.tr(),
+              options: _actionOptions,
+              selected: _selectedActionNames,
+              onChanged: (next) => setState(
+                () => _selectedActionNames
+                  ..clear()
+                  ..addAll(next),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _hostsController,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeCredentialHostsScope'.tr(),
-                ),
+            ),
+            const SizedBox(height: 12),
+            _ScopeMultiSelectField(
+              label: 'maidCafeCredentialHostsScope'.tr(),
+              options: _hostOptions,
+              selected: _selectedHostIds,
+              onChanged: (next) => setState(
+                () => _selectedHostIds
+                  ..clear()
+                  ..addAll(next),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _daemonsController,
-                decoration: InputDecoration(
-                  labelText: 'maidCafeCredentialDaemonsScope'.tr(),
-                ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _daemonsController,
+              decoration: InputDecoration(
+                labelText: 'maidCafeCredentialDaemonsScope'.tr(),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'maidCafeCredentialScopesHint'.tr(),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'maidCafeCredentialScopesHint'.tr(),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: _busy ? null : () => Navigator.pop(context),
+                  child: Text('maidCafeCancel'.tr()),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _busy ? null : _submit,
+                  child: Text('maidCafeCredentialCreate'.tr()),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.pop(context),
-          child: Text('maidCafeCancel'.tr()),
+    );
+  }
+}
+
+/// Dropdown-style multi-select for the credential scope pickers. Renders as
+/// a form field; the menu lists every option with a checkbox and stays open
+/// so several can be toggled in one pass.
+class _ScopeMultiSelectField extends StatefulWidget {
+  const _ScopeMultiSelectField({
+    required this.label,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final String label;
+  final List<({String value, String label})> options;
+  final Set<String> selected;
+  final ValueChanged<Set<String>> onChanged;
+
+  @override
+  State<_ScopeMultiSelectField> createState() => _ScopeMultiSelectFieldState();
+}
+
+class _ScopeMultiSelectFieldState extends State<_ScopeMultiSelectField> {
+  final MenuController _menuController = MenuController();
+
+  Widget _summary(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return switch (widget.selected.length) {
+      0 => Text(
+        'maidCafeCredentialUnrestricted'.tr(),
+        style: TextStyle(color: colors.onSurfaceVariant),
+      ),
+      1 => Text(
+        widget.options
+                .where((option) => option.value == widget.selected.first)
+                .firstOrNull
+                ?.label ??
+            widget.selected.first,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      _ => Text(
+        'maidCafeCredentialCountSelected'.plural(widget.selected.length),
+      ),
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      controller: _menuController,
+      builder: (context, controller, child) => InkWell(
+        onTap: () => controller.isOpen ? controller.close() : controller.open(),
+        borderRadius: BorderRadius.circular(4),
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: widget.label,
+            suffixIcon: Icon(
+              controller.isOpen
+                  ? Symbols.keyboard_arrow_up
+                  : Symbols.keyboard_arrow_down,
+            ),
+          ),
+          child: _summary(context),
         ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: Text('maidCafeCredentialCreate'.tr()),
-        ),
+      ),
+      menuChildren: [
+        if (widget.options.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'maidCafeCredentialNoOptions'.tr(),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          )
+        else
+          for (final option in widget.options)
+            CheckboxListTile(
+              dense: true,
+              value: widget.selected.contains(option.value),
+              title: Text(
+                option.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onChanged: (checked) {
+                final next = Set.of(widget.selected);
+                if (checked == true) {
+                  next.add(option.value);
+                } else {
+                  next.remove(option.value);
+                }
+                widget.onChanged(next);
+              },
+            ),
       ],
+    );
+  }
+}
+
+/// One-time credential token sheet: shows the freshly minted token in the
+/// app's recessed monospace secret block, with a copy action and a curl
+/// snippet for invoking daemon actions through the cloud webhook relay.
+class _CredentialTokenSheet extends StatelessWidget {
+  const _CredentialTokenSheet({required this.token, required this.cloudUrl});
+
+  final String token;
+  final String cloudUrl;
+
+  /// Invokes an action through the cloud relay: the daemon polls pending
+  /// webhook requests every minute and runs the named action. The body is
+  /// the base64 of the JSON payload (`e30=` is `{}`).
+  String get _curlSnippet =>
+      "curl -sS -X POST '$cloudUrl/api/daemons/<daemon-id>/webhook-requests' \\\n"
+      "  -H 'Authorization: Bearer $token' \\\n"
+      "  -H 'Content-Type: application/json' \\\n"
+      "  -d '{\"name\":\"<action-name>\",\"body\":\"e30=\",\"signature\":\"\"}'\n"
+      "# Poll for the result (the daemon runs it within a minute):\n"
+      "# curl -sS '$cloudUrl/api/daemons/<daemon-id>/webhook-requests/<request-id>' "
+      "-H 'Authorization: Bearer $token'";
+
+  Widget _secretBlock(BuildContext context, String text) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: SelectableText(
+      text,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: 560,
+      child: SheetScaffold(
+        titleText: 'maidCafeCredentialToken'.tr(),
+        heightFactor: 0.62,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          children: [
+            Text('maidCafeCredentialTokenHint'.tr()),
+            const SizedBox(height: 12),
+            _secretBlock(context, token),
+            const SizedBox(height: 20),
+            Text(
+              'maidCafeCredentialCurlTitle'.tr(),
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'maidCafeCredentialCurlHint'.tr(),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _secretBlock(context, _curlSnippet),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: _curlSnippet)),
+                  child: Text('maidCafeCredentialCopyCurl'.tr()),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: token)),
+                  child: Text('maidCafeCredentialCopy'.tr()),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('maidCafeDone'.tr()),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1657,16 +1869,15 @@ class _RenameDaemonDialogState extends State<_RenameDaemonDialog> {
   );
 }
 
-class _RequestPushNotificationDialog extends StatefulWidget {
-  const _RequestPushNotificationDialog();
+class _RequestNotificationSheet extends StatefulWidget {
+  const _RequestNotificationSheet();
 
   @override
-  State<_RequestPushNotificationDialog> createState() =>
-      _RequestPushNotificationDialogState();
+  State<_RequestNotificationSheet> createState() =>
+      _RequestNotificationSheetState();
 }
 
-class _RequestPushNotificationDialogState
-    extends State<_RequestPushNotificationDialog> {
+class _RequestNotificationSheetState extends State<_RequestNotificationSheet> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _bodyController = TextEditingController();
 
@@ -1678,37 +1889,47 @@ class _RequestPushNotificationDialogState
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text('maidCafeRequestNotification'.tr()),
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        TextField(
-          controller: _titleController,
-          decoration: InputDecoration(
-            labelText: 'maidCafeNotificationTitle'.tr(),
+  Widget build(BuildContext context) => SizedBox(
+    width: 560,
+    child: SheetScaffold(
+      titleText: 'maidCafeRequestNotification'.tr(),
+      heightFactor: 0.5,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        children: [
+          TextField(
+            controller: _titleController,
+            decoration: InputDecoration(
+              labelText: 'maidCafeNotificationTitle'.tr(),
+            ),
           ),
-        ),
-        TextField(
-          controller: _bodyController,
-          decoration: InputDecoration(
-            labelText: 'maidCafeNotificationBody'.tr(),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _bodyController,
+            decoration: InputDecoration(
+              labelText: 'maidCafeNotificationBody'.tr(),
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('maidCafeCancel'.tr()),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, (
+                  title: _titleController.text,
+                  body: _bodyController.text,
+                )),
+                child: Text('maidCafeRequest'.tr()),
+              ),
+            ],
+          ),
+        ],
+      ),
     ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: Text('maidCafeCancel'.tr()),
-      ),
-      FilledButton(
-        onPressed: () => Navigator.pop(context, (
-          title: _titleController.text,
-          body: _bodyController.text,
-        )),
-        child: Text('maidCafeRequest'.tr()),
-      ),
-    ],
   );
 }

@@ -9,6 +9,7 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/theme.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
@@ -550,7 +551,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     final version = stream.version;
     final versionSuffix = version == null || version.isEmpty
         ? ''
-        : ' · v$version';
+        : ' · $version';
     return '${'maidCafeStreamConnected'.tr()}$versionSuffix';
   }
 
@@ -946,27 +947,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
-  /// Manual smoke test of the notification pipeline: the daemon pushes a test
-  /// notification to the cloud, which forwards it to Ring/Metoer.
-  Future<void> _sendTestNotification() async {
-    final stream = _stream;
-    if (stream == null || _busy) return;
-    setState(() {
-      _busy = true;
-      _message = null;
-    });
-    try {
-      await stream.sendTestNotification();
-      if (mounted) {
-        setState(() => _message = 'maidCafeTestNotificationSent'.tr());
-      }
-    } catch (error) {
-      if (mounted) setState(() => _message = error.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   Future<void> _checkForUpdate() async {
     if (_busy || !widget.connected || _stream == null) return;
     setState(() {
@@ -1349,17 +1329,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (_stream != null) ...[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : _sendTestNotification,
-                    icon: const Icon(Symbols.notifications_active, size: 18),
-                    label: Text('maidCafeSendTestNotification'.tr()),
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
@@ -1769,9 +1738,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     );
   }
 
-  Widget _installationRunning() => Card(
+  Widget _installationRunning() => Card.outlined(
     child: Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2078,9 +2047,11 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     BuildContext context, [
     MaidCafeAlarmDefinition? existing,
   ]) async {
-    final alarm = await showDialog<MaidCafeAlarmDefinition>(
+    final alarm = await showModalBottomSheet<MaidCafeAlarmDefinition>(
       context: context,
-      builder: (context) => _AlarmEditorDialog(initial: existing),
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => _AlarmEditorSheet(initial: existing),
     );
     if (alarm == null || !context.mounted) return;
     setState(() {
@@ -3490,18 +3461,18 @@ int? _cachedMaidCafePort(Server server) {
       : port;
 }
 
-/// Add/edit dialog for one alarm threshold. Cooldown is entered in minutes
+/// Add/edit sheet for one alarm threshold. Cooldown is entered in minutes
 /// and stored as seconds, matching the daemon's `cooldownSeconds` field.
-class _AlarmEditorDialog extends StatefulWidget {
-  const _AlarmEditorDialog({this.initial});
+class _AlarmEditorSheet extends StatefulWidget {
+  const _AlarmEditorSheet({this.initial});
 
   final MaidCafeAlarmDefinition? initial;
 
   @override
-  State<_AlarmEditorDialog> createState() => _AlarmEditorDialogState();
+  State<_AlarmEditorSheet> createState() => _AlarmEditorSheetState();
 }
 
-class _AlarmEditorDialogState extends State<_AlarmEditorDialog> {
+class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
   late final TextEditingController _thresholdController;
   late final TextEditingController _cooldownController;
   late String _kind;
@@ -3549,54 +3520,65 @@ class _AlarmEditorDialogState extends State<_AlarmEditorDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.initial == null ? 'maidCafeAddAlarm'.tr() : 'maidCafeAlarms'.tr(),
-    ),
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DropdownButtonFormField<String>(
-          initialValue: _kind,
-          decoration: InputDecoration(labelText: 'maidCafeAlarmKind'.tr()),
-          items: const [
-            DropdownMenuItem(value: 'cpu_percent', child: Text('CPU')),
-            DropdownMenuItem(
-              value: 'memory_used_percent',
-              child: Text('Memory'),
+  Widget build(BuildContext context) => SizedBox(
+    width: 560,
+    child: SheetScaffold(
+      titleText: widget.initial == null
+          ? 'maidCafeAddAlarm'.tr()
+          : 'maidCafeAlarms'.tr(),
+      heightFactor: 0.5,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: _kind,
+            decoration: InputDecoration(labelText: 'maidCafeAlarmKind'.tr()),
+            items: const [
+              DropdownMenuItem(value: 'cpu_percent', child: Text('CPU')),
+              DropdownMenuItem(
+                value: 'memory_used_percent',
+                child: Text('Memory'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => _kind = value);
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _thresholdController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'maidCafeThreshold'.tr(),
+              errorText: _error,
             ),
-          ],
-          onChanged: (value) {
-            if (value != null) setState(() => _kind = value);
-          },
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _thresholdController,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: 'maidCafeThreshold'.tr(),
-            errorText: _error,
           ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _cooldownController,
-          keyboardType: TextInputType.number,
-          decoration: InputDecoration(
-            labelText: 'maidCafeAlarmCooldown'.tr(),
-            errorText: _error,
+          const SizedBox(height: 12),
+          TextField(
+            controller: _cooldownController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'maidCafeAlarmCooldown'.tr(),
+              errorText: _error,
+            ),
           ),
-        ),
-      ],
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: Text('maidCafeCancel'.tr()),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('maidCafeCancel'.tr()),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _submit,
+                child: Text('maidCafeSave'.tr()),
+              ),
+            ],
+          ),
+        ],
       ),
-      FilledButton(onPressed: _submit, child: Text('maidCafeSave'.tr())),
-    ],
+    ),
   );
 }

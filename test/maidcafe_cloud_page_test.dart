@@ -30,6 +30,7 @@ MaidCafeDaemon _daemon({String id = 'daemon-1', String name = 'host-1'}) =>
       lastSeenAt: null,
       createdAt: DateTime.utc(2026, 8, 13),
       updatedAt: DateTime.utc(2026, 8, 13),
+      hostId: 'host-42',
     );
 
 MaidCafeMetoerNotification _notification() => MaidCafeMetoerNotification(
@@ -104,6 +105,8 @@ class _FakeMaidCafeService extends MaidCafeService {
   }
 
   String? createdCredentialLabel;
+  List<String> createdActionNames = const [];
+  List<String> createdHostIds = const [];
 
   @override
   Future<MaidCafeCredential> createCredential({
@@ -113,6 +116,8 @@ class _FakeMaidCafeService extends MaidCafeService {
     List<String> actionNames = const [],
   }) async {
     createdCredentialLabel = label;
+    createdActionNames = actionNames;
+    createdHostIds = hostIds;
     return MaidCafeCredential(
       id: 'cred-new',
       label: label,
@@ -360,12 +365,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-      find
-          .descendant(
-            of: find.byType(AlertDialog),
-            matching: find.byType(TextField),
-          )
-          .first,
+      find.widgetWithText(TextField, 'maidCafeCredentialLabel'.tr()),
       'ci-deploy',
     );
     await tester.pump();
@@ -377,6 +377,57 @@ void main() {
     expect(service.createdCredentialLabel, 'ci-deploy');
     expect(find.text('maidCafeCredentialToken'.tr()), findsOneWidget);
     expect(find.text('mk_test-token'), findsOneWidget);
+    // The sheet offers a copyable curl invocation against this cloud.
+    expect(find.text('maidCafeCredentialCurlTitle'.tr()), findsOneWidget);
+    expect(find.textContaining(maidCafeDefaultCloudUrl), findsOneWidget);
+    expect(
+      find.textContaining("Authorization: Bearer mk_test-token"),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('credential sheet picks action and host scopes from dropdowns', (
+    tester,
+  ) async {
+    final service = _FakeMaidCafeService();
+    await pumpPage(tester, service: service);
+
+    await tester.tap(find.text('maidCafeCredentials'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('maidCafeCredentialCreate'.tr()));
+    await tester.pumpAndSettle();
+
+    // The actions picker offers every daemon-reported action; selecting it
+    // scopes the credential to that action name. The menu stays open while
+    // checking items; tapping the hint below dismisses it.
+    await tester.tap(find.text('maidCafeCredentialActionsScope'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Backup data'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('maidCafeCredentialScopesHint'.tr()));
+    await tester.pumpAndSettle();
+
+    // The hosts picker offers the stable host ids the daemons reported.
+    await tester.tap(find.text('maidCafeCredentialHostsScope'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('host-42'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('maidCafeCredentialScopesHint'.tr()));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'maidCafeCredentialLabel'.tr()),
+      'ci-deploy',
+    );
+    await tester.pump();
+    await tester.tap(
+      find.widgetWithText(FilledButton, 'maidCafeCredentialCreate'.tr()).last,
+    );
+    await tester.pumpAndSettle();
+
+    expect(service.createdCredentialLabel, 'ci-deploy');
+    expect(service.createdActionNames, ['backup']);
+    expect(service.createdHostIds, ['host-42']);
   });
 
   testWidgets('manual register flow shows the one-time config snippet', (

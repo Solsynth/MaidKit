@@ -64,6 +64,7 @@ class MaidCafeDaemon {
     required this.lastSeenAt,
     required this.createdAt,
     required this.updatedAt,
+    this.hostId,
   });
 
   final String id;
@@ -73,14 +74,22 @@ class MaidCafeDaemon {
   final DateTime createdAt;
   final DateTime updatedAt;
 
-  factory MaidCafeDaemon.fromJson(Map<String, dynamic> json) => MaidCafeDaemon(
-    id: _requiredString(json, 'id'),
-    name: _requiredString(json, 'name'),
-    enabled: _requiredBool(json, 'enabled'),
-    lastSeenAt: _optionalDate(json, 'last_seen_at'),
-    createdAt: _requiredDate(json, 'created_at'),
-    updatedAt: _requiredDate(json, 'updated_at'),
-  );
+  /// Stable machine identity the daemon reports at install; survives daemon
+  /// re-registration, so credential host scopes key on it.
+  final String? hostId;
+
+  factory MaidCafeDaemon.fromJson(Map<String, dynamic> json) {
+    final hostId = _optionalString(json, 'host_id');
+    return MaidCafeDaemon(
+      id: _requiredString(json, 'id'),
+      name: _requiredString(json, 'name'),
+      enabled: _requiredBool(json, 'enabled'),
+      lastSeenAt: _optionalDate(json, 'last_seen_at'),
+      createdAt: _requiredDate(json, 'created_at'),
+      updatedAt: _requiredDate(json, 'updated_at'),
+      hostId: (hostId == null || hostId.isEmpty) ? null : hostId,
+    );
+  }
 }
 
 class MaidCafeDaemonCredential extends MaidCafeDaemon {
@@ -91,6 +100,7 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
     required super.lastSeenAt,
     required super.createdAt,
     required super.updatedAt,
+    super.hostId,
     required this.secret,
   });
 
@@ -106,6 +116,7 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
       lastSeenAt: daemon.lastSeenAt,
       createdAt: daemon.createdAt,
       updatedAt: daemon.updatedAt,
+      hostId: daemon.hostId,
       secret: secret,
     );
   }
