@@ -214,7 +214,9 @@ command -v visudo >/dev/null 2>&1 || {
 }
 rule_user=$ruleUserExpr
 sudoers_tmp="\$(mktemp "\${TMPDIR:-/tmp}/maidcafe-actions.XXXXXX")"
-printf '%s\\n' "\$rule_user ALL=($runAsList) NOPASSWD: /etc/maidcafe/actions/*" > "\$sudoers_tmp"
+# User-mode actions execute the rendered script under .run; sudoers
+# wildcards do not cross "/", so both segments need their own spec.
+printf '%s\\n' "\$rule_user ALL=($runAsList) NOPASSWD: /etc/maidcafe/actions/.run/*, /etc/maidcafe/actions/*" > "\$sudoers_tmp"
 visudo -cf "\$sudoers_tmp" >/dev/null 2>&1 || {
   echo "MaidCafe rejected its own sudoers rule; no changes were made." >&2
   rm -f "\$sudoers_tmp"

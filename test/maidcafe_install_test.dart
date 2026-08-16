@@ -353,61 +353,67 @@ void main() {
     expect(config, isNot(contains('displayName')));
   });
 
-  test('run-as users install a sudoers rule and relax the actions directory', () {
-    final script = buildMaidCafeDaemonInstallScript(
-      daemonId: 'daemon-1',
-      cloudUrl: '',
-      cloudSecret: '',
-      artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
-      actions: const [
-        MaidCafeActionDefinition(
-          name: 'deploy',
-          script: 'echo hi',
-          user: 'deploy',
-        ),
-        MaidCafeActionDefinition(
-          name: 'backup',
-          script: 'echo hi',
-          user: 'www-data',
-        ),
-        MaidCafeActionDefinition(name: 'plain', script: 'echo hi'),
-      ],
-    );
+  test(
+    'run-as users install a sudoers rule and relax the actions directory',
+    () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        actions: const [
+          MaidCafeActionDefinition(
+            name: 'deploy',
+            script: 'echo hi',
+            user: 'deploy',
+          ),
+          MaidCafeActionDefinition(
+            name: 'backup',
+            script: 'echo hi',
+            user: 'www-data',
+          ),
+          MaidCafeActionDefinition(name: 'plain', script: 'echo hi'),
+        ],
+      );
 
-    // The daemon renders substituted scripts into the actions directory, so
-    // it must be group-writable; .run is pre-created for it.
-    expect(
-      script,
-      contains('install -d -o root -g maidcafe -m 0770 /etc/maidcafe/actions'),
-    );
-    expect(
-      script,
-      contains(
-        'install -d -o root -g maidcafe -m 0770 /etc/maidcafe/actions/.run',
-      ),
-    );
-    // The sudoers rule names exactly the distinct run-as users, validated
-    // with visudo before install; the rule user is the daemon account.
-    expect(script, contains('rule_user="maidcafe"'));
-    expect(
-      script,
-      contains(
-        '"\$rule_user ALL=(deploy,www-data) NOPASSWD: /etc/maidcafe/actions/*"',
-      ),
-    );
-    expect(script, contains('visudo -cf'));
-    expect(
-      script,
-      contains(
-        'install -o root -g root -m 0440 "\$sudoers_tmp" '
-        '/etc/sudoers.d/maidcafe-actions',
-      ),
-    );
-    // sudo needs its setuid bit for user switching; the unit drops the
-    // NoNewPrivileges hardening when a run-as user is configured.
-    expect(script, isNot(contains('NoNewPrivileges=true')));
-    expect(script, contains('# NoNewPrivileges'));
-  });
+      // The daemon renders substituted scripts into the actions directory, so
+      // it must be group-writable; .run is pre-created for it.
+      expect(
+        script,
+        contains(
+          'install -d -o root -g maidcafe -m 0770 /etc/maidcafe/actions',
+        ),
+      );
+      expect(
+        script,
+        contains(
+          'install -d -o root -g maidcafe -m 0770 /etc/maidcafe/actions/.run',
+        ),
+      );
+      // The sudoers rule names exactly the distinct run-as users, validated
+      // with visudo before install; the rule user is the daemon account.
+      expect(script, contains('rule_user="maidcafe"'));
+      expect(
+        script,
+        contains(
+          '"\$rule_user ALL=(deploy,www-data) NOPASSWD: '
+          '/etc/maidcafe/actions/.run/*, /etc/maidcafe/actions/*"',
+        ),
+      );
+      expect(script, contains('visudo -cf'));
+      expect(
+        script,
+        contains(
+          'install -o root -g root -m 0440 "\$sudoers_tmp" '
+          '/etc/sudoers.d/maidcafe-actions',
+        ),
+      );
+      // sudo needs its setuid bit for user switching; the unit drops the
+      // NoNewPrivileges hardening when a run-as user is configured.
+      expect(script, isNot(contains('NoNewPrivileges=true')));
+      expect(script, contains('# NoNewPrivileges'));
+    },
+  );
 
   test(
     'without run-as users the unit keeps NoNewPrivileges and no sudoers',
@@ -451,7 +457,10 @@ void main() {
     expect(script, contains('rule_user="\${SUDO_USER:-\$(id -un)}"'));
     expect(
       script,
-      contains('"\$rule_user ALL=(deploy) NOPASSWD: /etc/maidcafe/actions/*"'),
+      contains(
+        '"\$rule_user ALL=(deploy) NOPASSWD: '
+        '/etc/maidcafe/actions/.run/*, /etc/maidcafe/actions/*"',
+      ),
     );
     // The actions directory belongs to the SSH user, not the maidcafe
     // service account that does not exist in stdio mode.
