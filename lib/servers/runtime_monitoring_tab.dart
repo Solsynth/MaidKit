@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -922,12 +924,28 @@ class _WatchedHistory extends StatefulWidget {
 }
 
 class _WatchedHistoryState extends State<_WatchedHistory> {
+  static const _refreshInterval = Duration(seconds: 15);
+
   late Future<List<ProcessHistorySample>> _future;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _future = widget.fetchHistory(widget.name);
+    // The daemon records a sample every runtimesInterval; refresh the
+    // sparklines while the section stays expanded so the charts are live.
+    _timer = Timer.periodic(_refreshInterval, (_) {
+      if (mounted) {
+        setState(() => _future = widget.fetchHistory(widget.name));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
   @override

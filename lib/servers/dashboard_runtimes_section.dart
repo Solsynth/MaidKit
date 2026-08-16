@@ -8,14 +8,16 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'maidcafe_service.dart';
 import 'maidcafe_session_registry.dart';
+import 'maidcafe_stream.dart';
 import 'runtime_monitoring_tab.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 
 /// Dashboard section aggregating every server's pinned runtime / watched
-/// process. One tile per (server, pinned name); snapshots are collected per
-/// server on a slow cadence (60s), daemon-first with SSH fallback, matching
-/// the Runtimes tab's channel selection. Hidden when nothing is pinned.
+/// process. One tile per (server, pinned name). Live data streams over the
+/// MaidCafe SSE `runtimes` channel per pinned server; servers without a
+/// daemon (or whose stream died) fall back to one-shot/SSH on a slow tick.
+/// Hidden when nothing is pinned.
 class DashboardRuntimesSection extends ConsumerStatefulWidget {
   const DashboardRuntimesSection({super.key});
 
@@ -26,11 +28,14 @@ class DashboardRuntimesSection extends ConsumerStatefulWidget {
 
 class _DashboardRuntimesSectionState
     extends ConsumerState<DashboardRuntimesSection> {
-  static const _refreshInterval = Duration(seconds: 60);
+  static const _fallbackInterval = Duration(seconds: 60);
 
   late final MaidCafeSessionRegistry _sessionRegistry;
   final Map<int, AsyncValue<RuntimeSnapshot?>> _snapshots = {};
   final Map<int, Server> _retained = {};
+  final Map<int, StreamSubscription<MaidCafeStreamEvent>> _subscriptions = {};
+  final Map<int, int> _sseIntervalSeconds = {};
+  final Map<int, DateTime> _lastSseEvent = {};
   Timer? _timer;
   var _refreshing = false;
 
@@ -39,10 +44,10 @@ class _DashboardRuntimesSectionState
     super.initState();
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
-    _timer = Timer.periodic(_refreshInterval, (_) => _refresh());
+    _timer = Timer.periodic(_fallbackInterval, (_) => _refresh());
     ref.listenManual(pinnedRuntimeConfigsProvider, (_, _) {
-      // A pin was added or removed elsewhere: re-collect so the section
-      // reflects the change without waiting for the next tick.
+      // A pin was added or removed elsewhere: re-arm subscriptions so the
+      // section reflects the change without waiting for the next tick.
       _refresh();
     });
   }
@@ -50,6 +55,10 @@ class _DashboardRuntimesSectionState
   @override
   void dispose() {
     _timer?.cancel();
+    for (final subscription in _subscriptions.values) {
+      unawaited(subscription.cancel());
+    }
+    _subscriptions.clear();
     for (final server in _retained.values) {
       _sessionRegistry.release(server);
     }
@@ -73,10 +82,17 @@ class _DashboardRuntimesSectionState
           if (session.status == SessionStatus.connected) session.serverId,
       };
       _snapshots.removeWhere((id, _) => !serverIds.contains(id));
+      // Drop subscriptions for servers that are no longer pinned.
+      for (final id in _subscriptions.keys.toList()) {
+        if (!serverIds.contains(id)) {
+          await _endSubscription(id);
+        }
+      }
       for (final id in serverIds) {
         final server = serversById[id];
         if (server == null) continue;
         if (!connectedIds.contains(id)) {
+          await _endSubscription(id);
           if (mounted) {
             setState(() => _snapshots[id] = const AsyncValue.data(null));
           }
@@ -86,17 +102,89 @@ class _DashboardRuntimesSectionState
           _retained[id] = server;
           _sessionRegistry.retain(server);
         }
-        if (!_snapshots.containsKey(id) && mounted) {
-          setState(() => _snapshots[id] = const AsyncValue.loading());
+        if (_subscriptions[id] == null) {
+          await _subscribe(server);
+        } else if (_isStale(id)) {
+          // The stream stays connected but stopped delivering data: re-arm.
+          await _endSubscription(id);
+          await _subscribe(server);
         }
-        final snapshot = await _collect(server);
-        if (mounted) {
-          setState(() => _snapshots[id] = AsyncValue.data(snapshot));
+        // No daemon channel (or the stream failed again): one-shot/SSH.
+        if (_subscriptions[id] == null &&
+            !_snapshots.containsKey(id) &&
+            mounted) {
+          setState(() => _snapshots[id] = const AsyncValue.loading());
+          final snapshot = await _collect(server);
+          if (mounted) {
+            setState(() => _snapshots[id] = AsyncValue.data(snapshot));
+          }
         }
       }
     } finally {
       _refreshing = false;
     }
+  }
+
+  bool _isStale(int serverId) {
+    final last = _lastSseEvent[serverId];
+    if (last == null) return true;
+    final cadence = _sseIntervalSeconds[serverId] ?? 10;
+    final timeout = cadence * 3 >= 15 ? cadence * 3 : 15;
+    return DateTime.now().difference(last) > Duration(seconds: timeout);
+  }
+
+  /// Opens a MaidCafe SSE stream for [server]'s `runtimes` events so tiles
+  /// update at the daemon's collection cadence. Old daemons without the
+  /// event reject the request; the one-shot/SSH fallback covers them.
+  Future<void> _subscribe(Server server) async {
+    if (!mounted || _subscriptions.containsKey(server.id)) return;
+    final session = await _sessionRegistry.sessionFor(server);
+    if (session == null || !mounted) return;
+    try {
+      final events = session.openStream(
+        events: const {MaidCafeStreamEventType.runtimes},
+      );
+      final subscription = events.listen(
+        (event) => _onRuntimesEvent(server.id, event),
+        onError: (Object error, StackTrace stackTrace) {
+          _endSubscription(server.id);
+        },
+        onDone: () => _endSubscription(server.id),
+      );
+      _subscriptions[server.id] = subscription;
+    } catch (_) {
+      // Old daemon or stream failure: fall back to one-shot/SSH.
+    }
+  }
+
+  void _onRuntimesEvent(int serverId, MaidCafeStreamEvent event) {
+    if (!mounted) return;
+    if (event.type == MaidCafeStreamEventType.hello) {
+      _lastSseEvent[serverId] = DateTime.now();
+      final intervals = event.data['intervals'];
+      if (intervals is Map) {
+        final seconds = intervals['runtimes'];
+        if (seconds is num && seconds > 0) {
+          _sseIntervalSeconds[serverId] = seconds.toInt();
+        }
+      }
+      return;
+    }
+    if (event.type != MaidCafeStreamEventType.runtimes) return;
+    _lastSseEvent[serverId] = DateTime.now();
+    final snapshot = parseMaidCafeRuntimes(event.data);
+    setState(() {
+      _snapshots[serverId] = AsyncValue.data(snapshot);
+    });
+  }
+
+  Future<void> _endSubscription(int serverId) async {
+    final subscription = _subscriptions.remove(serverId);
+    if (subscription != null) {
+      await subscription.cancel();
+    }
+    _lastSseEvent.remove(serverId);
+    _sseIntervalSeconds.remove(serverId);
   }
 
   Future<RuntimeSnapshot?> _collect(Server server) async {
