@@ -129,9 +129,9 @@ void main() {
       expect(credential.secret, 'cloud-secret');
       expect(capturedScript, isNotNull);
       // The config-sync script ships the patched config base64-encoded.
-      final encoded = RegExp(r"""printf '%s' '([A-Za-z0-9+/=]+)' \| base64""")
-          .firstMatch(capturedScript!)
-          ?.group(1);
+      final encoded = RegExp(
+        r"""printf '%s' '([A-Za-z0-9+/=]+)' \| base64""",
+      ).firstMatch(capturedScript!)?.group(1);
       expect(encoded, isNotNull);
       final patched = utf8.decode(base64Decode(encoded!));
       expect(patched, contains('id = "daemon-new"'));

@@ -208,6 +208,9 @@ void main() {
     await tester.tap(find.text('maidCafeRegister'.tr()));
     await tester.pumpAndSettle();
 
+    expect(find.text('maidCafeNoServers'.tr()), findsOneWidget);
+    expect(find.text('maidCafeRegisterManually'.tr()), findsOneWidget);
+
     await tester.tap(find.text('maidCafeRegisterManually'.tr()));
     await tester.pumpAndSettle();
 
@@ -304,6 +307,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Build host'), findsOneWidget);
+    expect(find.text('maidCafeRegisterManually'.tr()), findsNothing);
     await tester.tap(find.text('Build host'));
     await tester.pumpAndSettle();
 

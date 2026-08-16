@@ -1577,6 +1577,7 @@
   "maidCafeRefresh": "Refresh",
   "maidCafeConnectHint": "Pick a connected server. MaidKit registers its daemon in this workspace and configures it automatically.",
   "maidCafeConnectRunning": "Connecting…",
+  "maidCafeProbingServer": "Checking server…",
   "maidCafeRegisterManually": "Register manually",
   "maidCafeNoServers": "No servers to connect.",
   "maidCafeServerConnected": "MaidCafe installed — ready to connect.",

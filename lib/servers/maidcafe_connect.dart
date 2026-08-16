@@ -48,6 +48,31 @@ class MaidCafeServerProbe {
   final String? message;
 }
 
+/// Whether [probe] lets the user connect the server to the cloud
+/// automatically: a managed install that is not already bound to this cloud
+/// and workspace, or an unmanaged server that would get the full bundle
+/// install. Conflict, disconnected, and errored servers are excluded.
+bool _connectable(
+  MaidCafeServerProbe probe,
+  String cloudUrl,
+  List<MaidCafeDaemon> daemons,
+) {
+  switch (probe.status) {
+    case MaidCafeServerProbeStatus.notInstalled:
+      return true;
+    case MaidCafeServerProbeStatus.installed:
+      final already =
+          probe.access?.id != null &&
+          probe.access?.cloudUrl == cloudUrl &&
+          daemons.any((daemon) => daemon.id == probe.access!.id);
+      return !already;
+    case MaidCafeServerProbeStatus.disconnected:
+    case MaidCafeServerProbeStatus.conflict:
+    case MaidCafeServerProbeStatus.error:
+      return false;
+  }
+}
+
 /// Probes one server's MaidCafe installation. Requires the server's live SSH
 /// session; servers without one report [MaidCafeServerProbeStatus.disconnected]
 /// without touching the network.
@@ -345,8 +370,29 @@ class _MaidCafeConnectServerDialogState
   @override
   Widget build(BuildContext context) {
     final servers = ref.watch(serversProvider);
-    final daemons = ref.watch(maidCafeDaemonsProvider(widget.workspaceId));
+    final daemonsAsync = ref.watch(maidCafeDaemonsProvider(widget.workspaceId));
+    final daemons = daemonsAsync.asData?.value ?? const <MaidCafeDaemon>[];
     final cloudUrl = ref.watch(maidCafeCloudUrlProvider);
+    final serverList = servers.asData?.value ?? const <Server>[];
+    final probes = [
+      for (final server in serverList)
+        (
+          server: server,
+          probe: ref.watch(maidCafeServerProbeProvider(server.id)),
+        ),
+    ];
+    // The manual name-only path is a fallback: it is offered only once every
+    // probe has settled and no server can be connected automatically.
+    final anyLoading = probes.any((entry) => entry.probe.isLoading);
+    final hasConnectable =
+        !anyLoading &&
+        probes.any(
+          (entry) => entry.probe.when(
+            data: (value) => _connectable(value, cloudUrl, daemons),
+            error: (_, _) => false,
+            loading: () => false,
+          ),
+        );
     return AlertDialog(
       title: Text('maidCafeRegister'.tr()),
       content: SizedBox(
@@ -377,12 +423,7 @@ class _MaidCafeConnectServerDialogState
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     for (final server in items)
-                      _serverRow(
-                        context,
-                        server,
-                        cloudUrl,
-                        daemons.asData?.value ?? const [],
-                      ),
+                      _serverRow(context, server, cloudUrl, daemons),
                   ],
                 );
               },
@@ -413,15 +454,16 @@ class _MaidCafeConnectServerDialogState
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: _busyServerId == null
-              ? () => Navigator.pop(
-                  context,
-                  const MaidCafeConnectServerResult.manual(),
-                )
-              : null,
-          child: Text('maidCafeRegisterManually'.tr()),
-        ),
+        if (!anyLoading && !hasConnectable)
+          TextButton(
+            onPressed: _busyServerId == null
+                ? () => Navigator.pop(
+                    context,
+                    const MaidCafeConnectServerResult.manual(),
+                  )
+                : null,
+            child: Text('maidCafeRegisterManually'.tr()),
+          ),
         TextButton(
           onPressed: _busyServerId == null
               ? () => Navigator.pop(context)
@@ -449,7 +491,7 @@ class _MaidCafeConnectServerDialogState
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
         title: Text(server.name),
-        subtitle: Text('maidCafeProbeError'.tr()),
+        subtitle: Text('maidCafeProbingServer'.tr()),
         enabled: false,
       ),
       error: (error, _) => _statusRow(
@@ -465,48 +507,43 @@ class _MaidCafeConnectServerDialogState
             value.access?.id != null &&
             value.access?.cloudUrl == cloudUrl &&
             daemons.any((daemon) => daemon.id == value.access!.id);
-        final (icon, status, enabled) = switch (value.status) {
+        final (icon, status) = switch (value.status) {
           MaidCafeServerProbeStatus.disconnected => (
             const Icon(Symbols.link_off),
             'maidCafeServerNotConnected'.tr(),
-            false,
           ),
           MaidCafeServerProbeStatus.notInstalled => (
             const Icon(Symbols.download),
             'maidCafeServerNotInstalled'.tr(),
-            true,
           ),
           MaidCafeServerProbeStatus.installed when alreadyConnected => (
             const Icon(Symbols.check_circle),
             'maidCafeServerAlreadyConnected'.tr(),
-            false,
           ),
           MaidCafeServerProbeStatus.installed => (
             const Icon(Symbols.check_circle),
             'maidCafeServerConnected'.tr(),
-            true,
           ),
           MaidCafeServerProbeStatus.conflict => (
             const Icon(Symbols.warning),
             '${'maidCafeExistingInstallation'.tr()}\n'
                 '${value.message ?? ''}',
-            false,
           ),
           MaidCafeServerProbeStatus.error => (
             const Icon(Symbols.error_outline),
             '${'maidCafeProbeError'.tr()}\n${value.message ?? ''}',
-            false,
           ),
         };
+        final connectable = _connectable(value, cloudUrl, daemons);
         return _statusRow(
           context,
           server,
           icon: icon,
           iconColor: colors.onSurfaceVariant,
           status: status,
-          enabled: enabled && _busyServerId == null,
+          enabled: connectable && _busyServerId == null,
           busy: _busyServerId == server.id,
-          onTap: enabled && _busyServerId == null
+          onTap: connectable && _busyServerId == null
               ? () => _connect(server, value)
               : null,
         );

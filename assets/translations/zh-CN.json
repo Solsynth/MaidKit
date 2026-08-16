@@ -1576,6 +1576,7 @@
   "maidCafeRefresh": "刷新",
   "maidCafeConnectHint": "选择一台已连接的服务器。MaidKit 会在该工作区注册其守护进程并自动完成配置。",
   "maidCafeConnectRunning": "正在连接…",
+  "maidCafeProbingServer": "正在检查服务器…",
   "maidCafeRegisterManually": "手动注册",
   "maidCafeNoServers": "没有可连接的服务器。",
   "maidCafeServerConnected": "已安装 MaidCafe — 可连接。",
