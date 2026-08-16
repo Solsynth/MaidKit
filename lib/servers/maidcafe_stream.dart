@@ -858,6 +858,11 @@ class MaidCafeStreamSession {
     );
   }
 
+  /// Pushes a test notification through the cloud to Ring/Metoer, verifying
+  /// the whole daemon -> cloud -> notification-feed pipeline on demand.
+  Future<void> sendTestNotification() =>
+      _post('/api/v1/notifications/test').then((_) {});
+
   Future<Map<String, dynamic>> _get(String path) async {
     _throwIfClosed();
     try {

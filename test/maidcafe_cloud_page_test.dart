@@ -41,6 +41,18 @@ MaidCafeMetoerNotification _notification() => MaidCafeMetoerNotification(
   createdAt: DateTime.utc(2026, 8, 13),
 );
 
+MaidCafeCloudAction _cloudAction() => const MaidCafeCloudAction(
+  name: 'backup',
+  displayName: 'Backup data',
+  enabled: true,
+  notifyOnSuccess: false,
+  notifyOnFailure: true,
+  timeout: '',
+  cwd: '',
+  user: '',
+  updatedAt: null,
+);
+
 class _FakeMaidCafeService extends MaidCafeService {
   _FakeMaidCafeService()
     : super(
@@ -49,6 +61,7 @@ class _FakeMaidCafeService extends MaidCafeService {
       );
 
   String? registeredWorkspaceId;
+  String? invokedActionName;
 
   @override
   Future<MaidCafeDaemonCredential> createDaemon({
@@ -64,6 +77,20 @@ class _FakeMaidCafeService extends MaidCafeService {
       createdAt: DateTime.utc(2026, 8, 13),
       updatedAt: DateTime.utc(2026, 8, 13),
       secret: 'cloud-secret',
+    );
+  }
+
+  @override
+  Future<MaidCafeWebhookResult> invokeActionViaCloud({
+    required String daemonId,
+    required String actionName,
+    Map<String, dynamic> body = const {},
+  }) async {
+    invokedActionName = actionName;
+    return MaidCafeWebhookResult(
+      statusCode: 200,
+      body: Uint8List(0),
+      headers: const {},
     );
   }
 }
@@ -145,6 +172,12 @@ void main() {
       maidCafeDaemonsProvider.overrideWith(
         (ref, workspaceId) async => [_daemon()],
       ),
+      maidCafeMetricsProvider.overrideWith(
+        (ref, daemonId) async => const <MaidCafeMetric>[],
+      ),
+      maidCafeCloudActionsProvider.overrideWith(
+        (ref, daemonId) async => [_cloudAction()],
+      ),
       maidCafeServiceProvider.overrideWithValue(
         service ?? _FakeMaidCafeService(),
       ),
@@ -197,6 +230,18 @@ void main() {
     expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
     expect(find.text('Webhook backup failed'), findsOneWidget);
     expect(find.text('exit code 1'), findsOneWidget);
+    // Actions the daemon reported to the cloud render as invocable chips.
+    expect(find.text('Backup data'), findsOneWidget);
+  });
+
+  testWidgets('cloud action chips invoke through the relay', (tester) async {
+    final service = _FakeMaidCafeService();
+    await pumpPage(tester, service: service);
+
+    await tester.tap(find.text('Backup data'));
+    await tester.pumpAndSettle();
+
+    expect(service.invokedActionName, 'backup');
   });
 
   testWidgets('manual register flow shows the one-time config snippet', (

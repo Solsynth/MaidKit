@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/services.dart';
@@ -431,9 +433,71 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
               ),
             ],
           ),
+          _cloudActions(context, daemon),
         ],
       ),
     );
+  }
+
+  /// Actions the daemon reported to the cloud, invoked through the relay:
+  /// the cloud page asks the cloud, the cloud queues it, and the daemon
+  /// polls and runs it.
+  Widget _cloudActions(BuildContext context, MaidCafeDaemon daemon) {
+    final actions = ref.watch(maidCafeCloudActionsProvider(daemon.id));
+    return actions.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (items) {
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 8),
+            Text(
+              'maidCafeActions'.tr(),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final action in items)
+                  ActionChip(
+                    label: Text(action.label),
+                    onPressed: _busy == null
+                        ? () => _invokeCloudAction(context, daemon, action)
+                        : null,
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _invokeCloudAction(
+    BuildContext context,
+    MaidCafeDaemon daemon,
+    MaidCafeCloudAction action,
+  ) async {
+    await _run(context, 'maidCafeInvokeAction', () async {
+      final result = await ref
+          .read(maidCafeServiceProvider)
+          .invokeActionViaCloud(daemonId: daemon.id, actionName: action.name);
+      if (context.mounted) {
+        final stdout = utf8.decode(result.body, allowMalformed: true).trim();
+        final stderr = result.error?.trim() ?? '';
+        showSnackBar(
+          stdout.isNotEmpty
+              ? stdout
+              : stderr.isNotEmpty
+              ? stderr
+              : 'maidCafeActionInvoked'.tr(),
+        );
+      }
+    });
   }
 
   Future<void> _requestPushNotification(

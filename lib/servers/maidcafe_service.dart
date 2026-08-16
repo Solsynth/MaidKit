@@ -149,6 +149,48 @@ class MaidCafeNotification {
   bool get unread => readAt == null;
 }
 
+/// One action the daemon reported to the cloud for listing. The script body
+/// and any secret stay on the host; the cloud page invokes it through the
+/// webhook relay by name.
+class MaidCafeCloudAction {
+  const MaidCafeCloudAction({
+    required this.name,
+    required this.displayName,
+    required this.enabled,
+    required this.notifyOnSuccess,
+    required this.notifyOnFailure,
+    required this.timeout,
+    required this.cwd,
+    required this.user,
+    required this.updatedAt,
+  });
+
+  final String name;
+  final String displayName;
+  final bool enabled;
+  final bool notifyOnSuccess;
+  final bool notifyOnFailure;
+  final String timeout;
+  final String cwd;
+  final String user;
+  final DateTime? updatedAt;
+
+  String get label => displayName.isNotEmpty ? displayName : name;
+
+  factory MaidCafeCloudAction.fromJson(Map<String, dynamic> json) =>
+      MaidCafeCloudAction(
+        name: _requiredString(json, 'name'),
+        displayName: json['display_name']?.toString() ?? '',
+        enabled: json['enabled'] == true,
+        notifyOnSuccess: json['notify_on_success'] == true,
+        notifyOnFailure: json['notify_on_failure'] == true,
+        timeout: json['timeout']?.toString() ?? '',
+        cwd: json['cwd']?.toString() ?? '',
+        user: json['user']?.toString() ?? '',
+        updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? ''),
+      );
+}
+
 class MaidCafeMetric {
   const MaidCafeMetric({
     required this.id,
@@ -511,6 +553,59 @@ class MaidCafeService {
       );
     }
     return id;
+  }
+
+  /// Lists the actions the daemon reported to the cloud (see the daemon's
+  /// action report on every metrics tick).
+  Future<List<MaidCafeCloudAction>> listActions(String daemonId) async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/actions',
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseJson(response);
+    if (data is! List) {
+      throw _invalidResponse('Expected an action list.');
+    }
+    return data
+        .map((item) => MaidCafeCloudAction.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+
+  /// Invokes an action on the daemon through the cloud relay and waits for
+  /// the result. Actions carry no secret, so the relay request is
+  /// signature-less: the daemon runs it because it arrived through its own
+  /// cloud-authenticated poll.
+  Future<MaidCafeWebhookResult> invokeActionViaCloud({
+    required String daemonId,
+    required String actionName,
+    Map<String, dynamic> body = const {},
+  }) async {
+    final name = actionName.trim();
+    if (name.isEmpty) {
+      throw const MaidCafeException(
+        'Action name is required.',
+        kind: MaidCafeErrorKind.validation,
+      );
+    }
+    final payload = utf8.encode(jsonEncode(body));
+    final response = await _cloudRequest(
+      (token) => _dio.post<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/webhook-requests',
+        data: {'name': name, 'body': base64Encode(payload), 'signature': ''},
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseMap(response);
+    final id = data['id']?.toString();
+    if (id == null || id.isEmpty) {
+      throw const MaidCafeException(
+        'The cloud did not return a webhook request id.',
+        kind: MaidCafeErrorKind.invalidResponse,
+      );
+    }
+    return waitForWebhookResult(daemonId: daemonId, requestId: id);
   }
 
   /// Polls the cloud until the relayed webhook reaches a terminal state or

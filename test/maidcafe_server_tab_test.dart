@@ -152,6 +152,9 @@ class _FakeStreamSession implements MaidCafeStreamSession {
   }) => const Stream.empty();
 
   @override
+  Future<void> sendTestNotification() async {}
+
+  @override
   Future<void> close() async {}
 
   @override
@@ -599,5 +602,19 @@ void main() {
     // The chip shows the metric and threshold (labels resolve to raw keys in
     // this harness, so only the numbers are asserted).
     expect(find.textContaining('85%'), findsOneWidget);
+  });
+
+  testWidgets('send test notification runs from the actions tab', (
+    WidgetTester tester,
+  ) async {
+    await pumpRunningPayloadTab(tester);
+
+    await tester.tap(find.text('maidCafeActions'.tr()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('maidCafeSendTestNotification'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeTestNotificationSent'.tr()), findsOneWidget);
   });
 }

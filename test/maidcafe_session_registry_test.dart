@@ -50,6 +50,8 @@ class _FakeSession implements MaidCafeStreamSession {
       throw UnimplementedError();
 
   @override
+  Future<void> sendTestNotification() => throw UnimplementedError();
+  @override
   Future<List<MaidCafeAuditEntry>> audit({int limit = 50}) =>
       throw UnimplementedError();
 

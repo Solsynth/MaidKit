@@ -946,6 +946,27 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
+  /// Manual smoke test of the notification pipeline: the daemon pushes a test
+  /// notification to the cloud, which forwards it to Ring/Metoer.
+  Future<void> _sendTestNotification() async {
+    final stream = _stream;
+    if (stream == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await stream.sendTestNotification();
+      if (mounted) {
+        setState(() => _message = 'maidCafeTestNotificationSent'.tr());
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _checkForUpdate() async {
     if (_busy || !widget.connected || _stream == null) return;
     setState(() {
@@ -1314,6 +1335,17 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (_stream != null) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _sendTestNotification,
+                    icon: const Icon(Symbols.notifications_active, size: 18),
+                    label: Text('maidCafeSendTestNotification'.tr()),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(

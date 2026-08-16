@@ -175,6 +175,11 @@ final maidCafeMetricsProvider =
       return ref.watch(maidCafeServiceProvider).listMetrics(daemonId);
     });
 
+final maidCafeCloudActionsProvider =
+    FutureProvider.family<List<MaidCafeCloudAction>, String>((ref, daemonId) {
+      return ref.watch(maidCafeServiceProvider).listActions(daemonId);
+    });
+
 final personalityBillingPolicyProvider = FutureProvider<BillingPolicy?>((
   ref,
 ) async {

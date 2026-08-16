@@ -205,6 +205,65 @@ void main() {
     },
   );
 
+  test(
+    'cloud lists daemon actions and invokes them through the relay',
+    () async {
+      final requests = <RequestOptions>[];
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          requests.add(options);
+          final path = options.uri.path;
+          if (options.method == 'POST') {
+            return _json({'id': 'req-1', 'status': 'pending'}, 201);
+          }
+          if (path.endsWith('/actions')) {
+            return _json([
+              {
+                'name': 'backup',
+                'display_name': 'Backup data',
+                'enabled': true,
+              },
+              {'name': 'cleanup', 'enabled': false},
+            ], 200);
+          }
+          return _json({
+            'status': 'done',
+            'result_code': 0,
+            'result_body': base64Encode(utf8.encode('backup-ok')),
+            'result_error': '',
+          }, 200);
+        });
+      final service = MaidCafeService(
+        baseUrl: 'https://mk.solsynth.dev',
+        cloudSync: CloudSyncService(vaultId: 'test'),
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+
+      final actions = await service.listActions('daemon-1');
+      expect(actions, hasLength(2));
+      expect(actions.first.name, 'backup');
+      expect(actions.first.label, 'Backup data');
+      expect(actions.last.enabled, isFalse);
+      expect(requests.first.uri.path, '/api/daemons/daemon-1/actions');
+
+      final result = await service.invokeActionViaCloud(
+        daemonId: 'daemon-1',
+        actionName: 'backup',
+      );
+      final post = requests.firstWhere((r) => r.method == 'POST');
+      expect(post.uri.path, '/api/daemons/daemon-1/webhook-requests');
+      expect(post.headers['Authorization'], 'Bearer solar-token');
+      expect((post.data as Map)['name'], 'backup');
+      expect((post.data as Map)['signature'], '');
+      expect(
+        base64Decode((post.data as Map)['body'] as String),
+        utf8.encode('{}'),
+      );
+      expect(result.text, 'backup-ok');
+    },
+  );
+
   test('HMAC signature matches the RFC 4231 test vector', () async {
     expect(
       await maidCafeHmacSignature(
