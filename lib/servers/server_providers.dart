@@ -1200,6 +1200,15 @@ final serversProvider = StreamProvider<List<Server>>((ref) {
   return stored.map((servers) => [local, ...servers]);
 });
 
+/// Per-server enable/disable toggles for the Runtimes tab. Absent rows
+/// default to enabled; the UI reads this to decide which runtime cards render.
+final runtimeWatchConfigsProvider =
+    StreamProvider.family<List<RuntimeWatchConfig>, int>((ref, serverId) {
+      return ref
+          .watch(serverRepositoryProvider)
+          .watchRuntimeWatchConfigs(serverId);
+    });
+
 final serverMetricsRefreshSchedulerProvider =
     Provider<ServerMetricsRefreshScheduler>((ref) {
       final scheduler = ServerMetricsRefreshScheduler(

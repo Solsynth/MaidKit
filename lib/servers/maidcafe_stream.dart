@@ -27,6 +27,7 @@ enum MaidCafeStreamEventType {
   images,
   processes,
   systemd,
+  runtimes,
 }
 
 /// All streamable event types; the default whitelist for [MaidCafeStreamSession.openStream].
@@ -37,6 +38,7 @@ const Set<MaidCafeStreamEventType> maidCafeStreamAllEvents = {
   MaidCafeStreamEventType.images,
   MaidCafeStreamEventType.processes,
   MaidCafeStreamEventType.systemd,
+  MaidCafeStreamEventType.runtimes,
 };
 
 /// One decoded SSE frame from the daemon stream.
@@ -91,6 +93,7 @@ MaidCafeStreamEvent? _dispatchSseFrame(String? eventName, String data) {
     'images' => MaidCafeStreamEventType.images,
     'processes' => MaidCafeStreamEventType.processes,
     'systemd' => MaidCafeStreamEventType.systemd,
+    'runtimes' => MaidCafeStreamEventType.runtimes,
     _ => null,
   };
   if (type == null) return null;
@@ -714,6 +717,9 @@ class MaidCafeStreamSession {
 
   /// One-shot systemd unit snapshot (same payload as the `systemd` event).
   Future<Map<String, dynamic>> systemd() => _get('/api/v1/systemd');
+
+  /// One-shot runtime snapshot (same payload as the `runtimes` event).
+  Future<Map<String, dynamic>> runtimes() => _get('/api/v1/runtimes');
 
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,

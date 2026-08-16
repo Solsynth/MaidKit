@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
+import 'package:maid_kit/servers/server_models.dart';
 
 class _MemoryStorage extends FlutterSecureStorage {
   final values = <String, String>{};
@@ -325,6 +326,64 @@ void main() {
     expect(requests.last.uri.path, '/api/credentials/cred-1');
   });
 
+  test('MaidCafeMetric.fromJson parses the full daemon sample', () {
+    final metric = MaidCafeMetric.fromJson({
+      'id': 'm1',
+      'daemon_id': 'd1',
+      'sent_at': '2026-08-16T10:00:00Z',
+      'received_at': '2026-08-16T10:00:01Z',
+      'uptime_seconds': 259200,
+      'process_memory_bytes': 1073741824,
+      'cpu_percent': 41.2,
+      'cpu_count': 8,
+      'load1': 2.5,
+      'load5': 1.8,
+      'load15': 1.2,
+      'memory_used_percent': 58.3,
+      'memory_used_bytes': 11918589952,
+      'memory_total_bytes': 20462829568,
+      'swap_total_kb': 2097152,
+      'swap_free_kb': 1048576,
+      'disk_total_kb': 102400,
+      'disk_available_kb': 51200,
+      'net_rx_bytes': 100,
+      'net_tx_bytes': 200,
+      'webhook_executions': 42,
+      'webhook_failures': 1,
+    });
+    expect(metric.cpuCount, 8);
+    expect(metric.load1, 2.5);
+    expect(metric.load5, 1.8);
+    expect(metric.load15, 1.2);
+    expect(metric.swapTotalKb, 2097152);
+    expect(metric.swapFreeKb, 1048576);
+    expect(metric.diskTotalKb, 102400);
+    expect(metric.diskAvailableKb, 51200);
+    expect(metric.netRxBytes, 100);
+    expect(metric.netTxBytes, 200);
+  });
+
+  test('MaidCafeMetric.fromJson tolerates missing extras', () {
+    final metric = MaidCafeMetric.fromJson({
+      'id': 'm1',
+      'daemon_id': 'd1',
+      'sent_at': '2026-08-16T10:00:00Z',
+      'received_at': '2026-08-16T10:00:01Z',
+      'uptime_seconds': 60,
+      'process_memory_bytes': 0,
+      'cpu_percent': 1,
+      'memory_used_percent': 2,
+      'memory_used_bytes': 3,
+      'memory_total_bytes': 4,
+      'webhook_executions': 0,
+      'webhook_failures': 0,
+    });
+    expect(metric.cpuCount, 0);
+    expect(metric.load1, 0);
+    expect(metric.diskTotalKb, 0);
+    expect(metric.netTxBytes, 0);
+  });
+
   test('HMAC signature matches the RFC 4231 test vector', () async {
     expect(
       await maidCafeHmacSignature(
@@ -353,5 +412,138 @@ void main() {
       throwsA(isA<MaidCafeException>()),
     );
     expect(requests, 0);
+  });
+
+  test('parseMaidCafeRuntimes parses the full payload', () {
+    final snapshot = parseMaidCafeRuntimes({
+      'runtimes': [
+        {
+          'runtime': 'java',
+          'available': true,
+          'error': null,
+          'processes': [
+            {
+              'pid': 123,
+              'user': 'root',
+              'cpu_percent': 1.2,
+              'memory_percent': 2.1,
+              'rss_kb': 1048576,
+              'threads': 45,
+              'command': 'java -Xmx2g -jar app.jar',
+            },
+          ],
+          'java': {
+            'jdk': {'available': true, 'error': null},
+            'jvms': [
+              {
+                'pid': 123,
+                'main_class': 'app.Main',
+                'old_percent': 23.4,
+                'ygc': 12,
+                'fgc': 0,
+                'gct_seconds': 0.579,
+                'error': null,
+              },
+            ],
+          },
+        },
+        {
+          'runtime': 'dotnet',
+          'available': false,
+          'error': 'no dotnet processes found',
+          'processes': [],
+        },
+        {
+          'runtime': 'python',
+          'available': true,
+          'processes': [
+            {
+              'pid': 456,
+              'user': 'jane',
+              'cpu_percent': 7.5,
+              'memory_percent': 0.4,
+              'rss_kb': 20480,
+              'command': 'python3 server.py --port 8080',
+            },
+          ],
+        },
+      ],
+    });
+    expect(snapshot.groups, hasLength(3));
+    final java = snapshot.groups[0];
+    expect(java.kind, RuntimeKind.java);
+    expect(java.available, isTrue);
+    expect(java.processes, hasLength(1));
+    expect(java.processes[0].pid, 123);
+    expect(java.processes[0].threads, 45);
+    expect(java.processes[0].command, 'java -Xmx2g -jar app.jar');
+    expect(java.java, isNotNull);
+    expect(java.java!.jdkAvailable, isTrue);
+    expect(java.java!.jvms, hasLength(1));
+    expect(java.java!.jvms[0].mainClass, 'app.Main');
+    expect(java.java!.jvms[0].oldPercent, 23.4);
+    expect(java.java!.jvms[0].ygc, 12);
+    expect(java.java!.jvms[0].fgc, 0);
+    expect(java.java!.jvms[0].gctSeconds, 0.579);
+    final dotnet = snapshot.groups[1];
+    expect(dotnet.kind, RuntimeKind.dotnet);
+    expect(dotnet.available, isFalse);
+    expect(dotnet.error, 'no dotnet processes found');
+    expect(dotnet.java, isNull);
+    // Python group omits `threads`: stays null.
+    final python = snapshot.groups[2];
+    expect(python.kind, RuntimeKind.python);
+    expect(python.processes[0].threads, isNull);
+  });
+
+  test(
+    'parseMaidCafeRuntimes tolerates missing java key and unknown runtimes',
+    () {
+      final snapshot = parseMaidCafeRuntimes({
+        'runtimes': [
+          {
+            'runtime': 'java',
+            'available': true,
+            'processes': [
+              {'pid': 1, 'user': 'root', 'command': 'java -jar x.jar'},
+            ],
+          },
+          {'runtime': 'rust', 'available': true, 'processes': []},
+          'not-a-map',
+        ],
+      });
+      expect(snapshot.groups, hasLength(1));
+      expect(snapshot.groups[0].kind, RuntimeKind.java);
+      // Missing `java` key leaves the java info null.
+      expect(snapshot.groups[0].java, isNull);
+    },
+  );
+
+  test('parseMaidCafeRuntimes preserves per-JVM errors', () {
+    final snapshot = parseMaidCafeRuntimes({
+      'runtimes': [
+        {
+          'runtime': 'java',
+          'available': true,
+          'processes': [
+            {'pid': 1, 'user': 'root', 'command': 'java -jar x.jar'},
+          ],
+          'java': {
+            'jdk': {'available': true, 'error': null},
+            'jvms': [
+              {
+                'pid': 1,
+                'main_class': 'app.Main',
+                'error': 'jstat -gcutil: exit status 1',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    final jvm = snapshot.groups.single.java!.jvms.single;
+    expect(jvm.oldPercent, isNull);
+    expect(jvm.ygc, isNull);
+    expect(jvm.error, 'jstat -gcutil: exit status 1');
   });
 }

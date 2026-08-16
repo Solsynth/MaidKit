@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 28 migrations, which
+        // Opening the database again runs the 22 -> 29 migrations, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 28);
+        expect(version.read<int>('user_version'), 29);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -78,6 +78,15 @@ void main() {
             )
             .get();
         expect(presetTable, isNotEmpty);
+
+        // Per-runtime watch toggles are created in schema 29.
+        final runtimeTable = await database
+            .customSelect(
+              "SELECT name FROM sqlite_master "
+              "WHERE type = 'table' AND name = 'runtime_watch_configs'",
+            )
+            .get();
+        expect(runtimeTable, isNotEmpty);
         await database.close();
       },
     );
@@ -99,7 +108,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 28);
+        expect(version.read<int>('user_version'), 29);
 
         final column = await database
             .customSelect(

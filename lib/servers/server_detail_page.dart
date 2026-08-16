@@ -25,6 +25,7 @@ import 'firewall_tab.dart';
 import 'package_management_tab.dart';
 import 'port_forwarding_tab.dart';
 import 'privacy_preferences.dart';
+import 'runtime_monitoring_tab.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -52,7 +53,8 @@ class ServerDetailPage extends ConsumerStatefulWidget {
 
 class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   static const _processesTabIndex = 1;
-  static const _tabCount = 11;
+  static const _runtimesTabIndex = 11;
+  static const _tabCount = 12;
 
   AsyncValue<List<ServerProcess>> _processes = const AsyncValue.data([]);
   Timer? _refreshTimer;
@@ -71,6 +73,22 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   DateTime _lastProcessesEvent = DateTime.fromMillisecondsSinceEpoch(0);
   int _processesSseIntervalSeconds = 10;
 
+  AsyncValue<RuntimeSnapshot> _runtimeSnapshot = AsyncValue.data(
+    RuntimeSnapshot(
+      groups: const [],
+      collectedAt: DateTime.fromMillisecondsSinceEpoch(0),
+    ),
+  );
+  StreamSubscription<MaidCafeStreamEvent>? _runtimesSubscription;
+  var _runtimesSseActive = false;
+  var _runtimesSseAttempted = false;
+  var _hasLoadedRuntimes = false;
+
+  /// Last `runtimes` event timestamp and the daemon's announced cadence,
+  /// used to detect a stream that stays connected but stops delivering data.
+  DateTime _lastRuntimesEvent = DateTime.fromMillisecondsSinceEpoch(0);
+  int _runtimesSseIntervalSeconds = 10;
+
   @override
   void initState() {
     super.initState();
@@ -84,6 +102,12 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await _startProcessesSse();
         await _loadProcesses();
+      });
+    }
+    if (_activeTabIndex == _runtimesTabIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _startRuntimesSse();
+        await _loadRuntimes();
       });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -104,6 +128,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _closeProcessesSse();
+    _closeRuntimesSse();
     _sessionRegistry.release(widget.server);
     // Riverpod forbids mutating providers during dispose / tree finalization.
     final serverId = widget.server.id;
@@ -120,12 +145,20 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   void _onTabChanged(int index) {
     final openedProcesses =
         index == _processesTabIndex && _activeTabIndex != _processesTabIndex;
+    final openedRuntimes =
+        index == _runtimesTabIndex && _activeTabIndex != _runtimesTabIndex;
     _activeTabIndex = index;
     if (openedProcesses) {
       // Reopening the tab is a manual ask: allow a fresh stream attempt.
       _processesSseAttempted = false;
       unawaited(_startProcessesSse());
       unawaited(_loadProcesses());
+    }
+    if (openedRuntimes) {
+      // Reopening the tab is a manual ask: allow a fresh stream attempt.
+      _runtimesSseAttempted = false;
+      unawaited(_startRuntimesSse());
+      unawaited(_loadRuntimes());
     }
   }
 
@@ -180,6 +213,118 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     await _loadProcesses(force: true);
   }
 
+  Future<void> _loadRuntimes({bool force = false}) async {
+    // While SSE is authoritative the daemon cadence owns freshness. A manual
+    // refresh (force) always fetches: the stream can be silent even while
+    // the connection looks alive.
+    if (_runtimesSseActive && !force) return;
+    if (!_hasLoadedRuntimes) {
+      setState(() => _runtimeSnapshot = const AsyncValue.loading());
+    }
+    final session = await _ensureMaidCafeStream();
+    if (session != null) {
+      try {
+        final snapshot = parseMaidCafeRuntimes(await session.runtimes());
+        if (mounted) {
+          setState(() {
+            _hasLoadedRuntimes = true;
+            _runtimeSnapshot = AsyncValue.data(snapshot);
+          });
+        }
+        return;
+      } catch (_) {
+        // Old daemon without /api/v1/runtimes: fall back to SSH.
+      }
+    }
+    try {
+      final snapshot = await ref
+          .read(connectionManagerProvider)
+          .refreshRuntimeMetrics(widget.server.id);
+      if (mounted && snapshot != null) {
+        setState(() {
+          _hasLoadedRuntimes = true;
+          _runtimeSnapshot = AsyncValue.data(snapshot);
+        });
+      }
+    } catch (error, stackTrace) {
+      if (mounted && !_hasLoadedRuntimes) {
+        setState(() => _runtimeSnapshot = AsyncValue.error(error, stackTrace));
+      }
+    }
+  }
+
+  /// Manual refresh: always fetch (the stream may be silent), and re-arm the
+  /// MaidCafe path when it was previously unavailable. SSH collection runs
+  /// jstat per JVM, so this only ever runs on tab open and manual refresh.
+  Future<void> _refreshRuntimes() async {
+    if (!_runtimesSseActive) {
+      _runtimesSseAttempted = false;
+      _maidCafeStream = null;
+      _sessionRegistry.invalidate(widget.server);
+    }
+    await _loadRuntimes(force: true);
+  }
+
+  /// Opens a MaidCafe session with the same credential flow the Activity tab
+  /// uses, then subscribes to `runtimes` events.
+  Future<void> _startRuntimesSse() async {
+    if (_runtimesSubscription != null || _runtimesSseAttempted) return;
+    final session = await _ensureMaidCafeStream();
+    if (session == null || !mounted) return;
+    try {
+      final events = session.openStream(
+        events: const {MaidCafeStreamEventType.runtimes},
+      );
+      final subscription = events.listen(
+        _onRuntimesEvent,
+        onError: (Object error, StackTrace stackTrace) {
+          _runtimesSseAttempted = true;
+          _closeRuntimesSse();
+        },
+        onDone: () {
+          _runtimesSseAttempted = true;
+          _closeRuntimesSse();
+        },
+      );
+      _runtimesSubscription = subscription;
+    } catch (_) {
+      _runtimesSseAttempted = true;
+      _closeRuntimesSse();
+    }
+  }
+
+  void _onRuntimesEvent(MaidCafeStreamEvent event) {
+    if (!mounted) return;
+    if (event.type == MaidCafeStreamEventType.hello) {
+      _lastRuntimesEvent = DateTime.now();
+      final intervals = event.data['intervals'];
+      if (intervals is Map) {
+        final seconds = intervals['runtimes'];
+        if (seconds is num && seconds > 0) {
+          _runtimesSseIntervalSeconds = seconds.toInt();
+        }
+      }
+      return;
+    }
+    if (event.type != MaidCafeStreamEventType.runtimes) return;
+    _lastRuntimesEvent = DateTime.now();
+    final snapshot = parseMaidCafeRuntimes(event.data);
+    setState(() {
+      _runtimesSseActive = true;
+      _hasLoadedRuntimes = true;
+      _runtimeSnapshot = AsyncValue.data(snapshot);
+    });
+  }
+
+  void _closeRuntimesSse() {
+    final subscription = _runtimesSubscription;
+    _runtimesSubscription = null;
+    _runtimesSseActive = false;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+  }
+
   Future<void> _refresh() async {
     if (_refreshing) return;
     final manager = ref.read(connectionManagerProvider);
@@ -205,6 +350,27 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
           unawaited(_startProcessesSse());
         }
         await _loadProcesses();
+      }
+      if (_activeTabIndex == _runtimesTabIndex) {
+        if (_runtimesSseActive) {
+          final silence = DateTime.now().difference(_lastRuntimesEvent);
+          final timeoutSeconds = _runtimesSseIntervalSeconds * 3 >= 15
+              ? _runtimesSseIntervalSeconds * 3
+              : 15;
+          if (silence > Duration(seconds: timeoutSeconds)) {
+            // The stream stays connected (heartbeats) but stopped delivering
+            // data — the daemon collector may be disabled or failing. Fall
+            // back to on-demand fetches instead of freezing the cards.
+            _runtimesSseAttempted = true;
+            _closeRuntimesSse();
+          }
+        }
+        if (_runtimesSubscription == null) {
+          unawaited(_startRuntimesSse());
+        }
+        // No _loadRuntimes() on the tick: SSH collection runs jstat per JVM
+        // and must not repeat every refresh interval. The SSH fallback only
+        // runs on tab open and manual refresh.
       }
     } finally {
       _refreshing = false;
@@ -308,9 +474,11 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       session: session,
       connected: connected,
       processes: _processes,
+      runtimes: _runtimeSnapshot,
       refreshInterval: refreshInterval,
       onConnect: _connect,
       onRefreshProcesses: _refreshProcesses,
+      onRefreshRuntimes: _refreshRuntimes,
       onTabChanged: _onTabChanged,
       initialTab: widget.initialTab,
       initialComposeProject: widget.initialComposeProject,
@@ -378,9 +546,11 @@ class _DetailWorkspace extends StatelessWidget {
     required this.session,
     required this.connected,
     required this.processes,
+    required this.runtimes,
     required this.refreshInterval,
     required this.onConnect,
     required this.onRefreshProcesses,
+    required this.onRefreshRuntimes,
     required this.onTabChanged,
     required this.initialTab,
     required this.initialComposeProject,
@@ -390,9 +560,11 @@ class _DetailWorkspace extends StatelessWidget {
   final SshSessionInfo? session;
   final bool connected;
   final AsyncValue<List<ServerProcess>> processes;
+  final AsyncValue<RuntimeSnapshot> runtimes;
   final Duration refreshInterval;
   final Future<void> Function() onConnect;
   final Future<void> Function() onRefreshProcesses;
+  final Future<void> Function() onRefreshRuntimes;
   final ValueChanged<int> onTabChanged;
   final int initialTab;
   final String? initialComposeProject;
@@ -404,10 +576,12 @@ class _DetailWorkspace extends StatelessWidget {
       connected: connected,
       connectionError: session?.error,
       processes: processes,
+      runtimes: runtimes,
       server: server,
       refreshInterval: refreshInterval,
       onConnect: onConnect,
       onRefreshProcesses: onRefreshProcesses,
+      onRefreshRuntimes: onRefreshRuntimes,
       onTabChanged: onTabChanged,
       initialTab: initialTab,
       initialComposeProject: initialComposeProject,
@@ -600,10 +774,12 @@ class _InspectorTabs extends StatefulWidget {
     required this.connected,
     required this.connectionError,
     required this.processes,
+    required this.runtimes,
     required this.server,
     required this.refreshInterval,
     required this.onConnect,
     required this.onRefreshProcesses,
+    required this.onRefreshRuntimes,
     required this.onTabChanged,
     required this.initialTab,
     required this.initialComposeProject,
@@ -612,10 +788,12 @@ class _InspectorTabs extends StatefulWidget {
   final bool connected;
   final String? connectionError;
   final AsyncValue<List<ServerProcess>> processes;
+  final AsyncValue<RuntimeSnapshot> runtimes;
   final Server server;
   final Duration refreshInterval;
   final Future<void> Function() onConnect;
   final Future<void> Function() onRefreshProcesses;
+  final Future<void> Function() onRefreshRuntimes;
   final ValueChanged<int> onTabChanged;
   final int initialTab;
   final String? initialComposeProject;
@@ -626,7 +804,7 @@ class _InspectorTabs extends StatefulWidget {
 
 class _InspectorTabsState extends State<_InspectorTabs>
     with SingleTickerProviderStateMixin {
-  static const _tabCount = 11;
+  static const _tabCount = 12;
   late final TabController _tabController;
 
   @override
@@ -709,6 +887,10 @@ class _InspectorTabsState extends State<_InspectorTabs>
               icon: const Icon(Symbols.local_cafe, size: 18),
               label: 'detailCafe'.tr(),
             ),
+            IconLabelTab(
+              icon: const Icon(Symbols.code_blocks, size: 18),
+              label: 'detailRuntimes'.tr(),
+            ),
           ],
         ),
         Expanded(
@@ -788,6 +970,14 @@ class _InspectorTabsState extends State<_InspectorTabs>
                 connected: widget.connected,
                 connectionError: widget.connectionError,
                 onConnect: widget.onConnect,
+              ),
+              RuntimeMonitoringTab(
+                server: widget.server,
+                connected: widget.connected,
+                connectionError: widget.connectionError,
+                onConnect: widget.onConnect,
+                snapshot: widget.runtimes,
+                onRefresh: widget.onRefreshRuntimes,
               ),
             ],
           ),

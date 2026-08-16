@@ -349,6 +349,102 @@ class ServerProcess {
   final String command;
 }
 
+/// The fixed runtime set the Runtimes tab monitors. Wire names equal `.name`
+/// ('java', 'dotnet', 'python').
+enum RuntimeKind { java, dotnet, python }
+
+/// Tolerant wire lookup: returns null for unknown runtime names so future
+/// daemon additions degrade gracefully instead of throwing.
+RuntimeKind? RuntimeKindFromWire(String raw) {
+  for (final kind in RuntimeKind.values) {
+    if (kind.name == raw) {
+      return kind;
+    }
+  }
+  return null;
+}
+
+class RuntimeProcessInfo {
+  const RuntimeProcessInfo({
+    required this.pid,
+    required this.user,
+    required this.cpuPercent,
+    required this.memoryPercent,
+    required this.rssKb,
+    required this.command,
+    this.threads,
+  });
+
+  final int pid;
+  final String user;
+  final double cpuPercent;
+  final double memoryPercent;
+  final int rssKb;
+
+  /// Null on BSD/macOS hosts where ps has no nlwp column.
+  final int? threads;
+  final String command;
+}
+
+class JavaJvmInfo {
+  const JavaJvmInfo({
+    required this.pid,
+    this.mainClass,
+    this.oldPercent,
+    this.ygc,
+    this.fgc,
+    this.gctSeconds,
+    this.error,
+  });
+
+  final int pid;
+  final String? mainClass;
+  final double? oldPercent;
+  final int? ygc;
+  final int? fgc;
+  final double? gctSeconds;
+
+  /// Per-JVM collection failure; the process row itself is still valid.
+  final String? error;
+}
+
+class JavaRuntimeInfo {
+  const JavaRuntimeInfo({
+    required this.jdkAvailable,
+    required this.jvms,
+    this.jdkError,
+  });
+
+  final bool jdkAvailable;
+  final String? jdkError;
+  final List<JavaJvmInfo> jvms;
+}
+
+class RuntimeGroup {
+  const RuntimeGroup({
+    required this.kind,
+    required this.available,
+    required this.processes,
+    this.error,
+    this.java,
+  });
+
+  final RuntimeKind kind;
+  final bool available;
+  final String? error;
+  final List<RuntimeProcessInfo> processes;
+
+  /// Present only in the java group when at least one java process exists.
+  final JavaRuntimeInfo? java;
+}
+
+class RuntimeSnapshot {
+  const RuntimeSnapshot({required this.groups, required this.collectedAt});
+
+  final List<RuntimeGroup> groups;
+  final DateTime collectedAt;
+}
+
 class ServerSystemInfo {
   const ServerSystemInfo({this.distribution, this.kernel});
 

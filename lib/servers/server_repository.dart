@@ -267,6 +267,27 @@ class ServerRepository {
   Stream<List<PortForwardConfig>> watchPortForwardConfigs(int serverId) =>
       _database.watchPortForwardConfigs(serverId);
 
+  Stream<List<RuntimeWatchConfig>> watchRuntimeWatchConfigs(int serverId) =>
+      _database.watchRuntimeWatchConfigs(serverId);
+
+  /// Persists the enable/disable toggle for one runtime on a server. Absent
+  /// rows default to enabled, so toggling back on inserts a row.
+  Future<void> setRuntimeEnabled(
+    int serverId,
+    RuntimeKind kind,
+    bool enabled,
+  ) async {
+    await _database
+        .into(_database.runtimeWatchConfigs)
+        .insertOnConflictUpdate(
+          RuntimeWatchConfigsCompanion.insert(
+            serverId: serverId,
+            runtime: kind.name,
+            enabled: Value(enabled),
+          ),
+        );
+  }
+
   Future<List<PortForwardConfig>> portForwardConfigsForServer(int serverId) =>
       _database.portForwardConfigsForServer(serverId);
 

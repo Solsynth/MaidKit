@@ -246,9 +246,19 @@ class MaidCafeMetric {
     required this.uptimeSeconds,
     required this.processMemoryBytes,
     required this.cpuPercent,
+    this.cpuCount = 0,
+    this.load1 = 0,
+    this.load5 = 0,
+    this.load15 = 0,
     required this.memoryUsedPercent,
     required this.memoryUsedBytes,
     required this.memoryTotalBytes,
+    this.swapTotalKb = 0,
+    this.swapFreeKb = 0,
+    this.diskTotalKb = 0,
+    this.diskAvailableKb = 0,
+    this.netRxBytes = 0,
+    this.netTxBytes = 0,
     required this.webhookExecutions,
     required this.webhookFailures,
   });
@@ -260,9 +270,19 @@ class MaidCafeMetric {
   final int uptimeSeconds;
   final int processMemoryBytes;
   final double cpuPercent;
+  final int cpuCount;
+  final double load1;
+  final double load5;
+  final double load15;
   final double memoryUsedPercent;
   final int memoryUsedBytes;
   final int memoryTotalBytes;
+  final int swapTotalKb;
+  final int swapFreeKb;
+  final int diskTotalKb;
+  final int diskAvailableKb;
+  final int netRxBytes;
+  final int netTxBytes;
   final int webhookExecutions;
   final int webhookFailures;
 
@@ -274,9 +294,19 @@ class MaidCafeMetric {
     uptimeSeconds: _requiredInt(json, 'uptime_seconds'),
     processMemoryBytes: _requiredInt(json, 'process_memory_bytes'),
     cpuPercent: _requiredNum(json, 'cpu_percent').toDouble(),
+    cpuCount: _optionalInt(json, 'cpu_count'),
+    load1: _optionalNum(json, 'load1')?.toDouble() ?? 0,
+    load5: _optionalNum(json, 'load5')?.toDouble() ?? 0,
+    load15: _optionalNum(json, 'load15')?.toDouble() ?? 0,
     memoryUsedPercent: _requiredNum(json, 'memory_used_percent').toDouble(),
     memoryUsedBytes: _requiredInt(json, 'memory_used_bytes'),
     memoryTotalBytes: _requiredInt(json, 'memory_total_bytes'),
+    swapTotalKb: _optionalInt(json, 'swap_total_kb'),
+    swapFreeKb: _optionalInt(json, 'swap_free_kb'),
+    diskTotalKb: _optionalInt(json, 'disk_total_kb'),
+    diskAvailableKb: _optionalInt(json, 'disk_available_kb'),
+    netRxBytes: _optionalInt(json, 'net_rx_bytes'),
+    netTxBytes: _optionalInt(json, 'net_tx_bytes'),
     webhookExecutions: _requiredInt(json, 'webhook_executions'),
     webhookFailures: _requiredInt(json, 'webhook_failures'),
   );
@@ -933,6 +963,12 @@ num _requiredNum(Map<String, dynamic> json, String key) {
   throw _invalidResponse('MaidCafe response field "$key" is missing.');
 }
 
+/// Numeric field that older clouds or stored rows may omit; defaults to 0.
+int _optionalInt(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  return value is num ? value.toInt() : 0;
+}
+
 DateTime _requiredDate(Map<String, dynamic> json, String key) {
   final value = json[key];
   if (value is String) {
@@ -1227,6 +1263,110 @@ ServerProcess? _parseSseProcess(Map<String, dynamic> json) {
     memoryPercent: _optionalNum(json, 'memory_percent')?.toDouble() ?? 0,
     rssKb: _optionalNum(json, 'rss_kb')?.toInt() ?? 0,
     command: _optionalString(json, 'command') ?? '',
+  );
+}
+
+/// Tolerant parse of a `runtimes` SSE event payload / one-shot snapshot.
+/// Malformed groups are skipped, unknown runtime names are ignored, `available`
+/// defaults to true, and a missing `java` key leaves the java info null.
+RuntimeSnapshot parseMaidCafeRuntimes(Map<String, dynamic> json) {
+  final groups = <RuntimeGroup>[];
+  final rawGroups = json['runtimes'];
+  if (rawGroups is List) {
+    for (final raw in rawGroups) {
+      if (raw is! Map) continue;
+      final group = _parseSseRuntimeGroup(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (group != null) groups.add(group);
+    }
+  }
+  return RuntimeSnapshot(groups: groups, collectedAt: DateTime.now());
+}
+
+RuntimeGroup? _parseSseRuntimeGroup(Map<String, dynamic> json) {
+  final rawKind = _optionalString(json, 'runtime');
+  final kind = rawKind == null ? null : RuntimeKindFromWire(rawKind);
+  if (kind == null) return null;
+  final processes = <RuntimeProcessInfo>[];
+  final rawProcesses = json['processes'];
+  if (rawProcesses is List) {
+    for (final raw in rawProcesses) {
+      if (raw is! Map) continue;
+      final process = _parseSseRuntimeProcess(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      if (process != null) processes.add(process);
+    }
+  }
+  JavaRuntimeInfo? java;
+  final rawJava = json['java'];
+  if (rawJava is Map) {
+    final javaMap = rawJava.map(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+    final jdk = javaMap['jdk'];
+    final jvms = <JavaJvmInfo>[];
+    final rawJvms = javaMap['jvms'];
+    if (rawJvms is List) {
+      for (final raw in rawJvms) {
+        if (raw is! Map) continue;
+        final jvm = _parseSseJavaJvm(
+          raw.map((key, value) => MapEntry(key.toString(), value)),
+        );
+        if (jvm != null) jvms.add(jvm);
+      }
+    }
+    java = JavaRuntimeInfo(
+      jdkAvailable: jdk is Map && jdk['available'] is bool
+          ? jdk['available'] as bool
+          : true,
+      jdkError: jdk is Map && jdk['error'] is String
+          ? jdk['error'] as String
+          : null,
+      jvms: jvms,
+    );
+  }
+  return RuntimeGroup(
+    kind: kind,
+    available: json['available'] is bool ? json['available'] as bool : true,
+    error: _optionalString(json, 'error'),
+    processes: processes,
+    java: java,
+  );
+}
+
+RuntimeProcessInfo? _parseSseRuntimeProcess(Map<String, dynamic> json) {
+  final pid = json['pid'];
+  final user = _optionalString(json, 'user');
+  if (pid is! num || user == null) return null;
+  final threads = _optionalNum(json, 'threads');
+  return RuntimeProcessInfo(
+    pid: pid.toInt(),
+    user: user,
+    cpuPercent: _optionalNum(json, 'cpu_percent')?.toDouble() ?? 0,
+    memoryPercent: _optionalNum(json, 'memory_percent')?.toDouble() ?? 0,
+    rssKb: _optionalNum(json, 'rss_kb')?.toInt() ?? 0,
+    threads: threads?.toInt(),
+    command: _optionalString(json, 'command') ?? '',
+  );
+}
+
+JavaJvmInfo? _parseSseJavaJvm(Map<String, dynamic> json) {
+  final pid = json['pid'];
+  if (pid is! num) return null;
+  final oldPercent = _optionalNum(json, 'old_percent');
+  final ygc = _optionalNum(json, 'ygc');
+  final fgc = _optionalNum(json, 'fgc');
+  final gctSeconds = _optionalNum(json, 'gct_seconds');
+  return JavaJvmInfo(
+    pid: pid.toInt(),
+    mainClass: _optionalString(json, 'main_class'),
+    oldPercent: oldPercent?.toDouble(),
+    ygc: ygc?.toInt(),
+    fgc: fgc?.toInt(),
+    gctSeconds: gctSeconds?.toDouble(),
+    error: _optionalString(json, 'error'),
   );
 }
 

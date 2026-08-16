@@ -330,4 +330,64 @@ void main() {
       expect(await repository.portForwardConfigsForServer(serverId), isEmpty);
     });
   });
+
+  group('ServerRepository runtime watch configs', () {
+    late AppDatabase database;
+    late ServerRepository repository;
+    late int serverId;
+
+    setUp(() async {
+      final directory = Directory.systemTemp.createTempSync(
+        'runtime_watch_test',
+      );
+      database = AppDatabase(filePath: '${directory.path}/test.sqlite');
+      repository = ServerRepository(database, VaultService(database));
+      serverId = await repository
+          .create(
+            const ServerDraft(
+              name: 'runtime-host',
+              host: '10.0.0.9',
+              port: 22,
+              username: 'u',
+            ),
+          )
+          .then((server) => server.id);
+    });
+
+    test('setRuntimeEnabled persists and watchers see the toggle', () async {
+      await repository.setRuntimeEnabled(serverId, RuntimeKind.java, false);
+      final configs = await repository.watchRuntimeWatchConfigs(serverId).first;
+      expect(configs, hasLength(1));
+      expect(configs.single.runtime, 'java');
+      expect(configs.single.enabled, isFalse);
+    });
+
+    test(
+      'toggling the same runtime twice updates instead of duplicating',
+      () async {
+        await repository.setRuntimeEnabled(serverId, RuntimeKind.python, false);
+        await repository.setRuntimeEnabled(serverId, RuntimeKind.python, true);
+        final configs = await repository
+            .watchRuntimeWatchConfigs(serverId)
+            .first;
+        expect(configs, hasLength(1));
+        expect(configs.single.enabled, isTrue);
+      },
+    );
+
+    test('watch configs are scoped per server', () async {
+      await repository.setRuntimeEnabled(serverId, RuntimeKind.dotnet, false);
+      final otherId = await repository
+          .create(
+            const ServerDraft(
+              name: 'other',
+              host: '10.0.0.10',
+              port: 22,
+              username: 'u',
+            ),
+          )
+          .then((server) => server.id);
+      expect(await repository.watchRuntimeWatchConfigs(otherId).first, isEmpty);
+    });
+  });
 }

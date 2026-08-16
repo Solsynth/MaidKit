@@ -264,6 +264,17 @@ class PortForwardConfigs extends Table {
   DateTimeColumn get updatedAt => dateTime()();
 }
 
+/// Per-server enable/disable toggles for the Runtimes tab, keyed by the
+/// fixed runtime set (java/dotnet/python). Absent rows default to enabled.
+class RuntimeWatchConfigs extends Table {
+  IntColumn get serverId => integer()();
+  TextColumn get runtime => text()(); // 'java' | 'dotnet' | 'python'
+  BoolColumn get enabled => boolean().withDefault(const Constant(true))();
+
+  @override
+  Set<Column<Object>> get primaryKey => {serverId, runtime};
+}
+
 /// Links a deployment project to a GitHub workflow whose latest run is shown
 /// on the project detail page.
 @DriftDatabase(
@@ -285,6 +296,7 @@ class PortForwardConfigs extends Table {
     GitHubRepoPins,
     GitHubTokens,
     PortForwardConfigs,
+    RuntimeWatchConfigs,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -301,7 +313,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 28;
+  int get schemaVersion => 29;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -574,6 +586,9 @@ class AppDatabase extends _$AppDatabase {
       if (from < 28) {
         await m.createTable(portForwardConfigs);
       }
+      if (from < 29) {
+        await m.createTable(runtimeWatchConfigs);
+      }
     },
   );
 
@@ -636,6 +651,11 @@ class AppDatabase extends _$AppDatabase {
             ..where((table) => table.serverId.equals(serverId))
             ..orderBy([(table) => OrderingTerm.asc(table.createdAt)]))
           .watch();
+
+  Stream<List<RuntimeWatchConfig>> watchRuntimeWatchConfigs(int serverId) =>
+      (select(
+        runtimeWatchConfigs,
+      )..where((table) => table.serverId.equals(serverId))).watch();
 
   Future<List<PortForwardConfig>> portForwardConfigsForServer(int serverId) =>
       (select(portForwardConfigs)

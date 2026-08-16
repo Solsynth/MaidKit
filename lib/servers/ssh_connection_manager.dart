@@ -12,6 +12,7 @@ import 'crontab_models.dart';
 import 'firewall_models.dart';
 import 'package_models.dart';
 import 'port_forwarding_models.dart';
+import 'runtime_metrics_collector.dart';
 import 'server_metrics_collector.dart';
 import 'server_models.dart';
 import 'ssh_proxy_connect.dart';
@@ -471,6 +472,16 @@ fi
           .whereType<ServerProcess>()
           .toList();
     });
+  }
+
+  /// Collects a per-runtime snapshot (java/dotnet/python) over direct SSH,
+  /// mirroring the daemon's `runtimes` payload. Returns null when the SSH
+  /// ps commands fail entirely (caller falls back to the daemon channel).
+  Future<RuntimeSnapshot?> refreshRuntimeMetrics(int serverId) {
+    return withClient(
+      serverId,
+      (client) => collectRuntimeMetricsOverSsh(client),
+    );
   }
 
   /// Sends SIGKILL to [pid] on the remote host.

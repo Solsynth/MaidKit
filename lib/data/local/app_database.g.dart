@@ -9293,6 +9293,277 @@ class PortForwardConfigsCompanion extends UpdateCompanion<PortForwardConfig> {
   }
 }
 
+class $RuntimeWatchConfigsTable extends RuntimeWatchConfigs
+    with TableInfo<$RuntimeWatchConfigsTable, RuntimeWatchConfig> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RuntimeWatchConfigsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _serverIdMeta = const VerificationMeta(
+    'serverId',
+  );
+  @override
+  late final GeneratedColumn<int> serverId = GeneratedColumn<int>(
+    'server_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _runtimeMeta = const VerificationMeta(
+    'runtime',
+  );
+  @override
+  late final GeneratedColumn<String> runtime = GeneratedColumn<String>(
+    'runtime',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _enabledMeta = const VerificationMeta(
+    'enabled',
+  );
+  @override
+  late final GeneratedColumn<bool> enabled = GeneratedColumn<bool>(
+    'enabled',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("enabled" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [serverId, runtime, enabled];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'runtime_watch_configs';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RuntimeWatchConfig> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('server_id')) {
+      context.handle(
+        _serverIdMeta,
+        serverId.isAcceptableOrUnknown(data['server_id']!, _serverIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_serverIdMeta);
+    }
+    if (data.containsKey('runtime')) {
+      context.handle(
+        _runtimeMeta,
+        runtime.isAcceptableOrUnknown(data['runtime']!, _runtimeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_runtimeMeta);
+    }
+    if (data.containsKey('enabled')) {
+      context.handle(
+        _enabledMeta,
+        enabled.isAcceptableOrUnknown(data['enabled']!, _enabledMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {serverId, runtime};
+  @override
+  RuntimeWatchConfig map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RuntimeWatchConfig(
+      serverId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}server_id'],
+      )!,
+      runtime: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}runtime'],
+      )!,
+      enabled: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}enabled'],
+      )!,
+    );
+  }
+
+  @override
+  $RuntimeWatchConfigsTable createAlias(String alias) {
+    return $RuntimeWatchConfigsTable(attachedDatabase, alias);
+  }
+}
+
+class RuntimeWatchConfig extends DataClass
+    implements Insertable<RuntimeWatchConfig> {
+  final int serverId;
+  final String runtime;
+  final bool enabled;
+  const RuntimeWatchConfig({
+    required this.serverId,
+    required this.runtime,
+    required this.enabled,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['server_id'] = Variable<int>(serverId);
+    map['runtime'] = Variable<String>(runtime);
+    map['enabled'] = Variable<bool>(enabled);
+    return map;
+  }
+
+  RuntimeWatchConfigsCompanion toCompanion(bool nullToAbsent) {
+    return RuntimeWatchConfigsCompanion(
+      serverId: Value(serverId),
+      runtime: Value(runtime),
+      enabled: Value(enabled),
+    );
+  }
+
+  factory RuntimeWatchConfig.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RuntimeWatchConfig(
+      serverId: serializer.fromJson<int>(json['serverId']),
+      runtime: serializer.fromJson<String>(json['runtime']),
+      enabled: serializer.fromJson<bool>(json['enabled']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'serverId': serializer.toJson<int>(serverId),
+      'runtime': serializer.toJson<String>(runtime),
+      'enabled': serializer.toJson<bool>(enabled),
+    };
+  }
+
+  RuntimeWatchConfig copyWith({
+    int? serverId,
+    String? runtime,
+    bool? enabled,
+  }) => RuntimeWatchConfig(
+    serverId: serverId ?? this.serverId,
+    runtime: runtime ?? this.runtime,
+    enabled: enabled ?? this.enabled,
+  );
+  RuntimeWatchConfig copyWithCompanion(RuntimeWatchConfigsCompanion data) {
+    return RuntimeWatchConfig(
+      serverId: data.serverId.present ? data.serverId.value : this.serverId,
+      runtime: data.runtime.present ? data.runtime.value : this.runtime,
+      enabled: data.enabled.present ? data.enabled.value : this.enabled,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RuntimeWatchConfig(')
+          ..write('serverId: $serverId, ')
+          ..write('runtime: $runtime, ')
+          ..write('enabled: $enabled')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(serverId, runtime, enabled);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RuntimeWatchConfig &&
+          other.serverId == this.serverId &&
+          other.runtime == this.runtime &&
+          other.enabled == this.enabled);
+}
+
+class RuntimeWatchConfigsCompanion extends UpdateCompanion<RuntimeWatchConfig> {
+  final Value<int> serverId;
+  final Value<String> runtime;
+  final Value<bool> enabled;
+  final Value<int> rowid;
+  const RuntimeWatchConfigsCompanion({
+    this.serverId = const Value.absent(),
+    this.runtime = const Value.absent(),
+    this.enabled = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RuntimeWatchConfigsCompanion.insert({
+    required int serverId,
+    required String runtime,
+    this.enabled = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : serverId = Value(serverId),
+       runtime = Value(runtime);
+  static Insertable<RuntimeWatchConfig> custom({
+    Expression<int>? serverId,
+    Expression<String>? runtime,
+    Expression<bool>? enabled,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (serverId != null) 'server_id': serverId,
+      if (runtime != null) 'runtime': runtime,
+      if (enabled != null) 'enabled': enabled,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RuntimeWatchConfigsCompanion copyWith({
+    Value<int>? serverId,
+    Value<String>? runtime,
+    Value<bool>? enabled,
+    Value<int>? rowid,
+  }) {
+    return RuntimeWatchConfigsCompanion(
+      serverId: serverId ?? this.serverId,
+      runtime: runtime ?? this.runtime,
+      enabled: enabled ?? this.enabled,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (serverId.present) {
+      map['server_id'] = Variable<int>(serverId.value);
+    }
+    if (runtime.present) {
+      map['runtime'] = Variable<String>(runtime.value);
+    }
+    if (enabled.present) {
+      map['enabled'] = Variable<bool>(enabled.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RuntimeWatchConfigsCompanion(')
+          ..write('serverId: $serverId, ')
+          ..write('runtime: $runtime, ')
+          ..write('enabled: $enabled, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -9322,6 +9593,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $GitHubTokensTable gitHubTokens = $GitHubTokensTable(this);
   late final $PortForwardConfigsTable portForwardConfigs =
       $PortForwardConfigsTable(this);
+  late final $RuntimeWatchConfigsTable runtimeWatchConfigs =
+      $RuntimeWatchConfigsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -9344,6 +9617,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     gitHubRepoPins,
     gitHubTokens,
     portForwardConfigs,
+    runtimeWatchConfigs,
   ];
 }
 
@@ -14246,6 +14520,184 @@ typedef $$PortForwardConfigsTableProcessedTableManager =
       PortForwardConfig,
       PrefetchHooks Function()
     >;
+typedef $$RuntimeWatchConfigsTableCreateCompanionBuilder =
+    RuntimeWatchConfigsCompanion Function({
+      required int serverId,
+      required String runtime,
+      Value<bool> enabled,
+      Value<int> rowid,
+    });
+typedef $$RuntimeWatchConfigsTableUpdateCompanionBuilder =
+    RuntimeWatchConfigsCompanion Function({
+      Value<int> serverId,
+      Value<String> runtime,
+      Value<bool> enabled,
+      Value<int> rowid,
+    });
+
+class $$RuntimeWatchConfigsTableFilterComposer
+    extends Composer<_$AppDatabase, $RuntimeWatchConfigsTable> {
+  $$RuntimeWatchConfigsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get serverId => $composableBuilder(
+    column: $table.serverId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get runtime => $composableBuilder(
+    column: $table.runtime,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get enabled => $composableBuilder(
+    column: $table.enabled,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$RuntimeWatchConfigsTableOrderingComposer
+    extends Composer<_$AppDatabase, $RuntimeWatchConfigsTable> {
+  $$RuntimeWatchConfigsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get serverId => $composableBuilder(
+    column: $table.serverId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get runtime => $composableBuilder(
+    column: $table.runtime,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get enabled => $composableBuilder(
+    column: $table.enabled,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$RuntimeWatchConfigsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $RuntimeWatchConfigsTable> {
+  $$RuntimeWatchConfigsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get serverId =>
+      $composableBuilder(column: $table.serverId, builder: (column) => column);
+
+  GeneratedColumn<String> get runtime =>
+      $composableBuilder(column: $table.runtime, builder: (column) => column);
+
+  GeneratedColumn<bool> get enabled =>
+      $composableBuilder(column: $table.enabled, builder: (column) => column);
+}
+
+class $$RuntimeWatchConfigsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $RuntimeWatchConfigsTable,
+          RuntimeWatchConfig,
+          $$RuntimeWatchConfigsTableFilterComposer,
+          $$RuntimeWatchConfigsTableOrderingComposer,
+          $$RuntimeWatchConfigsTableAnnotationComposer,
+          $$RuntimeWatchConfigsTableCreateCompanionBuilder,
+          $$RuntimeWatchConfigsTableUpdateCompanionBuilder,
+          (
+            RuntimeWatchConfig,
+            BaseReferences<
+              _$AppDatabase,
+              $RuntimeWatchConfigsTable,
+              RuntimeWatchConfig
+            >,
+          ),
+          RuntimeWatchConfig,
+          PrefetchHooks Function()
+        > {
+  $$RuntimeWatchConfigsTableTableManager(
+    _$AppDatabase db,
+    $RuntimeWatchConfigsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RuntimeWatchConfigsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$RuntimeWatchConfigsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$RuntimeWatchConfigsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> serverId = const Value.absent(),
+                Value<String> runtime = const Value.absent(),
+                Value<bool> enabled = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => RuntimeWatchConfigsCompanion(
+                serverId: serverId,
+                runtime: runtime,
+                enabled: enabled,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required int serverId,
+                required String runtime,
+                Value<bool> enabled = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => RuntimeWatchConfigsCompanion.insert(
+                serverId: serverId,
+                runtime: runtime,
+                enabled: enabled,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$RuntimeWatchConfigsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $RuntimeWatchConfigsTable,
+      RuntimeWatchConfig,
+      $$RuntimeWatchConfigsTableFilterComposer,
+      $$RuntimeWatchConfigsTableOrderingComposer,
+      $$RuntimeWatchConfigsTableAnnotationComposer,
+      $$RuntimeWatchConfigsTableCreateCompanionBuilder,
+      $$RuntimeWatchConfigsTableUpdateCompanionBuilder,
+      (
+        RuntimeWatchConfig,
+        BaseReferences<
+          _$AppDatabase,
+          $RuntimeWatchConfigsTable,
+          RuntimeWatchConfig
+        >,
+      ),
+      RuntimeWatchConfig,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -14284,4 +14736,6 @@ class $AppDatabaseManager {
       $$GitHubTokensTableTableManager(_db, _db.gitHubTokens);
   $$PortForwardConfigsTableTableManager get portForwardConfigs =>
       $$PortForwardConfigsTableTableManager(_db, _db.portForwardConfigs);
+  $$RuntimeWatchConfigsTableTableManager get runtimeWatchConfigs =>
+      $$RuntimeWatchConfigsTableTableManager(_db, _db.runtimeWatchConfigs);
 }
