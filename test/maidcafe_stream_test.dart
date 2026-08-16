@@ -167,6 +167,54 @@ env = [
     );
   });
 
+  group('parseMaidCafeActionFragment', () {
+    test('reads every field from a flat fragment', () {
+      final action = parseMaidCafeActionFragment('''
+name = "deploy"
+command = "/etc/maidcafe/actions/deploy.sh"
+script = true
+enabled = false
+notifyOnSuccess = true
+displayName = "Deploy the web app"
+cwd = "/srv/myapp"
+user = "deploy"
+timeout = "2m"
+env = ["CI_BUILD=42"]
+''');
+      expect(action.name, 'deploy');
+      expect(action.enabled, isFalse);
+      expect(action.notifyOnSuccess, isTrue);
+      expect(action.displayName, 'Deploy the web app');
+      expect(action.workingDirectory, '/srv/myapp');
+      expect(action.user, 'deploy');
+      expect(action.scriptTimeout, '2m');
+      expect(action.environment, {'CI_BUILD': '42'});
+    });
+
+    test('defaults enabled and leaves optional fields null', () {
+      final action = parseMaidCafeActionFragment('''
+name = "cleanup"
+command = "/etc/maidcafe/actions/cleanup.sh"
+''');
+      expect(action.enabled, isTrue);
+      expect(action.workingDirectory, isNull);
+      expect(action.user, isNull);
+      expect(action.scriptTimeout, isNull);
+      expect(action.environment, isEmpty);
+    });
+  });
+
+  group('parseMaidCafeConfigFiles', () {
+    test('decodes hex files by name', () {
+      final blob =
+          '###FILE:deploy.toml###\n${_hexEncode('name = "deploy"')}\n'
+          '###FILE:cleanup.toml###\n${_hexEncode('name = "cleanup"')}\n';
+      final files = parseMaidCafeConfigFiles(blob, '.toml');
+      expect(files.keys, ['deploy', 'cleanup']);
+      expect(files['deploy'], 'name = "deploy"');
+    });
+  });
+
   group('parseMaidCafeSseFrames', () {
     test('parses hello and metric frames from bytes', () async {
       final events = await _frames(

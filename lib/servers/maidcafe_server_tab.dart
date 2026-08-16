@@ -120,6 +120,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   late final FocusNode _newActionFocusNode;
   late final TextEditingController _newActionCwdController;
   late final TextEditingController _newActionUserController;
+  late final TextEditingController _newActionTimeoutController;
   Map<String, String> _newActionEnvironment = {};
   var _showComposer = false;
   // Last values supplied for an action's {{ name }} template variables, so
@@ -149,10 +150,14 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   String? _latestVersion;
   List<MaidCafeActionDefinition>? _savedActions;
   String? _runningActionName;
+  // Raw current /etc/maidcafe/config.toml text, for patch-based saves that
+  // preserve everything the app does not model.
+  String _serverConfigText = '';
   final Map<String, Map<String, dynamic>> _actionResults = {};
   List<MaidCafeAuditEntry> _auditEntries = const [];
   var _auditLoading = false;
   String? _auditError;
+  String? _auditFilter;
   // Guards the build-time auto-load: empty entries are a legitimate state
   // (no runs yet, or the daemon lacks the endpoint), so the trigger must
   // fire once per stream, not on every rebuild — otherwise each failed or
@@ -178,6 +183,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _newActionFocusNode = FocusNode();
     _newActionCwdController = TextEditingController();
     _newActionUserController = TextEditingController();
+    _newActionTimeoutController = TextEditingController();
     final cachedPort = _cachedMaidCafePort(widget.server);
     _portController = TextEditingController(
       text: cachedPort == null ? '' : '$cachedPort',
@@ -219,6 +225,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _newActionFocusNode.dispose();
     _newActionCwdController.dispose();
     _newActionUserController.dispose();
+    _newActionTimeoutController.dispose();
     _portController.dispose();
     _daemonIdController.dispose();
     _versionController.dispose();
@@ -337,6 +344,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         .setForServer(widget.server.id, config.actions);
     _savedActions = List.unmodifiable(config.actions);
     _actionResults.clear();
+    _serverConfigText = config.configText;
   }
 
   Future<void> _probeInstallation() async {
@@ -423,6 +431,14 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       setState(() => _message = 'maidCafeActionUserInvalid'.tr());
       return;
     }
+    final scriptTimeout = _newActionTimeoutController.text.trim();
+    if (scriptTimeout.isNotEmpty &&
+        !RegExp(
+          r'^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$',
+        ).hasMatch(scriptTimeout)) {
+      setState(() => _message = 'maidCafeActionTimeoutInvalid'.tr());
+      return;
+    }
     for (final key in _newActionEnvironment.keys) {
       if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(key)) {
         setState(() => _message = 'maidCafeActionEnvKeyInvalid'.tr());
@@ -439,6 +455,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             : _newActionDisplayNameController.text.trim(),
         workingDirectory: workingDirectory.isEmpty ? null : workingDirectory,
         user: user.isEmpty ? null : user,
+        scriptTimeout: scriptTimeout.isEmpty ? null : scriptTimeout,
         environment: Map.unmodifiable(_newActionEnvironment),
       ),
     ]);
@@ -448,6 +465,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       _newActionController.text = '';
       _newActionCwdController.clear();
       _newActionUserController.clear();
+      _newActionTimeoutController.clear();
       _newActionEnvironment = {};
       _showComposer = false;
       _message = null;
@@ -491,6 +509,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       a.displayName == b.displayName &&
       a.workingDirectory == b.workingDirectory &&
       a.user == b.user &&
+      a.scriptTimeout == b.scriptTimeout &&
       _sameEnvironment(a.environment, b.environment);
 
   bool _sameEnvironment(Map<String, String> a, Map<String, String> b) {
@@ -601,6 +620,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     required String channel,
     required int port,
     required String apiSecret,
+    bool updating = false,
   }) async {
     final artifact = await fetchMaidCafeDistributionArtifact(channel: channel);
     return buildMaidCafeDaemonInstallScript(
@@ -619,6 +639,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
       maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
       actions: List.unmodifiable(_actions),
+      updateOnly: updating,
     );
   }
 
@@ -635,10 +656,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       _message = null;
     });
     try {
-      // For updates the live daemon config (secrets, intervals, actions)
-      // must be loaded before the preview is built.
-      if (updating) await _loadDaemonConfig();
-      if (!mounted) return;
+      // Updates replace only the daemon binary, so the live config is not
+      // needed and must not be rewritten; keep the current port.
       final apiSecret =
           updating && _metricsSecretController.text.trim().isNotEmpty
           ? _metricsSecretController.text.trim()
@@ -694,6 +713,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
         maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
         actions: List.unmodifiable(_actions),
+        updateOnly: updating,
       );
       await _cacheMaidCafePort(port);
       final opened = await _openStream(port: port, force: true);
@@ -742,8 +762,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
 
   Future<void> _rotateApiSecret() async {
     if (_busy || _stream == null || _state != _MaidCafeState.running) return;
-    final stream = _stream;
-    final version = stream?.version ?? '';
     final apiSecret = generateMaidCafeApiSecret();
     _metricsSecretController.text = apiSecret;
     setState(() {
@@ -769,13 +787,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         run: (onOutput) => manager.runPrivilegedScriptSnippet(
           widget.server.id,
           script: buildMaidCafeDaemonConfigScript(
+            currentConfig: _serverConfigText,
             daemonId: _configText(
               _daemonIdController,
               'maidkit-${widget.server.id}',
             ),
             cloudUrl: _cloudUrlController.text.trim(),
             cloudSecret: _cloudSecretController.text,
-            version: _configText(_versionController, version),
             apiSecret: apiSecret,
             port: port,
             transport: _transport,
@@ -823,7 +841,6 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       _message = null;
     });
     final stream = _stream;
-    final version = stream?.version;
     final apiSecret = _metricsSecretController.text.trim().isEmpty
         ? stream?.apiSecret ?? generateMaidCafeApiSecret()
         : _metricsSecretController.text.trim();
@@ -846,13 +863,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         run: (onOutput) => manager.runPrivilegedScriptSnippet(
           widget.server.id,
           script: buildMaidCafeDaemonConfigScript(
+            currentConfig: _serverConfigText,
             daemonId: _configText(
               _daemonIdController,
               'maidkit-${widget.server.id}',
             ),
             cloudUrl: _cloudUrlController.text.trim(),
             cloudSecret: _cloudSecretController.text,
-            version: _configText(_versionController, version ?? ''),
             apiSecret: apiSecret,
             port: port,
             transport: _transport,
@@ -953,6 +970,23 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
+  /// Distinct action names present in the loaded audit entries, sorted.
+  List<String> get _auditEntryNames {
+    final names = <String>{for (final entry in _auditEntries) entry.name};
+    final sorted = names.toList()..sort();
+    return sorted;
+  }
+
+  /// Audit entries narrowed to the selected action (all when no filter).
+  List<MaidCafeAuditEntry> get _visibleAuditEntries {
+    final filter = _auditFilter;
+    if (filter == null) return _auditEntries;
+    return [
+      for (final entry in _auditEntries)
+        if (entry.name == filter) entry,
+    ];
+  }
+
   Future<void> _loadAudit() async {
     final stream = _stream;
     if (stream == null || _busy || _auditLoading) return;
@@ -980,6 +1014,44 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       }
     } finally {
       if (mounted) setState(() => _auditLoading = false);
+    }
+  }
+
+  Future<void> _confirmClearAudit() async {
+    final stream = _stream;
+    if (stream == null || _busy) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('maidCafeAuditClearConfirmTitle'.tr()),
+        content: Text('maidCafeAuditClearConfirm'.tr()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('maidCafeCancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('maidCafeAuditClear'.tr()),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await stream.clearAudit();
+      if (mounted) {
+        setState(() {
+          _auditEntries = const [];
+          _auditError = null;
+          _auditFilter = null;
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _auditError = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -1263,6 +1335,34 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                       ),
                     ),
                   ),
+                  if (_auditEntries.isNotEmpty)
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<String?>(
+                        value: _auditFilter,
+                        hint: Text('maidCafeAuditFilter'.tr()),
+                        items: [
+                          DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('maidCafeAuditAll'.tr()),
+                          ),
+                          for (final name in _auditEntryNames)
+                            DropdownMenuItem<String?>(
+                              value: name,
+                              child: Text(name),
+                            ),
+                        ],
+                        onChanged: _busy
+                            ? null
+                            : (value) => setState(() => _auditFilter = value),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: 'maidCafeAuditClear'.tr(),
+                    onPressed: _busy || _auditEntries.isEmpty
+                        ? null
+                        : _confirmClearAudit,
+                    icon: const Icon(Symbols.delete_outline),
+                  ),
                   IconButton(
                     tooltip: 'commonRefresh'.tr(),
                     onPressed: _busy ? null : _loadAudit,
@@ -1295,8 +1395,18 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                     ),
                   ),
                 )
+              else if (_visibleAuditEntries.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    'maidCafeAuditNoMatches'.tr(),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                )
               else
-                for (final entry in _auditEntries)
+                for (final entry in _visibleAuditEntries)
                   _MaidCafeAuditRow(entry: entry),
             ],
           ),
@@ -1366,6 +1476,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             _MaidCafeExecutionSection(
               cwdController: _newActionCwdController,
               userController: _newActionUserController,
+              timeoutController: _newActionTimeoutController,
               environment: _newActionEnvironment,
               enabled: !_busy,
               onEnvironmentChanged: (environment) =>
@@ -2187,6 +2298,7 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
   late final TextEditingController _displayNameController;
   late final TextEditingController _cwdController;
   late final TextEditingController _userController;
+  late final TextEditingController _timeoutController;
 
   @override
   void initState() {
@@ -2202,6 +2314,9 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
       text: widget.action.workingDirectory ?? '',
     );
     _userController = TextEditingController(text: widget.action.user ?? '');
+    _timeoutController = TextEditingController(
+      text: widget.action.scriptTimeout ?? '',
+    );
   }
 
   @override
@@ -2222,6 +2337,9 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
     if (widget.action.user != _userController.text) {
       _userController.text = widget.action.user ?? '';
     }
+    if (widget.action.scriptTimeout != _timeoutController.text) {
+      _timeoutController.text = widget.action.scriptTimeout ?? '';
+    }
   }
 
   @override
@@ -2230,6 +2348,7 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
     _displayNameController.dispose();
     _cwdController.dispose();
     _userController.dispose();
+    _timeoutController.dispose();
     super.dispose();
   }
 
@@ -2344,6 +2463,7 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
             _MaidCafeExecutionSection(
               cwdController: _cwdController,
               userController: _userController,
+              timeoutController: _timeoutController,
               environment: action.environment,
               enabled: !widget.busy,
               onCwdChanged: (text) => widget.onChanged(
@@ -2353,6 +2473,11 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
               ),
               onUserChanged: (text) => widget.onChanged(
                 action.copyWith(user: text.trim().isEmpty ? null : text.trim()),
+              ),
+              onTimeoutChanged: (text) => widget.onChanged(
+                action.copyWith(
+                  scriptTimeout: text.trim().isEmpty ? null : text.trim(),
+                ),
               ),
               onEnvironmentChanged: (environment) =>
                   widget.onChanged(action.copyWith(environment: environment)),
@@ -2393,24 +2518,29 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
   }
 }
 
-/// Working directory, run-as user and environment inputs for an action.
+/// Working directory, run-as user, timeout and environment inputs for an
+/// action.
 class _MaidCafeExecutionSection extends StatelessWidget {
   const _MaidCafeExecutionSection({
     required this.cwdController,
     required this.userController,
+    required this.timeoutController,
     required this.environment,
     required this.onEnvironmentChanged,
     this.onCwdChanged,
     this.onUserChanged,
+    this.onTimeoutChanged,
     this.enabled = true,
   });
 
   final TextEditingController cwdController;
   final TextEditingController userController;
+  final TextEditingController timeoutController;
   final Map<String, String> environment;
   final ValueChanged<Map<String, String>> onEnvironmentChanged;
   final ValueChanged<String>? onCwdChanged;
   final ValueChanged<String>? onUserChanged;
+  final ValueChanged<String>? onTimeoutChanged;
   final bool enabled;
 
   @override
@@ -2450,6 +2580,18 @@ class _MaidCafeExecutionSection extends StatelessWidget {
                 decoration: InputDecoration(
                   labelText: 'maidCafeActionUser'.tr(),
                   hintText: 'deploy',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: timeoutController,
+                enabled: enabled,
+                onChanged: onTimeoutChanged,
+                decoration: InputDecoration(
+                  labelText: 'maidCafeActionTimeout'.tr(),
+                  hintText: '30s',
                 ),
               ),
             ),
@@ -2791,7 +2933,9 @@ class _MaidCafeActionResultView extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final ok = result['ok'] == true;
-    final exitCode = result['exitCode'];
+    // The daemon responds with snake_case keys; `exit_code` is what the
+    // action endpoint returns, not `exitCode`.
+    final exitCode = result['exit_code'];
     final stdout = result['stdout']?.toString() ?? '';
     final stderr = result['stderr']?.toString() ?? '';
     return DecoratedBox(

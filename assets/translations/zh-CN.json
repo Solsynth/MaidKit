@@ -1757,5 +1757,13 @@
   "maidCafeActionSlug": "操作名称 (API)",
   "maidCafeActionDisplayName": "显示名称",
   "maidCafeAuditTitle": "运行记录",
-  "maidCafeAuditEmpty": "暂无运行记录。"
+  "maidCafeAuditEmpty": "暂无运行记录。",
+  "maidCafeActionTimeout": "超时",
+  "maidCafeActionTimeoutInvalid": "超时必须为时长格式，如 30s 或 2m。",
+  "maidCafeAuditAll": "全部",
+  "maidCafeAuditClear": "清空日志",
+  "maidCafeAuditClearConfirm": "这将删除守护进程的所有运行记录，且无法撤销。",
+  "maidCafeAuditClearConfirmTitle": "清空审计日志？",
+  "maidCafeAuditFilter": "操作",
+  "maidCafeAuditNoMatches": "没有符合此筛选条件的运行记录。"
 }

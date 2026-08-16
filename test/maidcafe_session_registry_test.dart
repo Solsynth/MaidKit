@@ -54,6 +54,9 @@ class _FakeSession implements MaidCafeStreamSession {
       throw UnimplementedError();
 
   @override
+  Future<void> clearAudit() => throw UnimplementedError();
+
+  @override
   Stream<MaidCafeStreamEvent> openStream({
     Set<MaidCafeStreamEventType> events = maidCafeStreamAllEvents,
   }) => throw UnimplementedError();

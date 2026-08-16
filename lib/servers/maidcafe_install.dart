@@ -55,6 +55,7 @@ class MaidCafeActionDefinition {
     this.displayName,
     this.workingDirectory,
     this.user,
+    this.scriptTimeout,
     this.environment = const {},
   });
 
@@ -76,6 +77,10 @@ class MaidCafeActionDefinition {
   /// sudo, so the daemon needs the sudoers rule MaidKit installs.
   final String? user;
 
+  /// Per-action script timeout override (a duration like "30s" or "2m");
+  /// null uses the daemon-wide script timeout.
+  final String? scriptTimeout;
+
   /// KEY=VALUE assignments added to the script's environment.
   final Map<String, String> environment;
 
@@ -88,6 +93,7 @@ class MaidCafeActionDefinition {
     Object? displayName = _unset,
     Object? workingDirectory = _unset,
     Object? user = _unset,
+    Object? scriptTimeout = _unset,
     Map<String, String>? environment,
   }) => MaidCafeActionDefinition(
     name: name ?? this.name,
@@ -102,6 +108,9 @@ class MaidCafeActionDefinition {
         ? this.workingDirectory
         : workingDirectory as String?,
     user: identical(user, _unset) ? this.user : user as String?,
+    scriptTimeout: identical(scriptTimeout, _unset)
+        ? this.scriptTimeout
+        : scriptTimeout as String?,
     environment: environment ?? this.environment,
   );
 }
@@ -146,18 +155,19 @@ List<String> maidCafeActionTemplateVariables(String script) {
   return variables;
 }
 
-/// Builds a privileged shell snippet that deploys action script bodies to
-/// `/etc/maidcafe/actions/<name>.sh` and removes stale scripts.
+/// Builds a privileged shell snippet that deploys action script bodies and
+/// config fragments to `/etc/maidcafe/actions/` and removes stale files.
 ///
-/// The daemon only executes absolute-path commands (no inline scripts), so
-/// bodies are installed as executables and the action's `command` points at
-/// them. Under systemd the daemon runs as `maidcafe`, so scripts are
-/// group-executable but not world-readable; stdio mode runs as the SSH user,
-/// so they are world-executable instead.
+/// Each action gets a `<name>.toml` fragment (the daemon merges every
+/// fragment at load) and a `<name>.sh` script body; both are removed when the
+/// action is gone. Under systemd the daemon runs as `maidcafe`, so scripts
+/// are group-executable but not world-readable and fragments are group-
+/// readable only; stdio mode runs as the SSH user, so they are world-
+/// readable instead.
 ///
 /// [runAsUsers] lists the distinct accounts the actions run as. When
 /// non-empty the actions directory becomes group-writable for `maidcafe` (the
-/// daemon renders substituted scripts into `/etc/maidcafe/actions/.run` there)
+/// daemon renders substituted scripts into `/etc/maidcafe/actions/run` there)
 /// and a sudoers drop-in grants the daemon user the right to run those scripts
 /// as the listed accounts; `visudo` validates the rule before it is installed.
 /// An empty list removes any stale drop-in.
@@ -179,12 +189,22 @@ String buildMaidCafeActionScriptsScript(
       '-m ${stdio ? "0755" : "0750"} /dev/stdin '
       '/etc/maidcafe/actions/${action.name}.sh',
     );
+    final fragment = base64Encode(
+      utf8.encode(maidCafeActionFragments([action])[action.name]!),
+    );
+    writes.add(
+      "printf '%s' '$fragment' | base64 -d | "
+      'install -o root -g ${stdio ? "root" : "maidcafe"} '
+      '-m ${stdio ? "0644" : "0640"} /dev/stdin '
+      '/etc/maidcafe/actions/${action.name}.toml',
+    );
     names.add(action.name);
   }
   final keepChecks = names
       .map(
         (name) =>
-            '  if [ "\$f" = "/etc/maidcafe/actions/$name.sh" ]; then\n'
+            '  if [ "\$f" = "/etc/maidcafe/actions/$name.sh" ] || '
+            '[ "\$f" = "/etc/maidcafe/actions/$name.toml" ]; then\n'
             '    keep=true\n'
             '  fi',
       )
@@ -199,7 +219,7 @@ String buildMaidCafeActionScriptsScript(
 chown ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root:maidcafe'} /etc/maidcafe/actions 2>/dev/null || true
 chmod 0770 /etc/maidcafe/actions
 install -d -o ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root'} -g ${stdio ? 'root' : 'maidcafe'} -m 0770 /etc/maidcafe/actions
-install -d -o ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root'} -g ${stdio ? 'root' : 'maidcafe'} -m 0770 /etc/maidcafe/actions/.run'''
+install -d -o ${stdio ? '"\${SUDO_USER:-\$(id -un)}"' : 'root'} -g ${stdio ? 'root' : 'maidcafe'} -m 0770 /etc/maidcafe/actions/run'''
       : 'install -d -o root -g root -m 0755 /etc/maidcafe/actions';
   // The daemon runs as the SSH user in stdio mode; sudo sets SUDO_USER when
   // the install was elevated, so that is the account the rule must name. The
@@ -216,7 +236,7 @@ rule_user=$ruleUserExpr
 sudoers_tmp="\$(mktemp "\${TMPDIR:-/tmp}/maidcafe-actions.XXXXXX")"
 # User-mode actions execute the rendered script under .run; sudoers
 # wildcards do not cross "/", so both segments need their own spec.
-printf '%s\\n' "\$rule_user ALL=($runAsList) NOPASSWD: /etc/maidcafe/actions/.run/*, /etc/maidcafe/actions/*" > "\$sudoers_tmp"
+printf '%s\\n' "\$rule_user ALL=($runAsList) NOPASSWD: /etc/maidcafe/actions/run/*, /etc/maidcafe/actions/*" > "\$sudoers_tmp"
 visudo -cf "\$sudoers_tmp" >/dev/null 2>&1 || {
   echo "MaidCafe rejected its own sudoers rule; no changes were made." >&2
   rm -f "\$sudoers_tmp"
@@ -229,7 +249,7 @@ rm -f "\$sudoers_tmp"
   return '''
 $actionsDirInstall
 ${writes.join('\n')}
-for f in /etc/maidcafe/actions/*.sh; do
+for f in /etc/maidcafe/actions/*.sh /etc/maidcafe/actions/*.toml; do
   [ -e "\$f" ] || continue
   keep=false
 $keepChecks
@@ -353,6 +373,7 @@ Future<void> installMaidCafeApplication({
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
+  bool updateOnly = false,
 }) => _installMaidCafeDaemon(
   ref: ref,
   server: server,
@@ -372,6 +393,7 @@ Future<void> installMaidCafeApplication({
   channel: channel,
   port: port,
   apiSecret: apiSecret ?? generateMaidCafeApiSecret(),
+  updateOnly: updateOnly,
 );
 
 Future<void> _installMaidCafeDaemon({
@@ -393,6 +415,7 @@ Future<void> _installMaidCafeDaemon({
   List<MaidCafeActionDefinition> actions = const [],
   required int port,
   required String apiSecret,
+  bool updateOnly = false,
 }) async {
   final manager = ref.read(connectionManagerProvider);
   final packageManager = (await manager.getPackageManagerStatus(
@@ -405,6 +428,8 @@ Future<void> _installMaidCafeDaemon({
     subtitle: server.name,
     command: transport == 'stdio'
         ? 'download · install MaidCafe stdio daemon'
+        : updateOnly
+        ? 'download · replace binary · restart systemd service'
         : 'download · install · systemctl enable --now maidcafe-daemon',
     onCancel: () => cancelScript?.call(),
     run: (onOutput) async {
@@ -449,6 +474,7 @@ Future<void> _installMaidCafeDaemon({
           maxBodyBytes: maxBodyBytes,
           maxConcurrentRuns: maxConcurrentRuns,
           actions: actions,
+          updateOnly: updateOnly,
         ),
         sshUserIsRoot: server.username == 'root',
         sudoPassword: sudoPassword,
@@ -504,6 +530,10 @@ String buildMaidCafeDaemonInstallScript({
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
+  // When true the script replaces only the daemon binary and restarts the
+  // service; the configuration, action fragments, scripts, sudoers rule and
+  // systemd unit are left untouched, so an upgrade can never lose settings.
+  bool updateOnly = false,
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
     throw ArgumentError.value(
@@ -530,15 +560,26 @@ String buildMaidCafeDaemonInstallScript({
   final configInstall = stdio
       ? 'install -o root -g root -m 0644'
       : 'install -o root -g maidcafe -m 0640';
-  final serviceInstall = stdio
+  final encodedArtifactUrl = base64Encode(utf8.encode(artifactUrl));
+  final binaryInstall =
+      '''work_dir="\$(mktemp -d "\${TMPDIR:-/tmp}/maidcafe-install.XXXXXX")"
+trap 'rm -rf "\$work_dir"' EXIT
+
+printf '%s' '$encodedArtifactUrl' | base64 -d > "\$work_dir/artifact.url"
+mkdir -p "\$work_dir/extracted"
+curl --fail --location --retry 3 --silent --show-error "\$(cat "\$work_dir/artifact.url")" \\
+  --output "\$work_dir/maidcafe-daemon.tar"
+tar -xf "\$work_dir/maidcafe-daemon.tar" -C "\$work_dir/extracted"
+daemon_binary="\$(find "\$work_dir/extracted" -type f -name maidcafe-daemon -print -quit)"
+test -n "\$daemon_binary"
+
+install -o root -g root -m 0755 "\$daemon_binary" /usr/local/bin/maidcafe-daemon
+''';
+  // Restart the service and verify health using the secret in the existing
+  // config (never rewritten by an update).
+  final restartHealth = stdio
       ? ''
       : '''
-cat > "\$work_dir/maidcafe-daemon.service" <<'EOF'
-${_maidCafeSystemdUnit(runAsUsers)}
-EOF
-install -o root -g root -m 0644 "\$work_dir/maidcafe-daemon.service" /etc/systemd/system/maidcafe-daemon.service
-systemctl daemon-reload
-systemctl enable maidcafe-daemon
 systemctl restart maidcafe-daemon
 metricsSecret="\$(awk -F'"' '/metricsSecret[[:space:]]*=/{print \$2; exit}' /etc/maidcafe/config.toml)"
  i=0
@@ -560,6 +601,24 @@ then
   exit 1
 fi
 ''';
+  if (updateOnly) {
+    return '''set -eu
+${stdio ? '' : '''command -v systemctl >/dev/null 2>&1 || {
+  echo "MaidCafe daemon installation requires systemd." >&2
+  exit 1
+}
+'''}$binaryInstall$restartHealth''';
+  }
+  final serviceInstall = stdio
+      ? ''
+      : '''
+cat > "\$work_dir/maidcafe-daemon.service" <<'EOF'
+${_maidCafeSystemdUnit(runAsUsers)}
+EOF
+install -o root -g root -m 0644 "\$work_dir/maidcafe-daemon.service" /etc/systemd/system/maidcafe-daemon.service
+systemctl daemon-reload
+systemctl enable maidcafe-daemon
+$restartHealth''';
   final encodedConfig = base64Encode(
     utf8.encode(
       _maidCafeConfig(
@@ -576,32 +635,19 @@ fi
         scriptTimeout: scriptTimeout,
         maxBodyBytes: maxBodyBytes,
         maxConcurrentRuns: maxConcurrentRuns,
-        actions: actions,
       ),
     ),
   );
-  final encodedArtifactUrl = base64Encode(utf8.encode(artifactUrl));
 
   return '''set -eu
 ${stdio ? '' : '''command -v systemctl >/dev/null 2>&1 || {
   echo "MaidCafe daemon installation requires systemd." >&2
   exit 1
 }
-'''}work_dir="\$(mktemp -d "\${TMPDIR:-/tmp}/maidcafe-install.XXXXXX")"
-trap 'rm -rf "\$work_dir"' EXIT
-
-printf '%s' '$encodedArtifactUrl' | base64 -d > "\$work_dir/artifact.url"
-mkdir -p "\$work_dir/extracted"
-curl --fail --location --retry 3 --silent --show-error "\$(cat "\$work_dir/artifact.url")" \\
-  --output "\$work_dir/maidcafe-daemon.tar"
-tar -xf "\$work_dir/maidcafe-daemon.tar" -C "\$work_dir/extracted"
-daemon_binary="\$(find "\$work_dir/extracted" -type f -name maidcafe-daemon -print -quit)"
-test -n "\$daemon_binary"
-
-${stdio ? '' : '''if ! id maidcafe >/dev/null 2>&1; then
+'''}${stdio ? '' : '''if ! id maidcafe >/dev/null 2>&1; then
   useradd --system --home /var/lib/maidcafe --create-home maidcafe
 fi
-'''}install -o root -g root -m 0755 "\$daemon_binary" /usr/local/bin/maidcafe-daemon
+'''}$binaryInstall
 install -d -o root -g root -m 0755 /etc/maidcafe
 printf '%s\n' 'maidkit' > "\$work_dir/maidkit-managed"
 install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidkit-managed
@@ -612,13 +658,86 @@ ${buildMaidCafeActionScriptsScript(actions, stdio: stdio, runAsUsers: runAsUsers
 $serviceInstall''';
 }
 
-/// Builds a root-owned MaidCafe configuration update without replacing the
-/// daemon binary.
+/// Strips legacy `[[daemon.actions]]` blocks from [currentConfig]: actions now
+/// live in per-file fragments, and the daemon would see both otherwise. A
+/// block ends at the next table header of any kind.
+String stripMaidCafeInlineActions(String currentConfig) => currentConfig
+    .replaceAll(
+      RegExp(r'\[\[daemon\.actions\]\](.*?)(?=\n\[\[|\Z)', dotAll: true),
+      '',
+    )
+    .replaceAll(RegExp(r'\n{3,}'), '\n\n');
+
+/// Patches [currentConfig] (the raw `/etc/maidcafe/config.toml` text) by
+/// replacing only the keys in [values], leaving every other line — webhooks,
+/// comments, unknown fields, formatting — untouched. Values are pre-formatted
+/// TOML literals (strings already quoted, integers bare), written verbatim.
+/// Keys absent from the `[daemon]` section are appended at its end.
+String patchMaidCafeConfigText(
+  String currentConfig,
+  Map<String, String> values,
+) {
+  if (values.isEmpty) return currentConfig;
+  final lines = currentConfig.split('\n');
+  final missing = <String>{...values.keys};
+  final result = <String>[];
+  var inDaemon = false;
+  var daemonEnd = -1;
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('[')) {
+      if (inDaemon) daemonEnd = result.length;
+      inDaemon = trimmed == '[daemon]';
+      result.add(line);
+      continue;
+    }
+    if (!inDaemon) {
+      result.add(line);
+      continue;
+    }
+    var replaced = false;
+    for (final entry in values.entries) {
+      if (RegExp(r'^\s*' + RegExp.escape(entry.key) + r'\s*=').hasMatch(line)) {
+        // Keep a trailing comment (`key = "v" # note`) attached to the line.
+        final comment = RegExp(
+          r'^(?:[^#]|"(?:[^"\\]|\\.)*")*(#.*)$',
+        ).firstMatch(line.trimLeft());
+        final suffix = comment == null ? '' : ' ${comment.group(1)}';
+        result.add('${entry.key} = ${entry.value}$suffix');
+        missing.remove(entry.key);
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) result.add(line);
+  }
+  if (inDaemon) daemonEnd = result.length;
+  if (missing.isNotEmpty) {
+    final insertion = missing.map((key) => '$key = ${values[key]}');
+    if (daemonEnd >= 0) {
+      result.insertAll(
+        daemonEnd,
+        ['', ...insertion, ''].where((l) => l.isNotEmpty),
+      );
+    } else {
+      result.addAll(['', '[daemon]', ...insertion]);
+    }
+  }
+  return result.join('\n');
+}
+
+/// Builds a root-owned MaidCafe save script: patches only the edited values
+/// into the existing `/etc/maidcafe/config.toml` (webhooks, comments and any
+/// other setting are preserved verbatim), migrates legacy inline
+/// `[[daemon.actions]]` blocks out into fragments, deploys the action files,
+/// reconciles the sudoers rule and systemd unit, and restarts the daemon.
+/// The daemon binary is never replaced.
 String buildMaidCafeDaemonConfigScript({
+  required String currentConfig,
   required String daemonId,
   required String cloudUrl,
   required String cloudSecret,
-  String version = '',
   String transport = 'stdio',
   String listenHost = '127.0.0.1',
   int port = 8747,
@@ -647,14 +766,10 @@ String buildMaidCafeDaemonConfigScript({
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
       : '/etc/maidcafe/config.toml';
-  final resolvedApiSecret = transport == 'stdio' || apiSecret.trim().isNotEmpty
-      ? apiSecret.trim()
-      : generateMaidCafeApiSecret();
   final installMode = transport == 'stdio' ? '0644' : '0640';
   final installGroup = transport == 'stdio' ? 'root' : 'maidcafe';
   // The unit must match the sudoers state: NoNewPrivileges blocks sudo, so it
-  // is dropped exactly when a run-as user is configured. Reconcile on every
-  // sync so enabling user-switching on an existing install actually works.
+  // is dropped exactly when a run-as user is configured.
   final serviceReconcile = transport == 'stdio'
       ? ''
       : '''
@@ -665,36 +780,29 @@ EOF
 install -o root -g root -m 0644 "\$unit_tmp" /etc/systemd/system/maidcafe-daemon.service
 rm -f "\$unit_tmp"
 systemctl daemon-reload
+systemctl restart maidcafe-daemon
 ''';
-  final serviceRestart = transport == 'stdio'
-      ? ''
-      : 'systemctl restart maidcafe-daemon\n';
-  final encodedConfig = base64Encode(
-    utf8.encode(
-      _maidCafeConfig(
-        daemonId: daemonId,
-        cloudUrl: cloudUrl,
-        version: version,
-        cloudSecret: cloudSecret,
-        metricsSecret: resolvedApiSecret,
-        port: port,
-        transport: transport,
-        listenHost: listenHost,
-        metricsInterval: metricsInterval,
-        requestTimeout: requestTimeout,
-        scriptTimeout: scriptTimeout,
-        maxBodyBytes: maxBodyBytes,
-        maxConcurrentRuns: maxConcurrentRuns,
-        actions: actions,
-      ),
-    ),
-  );
+  final patched =
+      patchMaidCafeConfigText(stripMaidCafeInlineActions(currentConfig), {
+        'id': _tomlString(daemonId.trim()),
+        'transport': _tomlString(transport.trim()),
+        if (transport != 'stdio') 'listen': _tomlString('$listenHost:$port'),
+        if (apiSecret.trim().isNotEmpty)
+          'metricsSecret': _tomlString(apiSecret.trim()),
+        'cloudUrl': _tomlString(cloudUrl.trim()),
+        'cloudSecret': _tomlString(cloudSecret),
+        'metricsInterval': _tomlString(metricsInterval.trim()),
+        'requestTimeout': _tomlString(requestTimeout.trim()),
+        'scriptTimeout': _tomlString(scriptTimeout.trim()),
+        'maxBodyBytes': '$maxBodyBytes',
+        'maxConcurrentRuns': '$maxConcurrentRuns',
+      });
+  final encodedConfig = base64Encode(utf8.encode(patched));
   return '''set -eu
 install -d -o root -g root -m 0755 /etc/maidcafe
-printf '%s\n' 'maidkit' | install -o root -g root -m 0644 /dev/stdin /etc/maidcafe/maidkit-managed
 printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
 ${buildMaidCafeActionScriptsScript(actions, stdio: transport == 'stdio', runAsUsers: runAsUsers)}
-$serviceReconcile$serviceRestart''';
+$serviceReconcile''';
 }
 
 void _validateMaidCafeConfigFields({
@@ -778,7 +886,7 @@ String _maidCafeConfig({
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
-  required List<MaidCafeActionDefinition> actions,
+  String actionsDir = '/etc/maidcafe/actions',
 }) {
   final versionLine = version.trim().isEmpty
       ? ''
@@ -799,7 +907,8 @@ $listenLine$metricsSecretLine cloudUrl = ${_tomlString(cloudUrl)}
  scriptTimeout = ${_tomlString(scriptTimeout)}
  maxBodyBytes = $maxBodyBytes
  maxConcurrentRuns = $maxConcurrentRuns
-${_tomlActions(actions)}'''
+ actionsDir = ${_tomlString(actionsDir)}
+'''
       .replaceAll('\n ', '\n');
 }
 
@@ -946,38 +1055,51 @@ String _maidCafeDownloadPackage(PackageManager manager) => switch (manager) {
   PackageManager.brew => 'curl',
 };
 
-String _tomlActions(List<MaidCafeActionDefinition> actions) =>
-    actions.map((action) {
-      final buffer = StringBuffer('''[[daemon.actions]]
+/// Builds the `<slug>.toml` config fragment for each action, keyed by name.
+/// The daemon merges every fragment in the actions directory at load, so
+/// action changes never rewrite the main config file.
+Map<String, String> maidCafeActionFragments(
+  List<MaidCafeActionDefinition> actions,
+) {
+  return {
+    for (final action in actions) action.name: _tomlActionFragment(action),
+  };
+}
+
+String _tomlActionFragment(MaidCafeActionDefinition action) {
+  final buffer = StringBuffer('''
 name = ${_tomlString(action.name)}
 command = ${_tomlString(maidCafeActionScriptPath(action))}
-args = []
 script = true
 enabled = ${action.enabled}
 notifyOnSuccess = ${action.notifyOnSuccess}
 notifyOnFailure = ${action.notifyOnFailure}
 ''');
-      final displayName = action.displayName?.trim() ?? '';
-      if (displayName.isNotEmpty) {
-        buffer.write('displayName = ${_tomlString(displayName)}\n');
-      }
-      final workingDirectory = action.workingDirectory?.trim() ?? '';
-      if (workingDirectory.isNotEmpty) {
-        buffer.write('cwd = ${_tomlString(workingDirectory)}\n');
-      }
-      final user = action.user?.trim() ?? '';
-      if (user.isNotEmpty) {
-        buffer.write('user = ${_tomlString(user)}\n');
-      }
-      if (action.environment.isNotEmpty) {
-        final entries = [
-          for (final entry in action.environment.entries)
-            '${entry.key}=${entry.value}',
-        ]..sort();
-        buffer.write('env = [${entries.map(_tomlString).join(', ')}]\n');
-      }
-      return buffer.toString();
-    }).join();
+  final displayName = action.displayName?.trim() ?? '';
+  if (displayName.isNotEmpty) {
+    buffer.write('displayName = ${_tomlString(displayName)}\n');
+  }
+  final workingDirectory = action.workingDirectory?.trim() ?? '';
+  if (workingDirectory.isNotEmpty) {
+    buffer.write('cwd = ${_tomlString(workingDirectory)}\n');
+  }
+  final user = action.user?.trim() ?? '';
+  if (user.isNotEmpty) {
+    buffer.write('user = ${_tomlString(user)}\n');
+  }
+  final scriptTimeout = action.scriptTimeout?.trim() ?? '';
+  if (scriptTimeout.isNotEmpty) {
+    buffer.write('timeout = ${_tomlString(scriptTimeout)}\n');
+  }
+  if (action.environment.isNotEmpty) {
+    final entries = [
+      for (final entry in action.environment.entries)
+        '${entry.key}=${entry.value}',
+    ]..sort();
+    buffer.write('env = [${entries.map(_tomlString).join(', ')}]\n');
+  }
+  return buffer.toString();
+}
 
 String _tomlString(String value) =>
     '"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n')}"';

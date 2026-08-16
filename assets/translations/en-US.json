@@ -1758,5 +1758,13 @@
   "maidCafeActionSlug": "Action name (API)",
   "maidCafeActionDisplayName": "Display name",
   "maidCafeAuditTitle": "Recent runs",
-  "maidCafeAuditEmpty": "No runs recorded yet."
+  "maidCafeAuditEmpty": "No runs recorded yet.",
+  "maidCafeActionTimeout": "Timeout",
+  "maidCafeActionTimeoutInvalid": "Timeout must be a duration like 30s or 2m.",
+  "maidCafeAuditAll": "All",
+  "maidCafeAuditClear": "Clear log",
+  "maidCafeAuditClearConfirm": "This removes every recorded run from the daemon. This cannot be undone.",
+  "maidCafeAuditClearConfirmTitle": "Clear the audit log?",
+  "maidCafeAuditFilter": "Action",
+  "maidCafeAuditNoMatches": "No runs match this filter."
 }

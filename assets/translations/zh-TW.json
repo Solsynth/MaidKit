@@ -1758,5 +1758,13 @@
   "maidCafeActionSlug": "操作名稱 (API)",
   "maidCafeActionDisplayName": "顯示名稱",
   "maidCafeAuditTitle": "執行記錄",
-  "maidCafeAuditEmpty": "尚無執行記錄。"
+  "maidCafeAuditEmpty": "尚無執行記錄。",
+  "maidCafeActionTimeout": "逾時",
+  "maidCafeActionTimeoutInvalid": "逾時必須為時長格式，如 30s 或 2m。",
+  "maidCafeAuditAll": "全部",
+  "maidCafeAuditClear": "清空記錄",
+  "maidCafeAuditClearConfirm": "這將刪除守護程序的所有執行記錄，且無法撤銷。",
+  "maidCafeAuditClearConfirmTitle": "清空稽核記錄？",
+  "maidCafeAuditFilter": "操作",
+  "maidCafeAuditNoMatches": "沒有符合此篩選條件的執行記錄。"
 }

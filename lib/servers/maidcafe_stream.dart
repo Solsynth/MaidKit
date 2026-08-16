@@ -163,6 +163,7 @@ class MaidCafeDaemonAccess {
     this.maxBodyBytes,
     this.maxConcurrentRuns,
     this.actions = const [],
+    this.configText = '',
   });
   final int? port;
   final String? apiSecret;
@@ -178,6 +179,10 @@ class MaidCafeDaemonAccess {
   final int? maxBodyBytes;
   final int? maxConcurrentRuns;
   final List<MaidCafeActionDefinition> actions;
+
+  /// The raw `/etc/maidcafe/config.toml` text, for patch-based updates that
+  /// preserve everything the model does not parse.
+  final String configText;
 }
 
 /// Reads the daemon's HTTP endpoint, API secret, and action scripts over SSH.
@@ -195,7 +200,17 @@ const _maidCafeConfigReadBody = r'''awk '
   /^\[/{section=""; next}
   section!=""{print}
 ' /etc/maidcafe/config.toml 2>/dev/null || true
-printf '\n###MAIDKIT-ACTION-SCRIPTS###\n'
+printf '\n###MAIDKIT-FULL-CONFIG###\n'
+od -An -tx1 -v < /etc/maidcafe/config.toml 2>/dev/null | tr -d ' \n'
+printf '\n'
+printf '###MAIDKIT-ACTION-CONFIGS###\n'
+ls /etc/maidcafe/actions/*.toml 2>/dev/null | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  printf '###FILE:%s###\n' "$(basename "$f")"
+  od -An -tx1 -v < "$f" 2>/dev/null | tr -d ' \n'
+  printf '\n'
+done
+printf '###MAIDKIT-ACTION-SCRIPTS###\n'
 ls /etc/maidcafe/actions/*.sh 2>/dev/null | while IFS= read -r f; do
   [ -f "$f" ] || continue
   printf '###FILE:%s###\n' "$(basename "$f")"
@@ -203,17 +218,65 @@ ls /etc/maidcafe/actions/*.sh 2>/dev/null | while IFS= read -r f; do
   printf '\n'
 done''';
 
+const _maidCafeFullConfigMarker = '###MAIDKIT-FULL-CONFIG###';
+const _maidCafeActionConfigsMarker = '###MAIDKIT-ACTION-CONFIGS###';
 const _maidCafeActionScriptsMarker = '###MAIDKIT-ACTION-SCRIPTS###';
 
-/// Splits the combined read-back payload into the `[daemon]` config section
-/// and the deployed action-scripts blob.
-(String config, String scripts) _splitMaidCafeConfigPayload(String output) {
-  final marker = output.indexOf(_maidCafeActionScriptsMarker);
-  if (marker == -1) return (output, '');
+/// Splits the combined read-back payload into the `[daemon]` config section,
+/// the raw full config text, the per-action `.toml` fragments and the
+/// deployed action-script blob.
+(
+  String config,
+  String fullConfig,
+  Map<String, String> actionConfigs,
+  String scripts,
+)
+_splitMaidCafeConfigPayload(String output) {
+  final fullIndex = output.indexOf(_maidCafeFullConfigMarker);
+  final configsIndex = output.indexOf(_maidCafeActionConfigsMarker);
+  final scriptsIndex = output.indexOf(_maidCafeActionScriptsMarker);
+  String section(int markerIndex, String marker, int end) {
+    if (markerIndex == -1 || end == -1 || end <= markerIndex) return '';
+    return output.substring(markerIndex + marker.length + 1, end);
+  }
+
   return (
-    output.substring(0, marker),
-    output.substring(marker + _maidCafeActionScriptsMarker.length),
+    fullIndex == -1 ? output : output.substring(0, fullIndex),
+    _hexDecode(section(fullIndex, _maidCafeFullConfigMarker, configsIndex)),
+    parseMaidCafeConfigFiles(
+      section(configsIndex, _maidCafeActionConfigsMarker, scriptsIndex),
+      '.toml',
+    ),
+    scriptsIndex == -1
+        ? ''
+        : output.substring(
+            scriptsIndex + _maidCafeActionScriptsMarker.length + 1,
+          ),
   );
+}
+
+/// Decodes `###FILE:<name><ext>###` + hex pairs from a marker blob.
+Map<String, String> parseMaidCafeConfigFiles(String blob, String extension) {
+  final result = <String, String>{};
+  final pattern = RegExp(
+    '###FILE:([A-Za-z0-9._-]+\\$extension)###\\n([0-9a-fA-F]*)\\n',
+  );
+  for (final match in pattern.allMatches(blob)) {
+    final fileName = match.group(1)!;
+    final hex = match.group(2)!;
+    if (hex.isEmpty) continue;
+    result[fileName.substring(0, fileName.length - extension.length)] =
+        _hexDecode(hex);
+  }
+  return result;
+}
+
+String _hexDecode(String hex) {
+  final bytes = <int>[];
+  for (var i = 0; i + 1 < hex.length; i += 2) {
+    bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+  }
+  return utf8.decode(bytes, allowMalformed: true);
 }
 
 /// Decodes deployed action scripts from the marker-delimited read-back blob:
@@ -222,27 +285,8 @@ const _maidCafeActionScriptsMarker = '###MAIDKIT-ACTION-SCRIPTS###';
 /// Keys are action names (file name without `.sh`); bodies are returned
 /// verbatim, including any trailing newline. Public so round-trip parsing can
 /// be unit-tested.
-Map<String, String> parseMaidCafeActionScripts(String blob) {
-  final result = <String, String>{};
-  // The read-back protocol terminates every hex line with a newline, so the
-  // hex capture is bounded by an explicit \n rather than an end-of-input
-  // assertion (which does not match before a trailing newline).
-  final pattern = RegExp(r'###FILE:([A-Za-z0-9._-]+\.sh)###\n([0-9a-fA-F]*)\n');
-  for (final match in pattern.allMatches(blob)) {
-    final fileName = match.group(1)!;
-    final hex = match.group(2)!;
-    if (hex.isEmpty) continue;
-    final bytes = <int>[];
-    for (var i = 0; i < hex.length; i += 2) {
-      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
-    }
-    result[fileName.substring(0, fileName.length - 3)] = utf8.decode(
-      bytes,
-      allowMalformed: true,
-    );
-  }
-  return result;
-}
+Map<String, String> parseMaidCafeActionScripts(String blob) =>
+    parseMaidCafeConfigFiles(blob, '.sh');
 
 /// Wraps a multi-line [body] for elevation as a single `sh -c` argument.
 String _elevatedMaidCafeRead(String prefix, String body) =>
@@ -287,8 +331,27 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
       output = await read(passwordRead, stdin: password);
     }
   }
-  final (config, scriptsBlob) = _splitMaidCafeConfigPayload(output);
+  final (config, fullConfig, actionConfigs, scriptsBlob) =
+      _splitMaidCafeConfigPayload(output);
   final scripts = parseMaidCafeActionScripts(scriptsBlob);
+  // Fragments are the current source of truth; legacy inline [[daemon.actions]]
+  // blocks (pre-fragment installs) are kept for migration and overridden by
+  // name when a fragment exists.
+  final inline = {
+    for (final action in parseMaidCafeActionDefinitions(config))
+      action.name: action,
+  };
+  final actions = <MaidCafeActionDefinition>[
+    for (final entry in actionConfigs.entries)
+      _mergeAction(
+        parseMaidCafeActionFragment(entry.value),
+        entry.key,
+        scripts,
+      ),
+    for (final entry in inline.entries)
+      if (!actionConfigs.containsKey(entry.key))
+        _mergeAction(entry.value, entry.key, scripts),
+  ];
   final listen = _configValue(config, 'listen');
   final listenUri = listen == null ? null : Uri.tryParse('http://$listen');
   return MaidCafeDaemonAccess(
@@ -312,14 +375,18 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     maxConcurrentRuns: int.tryParse(
       _configValue(config, 'maxConcurrentRuns') ?? '',
     ),
-    actions: [
-      for (final action in parseMaidCafeActionDefinitions(config))
-        scripts[action.name] == null
-            ? action
-            : action.copyWith(script: scripts[action.name]),
-    ],
+    configText: fullConfig,
+    actions: actions,
   );
 });
+
+/// Merges a parsed action (fragment or legacy inline block) with its deployed
+/// script body.
+MaidCafeActionDefinition _mergeAction(
+  MaidCafeActionDefinition action,
+  String name,
+  Map<String, String> scripts,
+) => scripts[name] == null ? action : action.copyWith(script: scripts[name]);
 
 Future<int?> readMaidCafeListenPort({
   required SshConnectionManager manager,
@@ -364,25 +431,34 @@ List<MaidCafeActionDefinition> parseMaidCafeActionDefinitions(String config) {
     for (final block in blocks)
       if (_configValue(block.group(1)!, 'name') != null &&
           _configValue(block.group(1)!, 'command') != null)
-        MaidCafeActionDefinition(
-          name: _configValue(block.group(1)!, 'name')!,
-          script: '',
-          enabled: _configBool(block.group(1)!, 'enabled', fallback: true),
-          notifyOnSuccess: _configBool(block.group(1)!, 'notifyOnSuccess'),
-          notifyOnFailure: _configBool(block.group(1)!, 'notifyOnFailure'),
-          displayName: _configValue(block.group(1)!, 'displayName'),
-          workingDirectory: _configValue(block.group(1)!, 'cwd'),
-          user: _configValue(block.group(1)!, 'user'),
-          environment: {
-            for (final entry in _configList(block.group(1)!, 'env'))
-              if (entry.contains('='))
-                entry.substring(0, entry.indexOf('=')): entry.substring(
-                  entry.indexOf('=') + 1,
-                ),
-          },
-        ),
+        _actionFromBlock(block.group(1)!),
   ];
 }
+
+/// Parses one flat `<slug>.toml` action fragment (the same shape as an entry
+/// of `[[daemon.actions]]` without the table header).
+MaidCafeActionDefinition parseMaidCafeActionFragment(String fragment) =>
+    _actionFromBlock(fragment);
+
+MaidCafeActionDefinition _actionFromBlock(String block) =>
+    MaidCafeActionDefinition(
+      name: _configValue(block, 'name')!,
+      script: '',
+      enabled: _configBool(block, 'enabled', fallback: true),
+      notifyOnSuccess: _configBool(block, 'notifyOnSuccess'),
+      notifyOnFailure: _configBool(block, 'notifyOnFailure'),
+      displayName: _configValue(block, 'displayName'),
+      workingDirectory: _configValue(block, 'cwd'),
+      user: _configValue(block, 'user'),
+      scriptTimeout: _configValue(block, 'timeout'),
+      environment: {
+        for (final entry in _configList(block, 'env'))
+          if (entry.contains('='))
+            entry.substring(0, entry.indexOf('=')): entry.substring(
+              entry.indexOf('=') + 1,
+            ),
+      },
+    );
 
 List<String> _configList(String config, String key) {
   final match = RegExp(
@@ -632,6 +708,11 @@ class MaidCafeStreamSession {
     ];
   }
 
+  /// Wipes the daemon's audit log (active and rotated files).
+  Future<void> clearAudit() async {
+    await _delete('/api/v1/audit');
+  }
+
   /// Opens a realtime SSE subscription over the session's port forward.
   ///
   /// Returns a single-subscription stream of decoded frames. The request
@@ -769,6 +850,19 @@ class MaidCafeStreamSession {
           contentType: Headers.jsonContentType,
         ),
       );
+      return _responseMap(response);
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
+      throw StateError(_dioError(error));
+    }
+  }
+
+  Future<Map<String, dynamic>> _delete(String path) async {
+    _throwIfClosed();
+    try {
+      final response = await _dio.delete<Object?>(path);
       return _responseMap(response);
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
