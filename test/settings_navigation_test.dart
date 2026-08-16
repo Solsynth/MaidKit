@@ -94,9 +94,6 @@ void main() {
     await tester.tap(find.byTooltip('tabSettings'.tr()));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('openAllSettings'.tr()));
-    await tester.pumpAndSettle();
-
     await tester.tap(find.text('settingsTerminal'.tr()).first);
     await tester.pumpAndSettle();
     expect(find.text('settingsTerminalRenderer'.tr()), findsOneWidget);

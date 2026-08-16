@@ -150,6 +150,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   String? _latestVersion;
   List<MaidCafeActionDefinition>? _savedActions;
   String? _runningActionName;
+  // Alarm thresholds declared in the daemon's alarmsDir fragments. Edited
+  // here (the daemon evaluates them locally) and deployed with the config.
+  List<MaidCafeAlarmDefinition> _alarms = const [];
   // Raw current /etc/maidcafe/config.toml text, for patch-based saves that
   // preserve everything the app does not model.
   String _serverConfigText = '';
@@ -345,6 +348,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _savedActions = List.unmodifiable(config.actions);
     _actionResults.clear();
     _serverConfigText = config.configText;
+    _alarms = List.unmodifiable(config.alarms);
   }
 
   Future<void> _probeInstallation() async {
@@ -660,6 +664,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
       maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
       actions: List.unmodifiable(_actions),
+      alarms: List.unmodifiable(_alarms),
       updateOnly: updating,
     );
   }
@@ -734,6 +739,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
         maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
         actions: List.unmodifiable(_actions),
+        alarms: List.unmodifiable(_alarms),
         updateOnly: updating,
       );
       await _cacheMaidCafePort(port);
@@ -825,6 +831,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
             maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
             actions: List.unmodifiable(_actions),
+            alarms: List.unmodifiable(_alarms),
           ),
           onOutput: onOutput,
           sshUserIsRoot: widget.server.username == 'root',
@@ -901,6 +908,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
             maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
             actions: List.unmodifiable(_actions),
+            alarms: List.unmodifiable(_alarms),
           ),
           onOutput: onOutput,
           sshUserIsRoot: widget.server.username == 'root',
@@ -1879,6 +1887,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           ),
         ],
       ),
+      _alarmsEditor(context),
       const SizedBox(height: 4),
       Align(
         alignment: Alignment.centerLeft,
@@ -1890,6 +1899,93 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       ),
     ],
   );
+
+  /// Alarm thresholds are declared here, in the daemon's own config: the
+  /// daemon evaluates each metric sample locally and reports `daemon.alarm.*`
+  /// notifications to the cloud, so nothing here calls the cloud API.
+  Widget _alarmsEditor(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'maidCafeAlarms'.tr(),
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_alarms.isEmpty)
+            Text(
+              'maidCafeNoAlarms'.tr(),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final alarm in _alarms) _alarmChip(context, alarm),
+              ],
+            ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : () => _editAlarm(context),
+              icon: const Icon(Symbols.add),
+              label: Text('maidCafeAddAlarm'.tr()),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _alarmChip(BuildContext context, MaidCafeAlarmDefinition alarm) {
+    final kindLabel = alarm.kind == 'cpu_percent'
+        ? 'maidCafeCpuAlarm'.tr()
+        : 'maidCafeMemoryAlarm'.tr();
+    return InputChip(
+      label: Text(
+        '$kindLabel · ${alarm.threshold.toStringAsFixed(0)}% · '
+        '${'maidCafeAlarmCooldownLabel'.tr(args: ['${alarm.cooldownSeconds ~/ 60}'])}',
+      ),
+      onPressed: _busy ? null : () => _editAlarm(context, alarm),
+      onDeleted: _busy ? null : () => _removeAlarm(alarm),
+      deleteIcon: const Icon(Symbols.close, size: 16),
+    );
+  }
+
+  Future<void> _editAlarm(
+    BuildContext context, [
+    MaidCafeAlarmDefinition? existing,
+  ]) async {
+    final alarm = await showDialog<MaidCafeAlarmDefinition>(
+      context: context,
+      builder: (context) => _AlarmEditorDialog(initial: existing),
+    );
+    if (alarm == null || !context.mounted) return;
+    setState(() {
+      // One alarm per kind; editing an existing kind replaces it.
+      _alarms = List.unmodifiable([
+        ..._alarms.where((current) => current.kind != alarm.kind),
+        alarm,
+      ]);
+    });
+  }
+
+  void _removeAlarm(MaidCafeAlarmDefinition alarm) {
+    setState(() {
+      _alarms = List.unmodifiable(
+        _alarms.where((current) => current.kind != alarm.kind),
+      );
+    });
+  }
 
   Widget _configGroup({required String title, required List<Widget> fields}) {
     final theme = Theme.of(context);
@@ -3151,4 +3247,115 @@ int? _cachedMaidCafePort(Server server) {
   return port == null || port < maidCafeMinimumPort || port > 65535
       ? null
       : port;
+}
+
+/// Add/edit dialog for one alarm threshold. Cooldown is entered in minutes
+/// and stored as seconds, matching the daemon's `cooldownSeconds` field.
+class _AlarmEditorDialog extends StatefulWidget {
+  const _AlarmEditorDialog({this.initial});
+
+  final MaidCafeAlarmDefinition? initial;
+
+  @override
+  State<_AlarmEditorDialog> createState() => _AlarmEditorDialogState();
+}
+
+class _AlarmEditorDialogState extends State<_AlarmEditorDialog> {
+  late final TextEditingController _thresholdController;
+  late final TextEditingController _cooldownController;
+  late String _kind;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _kind = initial?.kind ?? 'cpu_percent';
+    _thresholdController = TextEditingController(
+      text: initial == null ? '80' : initial.threshold.toStringAsFixed(0),
+    );
+    _cooldownController = TextEditingController(
+      text: initial == null ? '5' : '${initial.cooldownSeconds ~/ 60}',
+    );
+  }
+
+  @override
+  void dispose() {
+    _thresholdController.dispose();
+    _cooldownController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final threshold = double.tryParse(_thresholdController.text.trim());
+    final minutes = int.tryParse(_cooldownController.text.trim());
+    if (threshold == null || threshold <= 0 || threshold > 100) {
+      setState(() => _error = 'maidCafeAlarmThresholdInvalid'.tr());
+      return;
+    }
+    if (minutes == null || minutes <= 0) {
+      setState(() => _error = 'maidCafeAlarmCooldownInvalid'.tr());
+      return;
+    }
+    Navigator.pop(
+      context,
+      MaidCafeAlarmDefinition(
+        kind: _kind,
+        threshold: threshold,
+        cooldownSeconds: minutes * 60,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(
+      widget.initial == null ? 'maidCafeAddAlarm'.tr() : 'maidCafeAlarms'.tr(),
+    ),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: _kind,
+          decoration: InputDecoration(labelText: 'maidCafeAlarmKind'.tr()),
+          items: const [
+            DropdownMenuItem(value: 'cpu_percent', child: Text('CPU')),
+            DropdownMenuItem(
+              value: 'memory_used_percent',
+              child: Text('Memory'),
+            ),
+          ],
+          onChanged: (value) {
+            if (value != null) setState(() => _kind = value);
+          },
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _thresholdController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: 'maidCafeThreshold'.tr(),
+            errorText: _error,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _cooldownController,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: 'maidCafeAlarmCooldown'.tr(),
+            errorText: _error,
+          ),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text('maidCafeCancel'.tr()),
+      ),
+      FilledButton(onPressed: _submit, child: Text('maidCafeSave'.tr())),
+    ],
+  );
 }

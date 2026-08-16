@@ -204,6 +204,32 @@ command = "/etc/maidcafe/actions/cleanup.sh"
     });
   });
 
+  group('parseMaidCafeAlarmFragment', () {
+    test('reads threshold, enabled and cooldown from a flat fragment', () {
+      final alarm = parseMaidCafeAlarmFragment('''
+kind = "cpu_percent"
+threshold = 85.50
+enabled = false
+cooldownSeconds = 120
+''');
+      expect(alarm.kind, 'cpu_percent');
+      expect(alarm.threshold, 85.5);
+      expect(alarm.enabled, isFalse);
+      expect(alarm.cooldownSeconds, 120);
+    });
+
+    test('defaults enabled on and cooldown to five minutes', () {
+      final alarm = parseMaidCafeAlarmFragment('''
+kind = "memory_used_percent"
+threshold = 90
+''');
+      expect(alarm.kind, 'memory_used_percent');
+      expect(alarm.threshold, 90);
+      expect(alarm.enabled, isTrue);
+      expect(alarm.cooldownSeconds, 300);
+    });
+  });
+
   group('parseMaidCafeConfigFiles', () {
     test('decodes hex files by name', () {
       final blob =

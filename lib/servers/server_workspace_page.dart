@@ -12,7 +12,6 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:styled_widget/styled_widget.dart';
 import 'port_forwarding_models.dart';
-import 'quick_settings_sheet.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
 
@@ -97,11 +96,7 @@ class _ServerTabsShell extends ConsumerWidget {
                             ),
                             IconButton(
                               tooltip: 'tabSettings'.tr(),
-                              onPressed: () => showQuickSettingsSheet(
-                                context,
-                                onOpenSettings: () =>
-                                    tabsRouter.setActiveIndex(5),
-                              ),
+                              onPressed: () => tabsRouter.setActiveIndex(5),
                               icon: Icon(
                                 Symbols.settings,
                                 fill: tabsRouter.activeIndex == 5 ? 1 : 0,

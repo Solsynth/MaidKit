@@ -175,11 +175,6 @@ final maidCafeMetricsProvider =
       return ref.watch(maidCafeServiceProvider).listMetrics(daemonId);
     });
 
-final maidCafeAlarmsProvider =
-    FutureProvider.family<List<MaidCafeAlarm>, String>((ref, daemonId) {
-      return ref.watch(maidCafeServiceProvider).listAlarms(daemonId);
-    });
-
 final personalityBillingPolicyProvider = FutureProvider<BillingPolicy?>((
   ref,
 ) async {

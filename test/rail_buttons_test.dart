@@ -132,8 +132,6 @@ void main() {
 
     await tester.tap(find.byTooltip('tabSettings'.tr()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('openAllSettings'.tr()));
-    await tester.pumpAndSettle();
     expect(tester.widget<Icon>(settingsIcon()).fill, 1);
 
     await tester.tap(find.byIcon(Symbols.dns));
@@ -150,30 +148,13 @@ void main() {
     expect(find.byType(MaidCafeCloudPage), findsOneWidget);
   });
 
-  testWidgets('rail gear opens the quick settings sheet', (tester) async {
+  testWidgets('rail gear opens the settings tab directly', (tester) async {
     await pumpApp(tester);
 
     await tester.tap(find.byTooltip('tabSettings'.tr()));
     await tester.pumpAndSettle();
 
-    expect(find.byType(SheetScaffold), findsOneWidget);
-    expect(find.text('openAllSettings'.tr()), findsOneWidget);
-
-    // Theme control updates the app theme mode.
-    final segmented = tester.widget<SegmentedButton<ThemeMode>>(
-      find.byType(SegmentedButton<ThemeMode>),
-    );
-    expect(segmented.selected, isNot({ThemeMode.dark}));
-    await tester.tap(find.text('settingsThemeDark'.tr()));
-    await tester.pumpAndSettle();
-    final after = tester.widget<SegmentedButton<ThemeMode>>(
-      find.byType(SegmentedButton<ThemeMode>),
-    );
-    expect(after.selected, {ThemeMode.dark});
-
-    // "Open all settings" pops the sheet and lands on the settings tab.
-    await tester.tap(find.text('openAllSettings'.tr()));
-    await tester.pumpAndSettle();
+    // No intermediate sheet: the gear lands straight on the settings tab.
     expect(find.byType(SheetScaffold), findsNothing);
     expect(tester.widget<Icon>(settingsIcon()).fill, 1);
   });

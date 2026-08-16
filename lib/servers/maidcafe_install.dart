@@ -119,6 +119,37 @@ class MaidCafeActionDefinition {
 /// current value", while an explicit null clears a nullable field.
 const _unset = Object();
 
+/// One alarm threshold the daemon evaluates locally against its metric
+/// samples (kind `cpu_percent` or `memory_used_percent`). Deployed as a
+/// `<kind>.toml` fragment under `daemon.alarmsDir`; the daemon merges the
+/// fragments at load and reports `daemon.alarm.<kind>` notifications to the
+/// cloud when a threshold is exceeded.
+class MaidCafeAlarmDefinition {
+  const MaidCafeAlarmDefinition({
+    required this.kind,
+    required this.threshold,
+    this.enabled = true,
+    this.cooldownSeconds = 300,
+  });
+
+  final String kind;
+  final double threshold;
+  final bool enabled;
+  final int cooldownSeconds;
+
+  MaidCafeAlarmDefinition copyWith({
+    String? kind,
+    double? threshold,
+    bool? enabled,
+    int? cooldownSeconds,
+  }) => MaidCafeAlarmDefinition(
+    kind: kind ?? this.kind,
+    threshold: threshold ?? this.threshold,
+    enabled: enabled ?? this.enabled,
+    cooldownSeconds: cooldownSeconds ?? this.cooldownSeconds,
+  );
+}
+
 /// Distinct run-as users across [actions], sorted; empty when no action
 /// switches users. Drives the sudoers rule and the systemd unit hardening.
 List<String> maidCafeActionRunAsUsers(List<MaidCafeActionDefinition> actions) {
@@ -341,6 +372,7 @@ Future<void> installMaidCafeDaemon({
   required String cloudSecret,
   required String? sudoPassword,
   String? channel,
+  List<MaidCafeAlarmDefinition> alarms = const [],
   int port = 8747,
   String? apiSecret,
 }) => _installMaidCafeDaemon(
@@ -353,6 +385,7 @@ Future<void> installMaidCafeDaemon({
   transport: 'http',
   title: 'maidCafeInstallDaemonRunning'.tr(),
   channel: channel,
+  alarms: alarms,
   port: port,
   apiSecret: apiSecret ?? generateMaidCafeApiSecret(),
 );
@@ -364,6 +397,7 @@ Future<void> installMaidCafeApplication({
   required String? sudoPassword,
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
+  List<MaidCafeAlarmDefinition> alarms = const [],
   int port = 8747,
   String? apiSecret,
   String daemonId = '',
@@ -392,6 +426,7 @@ Future<void> installMaidCafeApplication({
   maxBodyBytes: maxBodyBytes,
   maxConcurrentRuns: maxConcurrentRuns,
   actions: actions,
+  alarms: alarms,
   title: 'maidCafeInstallApplicationRunning'.tr(),
   channel: channel,
   port: port,
@@ -416,6 +451,7 @@ Future<void> _installMaidCafeDaemon({
   required String title,
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
+  List<MaidCafeAlarmDefinition> alarms = const [],
   required int port,
   required String apiSecret,
   bool updateOnly = false,
@@ -477,6 +513,7 @@ Future<void> _installMaidCafeDaemon({
           maxBodyBytes: maxBodyBytes,
           maxConcurrentRuns: maxConcurrentRuns,
           actions: actions,
+          alarms: alarms,
           updateOnly: updateOnly,
         ),
         sshUserIsRoot: server.username == 'root',
@@ -533,6 +570,7 @@ String buildMaidCafeDaemonInstallScript({
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
+  List<MaidCafeAlarmDefinition> alarms = const [],
   // When true the script replaces only the daemon binary and restarts the
   // service; the configuration, action fragments, scripts, sudoers rule and
   // systemd unit are left untouched, so an upgrade can never lose settings.
@@ -550,6 +588,7 @@ String buildMaidCafeDaemonInstallScript({
     maxBodyBytes: maxBodyBytes,
     maxConcurrentRuns: maxConcurrentRuns,
     actions: actions,
+    alarms: alarms,
   );
   final runAsUsers = maidCafeActionRunAsUsers(actions);
   final resolvedApiSecret = apiSecret.trim().isEmpty
@@ -658,6 +697,7 @@ printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
 
 $configInstall "\$work_dir/config.toml" $configPath
 ${buildMaidCafeActionScriptsScript(actions, stdio: stdio, runAsUsers: runAsUsers)}
+${buildMaidCafeAlarmFragmentsScript(alarms, stdio: stdio)}
 $serviceInstall''';
 }
 
@@ -751,6 +791,7 @@ String buildMaidCafeDaemonConfigScript({
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
+  List<MaidCafeAlarmDefinition> alarms = const [],
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
     throw ArgumentError.value(
@@ -764,6 +805,7 @@ String buildMaidCafeDaemonConfigScript({
     maxBodyBytes: maxBodyBytes,
     maxConcurrentRuns: maxConcurrentRuns,
     actions: actions,
+    alarms: alarms,
   );
   final runAsUsers = maidCafeActionRunAsUsers(actions);
   final configPath = transport == 'stdio'
@@ -805,6 +847,7 @@ systemctl restart maidcafe-daemon
 install -d -o root -g root -m 0755 /etc/maidcafe
 printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
 ${buildMaidCafeActionScriptsScript(actions, stdio: transport == 'stdio', runAsUsers: runAsUsers)}
+${buildMaidCafeAlarmFragmentsScript(alarms, stdio: transport == 'stdio')}
 $serviceReconcile''';
 }
 
@@ -813,6 +856,7 @@ void _validateMaidCafeConfigFields({
   required int maxBodyBytes,
   required int maxConcurrentRuns,
   List<MaidCafeActionDefinition> actions = const [],
+  List<MaidCafeAlarmDefinition> alarms = const [],
 }) {
   if (!RegExp(r'^[A-Za-z0-9_.:-]+$').hasMatch(listenHost)) {
     throw ArgumentError.value(
@@ -830,6 +874,34 @@ void _validateMaidCafeConfigFields({
       'maxConcurrentRuns',
       'must be positive',
     );
+  }
+  final alarmKinds = <String>{};
+  for (var i = 0; i < alarms.length; i++) {
+    final alarm = alarms[i];
+    if (alarm.kind != 'cpu_percent' && alarm.kind != 'memory_used_percent') {
+      throw ArgumentError.value(
+        alarm.kind,
+        'alarms[$i].kind',
+        'must be cpu_percent or memory_used_percent',
+      );
+    }
+    if (!alarmKinds.add(alarm.kind)) {
+      throw ArgumentError.value(alarm.kind, 'alarms[$i].kind', 'is duplicated');
+    }
+    if (alarm.threshold <= 0 || alarm.threshold > 100) {
+      throw ArgumentError.value(
+        alarm.threshold,
+        'alarms[$i].threshold',
+        'must be between 0 and 100',
+      );
+    }
+    if (alarm.cooldownSeconds <= 0) {
+      throw ArgumentError.value(
+        alarm.cooldownSeconds,
+        'alarms[$i].cooldownSeconds',
+        'must be positive',
+      );
+    }
   }
   for (var i = 0; i < actions.length; i++) {
     final action = actions[i];
@@ -1076,6 +1148,69 @@ Map<String, String> maidCafeActionFragments(
   return {
     for (final action in actions) action.name: _tomlActionFragment(action),
   };
+}
+
+/// Builds the `<kind>.toml` config fragment for each alarm, keyed by kind.
+/// The daemon merges every fragment in the alarms directory at load, so
+/// alarm changes never rewrite the main config file.
+Map<String, String> maidCafeAlarmFragments(
+  List<MaidCafeAlarmDefinition> alarms,
+) {
+  return {for (final alarm in alarms) alarm.kind: _tomlAlarmFragment(alarm)};
+}
+
+String _tomlAlarmFragment(MaidCafeAlarmDefinition alarm) =>
+    '''
+kind = ${_tomlString(alarm.kind)}
+threshold = ${alarm.threshold.toStringAsFixed(2)}
+enabled = ${alarm.enabled}
+cooldownSeconds = ${alarm.cooldownSeconds}
+''';
+
+/// Builds a privileged shell snippet that deploys alarm config fragments to
+/// `/etc/maidcafe/alarms/` and removes stale files. Each alarm gets a
+/// `<kind>.toml` fragment the daemon merges at load; fragments of removed
+/// alarms are deleted. Under systemd the daemon runs as `maidcafe`, so the
+/// fragments are group-readable only; stdio mode runs as the SSH user, so
+/// they are world-readable instead.
+String buildMaidCafeAlarmFragmentsScript(
+  List<MaidCafeAlarmDefinition> alarms, {
+  required bool stdio,
+}) {
+  final writes = <String>[];
+  final kinds = <String>[];
+  for (final alarm in alarms) {
+    final fragment = base64Encode(
+      utf8.encode(maidCafeAlarmFragments([alarm])[alarm.kind]!),
+    );
+    writes.add(
+      "printf '%s' '$fragment' | base64 -d | "
+      'install -o root -g ${stdio ? "root" : "maidcafe"} '
+      '-m ${stdio ? "0644" : "0640"} /dev/stdin '
+      '/etc/maidcafe/alarms/${alarm.kind}.toml',
+    );
+    kinds.add(alarm.kind);
+  }
+  final keepChecks = kinds
+      .map(
+        (kind) =>
+            '  if [ "\$f" = "/etc/maidcafe/alarms/$kind.toml" ]; then\n'
+            '    keep=true\n'
+            '  fi',
+      )
+      .join('\n');
+  return '''
+install -d -o root -g root -m 0755 /etc/maidcafe/alarms
+${writes.join('\n')}
+for f in /etc/maidcafe/alarms/*.toml; do
+  [ -e "\$f" ] || continue
+  keep=false
+$keepChecks
+  if [ "\$keep" != true ]; then
+    rm -f "\$f"
+  fi
+done
+''';
 }
 
 String _tomlActionFragment(MaidCafeActionDefinition action) {

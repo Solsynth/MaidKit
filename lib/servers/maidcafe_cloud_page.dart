@@ -401,14 +401,13 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
             ],
           ),
         ),
-        _daemonHistoryAndAlarms(context, daemon),
+        _daemonHistory(context, daemon),
       ],
     ),
   );
 
-  Widget _daemonHistoryAndAlarms(BuildContext context, MaidCafeDaemon daemon) {
+  Widget _daemonHistory(BuildContext context, MaidCafeDaemon daemon) {
     final metrics = ref.watch(maidCafeMetricsProvider(daemon.id));
-    final alarms = ref.watch(maidCafeAlarmsProvider(daemon.id));
     final history = metrics.asData?.value ?? const <MaidCafeMetric>[];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -426,28 +425,10 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
             children: [
               OutlinedButton(
                 onPressed: _busy == null
-                    ? () => _configureAlarm(context, daemon, 'cpu_percent')
-                    : null,
-                child: Text('maidCafeCpuAlarm'.tr()),
-              ),
-              OutlinedButton(
-                onPressed: _busy == null
-                    ? () => _configureAlarm(
-                        context,
-                        daemon,
-                        'memory_used_percent',
-                      )
-                    : null,
-                child: Text('maidCafeMemoryAlarm'.tr()),
-              ),
-              OutlinedButton(
-                onPressed: _busy == null
                     ? () => _requestPushNotification(context, daemon)
                     : null,
                 child: Text('maidCafeRequestNotification'.tr()),
               ),
-              if (alarms.hasValue)
-                Text('${'maidCafeAlarmCount'.tr()}: ${alarms.value!.length}'),
             ],
           ),
         ],
@@ -475,24 +456,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
           );
       ref.invalidate(maidCafeMetoerNotificationsProvider);
       ref.invalidate(maidCafeMetoerUnreadCountProvider);
-    });
-  }
-
-  Future<void> _configureAlarm(
-    BuildContext context,
-    MaidCafeDaemon daemon,
-    String kind,
-  ) async {
-    final threshold = await showDialog<double>(
-      context: context,
-      builder: (context) => _ConfigureAlarmDialog(kind: kind),
-    );
-    if (threshold == null || !context.mounted) return;
-    await _run(context, 'maidCafeSave', () async {
-      await ref
-          .read(maidCafeServiceProvider)
-          .setAlarm(daemon.id, kind: kind, threshold: threshold);
-      ref.invalidate(maidCafeAlarmsProvider(daemon.id));
     });
   }
 
@@ -1040,50 +1003,6 @@ class _RenameDaemonDialogState extends State<_RenameDaemonDialog> {
       ),
       FilledButton(
         onPressed: () => Navigator.pop(context, _controller.text),
-        child: Text('maidCafeSave'.tr()),
-      ),
-    ],
-  );
-}
-
-class _ConfigureAlarmDialog extends StatefulWidget {
-  const _ConfigureAlarmDialog({required this.kind});
-
-  final String kind;
-
-  @override
-  State<_ConfigureAlarmDialog> createState() => _ConfigureAlarmDialogState();
-}
-
-class _ConfigureAlarmDialogState extends State<_ConfigureAlarmDialog> {
-  final TextEditingController _controller = TextEditingController(text: '80');
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.kind == 'cpu_percent'
-          ? 'maidCafeCpuAlarm'.tr()
-          : 'maidCafeMemoryAlarm'.tr(),
-    ),
-    content: TextField(
-      controller: _controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      decoration: InputDecoration(labelText: 'maidCafeThreshold'.tr()),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: Text('maidCafeCancel'.tr()),
-      ),
-      FilledButton(
-        onPressed: () =>
-            Navigator.pop(context, double.tryParse(_controller.text)),
         child: Text('maidCafeSave'.tr()),
       ),
     ],

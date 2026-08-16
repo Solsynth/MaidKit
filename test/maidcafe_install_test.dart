@@ -58,6 +58,19 @@ String decodeFragmentFromScript(String script, String name) {
   return utf8.decode(base64Decode(match.group(1)!));
 }
 
+/// Decodes the `<kind>.toml` alarm fragment deployed by a generated script.
+String decodeAlarmFragmentFromScript(String script, String kind) {
+  final match = RegExp(
+    "printf '%s' '([^']+)' \\| base64 -d \\| "
+    r'install -o root -g \S+ -m \S+ /dev/stdin '
+    '/etc/maidcafe/alarms/$kind\\.toml',
+  ).firstMatch(script);
+  if (match == null) {
+    fail('no alarm fragment deploy for $kind in generated script');
+  }
+  return utf8.decode(base64Decode(match.group(1)!));
+}
+
 void main() {
   test(
     'installer script encodes cloud credentials outside shell arguments',
@@ -557,5 +570,114 @@ command = "/bin/true"
     final changed = action.copyWith(scriptTimeout: null);
     expect(changed.scriptTimeout, isNull);
     expect(changed.workingDirectory, '/srv/app');
+  });
+
+  test('configuration sync deploys alarm fragments and removes stale ones', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: _baseConfig,
+      daemonId: 'maidkit-1',
+      cloudUrl: 'https://mk.solsynth.dev',
+      cloudSecret: 'cloud-secret',
+      transport: 'http',
+      alarms: const [
+        MaidCafeAlarmDefinition(
+          kind: 'cpu_percent',
+          threshold: 85,
+          cooldownSeconds: 120,
+        ),
+        MaidCafeAlarmDefinition(
+          kind: 'memory_used_percent',
+          threshold: 90,
+          enabled: false,
+        ),
+      ],
+    );
+
+    final cpu = decodeAlarmFragmentFromScript(script, 'cpu_percent');
+    expect(cpu, contains('kind = "cpu_percent"'));
+    expect(cpu, contains('threshold = 85.00'));
+    expect(cpu, contains('enabled = true'));
+    expect(cpu, contains('cooldownSeconds = 120'));
+    final memory = decodeAlarmFragmentFromScript(script, 'memory_used_percent');
+    expect(memory, contains('threshold = 90.00'));
+    expect(memory, contains('enabled = false'));
+    expect(memory, contains('cooldownSeconds = 300'));
+    // Stale fragments are removed.
+    expect(script, contains('for f in /etc/maidcafe/alarms/*.toml; do'));
+  });
+
+  test('rejects invalid alarm definitions', () {
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        currentConfig: _baseConfig,
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        alarms: const [
+          MaidCafeAlarmDefinition(kind: 'disk_used_percent', threshold: 80),
+        ],
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        currentConfig: _baseConfig,
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        alarms: const [
+          MaidCafeAlarmDefinition(kind: 'cpu_percent', threshold: 120),
+        ],
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        currentConfig: _baseConfig,
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        alarms: const [
+          MaidCafeAlarmDefinition(kind: 'cpu_percent', threshold: 80),
+          MaidCafeAlarmDefinition(kind: 'cpu_percent', threshold: 90),
+        ],
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => buildMaidCafeDaemonConfigScript(
+        currentConfig: _baseConfig,
+        daemonId: 'maidkit-1',
+        cloudUrl: '',
+        cloudSecret: '',
+        transport: 'http',
+        alarms: const [
+          MaidCafeAlarmDefinition(
+            kind: 'cpu_percent',
+            threshold: 80,
+            cooldownSeconds: 0,
+          ),
+        ],
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('fresh installs deploy alarm fragments with the config', () {
+    final script = buildMaidCafeDaemonInstallScript(
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://mk.solsynth.dev',
+      cloudSecret: 'cloud-secret',
+      artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+      alarms: const [
+        MaidCafeAlarmDefinition(kind: 'cpu_percent', threshold: 85),
+      ],
+    );
+    final cpu = decodeAlarmFragmentFromScript(script, 'cpu_percent');
+    expect(cpu, contains('kind = "cpu_percent"'));
+    expect(cpu, contains('threshold = 85.00'));
   });
 }

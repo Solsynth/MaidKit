@@ -1400,7 +1400,6 @@
   "tabServers": "伺服器",
   "tabSessions": "會話",
   "tabSettings": "設定",
-  "openAllSettings": "開啟全部設定",
   "tabSnippets": "指令碼片段",
   "tailscaleAuthFailed": "Tailscale 登入失敗：{}",
   "tailscaleAuthKeyHint": "在 login.tailscale.com/admin/settings/keys 建立金鑰——可重複使用的金鑰可讓本裝置自動重連。",

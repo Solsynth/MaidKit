@@ -194,42 +194,6 @@ class MaidCafeMetric {
   );
 }
 
-class MaidCafeAlarm {
-  const MaidCafeAlarm({
-    required this.id,
-    required this.daemonId,
-    required this.kind,
-    required this.threshold,
-    required this.enabled,
-    required this.cooldownSeconds,
-    required this.lastTriggeredAt,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  final String id;
-  final String daemonId;
-  final String kind;
-  final double threshold;
-  final bool enabled;
-  final int cooldownSeconds;
-  final DateTime? lastTriggeredAt;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  factory MaidCafeAlarm.fromJson(Map<String, dynamic> json) => MaidCafeAlarm(
-    id: _requiredString(json, 'id'),
-    daemonId: _requiredString(json, 'daemon_id'),
-    kind: _requiredString(json, 'kind'),
-    threshold: _requiredNum(json, 'threshold').toDouble(),
-    enabled: _requiredBool(json, 'enabled'),
-    cooldownSeconds: _requiredInt(json, 'cooldown_seconds'),
-    lastTriggeredAt: _optionalDate(json, 'last_triggered_at'),
-    createdAt: _requiredDate(json, 'created_at'),
-    updatedAt: _requiredDate(json, 'updated_at'),
-  );
-}
-
 class MaidCafeDaemonHealth {
   const MaidCafeDaemonHealth({
     required this.ok,
@@ -363,51 +327,6 @@ class MaidCafeService {
     return data
         .map((item) => MaidCafeMetric.fromJson(_map(item)))
         .toList(growable: false);
-  }
-
-  Future<List<MaidCafeAlarm>> listAlarms(String daemonId) async {
-    final response = await _cloudRequest(
-      (token) => _dio.get<dynamic>(
-        '$_apiBase/daemons/${_pathPart(daemonId)}/alarms',
-        options: _cloudOptions(token),
-      ),
-    );
-    final data = _responseJson(response);
-    if (data is! List) throw _invalidResponse('Expected an alarm list.');
-    return data
-        .map((item) => MaidCafeAlarm.fromJson(_map(item)))
-        .toList(growable: false);
-  }
-
-  Future<MaidCafeAlarm> setAlarm(
-    String daemonId, {
-    required String kind,
-    required double threshold,
-    bool enabled = true,
-    int cooldownSeconds = 300,
-  }) async {
-    final response = await _cloudRequest(
-      (token) => _dio.put<dynamic>(
-        '$_apiBase/daemons/${_pathPart(daemonId)}/alarms',
-        data: {
-          'kind': kind,
-          'threshold': threshold,
-          'enabled': enabled,
-          'cooldown_seconds': cooldownSeconds,
-        },
-        options: _cloudOptions(token),
-      ),
-    );
-    return MaidCafeAlarm.fromJson(_responseMap(response));
-  }
-
-  Future<void> deleteAlarm(String daemonId, String alarmId) async {
-    await _cloudRequest(
-      (token) => _dio.delete<dynamic>(
-        '$_apiBase/daemons/${_pathPart(daemonId)}/alarms/${_pathPart(alarmId)}',
-        options: _cloudOptions(token),
-      ),
-    );
   }
 
   Future<MaidCafeNotification> requestPushNotification(

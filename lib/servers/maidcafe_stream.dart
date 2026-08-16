@@ -163,6 +163,7 @@ class MaidCafeDaemonAccess {
     this.maxBodyBytes,
     this.maxConcurrentRuns,
     this.actions = const [],
+    this.alarms = const [],
     this.configText = '',
   });
   final int? port;
@@ -179,6 +180,10 @@ class MaidCafeDaemonAccess {
   final int? maxBodyBytes;
   final int? maxConcurrentRuns;
   final List<MaidCafeActionDefinition> actions;
+
+  /// Alarm thresholds declared in the daemon's `alarmsDir` fragments. Alarms
+  /// are evaluated daemon-side; this list is what the config editor edits.
+  final List<MaidCafeAlarmDefinition> alarms;
 
   /// The raw `/etc/maidcafe/config.toml` text, for patch-based updates that
   /// preserve everything the model does not parse.
@@ -210,6 +215,13 @@ ls /etc/maidcafe/actions/*.toml 2>/dev/null | while IFS= read -r f; do
   od -An -tx1 -v < "$f" 2>/dev/null | tr -d ' \n'
   printf '\n'
 done
+printf '###MAIDKIT-ALARM-CONFIGS###\n'
+ls /etc/maidcafe/alarms/*.toml 2>/dev/null | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  printf '###FILE:%s###\n' "$(basename "$f")"
+  od -An -tx1 -v < "$f" 2>/dev/null | tr -d ' \n'
+  printf '\n'
+done
 printf '###MAIDKIT-ACTION-SCRIPTS###\n'
 ls /etc/maidcafe/actions/*.sh 2>/dev/null | while IFS= read -r f; do
   [ -f "$f" ] || continue
@@ -220,6 +232,7 @@ done''';
 
 const _maidCafeFullConfigMarker = '###MAIDKIT-FULL-CONFIG###';
 const _maidCafeActionConfigsMarker = '###MAIDKIT-ACTION-CONFIGS###';
+const _maidCafeAlarmConfigsMarker = '###MAIDKIT-ALARM-CONFIGS###';
 const _maidCafeActionScriptsMarker = '###MAIDKIT-ACTION-SCRIPTS###';
 
 /// Splits the combined read-back payload into the `[daemon]` config section,
@@ -229,11 +242,13 @@ const _maidCafeActionScriptsMarker = '###MAIDKIT-ACTION-SCRIPTS###';
   String config,
   String fullConfig,
   Map<String, String> actionConfigs,
+  Map<String, String> alarmConfigs,
   String scripts,
 )
 _splitMaidCafeConfigPayload(String output) {
   final fullIndex = output.indexOf(_maidCafeFullConfigMarker);
   final configsIndex = output.indexOf(_maidCafeActionConfigsMarker);
+  final alarmsIndex = output.indexOf(_maidCafeAlarmConfigsMarker);
   final scriptsIndex = output.indexOf(_maidCafeActionScriptsMarker);
   String section(int markerIndex, String marker, int end) {
     if (markerIndex == -1 || end == -1 || end <= markerIndex) return '';
@@ -244,7 +259,11 @@ _splitMaidCafeConfigPayload(String output) {
     fullIndex == -1 ? output : output.substring(0, fullIndex),
     _hexDecode(section(fullIndex, _maidCafeFullConfigMarker, configsIndex)),
     parseMaidCafeConfigFiles(
-      section(configsIndex, _maidCafeActionConfigsMarker, scriptsIndex),
+      section(configsIndex, _maidCafeActionConfigsMarker, alarmsIndex),
+      '.toml',
+    ),
+    parseMaidCafeConfigFiles(
+      section(alarmsIndex, _maidCafeAlarmConfigsMarker, scriptsIndex),
       '.toml',
     ),
     scriptsIndex == -1
@@ -331,7 +350,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
       output = await read(passwordRead, stdin: password);
     }
   }
-  final (config, fullConfig, actionConfigs, scriptsBlob) =
+  final (config, fullConfig, actionConfigs, alarmConfigs, scriptsBlob) =
       _splitMaidCafeConfigPayload(output);
   final scripts = parseMaidCafeActionScripts(scriptsBlob);
   // Fragments are the current source of truth; legacy inline [[daemon.actions]]
@@ -377,6 +396,10 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     ),
     configText: fullConfig,
     actions: actions,
+    alarms: [
+      for (final fragment in alarmConfigs.values)
+        parseMaidCafeAlarmFragment(fragment),
+    ],
   );
 });
 
@@ -439,6 +462,19 @@ List<MaidCafeActionDefinition> parseMaidCafeActionDefinitions(String config) {
 /// of `[[daemon.actions]]` without the table header).
 MaidCafeActionDefinition parseMaidCafeActionFragment(String fragment) =>
     _actionFromBlock(fragment);
+
+/// Parses one flat `<kind>.toml` alarm fragment (the same shape as an entry
+/// of `[[daemon.alarms]]` without the table header). Public so round-trip
+/// parsing can be unit-tested.
+MaidCafeAlarmDefinition parseMaidCafeAlarmFragment(String fragment) =>
+    MaidCafeAlarmDefinition(
+      kind: _configValue(fragment, 'kind') ?? '',
+      threshold:
+          double.tryParse(_configValue(fragment, 'threshold') ?? '') ?? 0,
+      enabled: _configBool(fragment, 'enabled', fallback: true),
+      cooldownSeconds:
+          int.tryParse(_configValue(fragment, 'cooldownSeconds') ?? '') ?? 300,
+    );
 
 MaidCafeActionDefinition _actionFromBlock(String block) =>
     MaidCafeActionDefinition(
