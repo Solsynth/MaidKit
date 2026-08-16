@@ -3,8 +3,9 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 /// App id the MaidCafe cloud publishes notifications under
-/// (`MaidCafe/internal/ring/client.go`); matches [CloudSyncService.appId].
-const maidCafeMetoerAppId = 'dev.solsynth.maidkit';
+/// (`MaidCafe/internal/ring/client.go`); matches the MaidKit bundle id
+/// (`firebase_options.dart`, `dev.solsynth.maid`).
+const maidCafeMetoerAppId = 'dev.solsynth.maid';
 
 /// A notification delivered to the signed-in Solar account by Metoer (the
 /// Solar Network Ring replacement). Wire shape mirrors

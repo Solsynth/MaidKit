@@ -38,7 +38,7 @@ Map<String, dynamic> _notification({String id = 'n1', bool unread = true}) => {
   'content': 'exit code 1',
   'meta': {'daemon_id': 'daemon-1'},
   'viewed_at': unread ? null : '2026-08-14T01:00:00Z',
-  'app_id': 'dev.solsynth.maidkit',
+  'app_id': 'dev.solsynth.maid',
   'account_id': 'acc-1',
   'created_at': '2026-08-13T00:00:00Z',
 };
@@ -65,7 +65,7 @@ void main() {
 
     expect(request.method, 'GET');
     expect(request.uri.path, '/metoer/notifications');
-    expect(request.uri.queryParameters['app'], 'dev.solsynth.maidkit');
+    expect(request.uri.queryParameters['app'], 'dev.solsynth.maid');
     expect(request.uri.queryParameters['offset'], '0');
     expect(request.uri.queryParameters['take'], '50');
     expect(request.headers['Authorization'], 'Bearer solar-token');
@@ -141,7 +141,7 @@ void main() {
 
       expect(request.method, 'POST');
       expect(request.uri.path, '/metoer/notifications/all/read');
-      expect(request.uri.queryParameters['app'], 'dev.solsynth.maidkit');
+      expect(request.uri.queryParameters['app'], 'dev.solsynth.maid');
       expect(request.headers['Authorization'], 'Bearer solar-token');
     },
   );
@@ -174,7 +174,7 @@ void main() {
       expect(body['device_token'], 'fcm-token-1');
       expect(body['provider'], 1);
       expect(body['device_name'], 'build-host');
-      expect(body['app_id'], 'dev.solsynth.maidkit');
+      expect(body['app_id'], 'dev.solsynth.maid');
     },
   );
 
