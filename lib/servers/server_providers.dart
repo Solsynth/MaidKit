@@ -1067,10 +1067,12 @@ final connectionManagerProvider = Provider<SshConnectionManager>((ref) {
 final maidCafeSessionRegistryProvider = Provider<MaidCafeSessionRegistry>((
   ref,
 ) {
-  return MaidCafeSessionRegistry(
+  final registry = MaidCafeSessionRegistry(
     manager: ref.watch(connectionManagerProvider),
     serverRepository: ref.watch(serverRepositoryProvider),
   );
+  ref.onDispose(registry.close);
+  return registry;
 });
 
 /// The shared native serial-port client.

@@ -109,14 +109,26 @@ class _DashboardRuntimesSectionState
           await _endSubscription(id);
           await _subscribe(server);
         }
-        // No daemon channel (or the stream failed again): one-shot/SSH.
-        if (_subscriptions[id] == null &&
-            !_snapshots.containsKey(id) &&
-            mounted) {
-          setState(() => _snapshots[id] = const AsyncValue.loading());
-          final snapshot = await _collect(server);
-          if (mounted) {
-            setState(() => _snapshots[id] = AsyncValue.data(snapshot));
+        // No daemon channel (or the stream failed again): one-shot/SSH on
+        // the slow tick. Refresh whenever the subscription is down — the
+        // existing snapshot must not freeze the tile after a stream death —
+        // but keep the old data on screen while a refresh is in flight.
+        if (_subscriptions[id] == null && mounted) {
+          if (!_snapshots.containsKey(id)) {
+            setState(() => _snapshots[id] = const AsyncValue.loading());
+          }
+          try {
+            final snapshot = await _collect(server);
+            if (mounted) {
+              setState(() => _snapshots[id] = AsyncValue.data(snapshot));
+            }
+          } catch (_) {
+            // The SSH client can drop between the connected check above and
+            // this collect; land on "no data" instead of wedging the loader
+            // (and rethrowing out of the timer callback).
+            if (mounted) {
+              setState(() => _snapshots[id] = const AsyncValue.data(null));
+            }
           }
         }
       }

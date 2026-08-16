@@ -143,6 +143,59 @@ void main() {
       expect(opens, 2);
     });
 
+    test('retries a failed open after the cooldown elapses', () async {
+      final entry = MaidCafeSessionEntry(
+        retryAfter: const Duration(milliseconds: 50),
+      );
+      var opens = 0;
+      Future<MaidCafeStreamSession> open(int? port) async {
+        opens++;
+        if (opens == 1) throw StateError('daemon absent');
+        return _FakeSession(opens);
+      }
+
+      expect(await entry.resolve(open), isNull);
+      expect(await entry.resolve(open), isNull, reason: 'within cooldown');
+      expect(opens, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      final reopened = await entry.resolve(open);
+      expect(reopened, isNotNull, reason: 'cooldown elapsed');
+      expect(opens, 2);
+    });
+
+    test('clearFailure clears the cached open failure', () async {
+      final entry = MaidCafeSessionEntry();
+      var opens = 0;
+      Future<MaidCafeStreamSession> open(int? port) async {
+        opens++;
+        if (opens == 1) throw StateError('daemon absent');
+        return _FakeSession(opens);
+      }
+
+      expect(await entry.resolve(open), isNull);
+      entry.clearFailure();
+      final reopened = await entry.resolve(open);
+      expect(reopened, isNotNull);
+      expect(opens, 2);
+    });
+
+    test(
+      'resolve discards a cached session that was closed externally',
+      () async {
+        final entry = MaidCafeSessionEntry();
+        var opens = 0;
+        final dead = _FakeSession(1);
+        entry.session = dead;
+        await dead.close();
+
+        final reopened = await entry.resolve((_) async => _FakeSession(2));
+        expect(opens, 0);
+        expect(identical(reopened, dead), isFalse);
+        expect(reopened, isNotNull);
+      },
+    );
+
     test('closeSession closes the live session and reopens fresh', () async {
       final entry = MaidCafeSessionEntry();
       var opens = 0;

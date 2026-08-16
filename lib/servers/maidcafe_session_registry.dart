@@ -17,18 +17,45 @@ import 'ssh_connection_manager.dart';
 /// use (single-flight across concurrent callers), closes when the last
 /// consumer releases, and is force-closed by [invalidate] after the daemon is
 /// reconfigured or restarted so the next request reconnects.
+///
+/// The registry also tracks each server's SSH transport. Port forwards die
+/// with the transport, and the connection manager tears them down on
+/// disconnect without notifying the registry — a cached session would
+/// otherwise become a zombie that fails every request and never recovers on
+/// its own. On disconnect the affected sessions are closed; on reconnect the
+/// cached open failures are cleared, so consumers (dashboard pinned tiles,
+/// polling tabs) heal across SSH blips without any tab being open.
 class MaidCafeSessionRegistry {
   MaidCafeSessionRegistry({
     required SshConnectionManager manager,
     required ServerRepository serverRepository,
   }) : this._(manager, serverRepository);
 
-  MaidCafeSessionRegistry._(this._manager, this._serverRepository);
+  MaidCafeSessionRegistry._(this._manager, this._serverRepository) {
+    _statesSubscription = _manager.sessions.listen((states) {
+      for (final serverId in _entries.keys.toList()) {
+        final info = states.where((s) => s.serverId == serverId).firstOrNull;
+        if (info == null || info.status != SessionStatus.connected) {
+          _entries[serverId]?.closeSession();
+        } else {
+          _entries[serverId]?.clearFailure();
+        }
+      }
+    });
+  }
 
   final SshConnectionManager _manager;
   final ServerRepository _serverRepository;
+  late final StreamSubscription<List<SshSessionInfo>> _statesSubscription;
 
   final Map<int, MaidCafeSessionEntry> _entries = {};
+
+  /// Stops tracking the SSH transports. The provider owns the registry for
+  /// the app lifetime, so this only runs on teardown; it does not close any
+  /// live session (consumers still holding one own its cleanup).
+  void close() {
+    unawaited(_statesSubscription.cancel());
+  }
 
   /// Marks [server] as in use. Pair with [release]; the entry (and any open
   /// session) survives until the last release.
@@ -55,7 +82,8 @@ class MaidCafeSessionRegistry {
 
   /// Returns the live shared session, opening it on first use. Returns null
   /// when the server is not retained, when a previous open failed (until
-  /// [invalidate] or a forced attempt succeeds), or while opening fails.
+  /// [invalidate], a forced attempt, the retry cooldown, or a reconnect),
+  /// or while opening fails.
   ///
   /// [port] is honored only when the session is opened by this call; a live
   /// session is returned as-is. [force] bypasses a cached failure so
@@ -92,13 +120,20 @@ class MaidCafeSessionRegistry {
 }
 
 /// Per-server session state: the live session (or null while down), a cached
-/// open failure, and single-flight in-flight opens. Public only so unit tests
-/// can drive the state machine with a stub opener; not part of the API.
+/// open failure with retry cooldown, and single-flight in-flight opens.
+/// Public only so unit tests can drive the state machine with a stub opener;
+/// not part of the API.
 class MaidCafeSessionEntry {
+  MaidCafeSessionEntry({this._retryAfter = const Duration(seconds: 30)});
+
   int refs = 0;
   MaidCafeStreamSession? session;
-  bool failed = false;
+  DateTime? failedAt;
   Future<MaidCafeStreamSession?>? pending;
+  final Duration _retryAfter;
+
+  bool get _failed =>
+      failedAt != null && DateTime.now().difference(failedAt!) < _retryAfter;
 
   Future<MaidCafeStreamSession?> resolve(
     Future<MaidCafeStreamSession> Function(int? port) open, {
@@ -106,8 +141,10 @@ class MaidCafeSessionEntry {
     bool force = false,
   }) {
     final live = session;
-    if (live != null) return Future.value(live);
-    if (!force && failed) return Future.value(null);
+    if (live != null && !live.isClosed) return Future.value(live);
+    // A closed session is never reusable; drop it so the next call reopens.
+    session = null;
+    if (!force && _failed) return Future.value(null);
     final inFlight = pending;
     if (inFlight != null) return inFlight;
     final future = _openAndCache(port, open);
@@ -122,20 +159,25 @@ class MaidCafeSessionEntry {
     try {
       final opened = await open(port);
       session = opened;
-      failed = false;
+      failedAt = null;
       return opened;
     } catch (_) {
-      failed = true;
+      failedAt = DateTime.now();
       return null;
     } finally {
       pending = null;
     }
   }
 
+  /// Clears a cached open failure so the next [resolve] retries. Called when
+  /// the server's SSH transport (re)connects: a failure from the old
+  /// transport says nothing about the new one.
+  void clearFailure() => failedAt = null;
+
   void closeSession() {
     final live = session;
     session = null;
-    failed = false;
+    failedAt = null;
     if (live != null) unawaited(live.close());
     final inFlight = pending;
     pending = null;
