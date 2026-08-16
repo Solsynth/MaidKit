@@ -14,6 +14,7 @@ import 'routing/app_router.dart';
 import 'shared/presentation/maidkit_window_scaffold.dart';
 import 'package:solsynth_express/solsynth_express.dart';
 import 'servers/server_providers.dart';
+import 'shared/services/analytics_service.dart';
 import 'shared/services/update_preferences.dart';
 import 'servers/startup_connection_bootstrap.dart';
 import 'servers/tailscale_auto_connect.dart';
@@ -45,6 +46,7 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     // retry until a context is available (up to ~60s).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(checkForUpdatesWhenReady());
+      MaidKitAnalytics.instance.logAppOpen();
     });
   }
 
@@ -85,6 +87,9 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     // Starts the local MCP server when the user enabled it, so other agents
     // can connect right after the app launches.
     ref.watch(localMcpServerProvider);
+    // Keeps the MaidCafe FCM push subscription alive (and subscribing on
+    // sign-in) for the whole app session.
+    ref.watch(maidCafePushProvider);
     IslandUIFoundation.configureOverlay(maidKitOverlayKey);
     IslandUIFoundation.configureNavigator(maidKitNavigatorKey);
     return MaterialApp.router(

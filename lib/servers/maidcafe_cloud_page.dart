@@ -9,6 +9,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/services/analytics_service.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
 import 'maidcafe_metoer.dart';
@@ -217,9 +218,11 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
 
   Future<void> _signInCloud(BuildContext context) async {
     try {
-      await ref.read(cloudSyncServiceProvider).signIn();
+      final user = await ref.read(cloudSyncServiceProvider).signIn();
       ref.invalidate(cloudUserProvider);
       ref.invalidate(cloudWorkspacesProvider);
+      MaidKitAnalytics.instance.setUserId(user.handle);
+      MaidKitAnalytics.instance.logCloudSignIn();
     } on CloudSyncException catch (error) {
       if (context.mounted) showSnackBar(error.message);
     } catch (_) {
@@ -232,6 +235,8 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
       await ref.read(cloudSyncServiceProvider).signOut();
       ref.invalidate(cloudUserProvider);
       ref.invalidate(cloudWorkspacesProvider);
+      MaidKitAnalytics.instance.setUserId(null);
+      MaidKitAnalytics.instance.logCloudSignOut();
       if (context.mounted) {
         showSnackBar('settingsCloudSignOutSuccess'.tr());
       }
@@ -317,6 +322,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
     }
     final credential = result.credential!;
     ref.invalidate(maidCafeDaemonsProvider(workspaceId));
+    MaidKitAnalytics.instance.logDaemonRegistered();
     if (context.mounted) {
       await _showSecret(
         context,
@@ -343,6 +349,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage> {
           .read(maidCafeServiceProvider)
           .createDaemon(name: name, workspaceId: workspaceId);
       ref.invalidate(maidCafeDaemonsProvider(workspaceId));
+      MaidKitAnalytics.instance.logDaemonRegistered();
       if (context.mounted) {
         await _showSecret(
           context,

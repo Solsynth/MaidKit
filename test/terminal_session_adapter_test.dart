@@ -83,13 +83,17 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    container.read(themeModeProvider.notifier).setThemeMode(ThemeMode.light);
+    await container
+        .read(themeModeProvider.notifier)
+        .setThemeMode(ThemeMode.light);
     expect(
       container.read(terminalColorSchemeProvider),
       TerminalColorSchemes.catppuccinLatte,
     );
 
-    container.read(themeModeProvider.notifier).setThemeMode(ThemeMode.dark);
+    await container
+        .read(themeModeProvider.notifier)
+        .setThemeMode(ThemeMode.dark);
     expect(
       container.read(terminalColorSchemeProvider),
       TerminalColorSchemes.nord,

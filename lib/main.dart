@@ -1,6 +1,8 @@
 import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -15,7 +17,10 @@ import 'servers/terminal_adapter_preferences.dart';
 import 'servers/startup_connection_preferences.dart';
 import 'servers/privacy_preferences.dart';
 import 'servers/local_machine_preferences.dart';
+import 'firebase_options.dart';
 import 'servers/maidcafe_preferences.dart';
+import 'servers/maidcafe_push.dart';
+import 'shared/services/analytics_service.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +40,17 @@ Future<void> main(List<String> args) async {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
   await EasyLocalization.ensureInitialized();
   EasyLocalization.logger.enableBuildModes = [];
+  // Firebase for MaidCafe cloud notifications and analytics (Android/iOS/
+  // macOS only; firebase_core has no Linux/Windows/web support here). The
+  // background handler must be registered before any message can be received
+  // in a terminated app.
+  if (firebaseSupported()) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    MaidKitAnalytics.instance.initialize();
+  }
   final preferences = await Future.wait([
     TerminalAdapterPreferences.load(),
     StartupConnectionPreferences.load(),

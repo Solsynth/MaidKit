@@ -166,6 +166,32 @@ class MaidCafeMetoerClient {
     );
   }
 
+  /// Registers (or updates) this device's push subscription for the MaidCafe
+  /// app, mirroring Solian's `NotificationsApi.registerPushSubscription`
+  /// (`PUT /metoer/notifications/subscription`). [provider] is the
+  /// `SnNotificationPushSubscription.Provider` wire value (Apple APNs = 0,
+  /// Google FCM = 1 — see `SolarNetwork/Metoer/internal/model/notification.go`).
+  /// The upsert is keyed by the device token, so re-registering the same
+  /// device replaces the previous row.
+  Future<void> registerPushSubscription({
+    required String deviceToken,
+    required int provider,
+    required String deviceName,
+  }) async {
+    await _request(
+      (token) => _dio.put<dynamic>(
+        '$baseUrl/metoer/notifications/subscription',
+        data: {
+          'device_token': deviceToken,
+          'provider': provider,
+          'device_name': deviceName,
+          'app_id': maidCafeMetoerAppId,
+        },
+        options: _options(token),
+      ),
+    );
+  }
+
   Future<Response<T>> _request<T>(
     Future<Response<T>> Function(String token) request,
   ) async {

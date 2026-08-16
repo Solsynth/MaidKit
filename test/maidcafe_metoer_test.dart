@@ -146,6 +146,38 @@ void main() {
     },
   );
 
+  test(
+    'registerPushSubscription puts the device token with the MaidCafe app id',
+    () async {
+      late RequestOptions request;
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          request = options;
+          return ResponseBody.fromString('', 204);
+        });
+      final client = MaidCafeMetoerClient(
+        baseUrl: 'https://api.solian.app',
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+
+      await client.registerPushSubscription(
+        deviceToken: 'fcm-token-1',
+        provider: 1,
+        deviceName: 'build-host',
+      );
+
+      expect(request.method, 'PUT');
+      expect(request.uri.path, '/metoer/notifications/subscription');
+      expect(request.headers['Authorization'], 'Bearer solar-token');
+      final body = request.data as Map;
+      expect(body['device_token'], 'fcm-token-1');
+      expect(body['provider'], 1);
+      expect(body['device_name'], 'build-host');
+      expect(body['app_id'], 'dev.solsynth.maidkit');
+    },
+  );
+
   test('missing Solarpass token fails before any network request', () async {
     var requests = 0;
     final dio = Dio()

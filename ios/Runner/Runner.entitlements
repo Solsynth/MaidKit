@@ -3,8 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>aps-environment</key>
-	<string>production</string>
-	<key>keychain-access-groups</key>
-	<array/>
+	<string>development</string>
 </dict>
 </plist>

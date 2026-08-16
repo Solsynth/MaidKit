@@ -104,6 +104,10 @@ dependencies:
   markdown_widget: ^2.3.2+8
   material_ui: ^1.0.0
   cupertino_ui: ^1.0.0
+  firebase_core: ^4.13.0
+  firebase_messaging: ^16.5.0
+  flutter_local_notifications: ^22.3.0
+  firebase_analytics: ^12.4.6
 dev_dependencies:
   auto_route_generator: ^10.6.0
   build_runner: ^2.16.0

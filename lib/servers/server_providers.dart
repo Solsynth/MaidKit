@@ -29,6 +29,7 @@ import 'app_theme_preferences.dart';
 import 'ghostty_terminal_session_adapter.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_preferences.dart';
+import 'maidcafe_push.dart';
 import 'maidcafe_service.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_session_registry.dart';
@@ -155,6 +156,33 @@ final maidCafeMetoerNotificationsProvider =
 final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
   (ref) => ref.watch(maidCafeMetoerClientProvider).unreadCount(),
 );
+
+/// FCM push for MaidCafe cloud notifications. Kept alive by `MaidKitApp`;
+/// subscribes once a Solar account is signed in (either at startup or on a
+/// later sign-in) and refreshes the Metoer feed when a push arrives while the
+/// app is running. Push is only registered when the configured MaidCafe cloud
+/// is a Solsynth-hosted instance (`maidCafeCloudSupportsPush`); self-hosted
+/// clouds have no Ring publisher.
+final maidCafePushProvider = Provider<MaidCafePushService>((ref) {
+  final service = MaidCafePushService(
+    client: ref.watch(maidCafeMetoerClientProvider),
+    pushAllowed: () =>
+        maidCafeCloudSupportsPush(ref.read(maidCafeCloudUrlProvider)),
+    onNotification: () {
+      ref.invalidate(maidCafeMetoerNotificationsProvider);
+      ref.invalidate(maidCafeMetoerUnreadCountProvider);
+    },
+  );
+  ref.listen(cloudUserProvider, (previous, next) {
+    if (next.asData?.value != null) unawaited(service.subscribe());
+  });
+  // The provider may be first built after the user already resolved (e.g. a
+  // vault unlock invalidates cloudUserProvider before this provider exists);
+  // ref.listen does not deliver the current value, so check it explicitly.
+  final user = ref.read(cloudUserProvider).asData?.value;
+  if (user != null) unawaited(service.subscribe());
+  return service;
+});
 
 final maidCafeServiceProvider = Provider<MaidCafeService>((ref) {
   return MaidCafeService(
