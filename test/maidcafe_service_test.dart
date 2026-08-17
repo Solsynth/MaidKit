@@ -80,11 +80,22 @@ Map<String, dynamic> _daemon({String id = 'daemon-1'}) => {
   'name': 'host',
   'enabled': true,
   'last_seen_at': null,
+  'disconnected_at': null,
   'created_at': '2026-08-13T00:00:00Z',
   'updated_at': '2026-08-13T00:00:00Z',
 };
 
 void main() {
+  test('daemon parses cloud disconnect state', () {
+    final daemon = MaidCafeDaemon.fromJson({
+      ..._daemon(),
+      'last_seen_at': '2026-08-17T11:50:00Z',
+      'disconnected_at': '2026-08-17T12:00:00Z',
+    });
+
+    expect(daemon.lastSeenAt, DateTime.utc(2026, 8, 17, 11, 50));
+    expect(daemon.disconnectedAt, DateTime.utc(2026, 8, 17, 12));
+  });
   test(
     'cloud create uses Solarpass bearer and stores one-time secret',
     () async {

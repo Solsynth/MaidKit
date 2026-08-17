@@ -931,6 +931,7 @@
   "maidCafeDisable": "停用",
   "maidCafeDisableConfirm": "停用此守護程式並刪除本機儲存的雲端密鑰？",
   "maidCafeDisabled": "已停用",
+  "maidCafeDisconnected": "已中斷連線",
   "maidCafeDiscardChanges": "捨棄變更",
   "maidCafeDone": "完成",
   "maidCafeEnable": "啟用",

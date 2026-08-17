@@ -22,17 +22,20 @@ import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/theme.dart';
 
-MaidCafeDaemon _daemon({String id = 'daemon-1', String name = 'host-1'}) =>
-    MaidCafeDaemon(
-      id: id,
-      name: name,
-      enabled: true,
-      lastSeenAt: null,
-      createdAt: DateTime.utc(2026, 8, 13),
-      updatedAt: DateTime.utc(2026, 8, 13),
-      hostId: 'host-42',
-    );
-
+MaidCafeDaemon _daemon({
+  String id = 'daemon-1',
+  String name = 'host-1',
+  DateTime? disconnectedAt,
+}) => MaidCafeDaemon(
+  id: id,
+  name: name,
+  enabled: true,
+  lastSeenAt: null,
+  createdAt: DateTime.utc(2026, 8, 13),
+  updatedAt: DateTime.utc(2026, 8, 13),
+  hostId: 'host-42',
+  disconnectedAt: disconnectedAt,
+);
 MaidCafeMetoerNotification _notification() => MaidCafeMetoerNotification(
   id: 'n1',
   topic: 'maidcafe.daemon.alert',
@@ -187,6 +190,7 @@ void main() {
     WidgetTester tester, {
     bool signedIn = true,
     _FakeMaidCafeService? service,
+    MaidCafeDaemon? daemon,
     List<MaidCafeMetric> metrics = const [],
     Future<List<MaidCafeMetric>> Function(Ref ref, String daemonId)?
     metricsLoader,
@@ -215,7 +219,7 @@ void main() {
         ),
       ),
       maidCafeDaemonsProvider.overrideWith(
-        (ref, workspaceId) async => [_daemon()],
+        (ref, workspaceId) async => [daemon ?? _daemon()],
       ),
       maidCafeQuotaProvider.overrideWith((ref, workspaceId) async => _quota()),
       maidCafeMetricsProvider.overrideWith(
@@ -224,7 +228,6 @@ void main() {
       maidCafeCloudActionsProvider.overrideWith(
         (ref, daemonId) async => [_cloudAction()],
       ),
-      maidCafeCredentialsProvider.overrideWith((ref) async => [_credential()]),
       maidCafeServiceProvider.overrideWithValue(
         service ?? _FakeMaidCafeService(),
       ),
@@ -283,6 +286,17 @@ void main() {
     expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
     expect(find.text('Webhook backup failed'), findsOneWidget);
     expect(find.text('exit code 1'), findsOneWidget);
+  });
+
+  testWidgets('fleet card surfaces a cloud heartbeat disconnect', (
+    tester,
+  ) async {
+    await pumpPage(
+      tester,
+      daemon: _daemon(disconnectedAt: DateTime.utc(2026, 8, 17, 12, 0)),
+    );
+
+    expect(find.text('maidCafeDisconnected'.tr()), findsOneWidget);
   });
 
   testWidgets('fleet tab renders the workspace quota with daemon usage', (

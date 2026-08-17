@@ -65,6 +65,7 @@ class MaidCafeDaemon {
     required this.createdAt,
     required this.updatedAt,
     this.hostId,
+    this.disconnectedAt,
   });
 
   final String id;
@@ -78,6 +79,10 @@ class MaidCafeDaemon {
   /// re-registration, so credential host scopes key on it.
   final String? hostId;
 
+  /// Cloud heartbeat alarm transition. Null means the daemon is not currently
+  /// marked disconnected by the cloud.
+  final DateTime? disconnectedAt;
+
   factory MaidCafeDaemon.fromJson(Map<String, dynamic> json) {
     final hostId = _optionalString(json, 'host_id');
     return MaidCafeDaemon(
@@ -85,6 +90,7 @@ class MaidCafeDaemon {
       name: _requiredString(json, 'name'),
       enabled: _requiredBool(json, 'enabled'),
       lastSeenAt: _optionalDate(json, 'last_seen_at'),
+      disconnectedAt: _optionalDate(json, 'disconnected_at'),
       createdAt: _requiredDate(json, 'created_at'),
       updatedAt: _requiredDate(json, 'updated_at'),
       hostId: (hostId == null || hostId.isEmpty) ? null : hostId,
@@ -101,6 +107,7 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
     required super.createdAt,
     required super.updatedAt,
     super.hostId,
+    super.disconnectedAt,
     required this.secret,
   });
 
@@ -117,6 +124,7 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
       createdAt: daemon.createdAt,
       updatedAt: daemon.updatedAt,
       hostId: daemon.hostId,
+      disconnectedAt: daemon.disconnectedAt,
       secret: secret,
     );
   }

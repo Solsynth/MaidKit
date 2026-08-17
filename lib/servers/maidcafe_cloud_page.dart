@@ -1072,6 +1072,7 @@ class _DaemonFleetCard extends ConsumerWidget {
         ref.watch(maidCafeCloudActionsProvider(daemon.id)).asData?.value ??
         const <MaidCafeCloudAction>[];
     final enabled = daemon.enabled;
+    final disconnected = enabled && daemon.disconnectedAt != null;
     final lastSeen = daemon.lastSeenAt;
     final uptime = samples.isEmpty ? null : samples.last.uptimeSeconds;
     final uptimeLabel = uptime != null && uptime > 0
@@ -1092,7 +1093,11 @@ class _DaemonFleetCard extends ConsumerWidget {
                   width: 8,
                   height: 8,
                   decoration: BoxDecoration(
-                    color: enabled ? colors.primary : colors.outline,
+                    color: disconnected
+                        ? colors.error
+                        : enabled
+                        ? colors.primary
+                        : colors.outline,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -1133,7 +1138,55 @@ class _DaemonFleetCard extends ConsumerWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            if (disconnected) ...[
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colors.errorContainer,
+                    border: Border(
+                      left: BorderSide(color: colors.error, width: 3),
+                    ),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Symbols.cloud_off,
+                        size: 18,
+                        color: colors.onErrorContainer,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'maidCafeDisconnected'.tr(),
+                          style: textTheme.labelLarge?.copyWith(
+                            color: colors.onErrorContainer,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        DateFormat(
+                          'yyyy-MM-dd HH:mm',
+                        ).format(daemon.disconnectedAt!.toLocal()),
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colors.onErrorContainer,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ] else
+              const SizedBox(height: 10),
+            if (disconnected) const SizedBox(height: 2),
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: _MetricBars(

@@ -970,6 +970,7 @@
   "maidCafeDisable": "Disable",
   "maidCafeDisableConfirm": "Disable this daemon and remove its stored cloud secret?",
   "maidCafeDisabled": "Disabled",
+  "maidCafeDisconnected": "Disconnected",
   "maidCafeDiscardChanges": "Discard changes",
   "maidCafeDone": "Done",
   "maidCafeEnable": "Enable",

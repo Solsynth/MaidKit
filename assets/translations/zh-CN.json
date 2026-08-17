@@ -969,6 +969,7 @@
   "maidCafeDisable": "禁用",
   "maidCafeDisableConfirm": "禁用此守护进程并删除本地保存的云密钥？",
   "maidCafeDisabled": "已禁用",
+  "maidCafeDisconnected": "已断开连接",
   "maidCafeDiscardChanges": "放弃更改",
   "maidCafeDone": "完成",
   "maidCafeEnable": "启用",
