@@ -8,6 +8,7 @@ import 'package:easy_localization/src/localization.dart' as ez;
 import 'package:easy_localization/src/translations.dart' as ez_tr;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
@@ -138,6 +139,9 @@ class _FakeMaidCafeService extends MaidCafeService {
       token: 'mk_test-token',
     );
   }
+
+  @override
+  Future<List<MaidCafeCredential>> listCredentials() async => [_credential()];
 }
 
 class _FakeConnector implements MaidCafeServerConnector {
@@ -194,6 +198,8 @@ void main() {
     List<MaidCafeMetric> metrics = const [],
     Future<List<MaidCafeMetric>> Function(Ref ref, String daemonId)?
     metricsLoader,
+    Future<List<MaidCafeMetoerNotification>> Function(Ref ref)?
+    notificationsLoader,
   }) async {
     tester.view.physicalSize = const Size(1200, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -232,9 +238,12 @@ void main() {
         service ?? _FakeMaidCafeService(),
       ),
       maidCafeMetoerNotificationsProvider.overrideWith(
-        (ref) => Future.value(
-          signedIn ? [_notification()] : const <MaidCafeMetoerNotification>[],
-        ),
+        notificationsLoader ??
+            ((ref) => Future.value(
+              signedIn
+                  ? [_notification()]
+                  : const <MaidCafeMetoerNotification>[],
+            )),
       ),
       maidCafeMetoerUnreadCountProvider.overrideWith(
         (ref) => Future.value(signedIn ? 1 : 0),
@@ -286,6 +295,46 @@ void main() {
     expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
     expect(find.text('Webhook backup failed'), findsOneWidget);
     expect(find.text('exit code 1'), findsOneWidget);
+  });
+
+  testWidgets('notifications refresh from pull and top-edge hover', (
+    tester,
+  ) async {
+    var fetches = 0;
+    await pumpPage(
+      tester,
+      notificationsLoader: (ref) async {
+        fetches++;
+        return [_notification()];
+      },
+    );
+
+    await tester.tap(find.text('maidCafeNotifications'.tr()));
+    await tester.pumpAndSettle();
+    expect(fetches, 1);
+
+    final refreshIndicator = find.byType(RefreshIndicator);
+    final refreshTopLeft = tester.getTopLeft(refreshIndicator);
+    await tester.dragFrom(
+      refreshTopLeft + const Offset(300, 180),
+      const Offset(0, 420),
+    );
+    await tester.pumpAndSettle();
+    expect(fetches, greaterThan(1));
+
+    final refreshButton = find.byKey(
+      const ValueKey('maidcafe-notifications-refresh'),
+    );
+    final ignorePointer = find
+        .ancestor(of: refreshButton, matching: find.byType(IgnorePointer))
+        .first;
+    expect(tester.widget<IgnorePointer>(ignorePointer).ignoring, isTrue);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final topLeft = tester.getTopLeft(refreshIndicator);
+    await gesture.moveTo(topLeft + const Offset(100, 2));
+    await tester.pump();
+    expect(tester.widget<IgnorePointer>(ignorePointer).ignoring, isFalse);
+    await gesture.removePointer();
   });
 
   testWidgets('fleet card surfaces a cloud heartbeat disconnect', (
@@ -360,6 +409,14 @@ void main() {
       find.textContaining('maidCafeUptime'.tr(args: ['3d 4h'])),
       findsOneWidget,
     );
+  });
+  testWidgets('daemon card offers a quick copy id action', (tester) async {
+    await pumpPage(tester);
+
+    final copyButton = find.byTooltip('maidCafeCopyDaemonId'.tr());
+    expect(copyButton, findsOneWidget);
+    await tester.tap(copyButton);
+    await tester.pump();
   });
 
   testWidgets('cloud page polls the cloud for fresh daemon metrics', (

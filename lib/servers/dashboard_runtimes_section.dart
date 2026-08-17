@@ -223,12 +223,8 @@ class _DashboardRuntimesSectionState
     final scheme = theme.colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerLow,
-          border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(12),
-        ),
+      child: Card(
+        margin: .zero,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -249,6 +245,8 @@ class _DashboardRuntimesSectionState
                     onPressed: _refresh,
                     icon: const Icon(Symbols.refresh, size: 18),
                     visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                   ),
                 ],
               ),

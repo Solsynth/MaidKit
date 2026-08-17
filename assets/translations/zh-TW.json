@@ -934,6 +934,7 @@
   "maidCafeCloudUrlHint": "非本機雲端主機必須使用 HTTPS。",
   "maidCafeConfigTab": "設定",
   "maidCafeCopySnippet": "複製配置片段",
+  "maidCafeCopyDaemonId": "複製守護程式 ID",
   "maidCafeCpuAlarm": "CPU 警報",
   "maidCafeDaemonCount_other": "{} 個守護程式",
   "maidCafeDaemonFilter": "守護程式篩選",
@@ -972,6 +973,7 @@
   "maidCafeUninstallHint": "停止守護程式並刪除 MaidCafe 管理的檔案。服務帳戶會保留。",
   "maidCafeUninstallSuccess": "MaidCafe 已解除安裝。",
   "maidCafeOperations": "操作",
+  "maidCafeOpenPayloadTab": "開啟負載分頁",
   "maidCafeDangerZone": "從伺服器移除",
   "maidCafeInstallBack": "上一步",
   "maidCafeInstallChecking": "正在檢查 MaidCafe 是否已安裝並執行……",
@@ -1933,5 +1935,7 @@
   "dbThreadsRunning": "執行中執行緒",
   "dbMaxUsedConnections": "峰值連線",
   "dbUptime": "運行時間",
-  "dbPerDatabase": "依資料庫"
+  "dbPerDatabase": "依資料庫",
+  "unknown": "未知",
+  "invokedBy": "调用者"
 }

@@ -940,6 +940,7 @@
   "maidCafeConnectHint": "选择一台已连接的服务器。MaidKit 会在该工作区注册其守护进程并自动完成配置。",
   "maidCafeConnectRunning": "正在连接…",
   "maidCafeCopySnippet": "复制配置片段",
+  "maidCafeCopyDaemonId": "复制守护进程 ID",
   "maidCafeCpuAlarm": "CPU 告警",
   "maidCafeCredentialActionsScope": "允许的操作（留空 = 全部）",
   "maidCafeCredentialCopy": "复制令牌",
@@ -1000,6 +1001,7 @@
   "maidCafeUninstallHint": "停止守护进程并删除 MaidCafe 管理的文件。服务账户会保留。",
   "maidCafeUninstallSuccess": "MaidCafe 已卸载。",
   "maidCafeOperations": "操作",
+  "maidCafeOpenPayloadTab": "打开负载标签页",
   "maidCafeDangerZone": "从服务器移除",
   "maidCafeInstallBack": "上一步",
   "maidCafeInstallChecking": "正在检查 MaidCafe 是否已安装并运行……",
@@ -1979,5 +1981,7 @@
   "dbThreadsRunning": "运行中线程",
   "dbMaxUsedConnections": "峰值连接",
   "dbUptime": "运行时间",
-  "dbPerDatabase": "按数据库"
+  "dbPerDatabase": "按数据库",
+  "unknown": "未知",
+  "invokedBy": "调用者"
 }

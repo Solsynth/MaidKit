@@ -8,6 +8,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_server_tab.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
@@ -232,13 +233,13 @@ SSHSession _fakeRemoteCommand(String command) {
   throw StateError('Unexpected remote command: $command');
 }
 
-/// Pumps the payload-mode tab into the running state against the fake SSH
-/// stack: the probe reads a managed install plus the daemon config, opens the
-/// shared session, and the payload tabs (Configuration / Actions / audit)
-/// become available.
+/// Pumps a MaidCafe tab into the running state against the fake SSH stack:
+/// the probe reads a managed install plus the daemon config, opens the shared
+/// session, and exposes either the installation actions or payload tabs.
 Future<void> pumpRunningPayloadTab(
   WidgetTester tester, {
   bool daemonReachable = true,
+  MaidCafeTabMode mode = MaidCafeTabMode.payload,
 }) async {
   // testWidgets bodies run in a FakeAsync zone where real I/O futures never
   // complete; the temp dir and the (lazily opened) drift database must be
@@ -321,7 +322,7 @@ Future<void> pumpRunningPayloadTab(
                       connected: true,
                       connectionError: null,
                       onConnect: () async {},
-                      mode: MaidCafeTabMode.payload,
+                      mode: mode,
                     ),
                   ),
                   const SizedBox.shrink(),
@@ -575,6 +576,34 @@ void main() {
       expect(find.text('maidCafeInstallApplication'.tr()), findsOneWidget);
     },
   );
+  testWidgets('running installation exposes the payload workspace action', (
+    WidgetTester tester,
+  ) async {
+    await pumpRunningPayloadTab(tester, mode: MaidCafeTabMode.installation);
+
+    final openPayloadButton = find.widgetWithText(
+      OutlinedButton,
+      'maidCafeOpenPayloadTab'.tr(),
+    );
+    expect(openPayloadButton, findsOneWidget);
+    expect(
+      tester.widget<OutlinedButton>(openPayloadButton).onPressed,
+      isNotNull,
+    );
+    await tester.tap(openPayloadButton);
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(MaidCafeServerTab)),
+    );
+    expect(
+      container
+          .read(terminalTabsProvider)
+          .tabs
+          .whereType<MaidCafePayloadSessionTab>(),
+      hasLength(1),
+    );
+  });
 
   testWidgets('alarms are edited in their own payload tab', (
     WidgetTester tester,

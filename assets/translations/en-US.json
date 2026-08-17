@@ -940,6 +940,7 @@
   "maidCafeConnectHint": "Pick a connected server. MaidKit registers its daemon in this workspace and configures it automatically.",
   "maidCafeConnectRunning": "Connecting…",
   "maidCafeCopySnippet": "Copy configuration snippet",
+  "maidCafeCopyDaemonId": "Copy daemon ID",
   "maidCafeCpuAlarm": "CPU alarm",
   "maidCafeCredentialActionsScope": "Allowed actions (empty = all)",
   "maidCafeCredentialCopy": "Copy token",
@@ -1002,6 +1003,7 @@
   "maidCafeUninstallHint": "Stops the daemon and removes MaidCafe-managed files. The service account is kept.",
   "maidCafeUninstallSuccess": "MaidCafe was uninstalled.",
   "maidCafeOperations": "Operations",
+  "maidCafeOpenPayloadTab": "Open payload tab",
   "maidCafeDangerZone": "Remove from server",
   "maidCafeInstallBack": "Back",
   "maidCafeInstallChecking": "Checking for a running MaidCafe installation...",
@@ -1981,5 +1983,7 @@
   "dbThreadsRunning": "Threads running",
   "dbMaxUsedConnections": "Peak connections",
   "dbUptime": "Uptime",
-  "dbPerDatabase": "Per database"
+  "dbPerDatabase": "Per database",
+  "unknown": "Unknown",
+  "invokedBy": "Invoked by"
 }

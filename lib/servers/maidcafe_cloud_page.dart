@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -23,8 +25,8 @@ import 'server_providers.dart';
 /// workspace selection, daemon registration (the one-time `[daemon]` config
 /// snippet), and the Metoer notification feed.
 ///
-/// The page is a tabbed console — fleet (daemon cards with a live metric
-/// strip), credentials and notifications — with the account and workspace
+/// The page is a tabbed console — fleet (daemon cards with live metric
+/// history), credentials and notifications — with the account and workspace
 /// selection in a terminal-style bottom status bar that also carries a
 /// manual refresh and a last-refreshed readout.
 @RoutePage()
@@ -56,6 +58,9 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
 
   Timer? _refreshTimer;
   DateTime? _lastRefreshed;
+  bool _notificationsTopHovered = false;
+  bool _notificationsRefreshing = false;
+  bool _notificationsUnreadOnly = false;
 
   bool _isBusy(String op) => _busyOps.contains(op);
 
@@ -362,8 +367,10 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     }
     final daemons = ref.watch(maidCafeDaemonsProvider(workspaceId));
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
       children: [
+        _MaidCafeQuotaCard(workspaceId: workspaceId),
+        const SizedBox(height: 16),
         daemons.when(
           loading: () => const Padding(
             padding: EdgeInsets.all(16),
@@ -664,15 +671,22 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         () => ref.invalidate(maidCafeCredentialsProvider),
       ),
       data: (items) => items.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('maidCafeNoCredentials'.tr()),
+          ? _SettingsSectionCard(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('maidCafeNoCredentials'.tr()),
+              ),
             )
-          : Column(
-              children: [
-                for (final credential in items)
-                  _credentialTile(context, credential),
-              ],
+          : _SettingsSectionCard(
+              child: Column(
+                children: [
+                  for (var i = 0; i < items.length; i++) ...[
+                    _credentialTile(context, items[i]),
+                    if (i < items.length - 1)
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                  ],
+                ],
+              ),
             ),
     );
   }
@@ -771,65 +785,213 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
 
   // ------------------------------------------------------------- notifications
 
-  /// Notifications tab: feed actions above the Metoer feed.
+  /// Notifications tab: a quiet, scan-friendly feed with pull-to-refresh.
+  /// On desktop the refresh action appears when the pointer reaches the top
+  /// edge, keeping the feed itself free of permanent toolbar chrome.
   Widget _notificationsTab(BuildContext context) {
     final unread = ref.watch(maidCafeMetoerUnreadCountProvider).asData?.value;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+    return Stack(
+      children: [
+        RefreshIndicator(
+          onRefresh: _refreshNotifications,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+            children: [
+              _notificationsHeader(context, unread),
+              const SizedBox(height: 16),
+              _notificationsBody(context),
+            ],
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 52,
+          child: MouseRegion(
+            onEnter: (_) {
+              if (mounted) setState(() => _notificationsTopHovered = true);
+            },
+            onExit: (_) {
+              if (mounted && !_notificationsRefreshing) {
+                setState(() => _notificationsTopHovered = false);
+              }
+            },
+            child: _notificationsRefreshAffordance(context),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _notificationsHeader(BuildContext context, int? unread) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final markAllBusy = _isBusy(_notificationsOp);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (unread != null && unread > 0) ...[
-              Text(
-                'maidCafeUnreadCount'.tr(args: ['$unread']),
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: colors.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
               ),
-              TextButton(
-                onPressed: () => _markAllRead(context),
-                child: Text('maidCafeMarkAllRead'.tr()),
+              child: Icon(
+                Symbols.notifications,
+                color: colors.onPrimaryContainer,
               ),
-            ],
-            IconButton(
-              tooltip: 'maidCafeRefresh'.tr(),
-              icon: const Icon(Symbols.refresh),
-              onPressed: () {
-                ref.invalidate(maidCafeMetoerNotificationsProvider);
-                ref.invalidate(maidCafeMetoerUnreadCountProvider);
-              },
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'maidCafeNotifications'.tr(),
+                    style: theme.textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    unread == null
+                        ? 'maidCafeUnreadCount'.tr(args: ['…'])
+                        : 'maidCafeUnreadCount'.tr(args: ['$unread']),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        _notificationsBody(context),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilterChip(
+              selected: _notificationsUnreadOnly,
+              avatar: const Icon(Symbols.mark_email_unread, size: 18),
+              label: Text('maidCafeUnreadOnly'.tr()),
+              onSelected: (selected) {
+                setState(() => _notificationsUnreadOnly = selected);
+              },
+            ),
+            if (unread != null && unread > 0)
+              TextButton.icon(
+                onPressed: markAllBusy ? null : () => _markAllRead(context),
+                icon: const Icon(Symbols.done_all, size: 18),
+                label: Text('maidCafeMarkAllRead'.tr()),
+              ),
+          ],
+        ),
       ],
     );
+  }
+
+  Widget _notificationsRefreshAffordance(BuildContext context) {
+    final theme = Theme.of(context);
+    final visible = _notificationsTopHovered || _notificationsRefreshing;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: AnimatedSlide(
+        offset: visible ? Offset.zero : const Offset(0, -0.35),
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        child: AnimatedOpacity(
+          opacity: visible ? 1 : 0,
+          duration: const Duration(milliseconds: 120),
+          child: IgnorePointer(
+            ignoring: !visible,
+            child: Material(
+              color: theme.colorScheme.surfaceContainerHigh,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: BorderSide(color: theme.colorScheme.outlineVariant),
+              ),
+              elevation: 2,
+              child: IconButton(
+                key: const ValueKey('maidcafe-notifications-refresh'),
+                tooltip: 'maidCafeRefresh'.tr(),
+                onPressed: _notificationsRefreshing
+                    ? null
+                    : () {
+                        _notificationsTopHovered = false;
+                        _refreshNotifications();
+                      },
+                icon: _notificationsRefreshing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Symbols.refresh, size: 20),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _refreshNotifications() async {
+    if (_notificationsRefreshing) return;
+    if (mounted) {
+      setState(() {
+        _notificationsRefreshing = true;
+        _notificationsTopHovered = true;
+      });
+    }
+    try {
+      await Future.wait([
+        ref.refresh(maidCafeMetoerNotificationsProvider.future),
+        ref.refresh(maidCafeMetoerUnreadCountProvider.future),
+      ]);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _notificationsRefreshing = false;
+          _notificationsTopHovered = false;
+        });
+      }
+    }
   }
 
   Widget _notificationsBody(BuildContext context) {
     final notifications = ref.watch(maidCafeMetoerNotificationsProvider);
     return notifications.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: LinearProgressIndicator(),
+      loading: () => _NotificationsLoading(),
+      error: (error, _) => _SettingsSectionCard(
+        child: _recoverableError(context, error, () {
+          _refreshNotifications();
+        }),
       ),
-      error: (error, _) => _recoverableError(
-        context,
-        error,
-        () => ref.invalidate(maidCafeMetoerNotificationsProvider),
-      ),
-      data: (items) => items.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('maidCafeNoNotifications'.tr()),
-            )
-          : Column(
-              children: [
-                for (final item in items) _notificationTile(context, item),
+      data: (items) {
+        final visibleItems = _notificationsUnreadOnly
+            ? items.where((item) => item.unread).toList(growable: false)
+            : items;
+        if (visibleItems.isEmpty) {
+          return _NotificationsEmptyState(unreadOnly: _notificationsUnreadOnly);
+        }
+        return _SettingsSectionCard(
+          child: Column(
+            children: [
+              for (var i = 0; i < visibleItems.length; i++) ...[
+                _notificationTile(context, visibleItems[i]),
+                if (i < visibleItems.length - 1)
+                  const Divider(height: 1, indent: 72, endIndent: 16),
               ],
-            ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -837,51 +999,159 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     BuildContext context,
     MaidCafeMetoerNotification item,
   ) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final daemonName = item.meta['daemon_name']?.toString();
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-      leading: Container(
-        width: 12,
-        height: 12,
-        decoration: BoxDecoration(
-          color: item.unread ? Colors.blue : Colors.transparent,
-          shape: BoxShape.circle,
-        ),
-      ),
-      title: Text(item.title ?? item.topic),
-      subtitle: Column(
+    final title = item.title?.trim().isNotEmpty == true
+        ? item.title!.trim()
+        : _notificationTopicLabel(item.topic);
+    final metadata = [
+      item.topic,
+      if (daemonName != null && daemonName.isNotEmpty)
+        'maidCafeFromServer'.tr(args: [daemonName]),
+    ];
+    return Container(
+      color: item.unread
+          ? colors.primaryContainer.withValues(alpha: 0.16)
+          : Colors.transparent,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (item.subtitle.isNotEmpty)
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: item.unread
+                  ? colors.primaryContainer
+                  : colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              _notificationIcon(item.topic),
+              size: 20,
+              color: item.unread
+                  ? colors.onPrimaryContainer
+                  : colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: item.unread ? FontWeight.w700 : null,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      DateFormat(
+                        'MMM d, HH:mm',
+                      ).format(item.createdAt.toLocal()),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+                if (item.subtitle.trim().isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    item.subtitle.trim(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (item.body.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    item.body.trim(),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.onSurface.withValues(alpha: 0.82),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 7),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 3,
+                  children: [
+                    for (var i = 0; i < metadata.length; i++) ...[
+                      if (i > 0)
+                        Text(
+                          '·',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: colors.outline,
+                          ),
+                        ),
+                      Text(
+                        metadata[i],
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (item.unread) ...[
+            const SizedBox(width: 10),
             Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Text(
-                item.subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              padding: const EdgeInsets.only(top: 5),
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: colors.primary,
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
-          Text(item.body, maxLines: 2, overflow: TextOverflow.ellipsis),
-          if (daemonName != null && daemonName.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                'maidCafeFromServer'.tr(args: [daemonName]),
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-              ),
-            ),
+          ],
         ],
       ),
-      trailing: Text(
-        DateFormat('yyyy-MM-dd HH:mm').format(item.createdAt.toLocal()),
-        style: Theme.of(
-          context,
-        ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-      ),
     );
+  }
+
+  IconData _notificationIcon(String topic) {
+    if (topic.contains('alarm') || topic.contains('failure')) {
+      return Symbols.warning;
+    }
+    if (topic.contains('success') || topic.contains('completed')) {
+      return Symbols.check_circle;
+    }
+    if (topic.contains('daemon') || topic.contains('metric')) {
+      return Symbols.dns;
+    }
+    if (topic.contains('request') || topic.contains('message')) {
+      return Symbols.chat;
+    }
+    return Symbols.notifications;
+  }
+
+  String _notificationTopicLabel(String topic) {
+    final words = topic.replaceAll(RegExp(r'[._-]+'), ' ').trim();
+    if (words.isEmpty) return 'maidCafeNotifications'.tr();
+    return words[0].toUpperCase() + words.substring(1);
   }
 
   Future<void> _markAllRead(BuildContext context) async {
@@ -933,13 +1203,139 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   }
 }
 
-/// Fixed-width control rail: the recessed panel holding the account and
-/// credential groups. Scrolls independently of the fleet.
+class _MaidCafeQuotaCard extends ConsumerWidget {
+  const _MaidCafeQuotaCard({required this.workspaceId});
 
-/// Fixed-width control rail: the recessed panel holding the connection,
-/// account and credential groups. Scrolls independently of the fleet.
-/// Left-packed fleet grid with natural card heights; each row is as tall as
-/// its tallest card so cloud-action chips never clip.
+  final String workspaceId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final quota = ref.watch(maidCafeQuotaProvider(workspaceId)).asData?.value;
+    if (quota == null) return const SizedBox.shrink();
+    final daemonCount =
+        ref.watch(maidCafeDaemonsProvider(workspaceId)).asData?.value.length ??
+        0;
+    final maxDaemons = quota.maxDaemons;
+    final atLimit = maxDaemons != null && daemonCount >= maxDaemons;
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 620;
+            final rows = [
+              _QuotaValue(
+                label: 'maidCafeQuotaMaxDaemons'.tr(),
+                value: maxDaemons == null
+                    ? 'maidCafeQuotaUnlimited'.tr()
+                    : '$daemonCount / $maxDaemons',
+                color: atLimit ? scheme.error : null,
+              ),
+              _QuotaValue(
+                label: 'maidCafeQuotaPollingInterval'.tr(),
+                value: quota.pollingIntervalSeconds == null
+                    ? 'maidCafeQuotaUnlimited'.tr()
+                    : 'maidCafeQuotaSeconds'.tr(
+                        args: ['${quota.pollingIntervalSeconds}'],
+                      ),
+              ),
+              _QuotaValue(
+                label: 'maidCafeQuotaMetricsRetention'.tr(),
+                value: quota.metricsRetentionDays == null
+                    ? 'maidCafeQuotaUnlimited'.tr()
+                    : 'maidCafeQuotaDays'.tr(
+                        args: ['${quota.metricsRetentionDays}'],
+                      ),
+              ),
+            ];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'maidCafeQuota'.tr(),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 10),
+                if (compact)
+                  Column(
+                    children: [
+                      for (final row in rows) ...[
+                        row,
+                        if (row != rows.last) const SizedBox(height: 8),
+                      ],
+                    ],
+                  )
+                else
+                  Row(
+                    children: [
+                      for (var i = 0; i < rows.length; i++) ...[
+                        if (i > 0)
+                          SizedBox(
+                            height: 34,
+                            child: VerticalDivider(
+                              color: scheme.outlineVariant,
+                              width: 24,
+                            ),
+                          ),
+                        Expanded(child: rows[i]),
+                      ],
+                    ],
+                  ),
+                if (maxDaemons != null) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: (daemonCount / maxDaemons).clamp(0.0, 1.0),
+                      minHeight: 6,
+                      color: atLimit ? scheme.error : scheme.primary,
+                    ),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _QuotaValue extends StatelessWidget {
+  const _QuotaValue({required this.label, required this.value, this.color});
+
+  final String label;
+  final String value;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          value,
+          textAlign: TextAlign.end,
+          style: theme.textTheme.labelLarge?.copyWith(color: color),
+        ),
+      ],
+    );
+  }
+}
+
 class _DaemonGrid extends StatelessWidget {
   const _DaemonGrid({
     required this.items,
@@ -1029,10 +1425,10 @@ class _DaemonFleetCard extends ConsumerWidget {
     final textTheme = theme.textTheme;
     final metrics = ref.watch(maidCafeMetricsProvider(daemon.id));
     final history = metrics.asData?.value ?? const <MaidCafeMetric>[];
-    // The API returns newest-first; the strip reads oldest → newest.
+    // The API returns newest-first; the chart reads oldest → newest.
     final ordered = [...history]..sort((a, b) => a.sentAt.compareTo(b.sentAt));
-    final samples = ordered.length > 5
-        ? ordered.sublist(ordered.length - 5)
+    final samples = ordered.length > 24
+        ? ordered.sublist(ordered.length - 24)
         : ordered;
     final actions =
         ref.watch(maidCafeCloudActionsProvider(daemon.id)).asData?.value ??
@@ -1069,12 +1465,33 @@ class _DaemonFleetCard extends ConsumerWidget {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    daemon.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.titleMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        daemon.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.titleMedium,
+                      ),
+                      Text(
+                        daemon.id,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          fontFamily: 'IBM Plex Mono',
+                        ),
+                      ),
+                    ],
                   ),
+                ),
+                IconButton(
+                  tooltip: 'maidCafeCopyDaemonId'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Symbols.content_copy),
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: daemon.id)),
                 ),
                 IconButton(
                   tooltip: 'maidCafeRename'.tr(),
@@ -1155,7 +1572,7 @@ class _DaemonFleetCard extends ConsumerWidget {
             if (disconnected) const SizedBox(height: 2),
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: _MetricBars(
+              child: _MetricHistoryChart(
                 samples: samples,
                 unavailable: metrics.hasError,
               ),
@@ -1227,166 +1644,315 @@ class _DaemonFleetCard extends ConsumerWidget {
   }
 }
 
-/// The fleet card's signature: the last five samples of the daemon's four
-/// host signals (CPU, RAM, load, disk) as threshold-colored bar strips with
-/// tabular values. Percent series follow the dashboard's load colors
-/// (tertiary ≥ 75%, error ≥ 90%); load is colored by the dashboard's
-/// absolute load thresholds (busy ≥ 2, high ≥ 4).
-class _MetricBars extends StatelessWidget {
-  const _MetricBars({required this.samples, required this.unavailable});
+/// The fleet card's signature: a compact history plot for the daemon's four
+/// host signals. It uses the same fl_chart vocabulary as the server Activity
+/// tab, but keeps the series intentionally small enough for a fleet card.
+class _MetricHistoryChart extends StatelessWidget {
+  const _MetricHistoryChart({required this.samples, required this.unavailable});
 
   final List<MaidCafeMetric> samples;
   final bool unavailable;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: unavailable && samples.isEmpty
-          ? Text(
-              'maidCafeHistoryUnavailable'.tr(),
-              style: textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _barRow(
-                  context,
-                  'CPU',
-                  (sample) => sample.cpuPercent / 100,
-                  (sample) => '${sample.cpuPercent.round()}%',
-                  (sample, colors) =>
-                      _percentColor(sample.cpuPercent / 100, colors),
-                ),
-                const SizedBox(height: 6),
-                _barRow(
-                  context,
-                  'RAM',
-                  (sample) => sample.memoryUsedPercent / 100,
-                  (sample) => '${sample.memoryUsedPercent.round()}%',
-                  (sample, colors) =>
-                      _percentColor(sample.memoryUsedPercent / 100, colors),
-                ),
-                const SizedBox(height: 6),
-                _barRow(
-                  context,
-                  'LOAD',
-                  (sample) => sample.cpuCount > 0
-                      ? (sample.load1 / sample.cpuCount).clamp(0.0, 1.0)
-                      : 0,
-                  (sample) => sample.load1.toStringAsFixed(2),
-                  (sample, colors) => _loadColor(sample.load1, colors),
-                ),
-                const SizedBox(height: 6),
-                _barRow(
-                  context,
-                  'DISK',
-                  (sample) => _diskRatio(sample),
-                  (sample) => sample.diskTotalKb <= 0
-                      ? '—'
-                      : '${(_diskRatio(sample) * 100).round()}%',
-                  (sample, colors) => _percentColor(_diskRatio(sample), colors),
-                ),
-              ],
-            ),
-    );
-  }
-
-  Widget _barRow(
-    BuildContext context,
-    String label,
-    double Function(MaidCafeMetric) ratioOf,
-    String Function(MaidCafeMetric) labelOf,
-    Color Function(MaidCafeMetric sample, ColorScheme colors) colorOf,
-  ) {
-    final colors = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final latest = samples.isEmpty ? null : samples.last;
-    return Row(
-      children: [
-        SizedBox(
-          width: 36,
-          child: Text(
-            label,
-            style: textTheme.labelSmall?.copyWith(
-              color: colors.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-            ),
+    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    if (unavailable && samples.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          'maidCafeHistoryUnavailable'.tr(),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
           ),
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: SizedBox(
-            height: 18,
-            child: Row(
-              children: [
-                for (final sample in samples)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                      child: Align(
-                        alignment: Alignment.bottomLeft,
-                        child: FractionallySizedBox(
-                          heightFactor: ratioOf(sample).clamp(0.04, 1.0),
-                          // FractionallySizedBox lays its child out loosely;
-                          // a bare DecoratedBox would collapse to zero size.
-                          child: SizedBox.expand(
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: colorOf(sample, colors),
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(2),
-                                ),
-                              ),
-                            ),
-                          ),
+      );
+    }
+    if (samples.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          'maidCafeHistoryUnavailable'.tr(),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+    final series = _series(scheme);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              for (final item in series)
+                _MetricLegend(label: item.label, color: item.color),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 120,
+            child: LineChart(
+              LineChartData(
+                minX: 0,
+                maxX: math.max(samples.length - 1, 1).toDouble(),
+                minY: 0,
+                maxY: 1,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: 0.25,
+                  getDrawingHorizontalLine: (_) => FlLine(
+                    color: scheme.outlineVariant.withValues(alpha: 0.55),
+                    strokeWidth: 1,
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 32,
+                      interval: 0.5,
+                      getTitlesWidget: (value, meta) => Text(
+                        '${(value * 100).toInt()}%',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 9,
                         ),
                       ),
                     ),
                   ),
-              ],
+                ),
+                borderData: FlBorderData(show: false),
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipColor: (_) => scheme.inverseSurface,
+                    getTooltipItems: (touchedSpots) => [
+                      for (final spot in touchedSpots)
+                        LineTooltipItem(
+                          '${(spot.y * 100).toStringAsFixed(0)}%',
+                          TextStyle(
+                            color: scheme.onInverseSurface,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                lineBarsData: [
+                  for (final item in series)
+                    LineChartBarData(
+                      spots: item.spots,
+                      isCurved: true,
+                      curveSmoothness: 0.2,
+                      color: item.color,
+                      barWidth: 2,
+                      isStrokeCapRound: true,
+                      dotData: FlDotData(
+                        show: samples.length == 1,
+                        getDotPainter: (spot, percent, bar, index) =>
+                            FlDotCirclePainter(
+                              radius: 2.5,
+                              color: item.color,
+                              strokeWidth: 0,
+                            ),
+                      ),
+                      belowBarData: BarAreaData(
+                        show: item == series.first,
+                        color: item.color.withValues(alpha: 0.08),
+                      ),
+                    ),
+                ],
+              ),
+              duration: Duration.zero,
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 42,
-          child: Text(
-            latest == null ? '—' : labelOf(latest),
-            textAlign: TextAlign.right,
-            style: textTheme.labelMedium?.copyWith(
-              color: colors.onSurface,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 14,
+            runSpacing: 4,
+            children: [
+              for (final item in series)
+                _MetricLatestValue(
+                  label: item.label,
+                  value: item.latestLabel,
+                  color: item.color,
+                ),
+            ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
+
+  List<_MetricSeries> _series(ColorScheme scheme) =>
+      [
+            _MetricSeries(
+              label: 'CPU',
+              color: scheme.primary,
+              ratioOf: (sample) => (sample.cpuPercent / 100).clamp(0.0, 1.0),
+              latestLabel: samples.isEmpty
+                  ? '—'
+                  : '${samples.last.cpuPercent.round()}%',
+            ),
+            _MetricSeries(
+              label: 'RAM',
+              color: scheme.tertiary,
+              ratioOf: (sample) =>
+                  (sample.memoryUsedPercent / 100).clamp(0.0, 1.0),
+              latestLabel: samples.isEmpty
+                  ? '—'
+                  : '${samples.last.memoryUsedPercent.round()}%',
+            ),
+            _MetricSeries(
+              label: 'LOAD',
+              color: scheme.secondary,
+              ratioOf: (sample) => sample.cpuCount > 0
+                  ? (sample.load1 / sample.cpuCount).clamp(0.0, 1.0)
+                  : 0,
+              latestLabel: samples.isEmpty
+                  ? '—'
+                  : samples.last.load1.toStringAsFixed(2),
+            ),
+            _MetricSeries(
+              label: 'DISK',
+              color: scheme.error,
+              ratioOf: _diskRatio,
+              latestLabel: samples.isEmpty
+                  ? '—'
+                  : samples.last.diskTotalKb <= 0
+                  ? '—'
+                  : '${(_diskRatio(samples.last) * 100).round()}%',
+            ),
+          ]
+          .map((item) {
+            final spots = [
+              for (var i = 0; i < samples.length; i++)
+                FlSpot(i.toDouble(), item.ratioOf(samples[i])),
+            ];
+            return item.copyWith(spots: spots);
+          })
+          .toList(growable: false);
 
   static double _diskRatio(MaidCafeMetric sample) => sample.diskTotalKb <= 0
       ? 0
       : ((sample.diskTotalKb - sample.diskAvailableKb) / sample.diskTotalKb)
             .clamp(0.0, 1.0);
+}
 
-  static Color _percentColor(double ratio, ColorScheme colors) {
-    if (ratio >= 0.9) return colors.error;
-    if (ratio >= 0.75) return colors.tertiary;
-    return colors.primary;
+class _MetricSeries {
+  const _MetricSeries({
+    required this.label,
+    required this.color,
+    required this.ratioOf,
+    required this.latestLabel,
+    this.spots = const [],
+  });
+
+  final String label;
+  final Color color;
+  final double Function(MaidCafeMetric) ratioOf;
+  final String latestLabel;
+  final List<FlSpot> spots;
+
+  _MetricSeries copyWith({required List<FlSpot> spots}) => _MetricSeries(
+    label: label,
+    color: color,
+    ratioOf: ratioOf,
+    latestLabel: latestLabel,
+    spots: spots,
+  );
+}
+
+class _MetricLegend extends StatelessWidget {
+  const _MetricLegend({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
   }
+}
 
-  static Color _loadColor(double load, ColorScheme colors) {
-    if (load >= 4) return colors.error;
-    if (load >= 2) return colors.tertiary;
-    return colors.primary;
+class _MetricLatestValue extends StatelessWidget {
+  const _MetricLatestValue({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$label ',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        Text(
+          value,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w600,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -1432,6 +1998,104 @@ class _EmptyDaemons extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NotificationsLoading extends StatelessWidget {
+  const _NotificationsLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return _SettingsSectionCard(
+      child: Column(
+        children: [
+          const LinearProgressIndicator(minHeight: 2),
+          for (var i = 0; i < 3; i++) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: i == 0 ? 0.72 : 0.58,
+                          child: Container(
+                            height: 14,
+                            color: colors.surfaceContainerHighest,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 11,
+                          color: colors.surfaceContainerHighest,
+                        ),
+                        const SizedBox(height: 8),
+                        FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: 0.84,
+                          child: Container(
+                            height: 11,
+                            color: colors.surfaceContainerHighest,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (i < 2) const Divider(height: 1, indent: 72, endIndent: 16),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationsEmptyState extends StatelessWidget {
+  const _NotificationsEmptyState({required this.unreadOnly});
+
+  final bool unreadOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return _SettingsSectionCard(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        child: Column(
+          children: [
+            Icon(
+              unreadOnly ? Symbols.mark_email_read : Symbols.notifications_none,
+              size: 32,
+              color: colors.onSurfaceVariant,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'maidCafeNoNotifications'.tr(),
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+            ),
+          ],
+        ),
       ),
     );
   }

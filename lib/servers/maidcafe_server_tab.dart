@@ -1284,31 +1284,31 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-Row(
-              children: [
-                Icon(Symbols.local_cafe, color: scheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+          Row(
+            children: [
+              Icon(Symbols.local_cafe, color: scheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'maidCafeTitle'.tr(),
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    if (_streamStatus != null)
                       Text(
-                        'maidCafeTitle'.tr(),
-                        style: theme.textTheme.titleMedium,
-                      ),
-                      if (_streamStatus != null)
-                        Text(
-                          _streamStatus!,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
+                        _streamStatus!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
-                Icon(Symbols.check_circle, color: scheme.primary),
-              ],
-            ).padding(bottom: 8),
+              ),
+              Icon(Symbols.check_circle, color: scheme.primary),
+            ],
+          ).padding(bottom: 8),
           if (!widget.connected)
             _connectionPrompt()
           else if (_state == _MaidCafeState.checking)
@@ -1681,7 +1681,7 @@ Row(
     );
   }
 
-  Widget _connectionPrompt() => Card(
+  Widget _connectionPrompt() => Card.outlined(
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1711,7 +1711,7 @@ Row(
     ],
   );
 
-  Widget _conflictPrompt() => Card(
+  Widget _conflictPrompt() => Card.outlined(
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Text(_message ?? 'maidCafeExistingInstallation'.tr()),
@@ -1720,7 +1720,7 @@ Row(
 
   Widget _notInstalledPrompt(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
+    return Card.outlined(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1832,7 +1832,10 @@ Row(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _sectionLabel(theme, 'maidCafeOperations'.tr()).padding(horizontal: 16),
+            _sectionLabel(
+              theme,
+              'maidCafeOperations'.tr(),
+            ).padding(horizontal: 16),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1841,6 +1844,15 @@ Row(
                   onPressed: _busy ? null : _refreshMetrics,
                   icon: const Icon(Symbols.monitoring),
                   label: Text('maidCafeRefreshMetrics'.tr()),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => ref
+                            .read(terminalTabsProvider.notifier)
+                            .openMaidCafePayload(widget.server),
+                  icon: const Icon(Symbols.local_cafe),
+                  label: Text('maidCafeOpenPayloadTab'.tr()),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _showDaemonLogs,
@@ -1868,7 +1880,10 @@ Row(
             const SizedBox(height: 16),
             Divider(color: scheme.outlineVariant),
             const SizedBox(height: 12),
-            _sectionLabel(theme, 'maidCafeDangerZone'.tr()).padding(horizontal: 16),
+            _sectionLabel(
+              theme,
+              'maidCafeDangerZone'.tr(),
+            ).padding(horizontal: 16),
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -3276,47 +3291,55 @@ class _MaidCafeAuditRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    entry.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  if (entry.error?.isNotEmpty ?? false)
-                    Text(
-                      entry.error!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          entry.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium,
+                        ),
                       ),
+                      const SizedBox(width: 8),
+                      Badge(
+                        label: Text(entry.source),
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        textColor: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ],
+                  ),
+                  Tooltip(
+                    message: 'invokedBy'.tr(),
+                    child: Row(
+                      children: [
+                        const Icon(Symbols.arrow_right_alt, size: 13),
+                        const SizedBox(width: 8),
+                        Text(
+                          invokedBy ?? 'unknown'.tr(),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontFamily: MaidKitFonts.mono,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                     ),
+                  ),
+                  Row(
+                    children: [
+                      const Icon(Symbols.info, size: 13),
+                      const SizedBox(width: 8),
+                      Text(
+                        'exit ${entry.exitCode} · ${entry.durationMs}ms',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontFamily: MaidKitFonts.mono,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (invokedBy != null && invokedBy.isNotEmpty)
-              Text(
-                invokedBy,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  fontFamily: MaidKitFonts.mono,
-                ),
-              ),
-            const SizedBox(width: 8),
-            Text(
-              entry.source,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontFamily: MaidKitFonts.mono,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '${entry.exitCode} · ${entry.durationMs}ms',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontFamily: MaidKitFonts.mono,
               ),
             ),
             const SizedBox(width: 8),
@@ -3471,15 +3494,6 @@ class _MaidCafeAuditLogSheet extends StatelessWidget {
                 fontFamily: MaidKitFonts.mono,
               ),
             ),
-            if (entry.error?.isNotEmpty ?? false) ...[
-              const SizedBox(height: 8),
-              Text(
-                entry.error!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
             const SizedBox(height: 12),
             Expanded(
               child: entry.stdout.isEmpty && entry.stderr.isEmpty

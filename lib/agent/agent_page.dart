@@ -1055,23 +1055,23 @@ class _AgentPageState extends ConsumerState<AgentPage> {
               const SizedBox(width: 8),
             ],
           ),
-          body: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1120),
-              child: ResponsiveSidebar(
-                isLeft: false,
-                showSidebar: _showSidebar,
-                sidebarWidth: 360,
-                minWideSidebarWidth: 300,
-                maxWideSidebarWidth: 400,
-                minMainContentWidth: 480,
-                sidebarBackgroundColor: scheme.surface,
-                sidebarElevation: 0,
-                sidebarContent: _buildConversationSidebar(
-                  conversations: conversations,
-                  scheme: scheme,
-                ),
-                mainContent: _buildChatColumn(
+          body: ResponsiveSidebar(
+            isLeft: false,
+            showSidebar: _showSidebar,
+            sidebarWidth: 360,
+            minWideSidebarWidth: 300,
+            maxWideSidebarWidth: 400,
+            minMainContentWidth: 480,
+            sidebarBackgroundColor: scheme.surface,
+            sidebarElevation: 0,
+            sidebarContent: _buildConversationSidebar(
+              conversations: conversations,
+              scheme: scheme,
+            ),
+            mainContent: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1120),
+                child: _buildChatColumn(
                   servers: servers,
                   mcpServers: mcpServers,
                   scheme: scheme,

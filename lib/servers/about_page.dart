@@ -7,8 +7,6 @@ import 'package:styled_widget/styled_widget.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:maid_kit/shared/services/package_info_provider.dart';
-import 'package:solsynth_express/solsynth_express.dart';
-import 'package:maid_kit/shared/services/update_preferences.dart';
 
 /// Opens the Solar Network product page in the default browser.
 Future<void> _openSolarNetwork() async {
@@ -25,9 +23,6 @@ class AboutPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final packageInfo = ref.watch(packageInfoProvider);
-    final updateChannel =
-        ref.watch(maidKitUpdateChannelProvider).asData?.value ??
-        kMaidKitDefaultUpdateChannel;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
