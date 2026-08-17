@@ -6,6 +6,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../firebase_options.dart';
 import 'maidcafe_metoer.dart';
@@ -98,8 +100,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 /// Registers this device for FCM push of MaidCafe cloud notifications,
 /// mirroring Solian's `subscribePushNotification`
 /// (`lib/core/services/notify.universal.dart`). The Metoer subscription is
-/// keyed by device token and carries the MaidCafe app id, so only daemon
-/// notifications reach this device.
+/// identified by a persistent per-install device ID and carries the current
+/// device token, so only daemon notifications reach this device.
 /// Current device push-registration state shown in Solar Network settings.
 enum MaidCafePushRegistrationStatus {
   unknown,
@@ -112,12 +114,26 @@ enum MaidCafePushRegistrationStatus {
   failed,
 }
 
+const _maidCafePushDeviceIdKey = 'maidcafe_push_device_id';
+
+Future<String> _loadMaidCafePushDeviceId() async {
+  final preferences = SharedPreferencesAsync();
+  final stored = (await preferences.getString(
+    _maidCafePushDeviceIdKey,
+  ))?.trim();
+  if (stored != null && stored.isNotEmpty) return stored;
+  final generated = Uuid().v4();
+  await preferences.setString(_maidCafePushDeviceIdKey, generated);
+  return generated;
+}
+
 class MaidCafePushService {
   MaidCafePushService({
     required this.client,
     required this.pushAllowed,
     required this.onNotification,
     this.onStatusChanged,
+    this.deviceIdProvider,
   });
 
   /// Metoer client used to register the push subscription.
@@ -135,6 +151,10 @@ class MaidCafePushService {
   /// Reports registration state to the settings UI.
   final void Function(MaidCafePushRegistrationStatus status)? onStatusChanged;
 
+  /// Optional override for tests. The default is a persistent per-install ID.
+  final Future<String> Function()? deviceIdProvider;
+
+  Future<String>? _deviceId;
   Future<void>? _pending;
   bool _subscribed = false;
   bool _listenersAttached = false;
@@ -227,6 +247,10 @@ class MaidCafePushService {
     }
   }
 
+  Future<String> _deviceIdForRegistration() {
+    return _deviceId ??= (deviceIdProvider ?? _loadMaidCafePushDeviceId)();
+  }
+
   Future<bool> _register() async {
     if (!pushAllowed()) return false;
     final permission = await FirebaseMessaging.instance.requestPermission(
@@ -257,6 +281,7 @@ class MaidCafePushService {
       );
       if (token != null && token.isNotEmpty) {
         await client.registerPushSubscription(
+          deviceId: await _deviceIdForRegistration(),
           deviceToken: token,
           provider: maidCafePushProviderFcm,
           deviceName: deviceName,
@@ -278,6 +303,7 @@ class MaidCafePushService {
     _attachListeners();
     if (apnsToken != null && apnsToken.isNotEmpty) {
       await client.registerPushSubscription(
+        deviceId: await _deviceIdForRegistration(),
         deviceToken: apnsToken,
         provider: maidCafePushProviderApple,
         deviceName: deviceName,
@@ -306,6 +332,7 @@ class MaidCafePushService {
         var registered = false;
         if (Platform.isAndroid) {
           await client.registerPushSubscription(
+            deviceId: await _deviceIdForRegistration(),
             deviceToken: token,
             provider: maidCafePushProviderFcm,
             deviceName: await _deviceName(),
@@ -315,6 +342,7 @@ class MaidCafePushService {
           final apnsToken = await _apnsTokenWithRetry();
           if (apnsToken != null && apnsToken.isNotEmpty) {
             await client.registerPushSubscription(
+              deviceId: await _deviceIdForRegistration(),
               deviceToken: apnsToken,
               provider: maidCafePushProviderApple,
               deviceName: await _deviceName(),

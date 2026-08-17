@@ -150,7 +150,7 @@ void main() {
   );
 
   test(
-    'registerPushSubscription puts the device token with the MaidCafe app id',
+    'registerPushSubscription puts the device identity and token with the MaidCafe app id',
     () async {
       late RequestOptions request;
       final dio = Dio()
@@ -165,6 +165,7 @@ void main() {
       );
 
       await client.registerPushSubscription(
+        deviceId: 'install-id-1',
         deviceToken: 'fcm-token-1',
         provider: 1,
         deviceName: 'build-host',
@@ -174,6 +175,7 @@ void main() {
       expect(request.uri.path, '/metoer/notifications/subscription');
       expect(request.headers['Authorization'], 'Bearer solar-token');
       final body = request.data as Map;
+      expect(body['device_id'], 'install-id-1');
       expect(body['device_token'], 'fcm-token-1');
       expect(body['provider'], 1);
       expect(body['device_name'], 'build-host');
