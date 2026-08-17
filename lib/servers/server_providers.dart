@@ -76,8 +76,9 @@ final vaultFileStorageProvider = Provider<VaultFileStorage>(
 );
 
 final cloudSyncServiceForVaultProvider =
-    Provider.family<CloudSyncService, String>((ref, vaultId) {
-      return CloudSyncService(vaultId: vaultId);
+    Provider.family<CloudSyncService, String>((ref, vaultPath) {
+      final storage = ref.read(vaultFileStorageProvider);
+      return CloudSyncService(vaultId: storage.vaultId(vaultPath));
     });
 
 final cloudSyncServiceProvider = Provider<CloudSyncService>((ref) {
@@ -260,15 +261,37 @@ const _activeVaultFilePreference = 'active_vault_file';
 const _vaultFilesPreference = 'vault_files';
 const _vaultLabelsPreference = 'vault_labels';
 
+/// Converts old path-based keychain/cloud identities to the stable identity
+/// used by the current vault file.
+Future<void> _relocateVaultIdentity({
+  required String oldReference,
+  required String currentPath,
+  required VaultFileStorage storage,
+}) async {
+  final oldId = oldReference;
+  final newId = storage.vaultId(currentPath);
+  if (oldId == newId) return;
+  await VaultService.relocateStoredKeys(oldVaultId: oldId, newVaultId: newId);
+  await CloudSyncService(vaultId: oldId).relocateVault(newId);
+}
+
+Future<List<String>> _persistentVaultPaths(
+  VaultFileStorage storage,
+  Iterable<String> paths,
+) async {
+  final result = <String>[];
+  for (final path in paths) {
+    final persisted = await storage.persistentPath(path);
+    if (!result.contains(persisted)) result.add(persisted);
+  }
+  return result;
+}
+
 /// Moves the pre-multi-vault app database into a managed vault location once.
 /// Platforms that support external vaults use the user-visible Documents
 /// location so existing data is also available to synchronization tools;
 /// restricted platforms keep the migrated vault in private application-support
 /// storage.
-///
-/// The original database lived at the app default location under the fixed
-/// "maid_kit" vault id. Cloud sync, biometric and sync-passphrase keys are
-/// moved to the new path-based vault id so existing bindings keep working.
 Future<void> migrateLegacyVault({required String defaultName}) async {
   final preferences = await SharedPreferences.getInstance();
   final documents = await getApplicationDocumentsDirectory();
@@ -282,25 +305,28 @@ Future<void> migrateLegacyVault({required String defaultName}) async {
   await database.close();
   if (hasVault.isEmpty) return;
 
-  final managedPath = await VaultFileStorage().moveVault(
+  final storage = VaultFileStorage();
+  final managedPath = await storage.moveVault(
     legacy.path,
     directoryPath: externalVaultsSupported ? documents.path : null,
     name: defaultName,
   );
+  final persistedPath = await storage.persistentPath(managedPath);
+  final stableId = storage.vaultId(managedPath);
 
-  final storage = const FlutterSecureStorage();
+  final secureStorage = const FlutterSecureStorage();
   for (final prefix in [
     'maidkit_cloud_sync',
     'maidkit_vault_data_key',
     'maidkit_vault_sync_passphrase',
   ]) {
     final oldKey = '${prefix}_${base64UrlEncode(utf8.encode('maid_kit'))}';
-    final newKey = '${prefix}_${base64UrlEncode(utf8.encode(managedPath))}';
+    final newKey = '${prefix}_${base64UrlEncode(utf8.encode(stableId))}';
     try {
-      final value = await storage.read(key: oldKey);
+      final value = await secureStorage.read(key: oldKey);
       if (value != null) {
-        await storage.write(key: newKey, value: value);
-        await storage.delete(key: oldKey);
+        await secureStorage.write(key: newKey, value: value);
+        await secureStorage.delete(key: oldKey);
       }
     } catch (_) {
       // Keychain migration is best-effort; the sync passphrase also lives in
@@ -310,15 +336,13 @@ Future<void> migrateLegacyVault({required String defaultName}) async {
 
   final storedFiles =
       preferences.getStringList(_vaultFilesPreference) ?? const [];
-  if (!storedFiles.contains(managedPath)) {
-    await preferences.setStringList(_vaultFilesPreference, [
-      managedPath,
-      ...storedFiles,
-    ]);
-  }
+  await preferences.setStringList(_vaultFilesPreference, [
+    persistedPath,
+    ...storedFiles.where((path) => path != persistedPath),
+  ]);
   final active = preferences.getString(_activeVaultFilePreference);
   if (active == null || active.isEmpty) {
-    await preferences.setString(_activeVaultFilePreference, managedPath);
+    await preferences.setString(_activeVaultFilePreference, persistedPath);
   }
   final rawLabels = preferences.getString(_vaultLabelsPreference);
   final labels = <String, String>{};
@@ -332,7 +356,7 @@ Future<void> migrateLegacyVault({required String defaultName}) async {
       // Ignore malformed labels and fall back to a clean map.
     }
   }
-  labels[managedPath] = defaultName;
+  labels[persistedPath] = defaultName;
   await preferences.setString(_vaultLabelsPreference, jsonEncode(labels));
 
   for (final suffix in ['', '-wal', '-shm']) {
@@ -359,10 +383,34 @@ class VaultLabelsNotifier extends Notifier<Map<String, String>> {
     if (raw == null) return;
     try {
       final values = Map<String, dynamic>.from(jsonDecode(raw) as Map);
-      state = values.map((key, value) => MapEntry(key, value.toString()));
+      final storage = ref.read(vaultFileStorageProvider);
+      final restored = <String, String>{};
+      for (final entry in values.entries) {
+        final path = await storage.resolvePersistedPath(entry.key);
+        if (path != null) restored[path] = entry.value.toString();
+      }
+      state = restored;
+      final persisted = <String, String>{};
+      for (final entry in restored.entries) {
+        persisted[await storage.persistentPath(entry.key)] = entry.value;
+      }
+      await preferences.setString(
+        _vaultLabelsPreference,
+        jsonEncode(persisted),
+      );
     } catch (_) {
       await preferences.remove(_vaultLabelsPreference);
     }
+  }
+
+  Future<void> _persist() async {
+    final storage = ref.read(vaultFileStorageProvider);
+    final persisted = <String, String>{};
+    for (final entry in state.entries) {
+      persisted[await storage.persistentPath(entry.key)] = entry.value;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_vaultLabelsPreference, jsonEncode(persisted));
   }
 
   Future<void> rename(String vaultId, String name) async {
@@ -374,14 +422,12 @@ class VaultLabelsNotifier extends Notifier<Map<String, String>> {
       updated[vaultId] = normalized;
     }
     state = updated;
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(_vaultLabelsPreference, jsonEncode(state));
+    await _persist();
   }
 
   Future<void> remove(String vaultId) async {
     state = {...state}..remove(vaultId);
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(_vaultLabelsPreference, jsonEncode(state));
+    await _persist();
   }
 }
 
@@ -401,18 +447,26 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
 
   Future<void> _restore() async {
     final preferences = await SharedPreferences.getInstance();
-    final path = preferences.getString(_activeVaultFilePreference);
-    if (path != null && path.isNotEmpty) {
-      try {
-        final storage = ref.read(vaultFileStorageProvider);
-        final managedPath = await storage.importVault(path);
-        await ref.read(vaultFilesProvider.notifier).remember(managedPath);
-        state = managedPath;
-        await preferences.setString(_activeVaultFilePreference, managedPath);
-      } on FileSystemException {
-        await preferences.remove(_activeVaultFilePreference);
-      }
+    final reference = preferences.getString(_activeVaultFilePreference);
+    if (reference == null || reference.isEmpty) return;
+
+    final storage = ref.read(vaultFileStorageProvider);
+    final path = await storage.resolvePersistedPath(reference);
+    if (path == null) {
+      await preferences.remove(_activeVaultFilePreference);
+      return;
     }
+    await _relocateVaultIdentity(
+      oldReference: reference,
+      currentPath: path,
+      storage: storage,
+    );
+    await ref.read(vaultFilesProvider.notifier).remember(path);
+    state = path;
+    await preferences.setString(
+      _activeVaultFilePreference,
+      await storage.persistentPath(path),
+    );
   }
 
   Future<void> select(String? path) async {
@@ -431,7 +485,11 @@ class ActiveVaultFileNotifier extends Notifier<String?> {
     if (path == null) {
       await preferences.remove(_activeVaultFilePreference);
     } else {
-      await preferences.setString(_activeVaultFilePreference, path);
+      final storage = ref.read(vaultFileStorageProvider);
+      await preferences.setString(
+        _activeVaultFilePreference,
+        await storage.persistentPath(path),
+      );
     }
   }
 }
@@ -455,36 +513,47 @@ class VaultFilesNotifier extends Notifier<List<String>> {
     return const [];
   }
 
+  Future<void> _persist() async {
+    final storage = ref.read(vaultFileStorageProvider);
+    final persisted = await _persistentVaultPaths(storage, state);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(_vaultFilesPreference, persisted);
+  }
+
   Future<void> _restore() async {
     final preferences = await SharedPreferences.getInstance();
     final stored = preferences.getStringList(_vaultFilesPreference) ?? const [];
     final managedPaths = <String>[];
     final storage = ref.read(vaultFileStorageProvider);
-    for (final path in stored) {
-      try {
-        final managedPath = await storage.importVault(path);
-        if (!managedPaths.contains(managedPath)) managedPaths.add(managedPath);
-      } on FileSystemException {
-        // Missing or unsupported vault files are no longer selectable.
+    for (final reference in stored) {
+      final path = await storage.resolvePersistedPath(reference);
+      if (path != null && !managedPaths.contains(path)) {
+        await _relocateVaultIdentity(
+          oldReference: reference,
+          currentPath: path,
+          storage: storage,
+        );
+        managedPaths.add(path);
       }
+    }
+    for (final path in await storage.managedVaultPaths()) {
+      if (!managedPaths.contains(path)) managedPaths.add(path);
     }
     state = [
       ...managedPaths,
       ...state.where((path) => !managedPaths.contains(path)),
     ];
-    await preferences.setStringList(_vaultFilesPreference, state);
+    await _persist();
   }
 
   Future<void> remember(String path) async {
     state = [path, ...state.where((value) => value != path)];
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(_vaultFilesPreference, state);
+    await _persist();
   }
 
   Future<void> forget(String path) async {
     state = state.where((value) => value != path).toList();
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(_vaultFilesPreference, state);
+    await _persist();
   }
 }
 
@@ -641,9 +710,11 @@ final savedCredentialsProvider = StreamProvider<List<SavedCredential>>((ref) {
 });
 
 final vaultServiceProvider = Provider<VaultService>((ref) {
+  final path = ref.watch(activeVaultFileProvider);
+  final storage = ref.read(vaultFileStorageProvider);
   return VaultService(
     ref.watch(databaseProvider),
-    vaultId: ref.watch(activeVaultFileProvider) ?? 'maid_kit',
+    vaultId: path == null ? 'maid_kit' : storage.vaultId(path),
   );
 });
 

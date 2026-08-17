@@ -1521,12 +1521,12 @@ class SettingsPage extends HookConsumerWidget {
     final vaultPassword = await _newVaultPasswordSheet(context);
     if (vaultPassword == null || !context.mounted) return;
 
-    final vaultPath = await ref
-        .read(vaultFileStorageProvider)
-        .createVaultPath(name: path);
+    final storage = ref.read(vaultFileStorageProvider);
+    final vaultPath = await storage.createVaultPath(name: path);
+    await storage.persistentPath(vaultPath);
 
     final database = AppDatabase(filePath: vaultPath);
-    final vault = VaultService(database, vaultId: vaultPath);
+    final vault = VaultService(database, vaultId: storage.vaultId(vaultPath));
     try {
       await vault.create(vaultPassword);
       final archive = await File(path).readAsString();

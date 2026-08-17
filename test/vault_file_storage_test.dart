@@ -33,6 +33,35 @@ void main() {
       expect(storage.fileName(path), startsWith('Primary Vault-'));
       expect(path, endsWith('.maidkit'));
     });
+
+    test(
+      'resolves an old absolute path after the app container changes',
+      () async {
+        final support = await Directory.systemTemp.createTemp(
+          'maidkit-vault-update-',
+        );
+        final previous = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _FakePathProvider(support);
+        addTearDown(() async {
+          PathProviderPlatform.instance = previous;
+          await support.delete(recursive: true);
+        });
+
+        final directory = await Directory('${support.path}/vaults').create();
+        final current = File('${directory.path}/primary.maidkit');
+        await current.writeAsString('vault');
+
+        final resolved = await storage.resolvePersistedPath(
+          '/var/mobile/Containers/Data/Application/old-id/Library/'
+          'Application Support/vaults/primary.maidkit',
+        );
+
+        expect(resolved, current.absolute.path);
+        expect(await storage.persistentPath(resolved!), 'primary.maidkit');
+        expect(storage.vaultId(resolved), 'primary.maidkit');
+        expect(await storage.managedVaultPaths(), [current.absolute.path]);
+      },
+    );
   });
   group('VaultFileStorage external paths', () {
     test('imports vaults only when external storage is supported', () async {

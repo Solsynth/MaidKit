@@ -18,6 +18,77 @@ class VaultFileStorage {
   static const _directoryName = 'vaults';
   static const _extension = '.maidkit';
   final Uuid _uuid = const Uuid();
+  final Set<String> _managedPaths = {};
+
+  /// Returns the stable identity used for keychain and cloud-sync entries.
+  ///
+  /// Internal vaults are identified by their generated filename rather than
+  /// the absolute iOS sandbox path. External vaults retain their path because
+  /// two external files may legitimately have the same filename.
+  String vaultId(String path) =>
+      _managedPaths.contains(File(path).absolute.path) ? fileName(path) : path;
+
+  /// Converts a runtime path into the value safe to persist in preferences.
+  ///
+  /// Internal vaults need only their filename: iOS can change the application
+  /// container prefix when installing an update.
+  Future<String> persistentPath(String path) async {
+    final absolute = File(path).absolute.path;
+    return await isExternalPath(absolute) ? absolute : fileName(absolute);
+  }
+
+  /// Resolves a persisted vault reference against the current app container.
+  ///
+  /// Older versions persisted absolute paths. If such a path is stale after an
+  /// iOS update, its filename still identifies the managed vault file.
+  Future<String?> resolvePersistedPath(String value) async {
+    final hasSeparator = value.contains('/') || value.contains('\\');
+    if (!hasSeparator && _isVaultFile(value)) {
+      final directory = await _vaultDirectory();
+      final managed = File('${directory.path}/$value');
+      if (await managed.exists()) {
+        final path = managed.absolute.path;
+        await isExternalPath(path);
+        return path;
+      }
+    }
+
+    final candidate = File(value);
+    if (await candidate.exists()) {
+      final path = candidate.absolute.path;
+      await isExternalPath(path);
+      return path;
+    }
+
+    if (_isVaultFile(value)) {
+      final directory = await _vaultDirectory();
+      final managed = File('${directory.path}/${fileName(value)}');
+      if (await managed.exists()) {
+        final path = managed.absolute.path;
+        await isExternalPath(path);
+        return path;
+      }
+    }
+    return null;
+  }
+
+  /// Lists internal vault files even when their preference entry was lost.
+  ///
+  /// This recovers files left behind by the pre-fix startup path, which
+  /// discarded stale absolute-path preferences after an iOS update.
+  Future<List<String>> managedVaultPaths() async {
+    final directory = await _vaultDirectory();
+    final paths = <String>[];
+    await for (final entity in directory.list()) {
+      if (entity is File && _isVaultFile(entity.path)) {
+        final path = entity.absolute.path;
+        await isExternalPath(path);
+        paths.add(path);
+      }
+    }
+    paths.sort();
+    return paths;
+  }
 
   /// Creates a new vault file in [directoryPath].
   ///
@@ -124,7 +195,9 @@ class VaultFileStorage {
 
   Future<bool> isExternalPath(String path) async {
     final support = await getApplicationSupportDirectory();
-    return !isInDirectory(path, '${support.path}/$_directoryName');
+    final external = !isInDirectory(path, '${support.path}/$_directoryName');
+    if (!external) _managedPaths.add(File(path).absolute.path);
+    return external;
   }
 
   /// The final path segment, tolerating both '/' and '\' separators.
