@@ -398,30 +398,53 @@ List<PgBackRestStanza> parsePgBackRestInfoJson(String json) {
       }
     }
 
-    String? repositoryPath;
-    final repoRaw = raw['repo'];
-    if (repoRaw is List) {
-      for (final repo in repoRaw) {
-        if (repo is! Map) continue;
-        final path = repo['path']?.toString();
-        if (path != null && path.isNotEmpty) {
-          repositoryPath = path;
-          break;
+    String? repoPath(Object? value) {
+      if (value is Map) {
+        final path = value['path']?.toString();
+        return path == null || path.isEmpty ? null : path;
+      }
+      if (value is List) {
+        for (final item in value) {
+          final path = repoPath(item);
+          if (path != null) return path;
         }
       }
+      return null;
     }
+
+    String? repositoryPath = repoPath(raw['repo']);
     if (repositoryPath == null && dbRaw is List) {
       for (final db in dbRaw) {
         if (db is! Map) continue;
-        final repo = db['repo'];
-        if (repo is Map) {
-          final path = repo['path']?.toString();
-          if (path != null && path.isNotEmpty) {
-            repositoryPath = path;
-            break;
+        repositoryPath = repoPath(db['repo']);
+        if (repositoryPath != null) break;
+      }
+    }
+
+    DateTime? backupTimestamp(Object? value) {
+      final seconds = switch (value) {
+        num() => value,
+        Map() => value['stop'] ?? value['start'],
+        _ => null,
+      };
+      if (seconds is! num) return null;
+      return DateTime.fromMillisecondsSinceEpoch(
+        (seconds * 1000).round(),
+        isUtc: true,
+      ).toLocal();
+    }
+
+    String? backupDatabase(Object? value) {
+      if (value is Map) return value['name']?.toString();
+      if (value is List) {
+        for (final item in value) {
+          if (item is Map) {
+            final name = item['name']?.toString();
+            if (name != null && name.isNotEmpty) return name;
           }
         }
       }
+      return null;
     }
 
     final backups = <PgBackRestBackup>[];
@@ -431,30 +454,27 @@ List<PgBackRestStanza> parsePgBackRestInfoJson(String json) {
         if (backup is! Map) continue;
         final label = backup['label']?.toString() ?? '';
         if (label.isEmpty) continue;
-        final timestamp = backup['timestamp'];
         backups.add(
           PgBackRestBackup(
             label: label,
             type: backup['type']?.toString() ?? 'full',
-            timestamp: timestamp is num
-                ? DateTime.fromMillisecondsSinceEpoch(
-                    (timestamp * 1000).round(),
-                    isUtc: true,
-                  ).toLocal()
-                : null,
+            timestamp: backupTimestamp(backup['timestamp']),
             sizeBytes: backup['size'] is num
                 ? (backup['size'] as num).toInt()
                 : null,
             durationSeconds: backup['duration'] is num
                 ? (backup['duration'] as num).toDouble()
                 : null,
-            database: backup['database'] is Map
-                ? backup['database']['name']?.toString()
-                : null,
+            database: backupDatabase(backup['database']),
           ),
         );
       }
     }
+    backups.sort((a, b) {
+      if (a.timestamp == null) return b.timestamp == null ? 0 : 1;
+      if (b.timestamp == null) return -1;
+      return b.timestamp!.compareTo(a.timestamp!);
+    });
 
     stanzas.add(
       PgBackRestStanza(

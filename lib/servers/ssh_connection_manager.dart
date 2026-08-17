@@ -1271,15 +1271,37 @@ echo "pgBackRest restore completed."
 PGBIN=$(for d in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin /usr/local/pgsql/bin; do
   [ -d "$d" ] && echo "$d"
 done | sort -V | tail -n 1)
-if [ -z "$PGBIN" ]; then exit 1; fi
+PSQL=""
+if [ -n "$PGBIN" ] && [ -x "$PGBIN/psql" ]; then
+  PSQL="$PGBIN/psql"
+else
+  PSQL=$(command -v psql 2>/dev/null || true)
+fi
+if [ -z "$PSQL" ]; then exit 1; fi
 echo '--DB-PG-ROWS--'
-su -s /bin/sh postgres -c "$PGBIN/psql -X -A -t -F '|' -c 'SELECT d.datname, s.numbackends, s.xact_commit, s.xact_rollback, s.blks_read, s.blks_hit, s.deadlocks, s.temp_bytes FROM pg_catalog.pg_stat_database s JOIN pg_catalog.pg_database d ON d.oid = s.datid WHERE d.datallowconn ORDER BY d.datname'"
+if id postgres >/dev/null 2>&1; then
+  su -s /bin/sh postgres -c "$PSQL -X -A -t -F '|' -c 'SELECT d.datname, s.numbackends, s.xact_commit, s.xact_rollback, s.blks_read, s.blks_hit, s.deadlocks, s.temp_bytes FROM pg_catalog.pg_stat_database s JOIN pg_catalog.pg_database d ON d.oid = s.datid WHERE d.datallowconn ORDER BY d.datname'" 2>&1
+else
+  "$PSQL" -X -A -t -F '|' -c 'SELECT d.datname, s.numbackends, s.xact_commit, s.xact_rollback, s.blks_read, s.blks_hit, s.deadlocks, s.temp_bytes FROM pg_catalog.pg_stat_database s JOIN pg_catalog.pg_database d ON d.oid = s.datid WHERE d.datallowconn ORDER BY d.datname' 2>&1
+fi
 echo '--DB-PG-MAXCONN--'
-su -s /bin/sh postgres -c "$PGBIN/psql -X -A -t -c 'SHOW max_connections'"
+if id postgres >/dev/null 2>&1; then
+  su -s /bin/sh postgres -c "$PSQL -X -A -t -c 'SHOW max_connections'" 2>&1
+else
+  "$PSQL" -X -A -t -c 'SHOW max_connections' 2>&1
+fi
 echo '--DB-PG-SHARED--'
-su -s /bin/sh postgres -c "$PGBIN/psql -X -A -t -c 'SHOW shared_buffers'"
+if id postgres >/dev/null 2>&1; then
+  su -s /bin/sh postgres -c "$PSQL -X -A -t -c 'SHOW shared_buffers'" 2>&1
+else
+  "$PSQL" -X -A -t -c 'SHOW shared_buffers' 2>&1
+fi
 echo '--DB-PG-VERSION--'
-"$PGBIN/postgres" --version
+if [ -n "$PGBIN" ] && [ -x "$PGBIN/postgres" ]; then
+  "$PGBIN/postgres" --version
+else
+  "$PSQL" --version
+fi
 ''';
 
   static const _mysqlMetricsProbeScript = r'''
@@ -1490,12 +1512,21 @@ if [ -z "$PBR" ]; then
   echo 'installed: false'
 else
   echo "version: $($PBR version 2>/dev/null)"
-  CONF=/etc/pgbackrest.conf
-  if [ -f "$CONF" ]; then echo "config: $CONF"; fi
+  CONF="${PGBACKREST_CONFIG:-}"
+  for candidate in /etc/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf; do
+    if [ -z "$CONF" ] && [ -f "$candidate" ]; then CONF="$candidate"; fi
+  done
+  if [ -n "$CONF" ] && [ -f "$CONF" ]; then echo "config: $CONF"; fi
   echo "stanzas: $(awk -F'[][]' '/^\[[^]]+\]$/ {gsub(/ /, "", $2); if ($2 != "global") print $2}' "$CONF" 2>/dev/null | paste -sd, -)"
-  JSON=$($PBR info --output=json 2>/dev/null)
+  PBR_ARGS=""
+  [ -n "$CONF" ] && PBR_ARGS="--config=$CONF"
+  JSON=""
+  if id postgres >/dev/null 2>&1; then
+    JSON=$(su -s /bin/sh postgres -c "$PBR $PBR_ARGS info --output=json" 2>/dev/null)
+  fi
+  [ -n "$JSON" ] || JSON=$("$PBR" $PBR_ARGS info --output=json 2>/dev/null)
   if [ -n "$JSON" ]; then
-    echo "info-json: $(echo "$JSON" | tr -d '\n')"
+    echo "info-json: $(printf '%s' "$JSON" | tr -d '\n')"
   else
     echo 'error: pgbackrest info failed (no stanza configured or repository unavailable)'
   fi
@@ -1540,11 +1571,13 @@ echo '---MAIDKIT-DB-PG---'
 PGBIN=$(for d in /usr/pgsql-*/bin /usr/lib/postgresql/*/bin /usr/local/pgsql/bin; do
   [ -d "$d" ] && echo "$d"
 done | sort -V | tail -n 1)
-PGTOOL="$PGBIN/psql"
-if [ -z "$PGBIN" ]; then
+PGTOOL=""
+if [ -n "$PGBIN" ] && [ -x "$PGBIN/psql" ]; then
+  PGTOOL="$PGBIN/psql"
+else
   PGTOOL=$(command -v psql 2>/dev/null || true)
 fi
-if [ -n "$PGBIN" ] || [ -n "$PGTOOL" ]; then
+if [ -n "$PGTOOL" ]; then
   PGVER=""
   if [ -n "$PGBIN" ] && [ -x "$PGBIN/postgres" ]; then
     PGVER=$("$PGBIN/postgres" --version 2>/dev/null | sed 's/^postgres (PostgreSQL) //')
@@ -1721,12 +1754,21 @@ if [ -z "$PBR" ]; then
   echo 'installed: false'
 else
   echo "version: $($PBR version 2>/dev/null)"
-  CONF=/etc/pgbackrest.conf
-  if [ -f "$CONF" ]; then echo "config: $CONF"; fi
+  CONF="${PGBACKREST_CONFIG:-}"
+  for candidate in /etc/pgbackrest.conf /etc/pgbackrest/pgbackrest.conf; do
+    if [ -z "$CONF" ] && [ -f "$candidate" ]; then CONF="$candidate"; fi
+  done
+  if [ -n "$CONF" ] && [ -f "$CONF" ]; then echo "config: $CONF"; fi
   echo "stanzas: $(awk -F'[][]' '/^\[[^]]+\]$/ {gsub(/ /, "", $2); if ($2 != "global") print $2}' "$CONF" 2>/dev/null | paste -sd, -)"
-  JSON=$($PBR info --output=json 2>/dev/null)
+  PBR_ARGS=""
+  [ -n "$CONF" ] && PBR_ARGS="--config=$CONF"
+  JSON=""
+  if id postgres >/dev/null 2>&1; then
+    JSON=$(su -s /bin/sh postgres -c "$PBR $PBR_ARGS info --output=json" 2>/dev/null)
+  fi
+  [ -n "$JSON" ] || JSON=$("$PBR" $PBR_ARGS info --output=json 2>/dev/null)
   if [ -n "$JSON" ]; then
-    echo "info-json: $(echo "$JSON" | tr -d '\n')"
+    echo "info-json: $(printf '%s' "$JSON" | tr -d '\n')"
   else
     echo 'error: pgbackrest info failed (no stanza configured or repository unavailable)'
   fi

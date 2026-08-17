@@ -122,6 +122,17 @@ void main() {
       expect(stanza.latestBackup!.type, 'full');
       expect(stanza.latestBackup!.timestamp!.isUtc, isFalse);
     });
+    test('parses current pgBackRest backup schema', () {
+      const json =
+          '[{"name":"main","repo":[{"path":"/srv/pgbackrest"}],"db":[{"name":"app"}],"backup":['
+          '{"label":"older","type":"full","timestamp":{"start":1700000000,"stop":1700000010},"database":[{"name":"app"}]},'
+          '{"label":"newer","type":"incr","timestamp":{"start":1701000000,"stop":1701000010},"database":[{"name":"app"}]}]}]';
+      final stanza = parsePgBackRestInfoJson(json).single;
+      expect(stanza.repositoryPath, '/srv/pgbackrest');
+      expect(stanza.latestBackup!.label, 'newer');
+      expect(stanza.latestBackup!.database, 'app');
+      expect(stanza.latestBackup!.timestamp, isNotNull);
+    });
 
     test('handles malformed json', () {
       expect(parsePgBackRestInfoJson('not json'), isEmpty);
