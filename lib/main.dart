@@ -81,7 +81,9 @@ Future<void> main(List<String> args) async {
     await windowManager.setOpacity(await loadMaidKitWindowOpacity());
     const windowOptions = WindowOptions(
       size: Size(1180, 760),
-      minimumSize: Size(720, 520),
+      // Keep the desktop window resizable below the responsive breakpoint so
+      // narrow-layout behavior can be exercised without a mobile device.
+      minimumSize: Size(390, 520),
       center: true,
       titleBarStyle: TitleBarStyle.hidden,
       windowButtonVisibility: true,

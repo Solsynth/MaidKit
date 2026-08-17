@@ -94,7 +94,7 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     IslandUIFoundation.configureNavigator(maidKitNavigatorKey);
     return MaterialApp.router(
       title: 'title'.tr(),
-      debugShowCheckedModeBanner: false,
+      debugShowCheckedModeBanner: true,
       theme: createMaidKitTheme(Brightness.light, seedColor: appSeedColor),
       darkTheme: createMaidKitTheme(Brightness.dark, seedColor: appSeedColor),
       themeMode: themeMode,

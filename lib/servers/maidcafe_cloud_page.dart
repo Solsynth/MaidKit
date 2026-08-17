@@ -1752,17 +1752,51 @@ class _MetricHistoryChart extends StatelessWidget {
                 lineTouchData: LineTouchData(
                   touchTooltipData: LineTouchTooltipData(
                     getTooltipColor: (_) => scheme.inverseSurface,
-                    getTooltipItems: (touchedSpots) => [
-                      for (final spot in touchedSpots)
-                        LineTooltipItem(
-                          '${(spot.y * 100).toStringAsFixed(0)}%',
-                          TextStyle(
-                            color: scheme.onInverseSurface,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                    tooltipPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    maxContentWidth: 180,
+                    fitInsideHorizontally: true,
+                    fitInsideVertically: true,
+                    getTooltipItems: (touchedSpots) {
+                      if (touchedSpots.isEmpty) return const [];
+                      final firstIndex = touchedSpots.first.spotIndex
+                          .clamp(0, samples.length - 1)
+                          .toInt();
+                      final sampledAt = DateFormat(
+                        'yyyy-MM-dd HH:mm:ss',
+                      ).format(samples[firstIndex].sentAt.toLocal());
+                      final items = <LineTooltipItem?>[];
+                      for (var i = 0; i < touchedSpots.length; i++) {
+                        final spot = touchedSpots[i];
+                        if (spot.barIndex < 0 ||
+                            spot.barIndex >= series.length) {
+                          items.add(null);
+                          continue;
+                        }
+                        final sampleIndex = spot.spotIndex
+                            .clamp(0, samples.length - 1)
+                            .toInt();
+                        final metric = series[spot.barIndex];
+                        final prefix = i == 0
+                            ? '${'maidCafeMetricSampleTime'.tr(args: [sampledAt])}\n'
+                            : '';
+                        items.add(
+                          LineTooltipItem(
+                            '$prefix${metric.label}: '
+                            '${metric.valueLabelOf(samples[sampleIndex])}',
+                            TextStyle(
+                              color: scheme.onInverseSurface,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              height: 1.35,
+                            ),
                           ),
-                        ),
-                    ],
+                        );
+                      }
+                      return items;
+                    },
                   ),
                 ),
                 lineBarsData: [
@@ -1801,7 +1835,9 @@ class _MetricHistoryChart extends StatelessWidget {
               for (final item in series)
                 _MetricLatestValue(
                   label: item.label,
-                  value: item.latestLabel,
+                  value: samples.isEmpty
+                      ? '—'
+                      : item.valueLabelOf(samples.last),
                   color: item.color,
                 ),
             ],
@@ -1814,41 +1850,36 @@ class _MetricHistoryChart extends StatelessWidget {
   List<_MetricSeries> _series(ColorScheme scheme) =>
       [
             _MetricSeries(
-              label: 'CPU',
+              label: 'maidCafeMetricCpuUsage'.tr(),
               color: scheme.primary,
               ratioOf: (sample) => (sample.cpuPercent / 100).clamp(0.0, 1.0),
-              latestLabel: samples.isEmpty
-                  ? '—'
-                  : '${samples.last.cpuPercent.round()}%',
+              valueLabelOf: (sample) => '${sample.cpuPercent.round()}%',
             ),
             _MetricSeries(
-              label: 'RAM',
+              label: 'maidCafeMetricMemoryUsage'.tr(),
               color: scheme.tertiary,
               ratioOf: (sample) =>
                   (sample.memoryUsedPercent / 100).clamp(0.0, 1.0),
-              latestLabel: samples.isEmpty
-                  ? '—'
-                  : '${samples.last.memoryUsedPercent.round()}%',
+              valueLabelOf: (sample) => '${sample.memoryUsedPercent.round()}%',
             ),
             _MetricSeries(
-              label: 'LOAD',
+              label: 'maidCafeMetricLoadPerCpu'.tr(),
               color: scheme.secondary,
               ratioOf: (sample) => sample.cpuCount > 0
                   ? (sample.load1 / sample.cpuCount).clamp(0.0, 1.0)
                   : 0,
-              latestLabel: samples.isEmpty
-                  ? '—'
-                  : samples.last.load1.toStringAsFixed(2),
+              valueLabelOf: (sample) => sample.cpuCount > 0
+                  ? '${sample.load1.toStringAsFixed(2)} '
+                        '(${(sample.load1 / sample.cpuCount * 100).round()}%)'
+                  : sample.load1.toStringAsFixed(2),
             ),
             _MetricSeries(
-              label: 'DISK',
+              label: 'maidCafeMetricDiskUsed'.tr(),
               color: scheme.error,
               ratioOf: _diskRatio,
-              latestLabel: samples.isEmpty
+              valueLabelOf: (sample) => sample.diskTotalKb <= 0
                   ? '—'
-                  : samples.last.diskTotalKb <= 0
-                  ? '—'
-                  : '${(_diskRatio(samples.last) * 100).round()}%',
+                  : '${(_diskRatio(sample) * 100).round()}%',
             ),
           ]
           .map((item) {
@@ -1871,21 +1902,21 @@ class _MetricSeries {
     required this.label,
     required this.color,
     required this.ratioOf,
-    required this.latestLabel,
+    required this.valueLabelOf,
     this.spots = const [],
   });
 
   final String label;
   final Color color;
   final double Function(MaidCafeMetric) ratioOf;
-  final String latestLabel;
+  final String Function(MaidCafeMetric) valueLabelOf;
   final List<FlSpot> spots;
 
   _MetricSeries copyWith({required List<FlSpot> spots}) => _MetricSeries(
     label: label,
     color: color,
     ratioOf: ratioOf,
-    latestLabel: latestLabel,
+    valueLabelOf: valueLabelOf,
     spots: spots,
   );
 }

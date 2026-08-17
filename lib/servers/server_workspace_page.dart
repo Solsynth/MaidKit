@@ -57,11 +57,7 @@ class _ServerTabsShell extends ConsumerWidget {
         );
     final isAgentInputFocused = ref.watch(agentInputFocusedProvider);
     final githubHasFailures = ref.watch(githubHasFailuresProvider);
-    final mobileSelectedIndex = tabsRouter.activeIndex == 5
-        ? 4
-        : tabsRouter.activeIndex == 4
-        ? null
-        : tabsRouter.activeIndex;
+    final mobileSelectedIndex = tabsRouter.activeIndex;
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth > 768;
@@ -152,10 +148,7 @@ class _ServerTabsShell extends ConsumerWidget {
                 )
               : child,
           bottomNavigationBar:
-              isWide ||
-                  !isDashboardFocused ||
-                  isAgentInputFocused ||
-                  mobileSelectedIndex == null
+              isWide || !isDashboardFocused || isAgentInputFocused
               ? null
               : Material(
                   elevation: 0,
@@ -166,8 +159,7 @@ class _ServerTabsShell extends ConsumerWidget {
                     labelBehavior:
                         NavigationDestinationLabelBehavior.alwaysHide,
                     selectedIndex: mobileSelectedIndex,
-                    onDestinationSelected: (index) =>
-                        tabsRouter.setActiveIndex(index == 4 ? 5 : index),
+                    onDestinationSelected: tabsRouter.setActiveIndex,
                     destinations: [
                       NavigationDestination(
                         icon: const Icon(Symbols.dns),
@@ -197,6 +189,11 @@ class _ServerTabsShell extends ConsumerWidget {
                         icon: const Icon(Symbols.smart_toy),
                         selectedIcon: const Icon(Symbols.smart_toy, fill: 1),
                         label: 'tabAgent'.tr(),
+                      ),
+                      NavigationDestination(
+                        icon: const Icon(Symbols.cloud),
+                        selectedIcon: const Icon(Symbols.cloud, fill: 1),
+                        label: 'maidCafeCloudTitle'.tr(),
                       ),
                       NavigationDestination(
                         icon: const Icon(Symbols.settings),

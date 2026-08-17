@@ -398,12 +398,12 @@ void main() {
       ],
     );
 
-    expect(find.text('LOAD'), findsOneWidget);
-    expect(find.text('2.50'), findsOneWidget);
-    expect(find.text('DISK'), findsOneWidget);
+    expect(find.text('Load / CPU (1 min)'), findsOneWidget);
+    expect(find.textContaining('2.50'), findsOneWidget);
+    expect(find.text('Disk used'), findsOneWidget);
     // (102400 - 25600) / 102400 = 75% used.
     expect(find.text('75%'), findsOneWidget);
-    expect(find.text('CPU'), findsOneWidget);
+    expect(find.text('CPU usage'), findsOneWidget);
     expect(find.text('30%'), findsOneWidget);
     expect(
       find.textContaining('maidCafeUptime'.tr(args: ['3d 4h'])),

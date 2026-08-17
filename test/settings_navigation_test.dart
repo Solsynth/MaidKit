@@ -158,6 +158,16 @@ void main() {
 
     expect(find.byType(MaidCafeCloudPage), findsOneWidget);
   });
+  testWidgets('opens MaidCafe Cloud from the mobile dashboard navigation', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(390, 844));
+
+    await tester.tap(find.byIcon(Symbols.cloud));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MaidCafeCloudPage), findsOneWidget);
+  });
 
   testWidgets(
     'MaidCafe cloud connection lives in Settings with a self-hosted push hint',

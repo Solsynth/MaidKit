@@ -763,6 +763,12 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                     _SettingsSection(
+                      titleKey: 'settingsPushNotifications',
+                      padding: EdgeInsets.zero,
+                      child: const _MaidCafePushStatusSection(),
+                    ),
+                    const SizedBox(height: 24),
+                    _SettingsSection(
                       titleKey: 'maidCafeCloudConnection',
                       padding: EdgeInsets.zero,
                       child: const _MaidCafeCloudConnectionSection(),
@@ -2825,6 +2831,84 @@ class _SettingsCategoryTabsState extends State<_SettingsCategoryTabs>
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MaidCafePushStatusSection extends ConsumerWidget {
+  const _MaidCafePushStatusSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(maidCafePushStatusProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+    final (icon, color, messageKey, canRetry) = switch (status) {
+      MaidCafePushRegistrationStatus.registered => (
+        Symbols.notifications_active,
+        colorScheme.primary,
+        'settingsPushStatusRegistered',
+        false,
+      ),
+      MaidCafePushRegistrationStatus.registering => (
+        Symbols.sync,
+        colorScheme.primary,
+        'settingsPushStatusRegistering',
+        false,
+      ),
+      MaidCafePushRegistrationStatus.waitingForToken => (
+        Symbols.hourglass_top,
+        colorScheme.tertiary,
+        'settingsPushStatusWaitingForToken',
+        true,
+      ),
+      MaidCafePushRegistrationStatus.notSignedIn => (
+        Symbols.person_off,
+        colorScheme.onSurfaceVariant,
+        'settingsPushStatusNotSignedIn',
+        false,
+      ),
+      MaidCafePushRegistrationStatus.unavailable => (
+        Symbols.notifications_off,
+        colorScheme.onSurfaceVariant,
+        'settingsPushStatusUnavailable',
+        false,
+      ),
+      MaidCafePushRegistrationStatus.unsupported => (
+        Symbols.block,
+        colorScheme.onSurfaceVariant,
+        'settingsPushStatusUnsupported',
+        false,
+      ),
+      MaidCafePushRegistrationStatus.failed => (
+        Symbols.error_outline,
+        colorScheme.error,
+        'settingsPushStatusFailed',
+        true,
+      ),
+      MaidCafePushRegistrationStatus.unknown => (
+        Symbols.notifications_none,
+        colorScheme.onSurfaceVariant,
+        'settingsPushStatusUnknown',
+        false,
+      ),
+    };
+
+    return ListTile(
+      contentPadding: _sectionTilePadding,
+      shape: RoundedRectangleBorder(
+        borderRadius: _sectionTileBorderRadius(_SettingsTilePosition.only),
+      ),
+      leading: Icon(icon, color: color),
+      title: const Text('settingsPushRegistration').tr(),
+      subtitle: Text(messageKey).tr(),
+      trailing: canRetry
+          ? TextButton(
+              onPressed: () => unawaited(
+                ref.read(maidCafePushProvider).subscribe().catchError((_) {}),
+              ),
+              child: const Text('settingsPushRetry').tr(),
+            )
+          : null,
     );
   }
 }

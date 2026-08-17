@@ -159,6 +159,21 @@ final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
   (ref) => ref.watch(maidCafeMetoerClientProvider).unreadCount(),
 );
 
+final maidCafePushStatusProvider =
+    NotifierProvider<
+      MaidCafePushStatusNotifier,
+      MaidCafePushRegistrationStatus
+    >(MaidCafePushStatusNotifier.new);
+
+class MaidCafePushStatusNotifier
+    extends Notifier<MaidCafePushRegistrationStatus> {
+  @override
+  MaidCafePushRegistrationStatus build() =>
+      MaidCafePushRegistrationStatus.unknown;
+
+  void set(MaidCafePushRegistrationStatus status) => state = status;
+}
+
 /// FCM push for MaidCafe cloud notifications. Kept alive by `MaidKitApp`;
 /// subscribes once a Solar account is signed in (either at startup or on a
 /// later sign-in) and refreshes the Metoer feed when a push arrives while the
@@ -166,23 +181,41 @@ final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
 /// is a Solsynth-hosted instance (`maidCafeCloudSupportsPush`); self-hosted
 /// clouds have no Ring publisher.
 final maidCafePushProvider = Provider<MaidCafePushService>((ref) {
+  final status = ref.read(maidCafePushStatusProvider.notifier);
   final service = MaidCafePushService(
     client: ref.watch(maidCafeMetoerClientProvider),
     pushAllowed: () =>
         maidCafeCloudSupportsPush(ref.read(maidCafeCloudUrlProvider)),
+    onStatusChanged: status.set,
     onNotification: () {
       ref.invalidate(maidCafeMetoerNotificationsProvider);
       ref.invalidate(maidCafeMetoerUnreadCountProvider);
     },
   );
   ref.listen(cloudUserProvider, (previous, next) {
-    if (next.asData?.value != null) unawaited(service.subscribe());
+    final user = next.asData?.value;
+    if (user != null) {
+      unawaited(service.subscribe());
+    } else if (next.hasValue) {
+      service.markNotSignedIn();
+    }
+  });
+  ref.listen(maidCafeCloudUrlProvider, (previous, next) {
+    final signedIn = ref.read(cloudUserProvider).asData?.value != null;
+    service.refreshStatus(signedIn: signedIn);
+    if (signedIn) unawaited(service.subscribe());
   });
   // The provider may be first built after the user already resolved (e.g. a
   // vault unlock invalidates cloudUserProvider before this provider exists);
   // ref.listen does not deliver the current value, so check it explicitly.
-  final user = ref.read(cloudUserProvider).asData?.value;
-  if (user != null) unawaited(service.subscribe());
+  // Defer this initial status update/subscription until this provider has
+  // finished building; the callback updates a separate provider.
+  Future<void>.microtask(() {
+    if (!ref.mounted) return;
+    final user = ref.read(cloudUserProvider).asData?.value;
+    service.refreshStatus(signedIn: user != null);
+    if (user != null) unawaited(service.subscribe());
+  });
   return service;
 });
 

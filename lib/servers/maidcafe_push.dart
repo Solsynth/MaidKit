@@ -100,11 +100,24 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 /// (`lib/core/services/notify.universal.dart`). The Metoer subscription is
 /// keyed by device token and carries the MaidCafe app id, so only daemon
 /// notifications reach this device.
+/// Current device push-registration state shown in Solar Network settings.
+enum MaidCafePushRegistrationStatus {
+  unknown,
+  notSignedIn,
+  registering,
+  registered,
+  waitingForToken,
+  unavailable,
+  unsupported,
+  failed,
+}
+
 class MaidCafePushService {
   MaidCafePushService({
     required this.client,
     required this.pushAllowed,
     required this.onNotification,
+    this.onStatusChanged,
   });
 
   /// Metoer client used to register the push subscription.
@@ -119,29 +132,84 @@ class MaidCafePushService {
   /// the in-app Metoer feed can refresh.
   final void Function() onNotification;
 
+  /// Reports registration state to the settings UI.
+  final void Function(MaidCafePushRegistrationStatus status)? onStatusChanged;
+
   Future<void>? _pending;
   bool _subscribed = false;
   bool _listenersAttached = false;
 
-  /// Registers this device once per session. Idempotent: concurrent calls
-  /// share one attempt and later calls are no-ops after a successful
-  /// registration. A failed attempt is retried by the next call (e.g. the
-  /// next sign-in).
-  Future<void> subscribe() {
-    if (!firebaseSupported() || !pushAllowed() || _subscribed) {
-      return Future.value();
+  MaidCafePushRegistrationStatus get initialStatus {
+    if (!firebaseSupported()) {
+      return MaidCafePushRegistrationStatus.unsupported;
     }
-    return _pending ??= _register()
-        .then((_) {
-          _subscribed = true;
-        })
-        .whenComplete(() {
-          _pending = null;
-        });
+    if (!pushAllowed()) {
+      return MaidCafePushRegistrationStatus.unavailable;
+    }
+    return MaidCafePushRegistrationStatus.unknown;
   }
 
-  Future<void> _register() async {
-    if (!pushAllowed()) return;
+  void refreshStatus({required bool signedIn}) {
+    final status = !firebaseSupported()
+        ? MaidCafePushRegistrationStatus.unsupported
+        : !pushAllowed()
+        ? MaidCafePushRegistrationStatus.unavailable
+        : _subscribed
+        ? MaidCafePushRegistrationStatus.registered
+        : signedIn
+        ? MaidCafePushRegistrationStatus.unknown
+        : MaidCafePushRegistrationStatus.notSignedIn;
+    onStatusChanged?.call(status);
+  }
+
+  void markNotSignedIn() {
+    _subscribed = false;
+    refreshStatus(signedIn: false);
+  }
+
+  /// Registers this device once per session. Idempotent: concurrent calls
+  /// share one attempt and later calls are no-ops after a successful
+  /// registration. A missing token or failed attempt is retried by the next
+  /// call (e.g. a token refresh or the next sign-in).
+  Future<void> subscribe() {
+    if (!firebaseSupported()) {
+      onStatusChanged?.call(MaidCafePushRegistrationStatus.unsupported);
+      return Future.value();
+    }
+    if (!pushAllowed()) {
+      onStatusChanged?.call(MaidCafePushRegistrationStatus.unavailable);
+      return Future.value();
+    }
+    if (_subscribed) {
+      onStatusChanged?.call(MaidCafePushRegistrationStatus.registered);
+      return Future.value();
+    }
+    if (_pending != null) return _pending!;
+    onStatusChanged?.call(MaidCafePushRegistrationStatus.registering);
+    final attempt = _subscribe();
+    _pending = attempt;
+    return attempt;
+  }
+
+  Future<void> _subscribe() async {
+    try {
+      final registered = await _register();
+      _subscribed = registered;
+      onStatusChanged?.call(
+        registered
+            ? MaidCafePushRegistrationStatus.registered
+            : MaidCafePushRegistrationStatus.waitingForToken,
+      );
+    } catch (_) {
+      onStatusChanged?.call(MaidCafePushRegistrationStatus.failed);
+      rethrow;
+    } finally {
+      _pending = null;
+    }
+  }
+
+  Future<bool> _register() async {
+    if (!pushAllowed()) return false;
     _attachListeners();
     await FirebaseMessaging.instance.requestPermission(
       alert: true,
@@ -158,8 +226,9 @@ class MaidCafePushService {
           provider: maidCafePushProviderFcm,
           deviceName: deviceName,
         );
+        return true;
       }
-      return;
+      return false;
     }
 
     // iOS/macOS: the APNs token is the FCM identity; it may not be ready at
@@ -171,7 +240,9 @@ class MaidCafePushService {
         provider: maidCafePushProviderApple,
         deviceName: deviceName,
       );
+      return true;
     }
+    return false;
   }
 
   /// Attaches the token-refresh and foreground-message listeners once.
@@ -180,14 +251,20 @@ class MaidCafePushService {
     _listenersAttached = true;
 
     FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
-      if (!pushAllowed()) return;
+      if (!pushAllowed()) {
+        onStatusChanged?.call(MaidCafePushRegistrationStatus.unavailable);
+        return;
+      }
+      onStatusChanged?.call(MaidCafePushRegistrationStatus.registering);
       try {
+        var registered = false;
         if (Platform.isAndroid) {
           await client.registerPushSubscription(
             deviceToken: token,
             provider: maidCafePushProviderFcm,
             deviceName: await _deviceName(),
           );
+          registered = token.isNotEmpty;
         } else {
           final apnsToken = await _apnsTokenWithRetry();
           if (apnsToken != null && apnsToken.isNotEmpty) {
@@ -196,9 +273,17 @@ class MaidCafePushService {
               provider: maidCafePushProviderApple,
               deviceName: await _deviceName(),
             );
+            registered = true;
           }
         }
+        _subscribed = registered;
+        onStatusChanged?.call(
+          registered
+              ? MaidCafePushRegistrationStatus.registered
+              : MaidCafePushRegistrationStatus.waitingForToken,
+        );
       } catch (_) {
+        onStatusChanged?.call(MaidCafePushRegistrationStatus.failed);
         // Registration is an upsert; the next token refresh or sign-in
         // retries it. Never let push bookkeeping crash the app.
       }
