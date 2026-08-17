@@ -38,6 +38,7 @@ import 'server_providers.dart';
 import 'tailscale_settings_section.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
+import 'transfer_conflict_preferences.dart';
 import 'vault_service.dart';
 import 'vault_file_storage.dart';
 
@@ -133,6 +134,7 @@ class SettingsPage extends HookConsumerWidget {
     final connectOnStartup = ref.watch(connectOnStartupProvider);
     final hideServerAddresses = ref.watch(hideServerAddressesProvider);
     final localMachineEnabled = ref.watch(localMachineEnabledProvider);
+    final transferConflictMode = ref.watch(transferConflictModeProvider);
     final refreshInterval = ref.watch(serverMetricsRefreshIntervalProvider);
     final focusedRefreshInterval = ref.watch(
       focusedServerRefreshIntervalProvider,
@@ -541,6 +543,15 @@ class SettingsPage extends HookConsumerWidget {
                                         )
                                         .setInterval(interval);
                                   },
+                                ),
+                                const SizedBox(height: 16),
+                                _TransferConflictDropdown(
+                                  value: transferConflictMode,
+                                  onChanged: (mode) => ref
+                                      .read(
+                                        transferConflictModeProvider.notifier,
+                                      )
+                                      .setMode(mode),
                                 ),
                               ],
                             ),
@@ -3345,6 +3356,43 @@ class _IntervalDropdown extends StatelessWidget {
       ],
       onChanged: (interval) {
         if (interval != null) onChanged(interval);
+      },
+    );
+  }
+}
+
+class _TransferConflictDropdown extends StatelessWidget {
+  const _TransferConflictDropdown({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final TransferConflictMode value;
+  final ValueChanged<TransferConflictMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<TransferConflictMode>(
+      initialValue: value,
+      decoration: InputDecoration(
+        labelText: 'settingsTransferConflictMode'.tr(),
+        helperText: 'settingsTransferConflictModeHint'.tr(),
+      ),
+      items: [
+        for (final mode in TransferConflictMode.values)
+          DropdownMenuItem(
+            value: mode,
+            child: Text(switch (mode) {
+              TransferConflictMode.rename =>
+                'settingsTransferConflictRename'.tr(),
+              TransferConflictMode.overwrite =>
+                'settingsTransferConflictOverwrite'.tr(),
+              TransferConflictMode.ask => 'settingsTransferConflictAsk'.tr(),
+            }),
+          ),
+      ],
+      onChanged: (mode) {
+        if (mode != null) onChanged(mode);
       },
     );
   }

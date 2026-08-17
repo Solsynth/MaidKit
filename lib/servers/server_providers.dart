@@ -48,6 +48,7 @@ import 'terminal_session_adapter.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
 import 'startup_connection_preferences.dart';
+import 'transfer_conflict_preferences.dart';
 import 'vault_service.dart';
 import 'vault_file_storage.dart';
 
@@ -784,6 +785,26 @@ class LocalMachineEnabledNotifier extends Notifier<bool> {
     if (value && localMachineSupported) {
       unawaited(ref.read(localConnectionManagerProvider).refreshNow());
     }
+  }
+}
+
+final transferConflictSettingsProvider = Provider<TransferConflictSettings>(
+  (ref) => InMemoryTransferConflictSettings(),
+);
+
+final transferConflictModeProvider =
+    NotifierProvider<TransferConflictModeNotifier, TransferConflictMode>(
+      TransferConflictModeNotifier.new,
+    );
+
+class TransferConflictModeNotifier extends Notifier<TransferConflictMode> {
+  @override
+  TransferConflictMode build() =>
+      ref.read(transferConflictSettingsProvider).conflictMode;
+
+  Future<void> setMode(TransferConflictMode value) async {
+    await ref.read(transferConflictSettingsProvider).saveConflictMode(value);
+    state = value;
   }
 }
 

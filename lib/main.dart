@@ -15,6 +15,7 @@ import 'servers/app_theme_preferences.dart';
 import 'servers/metrics_refresh_preferences.dart';
 import 'servers/terminal_adapter_preferences.dart';
 import 'servers/startup_connection_preferences.dart';
+import 'servers/transfer_conflict_preferences.dart';
 import 'servers/privacy_preferences.dart';
 import 'servers/local_machine_preferences.dart';
 import 'firebase_options.dart';
@@ -59,6 +60,7 @@ Future<void> main(List<String> args) async {
     PrivacyPreferences.load(),
     LocalMachinePreferences.load(),
     MaidCafePreferences.load(),
+    TransferConflictPreferences.load(),
   ]);
   final terminalAdapterPreferences =
       preferences[0] as TerminalAdapterPreferences;
@@ -69,6 +71,8 @@ Future<void> main(List<String> args) async {
   final privacyPreferences = preferences[4] as PrivacyPreferences;
   final localMachinePreferences = preferences[5] as LocalMachinePreferences;
   final maidCafePreferences = preferences[6] as MaidCafePreferences;
+  final transferConflictPreferences =
+      preferences[7] as TransferConflictPreferences;
 
   await migrateLegacyVault(defaultName: 'Primary Vault');
 
@@ -104,6 +108,9 @@ Future<void> main(List<String> args) async {
         privacySettingsProvider.overrideWithValue(privacyPreferences),
         localMachineSettingsProvider.overrideWithValue(localMachinePreferences),
         maidCafeSettingsProvider.overrideWithValue(maidCafePreferences),
+        transferConflictSettingsProvider.overrideWithValue(
+          transferConflictPreferences,
+        ),
       ],
       child: EasyLocalization(
         supportedLocales: const [

@@ -26,6 +26,7 @@ import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
+import 'transfer_conflict_preferences.dart';
 
 enum _FileSide { local, remote }
 
@@ -40,6 +41,16 @@ const double _kFileRowExtent = 44.0;
 class _TransferCancelled implements Exception {
   const _TransferCancelled();
 }
+
+/// Thrown inside a queued transfer action when the user chose to skip the
+/// conflicting entry in ask mode. The transfer completes quietly instead of
+/// failing.
+class _TransferSkipped implements Exception {
+  const _TransferSkipped();
+}
+
+/// Per-conflict choice when the transfer conflict mode is [ask].
+enum _TransferConflictChoice { overwrite, keepBoth, skip }
 
 class _TransferController {
   var _isPaused = false;
@@ -266,6 +277,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         .firstOrNull;
     return server?.connectionType == ServerConnectionType.local.name;
   }
+
+  /// How transfers resolve destination entries that already exist. Read at
+  /// transfer time so setting changes apply to queued work immediately.
+  TransferConflictMode get _conflictMode =>
+      ref.read(transferConflictModeProvider);
 
   Future<void> _closeSftp(Future<SftpClient>? future) async {
     if (future == null) return;
@@ -1369,13 +1385,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       notify: notify,
       action: (controller, reportProgress) async {
         final destination = await _sftpForServer(targetServerId);
-        final target = await _uniqueRemotePath(
+        final target = await _resolveRemoteDestination(
           destination,
           targetDirectory,
           entry.name,
         );
+        if (target == null) throw const _TransferSkipped();
         try {
           if (entry.isDirectory) {
+            await _removeRemoteEntry(destination, target);
             await _streamRemoteDirectory(
               source,
               destination,
@@ -1627,11 +1645,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         final destinationDir = _leftRemotePath;
         if (_parentRemotePath(entry.path) == destinationDir) return;
         final sftp = await _leftSftp();
-        final destination = await _uniqueRemotePath(
+        final destination = await _resolveRemoteDestination(
           sftp,
           destinationDir,
           entry.name,
         );
+        if (destination == null) return;
+        await _removeRemoteEntry(sftp, destination);
         await sftp.rename(entry.path, destination);
         await _refreshLeftRemote();
         return;
@@ -1641,7 +1661,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           Directory(entry.path).parent.path == destinationDir) {
         return;
       }
-      final destination = await _uniqueLocalPath(destinationDir, entry.name);
+      final destination = await _resolveLocalDestination(
+        destinationDir,
+        entry.name,
+      );
+      if (destination == null) return;
+      await _removeLocalEntry(destination);
       if (entry.isDirectory) {
         await Directory(entry.path).rename(destination);
       } else {
@@ -1654,11 +1679,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final destinationDir = _remotePath;
     if (_parentRemotePath(entry.path) == destinationDir) return;
     final sftp = await _sftp();
-    final destination = await _uniqueRemotePath(
+    final destination = await _resolveRemoteDestination(
       sftp,
       destinationDir,
       entry.name,
     );
+    if (destination == null) return;
+    await _removeRemoteEntry(sftp, destination);
     await sftp.rename(entry.path, destination);
     await _refreshRemote();
   }
@@ -1667,12 +1694,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     if (side == _FileSide.local) {
       if (_leftIsRemote && entry.serverId != null) {
         final sftp = await _leftSftp();
-        final destination = await _uniqueRemotePath(
+        final destination = await _resolveRemoteDestination(
           sftp,
           _leftRemotePath,
           entry.name,
         );
+        if (destination == null) return;
         if (entry.isDirectory) {
+          await _removeRemoteEntry(sftp, destination);
           await _copyRemoteDirectory(sftp, entry.path, destination);
         } else {
           await _copyRemoteFile(sftp, entry.path, destination);
@@ -1680,11 +1709,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         await _refreshLeftRemote();
         return;
       }
-      final destination = await _uniqueLocalPath(
+      final destination = await _resolveLocalDestination(
         _localDirectory.path,
         entry.name,
       );
+      if (destination == null) return;
       if (entry.isDirectory) {
+        await _removeLocalEntry(destination);
         await _copyLocalDirectory(
           Directory(entry.path),
           Directory(destination),
@@ -1697,8 +1728,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     }
 
     final sftp = await _sftp();
-    final destination = await _uniqueRemotePath(sftp, _remotePath, entry.name);
+    final destination = await _resolveRemoteDestination(
+      sftp,
+      _remotePath,
+      entry.name,
+    );
+    if (destination == null) return;
     if (entry.isDirectory) {
+      await _removeRemoteEntry(sftp, destination);
       await _copyRemoteDirectory(sftp, entry.path, destination);
     } else {
       await _copyRemoteFile(sftp, entry.path, destination);
@@ -1901,11 +1938,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       notify: notify,
       action: (controller, reportProgress) async {
         final sftp = await _sftp();
-        final remotePath = await _uniqueRemotePath(
+        final remotePath = await _resolveRemoteDestination(
           sftp,
           _remotePath,
           _entityName(entry),
         );
+        if (remotePath == null) throw const _TransferSkipped();
         final remoteFile = await sftp.open(
           remotePath,
           mode:
@@ -1949,8 +1987,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       notify: notify,
       action: (controller, reportProgress) async {
         final sftp = await _sftp();
-        final remoteRoot = await _uniqueRemotePath(sftp, _remotePath, name);
+        final remoteRoot = await _resolveRemoteDestination(
+          sftp,
+          _remotePath,
+          name,
+        );
+        if (remoteRoot == null) throw const _TransferSkipped();
         try {
+          await _removeRemoteEntry(sftp, remoteRoot);
           await _uploadLocalDirectory(
             sftp,
             directory,
@@ -2070,10 +2114,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       notify: notify,
       action: (controller, reportProgress) async {
         final sftp = await _sftp();
-        final destinationPath = await _uniqueLocalPath(
+        final destinationPath = await _resolveLocalDestination(
           _localDirectory.path,
           filename,
         );
+        if (destinationPath == null) throw const _TransferSkipped();
         final destination = File(destinationPath);
         final remoteFile = await sftp.open(
           remotePath,
@@ -2236,9 +2281,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       notify: notify,
       action: (controller, reportProgress) async {
         final sftp = await _sftp();
-        final localRoot = await _uniqueLocalPath(_localDirectory.path, name);
+        final localRoot = await _resolveLocalDestination(
+          _localDirectory.path,
+          name,
+        );
+        if (localRoot == null) throw const _TransferSkipped();
         final localDirectory = Directory(localRoot);
         try {
+          await _removeLocalEntry(localRoot);
           await _downloadRemoteDirectory(
             sftp,
             remotePath,
@@ -2386,6 +2436,117 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       }
     }
     await sftp.rmdir(path);
+  }
+
+  /// Asks the user how to resolve a name conflict during a transfer.
+  Future<_TransferConflictChoice> _askConflict(String name) async {
+    final choice = await showMaidKitOverlayDialog<_TransferConflictChoice>(
+      barrierDismissible: false,
+      builder: (context, close) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: kMaidKitDialogMaxWidth),
+        child: AlertDialog(
+          title: Text('fileManagerOverwriteTitle'.tr()),
+          content: Text('fileManagerOverwriteMessage'.tr(args: [name])),
+          actions: [
+            TextButton(
+              onPressed: () => close(_TransferConflictChoice.skip),
+              child: Text('fileManagerSkip'.tr()),
+            ),
+            TextButton(
+              onPressed: () => close(_TransferConflictChoice.keepBoth),
+              child: Text('fileManagerKeepBoth'.tr()),
+            ),
+            FilledButton(
+              onPressed: () => close(_TransferConflictChoice.overwrite),
+              child: Text('fileManagerOverwrite'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
+    return choice ?? _TransferConflictChoice.skip;
+  }
+
+  /// Resolves where [name] should land inside [directory] according to the
+  /// configured conflict mode. Returns `null` when the user chose to skip the
+  /// entry (ask mode only).
+  Future<String?> _resolveLocalDestination(
+    String directory,
+    String name,
+  ) async {
+    final candidate = '$directory${Platform.pathSeparator}$name';
+    if (!await FileSystemEntity.type(
+      candidate,
+    ).then((type) => type != FileSystemEntityType.notFound)) {
+      return candidate;
+    }
+    switch (_conflictMode) {
+      case TransferConflictMode.rename:
+        return _uniqueLocalPath(directory, name);
+      case TransferConflictMode.overwrite:
+        return candidate;
+      case TransferConflictMode.ask:
+        switch (await _askConflict(name)) {
+          case _TransferConflictChoice.overwrite:
+            return candidate;
+          case _TransferConflictChoice.keepBoth:
+            return _uniqueLocalPath(directory, name);
+          case _TransferConflictChoice.skip:
+            return null;
+        }
+    }
+  }
+
+  Future<String?> _resolveRemoteDestination(
+    SftpClient sftp,
+    String directory,
+    String name,
+  ) async {
+    final candidate = _joinRemotePath(directory, name);
+    if (!await _remoteExists(sftp, candidate)) return candidate;
+    switch (_conflictMode) {
+      case TransferConflictMode.rename:
+        return _uniqueRemotePath(sftp, directory, name);
+      case TransferConflictMode.overwrite:
+        return candidate;
+      case TransferConflictMode.ask:
+        switch (await _askConflict(name)) {
+          case _TransferConflictChoice.overwrite:
+            return candidate;
+          case _TransferConflictChoice.keepBoth:
+            return _uniqueRemotePath(sftp, directory, name);
+          case _TransferConflictChoice.skip:
+            return null;
+        }
+    }
+  }
+
+  /// Removes an existing local entry so a move or directory transfer can
+  /// replace it. No-op when nothing exists at [path].
+  Future<void> _removeLocalEntry(String path) async {
+    final type = await FileSystemEntity.type(path);
+    if (type == FileSystemEntityType.notFound) return;
+    if (type == FileSystemEntityType.directory) {
+      await Directory(path).delete(recursive: true);
+    } else {
+      await File(path).delete();
+    }
+  }
+
+  /// Removes an existing remote entry so a move or directory transfer can
+  /// replace it. No-op when nothing exists at [path].
+  Future<void> _removeRemoteEntry(SftpClient sftp, String path) async {
+    try {
+      final attrs = await sftp.stat(path);
+      if (attrs.isDirectory) {
+        await _deleteRemoteDirectory(sftp, path);
+      } else {
+        await sftp.remove(path);
+      }
+    } catch (_) {
+      // Nothing to replace (or already gone); the transfer itself reports
+      // real failures.
+    }
   }
 
   Future<String> _uniqueLocalPath(String directory, String name) async {
@@ -2548,6 +2709,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     } on _TransferCancelled {
       flushProgress();
       await ref.read(taskProgressProvider.notifier).cancel(transfer.id);
+    } on _TransferSkipped {
+      // User declined the conflicting entry; finish quietly without the
+      // completion snackbar or a failure state.
+      flushProgress();
+      ref.read(taskProgressProvider.notifier).complete(transfer.id);
     } catch (error) {
       flushProgress();
       ref.read(taskProgressProvider.notifier).fail(transfer.id);
