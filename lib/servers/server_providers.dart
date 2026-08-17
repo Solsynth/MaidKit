@@ -199,6 +199,15 @@ final maidCafeDaemonsProvider =
           .listDaemons(workspaceId: workspaceId);
     });
 
+/// The effective quota of a workspace: what the cloud enforces for daemon
+/// registration, metric-ingest throttling and metric retention.
+final maidCafeQuotaProvider = FutureProvider.family<MaidCafeQuota, String>((
+  ref,
+  workspaceId,
+) {
+  return ref.watch(maidCafeServiceProvider).fetchWorkspaceQuota(workspaceId);
+});
+
 final maidCafeMetricsProvider =
     FutureProvider.family<List<MaidCafeMetric>, String>((ref, daemonId) {
       return ref.watch(maidCafeServiceProvider).listMetrics(daemonId);

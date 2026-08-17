@@ -791,6 +791,8 @@ class SettingsPage extends HookConsumerWidget {
                       child: const _MaidCafeCloudConnectionSection(),
                     ),
                     const SizedBox(height: 24),
+                    const _MaidCafeQuotaSection(),
+                    const SizedBox(height: 24),
                   ],
                   if (selectedCategory.id == 'solarNetwork' &&
                       cloudUser.asData?.value != null) ...[
@@ -2873,6 +2875,97 @@ class _SettingsSection extends StatelessWidget {
           child: Padding(padding: padding, child: child),
         ),
       ],
+    );
+  }
+}
+
+/// The signed-in workspace's effective quota: the daemon registration limit
+/// with current usage, the relay/metric poll throttle and metric retention.
+/// Hidden until a workspace is selected and the cloud exposes a quota view
+/// (older or self-hosted clouds may not).
+class _MaidCafeQuotaSection extends ConsumerWidget {
+  const _MaidCafeQuotaSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final workspaceId =
+        ref.watch(maidCafeWorkspaceIdProvider) ??
+        ref.watch(cloudWorkspacesProvider).asData?.value.firstOrNull?.id;
+    if (workspaceId == null) return const SizedBox.shrink();
+    final quota = ref.watch(maidCafeQuotaProvider(workspaceId)).asData?.value;
+    if (quota == null) return const SizedBox.shrink();
+    final daemonCount =
+        ref.watch(maidCafeDaemonsProvider(workspaceId)).asData?.value.length ??
+        0;
+    final maxDaemons = quota.maxDaemons;
+    final atLimit = maxDaemons != null && daemonCount >= maxDaemons;
+    final colors = Theme.of(context).colorScheme;
+    return _SettingsSection(
+      titleKey: 'maidCafeQuota',
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          ListTile(
+            contentPadding: _sectionTilePadding,
+            shape: RoundedRectangleBorder(
+              borderRadius: _sectionTileBorderRadius(
+                _SettingsTilePosition.first,
+              ),
+            ),
+            title: Text('maidCafeQuotaMaxDaemons'.tr()),
+            trailing: Text(
+              maxDaemons == null
+                  ? 'maidCafeQuotaUnlimited'.tr()
+                  : '$daemonCount / $maxDaemons',
+              style: atLimit ? TextStyle(color: colors.error) : null,
+            ),
+          ),
+          if (maxDaemons != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: (daemonCount / maxDaemons).clamp(0.0, 1.0),
+                  minHeight: 4,
+                  color: atLimit ? colors.error : null,
+                ),
+              ),
+            ),
+          ListTile(
+            contentPadding: _sectionTilePadding,
+            shape: RoundedRectangleBorder(
+              borderRadius: _sectionTileBorderRadius(
+                _SettingsTilePosition.middle,
+              ),
+            ),
+            title: Text('maidCafeQuotaPollingInterval'.tr()),
+            trailing: Text(
+              quota.pollingIntervalSeconds == null
+                  ? 'maidCafeQuotaUnlimited'.tr()
+                  : 'maidCafeQuotaSeconds'.tr(
+                      args: ['${quota.pollingIntervalSeconds}'],
+                    ),
+            ),
+          ),
+          ListTile(
+            contentPadding: _sectionTilePadding,
+            shape: RoundedRectangleBorder(
+              borderRadius: _sectionTileBorderRadius(
+                _SettingsTilePosition.last,
+              ),
+            ),
+            title: Text('maidCafeQuotaMetricsRetention'.tr()),
+            trailing: Text(
+              quota.metricsRetentionDays == null
+                  ? 'maidCafeQuotaUnlimited'.tr()
+                  : 'maidCafeQuotaDays'.tr(
+                      args: ['${quota.metricsRetentionDays}'],
+                    ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

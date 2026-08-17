@@ -63,6 +63,13 @@ MaidCafeCredential _credential() => MaidCafeCredential(
   createdAt: DateTime.utc(2026, 8, 13),
 );
 
+MaidCafeQuota _quota() => const MaidCafeQuota(
+  workspaceId: 'ws-1',
+  maxDaemons: 5,
+  pollingIntervalSeconds: 30,
+  metricsRetentionDays: 30,
+);
+
 class _FakeMaidCafeService extends MaidCafeService {
   _FakeMaidCafeService()
     : super(
@@ -210,6 +217,7 @@ void main() {
       maidCafeDaemonsProvider.overrideWith(
         (ref, workspaceId) async => [_daemon()],
       ),
+      maidCafeQuotaProvider.overrideWith((ref, workspaceId) async => _quota()),
       maidCafeMetricsProvider.overrideWith(
         metricsLoader ?? ((Ref ref, String daemonId) async => metrics),
       ),
@@ -275,6 +283,25 @@ void main() {
     expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
     expect(find.text('Webhook backup failed'), findsOneWidget);
     expect(find.text('exit code 1'), findsOneWidget);
+  });
+
+  testWidgets('fleet tab renders the workspace quota with daemon usage', (
+    tester,
+  ) async {
+    await pumpPage(tester);
+
+    expect(find.text('maidCafeQuota'.tr()), findsOneWidget);
+    expect(find.text('maidCafeQuotaMaxDaemons'.tr()), findsOneWidget);
+    // One daemon registered against a max of five.
+    expect(find.text('1 / 5'), findsOneWidget);
+    expect(find.text('maidCafeQuotaSeconds'.tr(args: ['30'])), findsOneWidget);
+    expect(find.text('maidCafeQuotaDays'.tr(args: ['30'])), findsOneWidget);
+    final usageBar = tester.widget<LinearProgressIndicator>(
+      find.byWidgetPredicate(
+        (widget) => widget is LinearProgressIndicator && widget.minHeight == 6,
+      ),
+    );
+    expect(usageBar.value, closeTo(0.2, 0.001));
   });
 
   testWidgets('daemon card surfaces load, disk and uptime from samples', (

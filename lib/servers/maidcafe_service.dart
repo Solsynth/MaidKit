@@ -244,6 +244,54 @@ class MaidCafeCredential {
       );
 }
 
+/// A workspace's effective quota: the plan preset plus any active addon
+/// grants. Dimension keys are served by the workspace service and are
+/// configurable; a missing or non-positive dimension means no enforcement
+/// (null).
+class MaidCafeQuota {
+  const MaidCafeQuota({
+    required this.workspaceId,
+    this.maxDaemons,
+    this.pollingIntervalSeconds,
+    this.metricsRetentionDays,
+  });
+
+  final String workspaceId;
+
+  /// Registration limit for `POST /api/daemons`; null = no limit.
+  final int? maxDaemons;
+
+  /// Throttle for daemon metric ingest and relay pickup (HTTP `429`);
+  /// null = no throttle.
+  final int? pollingIntervalSeconds;
+
+  /// Prunes stored metrics older than this; null = retained indefinitely.
+  final int? metricsRetentionDays;
+
+  factory MaidCafeQuota.fromJson(Map<String, dynamic> json) {
+    final rawQuotas = json['quotas'];
+    final quotas = rawQuotas is Map
+        ? rawQuotas.map((key, value) => MapEntry('$key', value))
+        : <String, dynamic>{};
+    return MaidCafeQuota(
+      workspaceId: json['workspace_id']?.toString() ?? '',
+      maxDaemons: _enforcedQuota(quotas['max_daemons']),
+      pollingIntervalSeconds: _enforcedQuota(
+        quotas['polling_interval_seconds'],
+      ),
+      metricsRetentionDays: _enforcedQuota(quotas['metrics_retention_days']),
+    );
+  }
+}
+
+/// Quota dimension values: a missing or non-positive value means no
+/// enforcement, so such dimensions parse to null.
+int? _enforcedQuota(Object? value) {
+  if (value is! num) return null;
+  final intValue = value.toInt();
+  return intValue > 0 ? intValue : null;
+}
+
 List<String> _stringList(Object? value) {
   if (value is! List) return const [];
   return [for (final entry in value) entry.toString()];
@@ -429,6 +477,19 @@ class MaidCafeService {
     return data
         .map((item) => MaidCafeDaemon.fromJson(_map(item)))
         .toList(growable: false);
+  }
+
+  /// The workspace's effective quota (plan preset + active addon grants) —
+  /// the same view a daemon fetches with its own secret-authenticated
+  /// `GET /api/daemons/:id/quota`.
+  Future<MaidCafeQuota> fetchWorkspaceQuota(String workspaceId) async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/workspaces/${_pathPart(workspaceId)}/quota',
+        options: _cloudOptions(token),
+      ),
+    );
+    return MaidCafeQuota.fromJson(_responseMap(response));
   }
 
   Future<List<MaidCafeMetric>> listMetrics(

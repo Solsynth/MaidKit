@@ -117,6 +117,62 @@ void main() {
   );
 
   test(
+    'workspace quota is fetched with the Solarpass bearer and parsed',
+    () async {
+      late RequestOptions request;
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          request = options;
+          return _json({
+            'workspace_id': 'ws-1',
+            'quotas': {
+              'max_daemons': 5,
+              'polling_interval_seconds': 30,
+              'metrics_retention_days': 30,
+            },
+          }, 200);
+        });
+      final service = MaidCafeService(
+        baseUrl: 'https://mk.solsynth.dev',
+        cloudSync: CloudSyncService(vaultId: 'test'),
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+      final quota = await service.fetchWorkspaceQuota('ws-1');
+      expect(request.method, 'GET');
+      expect(
+        request.uri.toString(),
+        'https://mk.solsynth.dev/api/workspaces/ws-1/quota',
+      );
+      expect(request.headers['Authorization'], 'Bearer solar-token');
+      expect(quota.workspaceId, 'ws-1');
+      expect(quota.maxDaemons, 5);
+      expect(quota.pollingIntervalSeconds, 30);
+      expect(quota.metricsRetentionDays, 30);
+    },
+  );
+
+  test('missing or non-positive quota dimensions mean no enforcement', () {
+    final quota = MaidCafeQuota.fromJson({
+      'workspace_id': 'ws-1',
+      'quotas': {
+        'max_daemons': 0,
+        'polling_interval_seconds': -1,
+        'metrics_retention_days': 'unlimited',
+      },
+    });
+    expect(quota.maxDaemons, isNull);
+    expect(quota.pollingIntervalSeconds, isNull);
+    expect(quota.metricsRetentionDays, isNull);
+
+    final empty = MaidCafeQuota.fromJson(const {'workspace_id': 'ws-1'});
+    expect(empty.workspaceId, 'ws-1');
+    expect(empty.maxDaemons, isNull);
+    expect(empty.pollingIntervalSeconds, isNull);
+    expect(empty.metricsRetentionDays, isNull);
+  });
+
+  test(
     'local invocation keeps raw bytes and signs with the local secret',
     () async {
       late RequestOptions request;
