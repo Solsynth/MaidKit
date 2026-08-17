@@ -344,23 +344,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     }
   }
 
-  Future<void> _signOutCloud(BuildContext context) async {
-    try {
-      await ref.read(cloudSyncServiceProvider).signOut();
-      ref.invalidate(cloudUserProvider);
-      ref.invalidate(cloudWorkspacesProvider);
-      MaidKitAnalytics.instance.setUserId(null);
-      MaidKitAnalytics.instance.logCloudSignOut();
-      if (context.mounted) {
-        showSnackBar('settingsCloudSignOutSuccess'.tr());
-      }
-    } on CloudSyncException catch (error) {
-      if (context.mounted) showSnackBar(error.message);
-    } catch (_) {
-      if (context.mounted) showSnackBar('commonSomethingWentWrong'.tr());
-    }
-  }
-
   // ----------------------------------------------------------------- daemons
 
   /// Bare fleet section for the wide layout; sits directly on the surface.
@@ -381,7 +364,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
       children: [
-        _quotaSummary(context, workspaceId),
         daemons.when(
           loading: () => const Padding(
             padding: EdgeInsets.all(16),
@@ -420,22 +402,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         onInvokeAction: (daemon, action) =>
             _invokeCloudAction(context, daemon, action),
       );
-
-  /// Workspace quota readout above the fleet: daemon registration limit
-  /// with current usage, the relay/metric poll throttle and metric
-  /// retention. Skipped when the cloud exposes no quota view (older or
-  /// self-hosted clouds).
-  Widget _quotaSummary(BuildContext context, String workspaceId) {
-    final quota = ref.watch(maidCafeQuotaProvider(workspaceId)).asData?.value;
-    if (quota == null) return const SizedBox.shrink();
-    final daemonCount =
-        ref.watch(maidCafeDaemonsProvider(workspaceId)).asData?.value.length ??
-        0;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: _QuotaCard(quota: quota, daemonCount: daemonCount),
-    );
-  }
 
   Future<void> _registerDaemon(BuildContext context, String workspaceId) async {
     final result = await showDialog<MaidCafeConnectServerResult>(
@@ -1257,109 +1223,6 @@ class _DaemonFleetCard extends ConsumerWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Workspace quota summary above the fleet: the registration limit with
-/// current daemon usage (progress bar), the relay/metric poll throttle and
-/// metric retention. Unenforced dimensions read "Unlimited".
-class _QuotaCard extends StatelessWidget {
-  const _QuotaCard({required this.quota, required this.daemonCount});
-
-  final MaidCafeQuota quota;
-  final int daemonCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final textTheme = theme.textTheme;
-    final maxDaemons = quota.maxDaemons;
-    final atLimit = maxDaemons != null && daemonCount >= maxDaemons;
-    return _SettingsSectionCard(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(Symbols.speed, size: 18, color: colors.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Text('maidCafeQuota'.tr(), style: textTheme.titleSmall),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _quotaRow(
-              context,
-              label: 'maidCafeQuotaMaxDaemons'.tr(),
-              value: maxDaemons == null
-                  ? 'maidCafeQuotaUnlimited'.tr()
-                  : '$daemonCount / $maxDaemons',
-            ),
-            if (maxDaemons != null) ...[
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: (daemonCount / maxDaemons).clamp(0.0, 1.0),
-                  minHeight: 6,
-                  color: atLimit ? colors.error : colors.primary,
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            _quotaRow(
-              context,
-              label: 'maidCafeQuotaPollingInterval'.tr(),
-              value: quota.pollingIntervalSeconds == null
-                  ? 'maidCafeQuotaUnlimited'.tr()
-                  : 'maidCafeQuotaSeconds'.tr(
-                      args: ['${quota.pollingIntervalSeconds}'],
-                    ),
-            ),
-            const SizedBox(height: 8),
-            _quotaRow(
-              context,
-              label: 'maidCafeQuotaMetricsRetention'.tr(),
-              value: quota.metricsRetentionDays == null
-                  ? 'maidCafeQuotaUnlimited'.tr()
-                  : 'maidCafeQuotaDays'.tr(
-                      args: ['${quota.metricsRetentionDays}'],
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _quotaRow(
-    BuildContext context, {
-    required String label,
-    required String value,
-  }) {
-    final colors = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: textTheme.bodyMedium?.copyWith(
-              color: colors.onSurfaceVariant,
-            ),
-          ),
-        ),
-        Text(
-          value,
-          style: textTheme.bodyMedium?.copyWith(
-            color: colors.onSurface,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      ],
     );
   }
 }

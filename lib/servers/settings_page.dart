@@ -5,6 +5,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' as flutter;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -54,45 +55,20 @@ const _settingsCategories = [
     icon: Symbols.terminal,
   ),
   _SettingsCategory(
-    id: 'connections',
-    titleKey: 'settingsConnections',
-    icon: Symbols.lan,
-  ),
-  _SettingsCategory(
-    id: 'tailscale',
-    titleKey: 'settingsTailscale',
-    icon: Symbols.share,
-  ),
-  _SettingsCategory(
     id: 'agent',
     titleKey: 'settingsAgent',
     icon: Symbols.smart_toy,
   ),
   _SettingsCategory(
-    id: 'localMcp',
-    titleKey: 'settingsLocalMcpServer',
-    icon: Symbols.hub,
-  ),
-  _SettingsCategory(
-    id: 'security',
-    titleKey: 'settingsSecurity',
-    icon: Symbols.security,
-  ),
-  _SettingsCategory(
-    id: 'updates',
-    titleKey: 'settingsUpdates',
-    icon: Symbols.update,
+    id: 'storage',
+    titleKey: 'settingsStorage',
+    icon: Symbols.storage,
   ),
   _SettingsCategory(id: 'about', titleKey: 'settingsAbout', icon: Symbols.info),
   _SettingsCategory(
     id: 'solarNetwork',
     titleKey: 'settingsSolarNetwork',
     icon: Symbols.cloud,
-  ),
-  _SettingsCategory(
-    id: 'vaults',
-    titleKey: 'settingsVaults',
-    icon: Symbols.storage,
   ),
   _SettingsCategory(
     id: 'connectionsTransfer',
@@ -463,7 +439,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'connections') ...[
+                  if (selectedCategory.id == 'storage') ...[
                     _SettingsSection(
                       titleKey: 'settingsConnections',
                       padding: EdgeInsets.zero,
@@ -561,7 +537,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'tailscale') ...[
+                  if (selectedCategory.id == 'storage') ...[
                     _SettingsSection(
                       titleKey: 'settingsTailscale',
                       padding: EdgeInsets.zero,
@@ -646,7 +622,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'localMcp') ...[
+                  if (selectedCategory.id == 'agent') ...[
                     _SettingsSection(
                       titleKey: 'settingsLocalMcpServer',
                       padding: EdgeInsets.zero,
@@ -654,9 +630,9 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'security') ...[
+                  if (selectedCategory.id == 'storage') ...[
                     _SettingsSection(
-                      titleKey: 'settingsSecurity',
+                      titleKey: 'settingsStorage',
                       padding: EdgeInsets.zero,
                       child: biometricEnabled.when(
                         loading: () => const Padding(
@@ -711,15 +687,16 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'updates') ...[
+                  if (selectedCategory.id == 'about') ...[
                     _SettingsSection(
                       titleKey: 'settingsUpdates',
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: const MaidKitUpdateSettingsSection(),
+                      child: flutter.Material(
+                        type: flutter.MaterialType.transparency,
+                        child: const MaidKitUpdateSettingsSection(),
+                      ),
                     ),
                     const SizedBox(height: 24),
-                  ],
-                  if (selectedCategory.id == 'about') ...[
                     _SettingsSection(
                       titleKey: 'settingsAbout',
                       padding: EdgeInsets.zero,
@@ -1003,7 +980,7 @@ class SettingsPage extends HookConsumerWidget {
                       ),
                     ),
                   ],
-                  if (selectedCategory.id == 'vaults') ...[
+                  if (selectedCategory.id == 'storage') ...[
                     _SettingsSection(
                       titleKey: 'settingsVaults',
                       padding: EdgeInsets.zero,
@@ -3015,70 +2992,91 @@ class _MaidCafeCloudConnectionSectionState
       _cloudUrlController.text = cloudUrl;
     }
     final colors = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          controller: _cloudUrlController,
-          decoration: InputDecoration(
-            labelText: 'maidCafeCloudUrl'.tr(),
-            helperText: 'maidCafeCloudUrlHint'.tr(),
+    final cloudSupportsPush = maidCafeCloudSupportsPush(cloudUrl);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _cloudUrlController,
+            decoration: InputDecoration(
+              labelText: 'maidCafeCloudUrl'.tr(),
+              helperText: 'maidCafeCloudUrlHint'.tr(),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            FilledButton(
-              onPressed: _isBusy(_urlOp) ? null : _saveCloudUrl,
-              child: Text('maidCafeApply'.tr()),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: .end,
+            spacing: 8,
+            children: [
+              FilledButton(
+                onPressed: _isBusy(_urlOp) ? null : _saveCloudUrl,
+                child: Text('maidCafeApply'.tr()),
+              ),
+              TextButton(
+                onPressed: _isBusy(_urlOp) ? null : _resetCloudUrl,
+                child: Text('maidCafeReset'.tr()),
+              ),
+            ],
+          ),
+          Row(
+            spacing: 8,
+            mainAxisAlignment: .start,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _isBusy(_healthOp) ? null : _checkCloudHealth,
+                icon: const Icon(Symbols.health_and_safety),
+                label: Text('maidCafeCheckCloudHealth'.tr()),
+              ),
+              if (_cloudHealth != null) _healthStatus(context),
+            ],
+          ),
+          if (_message != null) ...[const SizedBox(height: 8), Text(_message!)],
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 240),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) => SizeTransition(
+              sizeFactor: animation,
+              alignment: Alignment.topCenter,
+              child: FadeTransition(opacity: animation, child: child),
             ),
-            TextButton(
-              onPressed: _isBusy(_urlOp) ? null : _resetCloudUrl,
-              child: Text('maidCafeReset'.tr()),
-            ),
-            OutlinedButton.icon(
-              onPressed: _isBusy(_healthOp) ? null : _checkCloudHealth,
-              icon: const Icon(Symbols.health_and_safety),
-              label: Text('maidCafeCheckCloudHealth'.tr()),
-            ),
-            if (_cloudHealth != null) _healthStatus(context),
-          ],
-        ),
-        if (_message != null) ...[const SizedBox(height: 8), Text(_message!)],
-        if (!maidCafeCloudSupportsPush(cloudUrl)) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: colors.surfaceContainerHighest,
-              border: Border.all(color: colors.outlineVariant),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Symbols.notifications_off,
-                  size: 20,
-                  color: colors.onSurfaceVariant,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'maidCafeSelfHostedPushHint'.tr(),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
+            child: cloudSupportsPush
+                ? const SizedBox.shrink(key: ValueKey('push-supported'))
+                : Padding(
+                    key: const ValueKey('push-unavailable'),
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest,
+                        border: Border.all(color: colors.outlineVariant),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Symbols.notifications_off,
+                            size: 20,
+                            color: colors.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'maidCafeSelfHostedPushHint'.tr(),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: colors.onSurfaceVariant),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
           ),
         ],
-      ],
+      ),
     );
   }
 
@@ -3106,11 +3104,7 @@ class _MaidCafeCloudConnectionSectionState
     await _run(_healthOp, () async {
       final health = await ref.read(maidCafeServiceProvider).checkCloudHealth();
       if (mounted) {
-        setState(
-          () => _cloudHealth = health.ok
-              ? 'OK (${health.mode ?? 'cloud'})'
-              : 'Not healthy',
-        );
+        setState(() => _cloudHealth = health.ok ? 'OK' : 'Not healthy');
       }
     });
   }
@@ -3119,11 +3113,11 @@ class _MaidCafeCloudConnectionSectionState
     final isHealthy = _cloudHealth!.startsWith('OK');
     final colors = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: isHealthy ? colors.secondaryContainer : colors.errorContainer,
         border: Border.all(color: isHealthy ? colors.secondary : colors.error),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -3144,6 +3138,7 @@ class _MaidCafeCloudConnectionSectionState
                   : colors.onErrorContainer,
             ),
           ),
+          const SizedBox(width: 4),
         ],
       ),
     );
