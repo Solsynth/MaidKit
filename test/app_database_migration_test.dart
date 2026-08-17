@@ -22,7 +22,7 @@ void main() {
 
   group('AppDatabase migrations', () {
     test(
-      'schema 22 database that already has sort_order migrates to 27',
+      'schema 22 database that already has sort_order migrates to 32',
       () async {
         final directory = Directory.systemTemp.createTempSync('migration_test');
         final path = '${directory.path}/stale.sqlite';
@@ -43,13 +43,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 31 migrations, which
+        // Opening the database again runs the 22 -> 32 migrations, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 31);
+        expect(version.read<int>('user_version'), 32);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -105,10 +105,18 @@ void main() {
             )
             .get();
         expect(settingsTable, isNotEmpty);
+
+        final authKeyColumns = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('vault_metadata') "
+              "WHERE name IN ('encrypted_tailscale_auth_key', "
+              "'tailscale_auth_key_nonce')",
+            )
+            .get();
+        expect(authKeyColumns, hasLength(2));
         await database.close();
       },
     );
-
     test(
       'schema 22 without sort_order adds the column and MaidCafe fields',
       () async {
@@ -126,7 +134,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 31);
+        expect(version.read<int>('user_version'), 32);
 
         final column = await database
             .customSelect(

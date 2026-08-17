@@ -46,7 +46,6 @@ class TailscaleSshSocket implements SSHSocket {
 
   final TailscaleConnection _connection;
 
-  /// Dials a tailnet peer through the embedded node. The node must be running
   /// ([Tailscale.up]); DNS for MagicDNS names is resolved by the tailnet.
   static Future<TailscaleSshSocket> connect(String host, int port) async {
     try {
@@ -54,7 +53,7 @@ class TailscaleSshSocket implements SSHSocket {
       final status = await Tailscale.instance.status();
       if (!status.isRunning) {
         throw const TailscaleConnectException(
-          'Tailscale is not connected. Open Settings → Tailscale to sign in.',
+          'Embedded Tailscale is not running.',
         );
       }
       final connection = await Tailscale.instance.tcp.dial(
@@ -66,12 +65,12 @@ class TailscaleSshSocket implements SSHSocket {
     } on TailscaleTcpException catch (error) {
       throw TailscaleConnectException(
         error.cause?.toString() ??
-            'Could not reach $host:$port over Tailscale.',
+            'Could not reach $host:$port over embedded Tailscale.',
         error,
       );
     } on TailscaleException catch (error) {
       throw TailscaleConnectException(
-        'Tailscale is not connected. Open Settings → Tailscale to sign in.',
+        'Could not connect to $host:$port through embedded Tailscale.',
         error,
       );
     }

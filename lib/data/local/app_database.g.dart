@@ -2658,6 +2658,28 @@ class $VaultMetadataTable extends VaultMetadata
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _encryptedTailscaleAuthKeyMeta =
+      const VerificationMeta('encryptedTailscaleAuthKey');
+  @override
+  late final GeneratedColumn<String> encryptedTailscaleAuthKey =
+      GeneratedColumn<String>(
+        'encrypted_tailscale_auth_key',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _tailscaleAuthKeyNonceMeta =
+      const VerificationMeta('tailscaleAuthKeyNonce');
+  @override
+  late final GeneratedColumn<String> tailscaleAuthKeyNonce =
+      GeneratedColumn<String>(
+        'tailscale_auth_key_nonce',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -2680,6 +2702,8 @@ class $VaultMetadataTable extends VaultMetadata
     verifierNonce,
     syncPassphraseCiphertext,
     syncPassphraseNonce,
+    encryptedTailscaleAuthKey,
+    tailscaleAuthKeyNonce,
     createdAt,
   ];
   @override
@@ -2775,6 +2799,24 @@ class $VaultMetadataTable extends VaultMetadata
         ),
       );
     }
+    if (data.containsKey('encrypted_tailscale_auth_key')) {
+      context.handle(
+        _encryptedTailscaleAuthKeyMeta,
+        encryptedTailscaleAuthKey.isAcceptableOrUnknown(
+          data['encrypted_tailscale_auth_key']!,
+          _encryptedTailscaleAuthKeyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('tailscale_auth_key_nonce')) {
+      context.handle(
+        _tailscaleAuthKeyNonceMeta,
+        tailscaleAuthKeyNonce.isAcceptableOrUnknown(
+          data['tailscale_auth_key_nonce']!,
+          _tailscaleAuthKeyNonceMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -2828,6 +2870,14 @@ class $VaultMetadataTable extends VaultMetadata
         DriftSqlType.string,
         data['${effectivePrefix}sync_passphrase_nonce'],
       ),
+      encryptedTailscaleAuthKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}encrypted_tailscale_auth_key'],
+      ),
+      tailscaleAuthKeyNonce: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tailscale_auth_key_nonce'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -2852,6 +2902,8 @@ class VaultMetadataData extends DataClass
   final String verifierNonce;
   final String? syncPassphraseCiphertext;
   final String? syncPassphraseNonce;
+  final String? encryptedTailscaleAuthKey;
+  final String? tailscaleAuthKeyNonce;
   final DateTime createdAt;
   const VaultMetadataData({
     required this.id,
@@ -2863,6 +2915,8 @@ class VaultMetadataData extends DataClass
     required this.verifierNonce,
     this.syncPassphraseCiphertext,
     this.syncPassphraseNonce,
+    this.encryptedTailscaleAuthKey,
+    this.tailscaleAuthKeyNonce,
     required this.createdAt,
   });
   @override
@@ -2883,6 +2937,14 @@ class VaultMetadataData extends DataClass
     if (!nullToAbsent || syncPassphraseNonce != null) {
       map['sync_passphrase_nonce'] = Variable<String>(syncPassphraseNonce);
     }
+    if (!nullToAbsent || encryptedTailscaleAuthKey != null) {
+      map['encrypted_tailscale_auth_key'] = Variable<String>(
+        encryptedTailscaleAuthKey,
+      );
+    }
+    if (!nullToAbsent || tailscaleAuthKeyNonce != null) {
+      map['tailscale_auth_key_nonce'] = Variable<String>(tailscaleAuthKeyNonce);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
   }
@@ -2902,6 +2964,13 @@ class VaultMetadataData extends DataClass
       syncPassphraseNonce: syncPassphraseNonce == null && nullToAbsent
           ? const Value.absent()
           : Value(syncPassphraseNonce),
+      encryptedTailscaleAuthKey:
+          encryptedTailscaleAuthKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(encryptedTailscaleAuthKey),
+      tailscaleAuthKeyNonce: tailscaleAuthKeyNonce == null && nullToAbsent
+          ? const Value.absent()
+          : Value(tailscaleAuthKeyNonce),
       createdAt: Value(createdAt),
     );
   }
@@ -2927,6 +2996,12 @@ class VaultMetadataData extends DataClass
       syncPassphraseNonce: serializer.fromJson<String?>(
         json['syncPassphraseNonce'],
       ),
+      encryptedTailscaleAuthKey: serializer.fromJson<String?>(
+        json['encryptedTailscaleAuthKey'],
+      ),
+      tailscaleAuthKeyNonce: serializer.fromJson<String?>(
+        json['tailscaleAuthKeyNonce'],
+      ),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
   }
@@ -2945,6 +3020,12 @@ class VaultMetadataData extends DataClass
         syncPassphraseCiphertext,
       ),
       'syncPassphraseNonce': serializer.toJson<String?>(syncPassphraseNonce),
+      'encryptedTailscaleAuthKey': serializer.toJson<String?>(
+        encryptedTailscaleAuthKey,
+      ),
+      'tailscaleAuthKeyNonce': serializer.toJson<String?>(
+        tailscaleAuthKeyNonce,
+      ),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
   }
@@ -2959,6 +3040,8 @@ class VaultMetadataData extends DataClass
     String? verifierNonce,
     Value<String?> syncPassphraseCiphertext = const Value.absent(),
     Value<String?> syncPassphraseNonce = const Value.absent(),
+    Value<String?> encryptedTailscaleAuthKey = const Value.absent(),
+    Value<String?> tailscaleAuthKeyNonce = const Value.absent(),
     DateTime? createdAt,
   }) => VaultMetadataData(
     id: id ?? this.id,
@@ -2974,6 +3057,12 @@ class VaultMetadataData extends DataClass
     syncPassphraseNonce: syncPassphraseNonce.present
         ? syncPassphraseNonce.value
         : this.syncPassphraseNonce,
+    encryptedTailscaleAuthKey: encryptedTailscaleAuthKey.present
+        ? encryptedTailscaleAuthKey.value
+        : this.encryptedTailscaleAuthKey,
+    tailscaleAuthKeyNonce: tailscaleAuthKeyNonce.present
+        ? tailscaleAuthKeyNonce.value
+        : this.tailscaleAuthKeyNonce,
     createdAt: createdAt ?? this.createdAt,
   );
   VaultMetadataData copyWithCompanion(VaultMetadataCompanion data) {
@@ -2999,6 +3088,12 @@ class VaultMetadataData extends DataClass
       syncPassphraseNonce: data.syncPassphraseNonce.present
           ? data.syncPassphraseNonce.value
           : this.syncPassphraseNonce,
+      encryptedTailscaleAuthKey: data.encryptedTailscaleAuthKey.present
+          ? data.encryptedTailscaleAuthKey.value
+          : this.encryptedTailscaleAuthKey,
+      tailscaleAuthKeyNonce: data.tailscaleAuthKeyNonce.present
+          ? data.tailscaleAuthKeyNonce.value
+          : this.tailscaleAuthKeyNonce,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
   }
@@ -3015,6 +3110,8 @@ class VaultMetadataData extends DataClass
           ..write('verifierNonce: $verifierNonce, ')
           ..write('syncPassphraseCiphertext: $syncPassphraseCiphertext, ')
           ..write('syncPassphraseNonce: $syncPassphraseNonce, ')
+          ..write('encryptedTailscaleAuthKey: $encryptedTailscaleAuthKey, ')
+          ..write('tailscaleAuthKeyNonce: $tailscaleAuthKeyNonce, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -3031,6 +3128,8 @@ class VaultMetadataData extends DataClass
     verifierNonce,
     syncPassphraseCiphertext,
     syncPassphraseNonce,
+    encryptedTailscaleAuthKey,
+    tailscaleAuthKeyNonce,
     createdAt,
   );
   @override
@@ -3046,6 +3145,8 @@ class VaultMetadataData extends DataClass
           other.verifierNonce == this.verifierNonce &&
           other.syncPassphraseCiphertext == this.syncPassphraseCiphertext &&
           other.syncPassphraseNonce == this.syncPassphraseNonce &&
+          other.encryptedTailscaleAuthKey == this.encryptedTailscaleAuthKey &&
+          other.tailscaleAuthKeyNonce == this.tailscaleAuthKeyNonce &&
           other.createdAt == this.createdAt);
 }
 
@@ -3059,6 +3160,8 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
   final Value<String> verifierNonce;
   final Value<String?> syncPassphraseCiphertext;
   final Value<String?> syncPassphraseNonce;
+  final Value<String?> encryptedTailscaleAuthKey;
+  final Value<String?> tailscaleAuthKeyNonce;
   final Value<DateTime> createdAt;
   const VaultMetadataCompanion({
     this.id = const Value.absent(),
@@ -3070,6 +3173,8 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
     this.verifierNonce = const Value.absent(),
     this.syncPassphraseCiphertext = const Value.absent(),
     this.syncPassphraseNonce = const Value.absent(),
+    this.encryptedTailscaleAuthKey = const Value.absent(),
+    this.tailscaleAuthKeyNonce = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
   VaultMetadataCompanion.insert({
@@ -3082,6 +3187,8 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
     required String verifierNonce,
     this.syncPassphraseCiphertext = const Value.absent(),
     this.syncPassphraseNonce = const Value.absent(),
+    this.encryptedTailscaleAuthKey = const Value.absent(),
+    this.tailscaleAuthKeyNonce = const Value.absent(),
     required DateTime createdAt,
   }) : formatVersion = Value(formatVersion),
        salt = Value(salt),
@@ -3100,6 +3207,8 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
     Expression<String>? verifierNonce,
     Expression<String>? syncPassphraseCiphertext,
     Expression<String>? syncPassphraseNonce,
+    Expression<String>? encryptedTailscaleAuthKey,
+    Expression<String>? tailscaleAuthKeyNonce,
     Expression<DateTime>? createdAt,
   }) {
     return RawValuesInsertable({
@@ -3115,6 +3224,10 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
         'sync_passphrase_ciphertext': syncPassphraseCiphertext,
       if (syncPassphraseNonce != null)
         'sync_passphrase_nonce': syncPassphraseNonce,
+      if (encryptedTailscaleAuthKey != null)
+        'encrypted_tailscale_auth_key': encryptedTailscaleAuthKey,
+      if (tailscaleAuthKeyNonce != null)
+        'tailscale_auth_key_nonce': tailscaleAuthKeyNonce,
       if (createdAt != null) 'created_at': createdAt,
     });
   }
@@ -3129,6 +3242,8 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
     Value<String>? verifierNonce,
     Value<String?>? syncPassphraseCiphertext,
     Value<String?>? syncPassphraseNonce,
+    Value<String?>? encryptedTailscaleAuthKey,
+    Value<String?>? tailscaleAuthKeyNonce,
     Value<DateTime>? createdAt,
   }) {
     return VaultMetadataCompanion(
@@ -3142,6 +3257,10 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
       syncPassphraseCiphertext:
           syncPassphraseCiphertext ?? this.syncPassphraseCiphertext,
       syncPassphraseNonce: syncPassphraseNonce ?? this.syncPassphraseNonce,
+      encryptedTailscaleAuthKey:
+          encryptedTailscaleAuthKey ?? this.encryptedTailscaleAuthKey,
+      tailscaleAuthKeyNonce:
+          tailscaleAuthKeyNonce ?? this.tailscaleAuthKeyNonce,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -3182,6 +3301,16 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
         syncPassphraseNonce.value,
       );
     }
+    if (encryptedTailscaleAuthKey.present) {
+      map['encrypted_tailscale_auth_key'] = Variable<String>(
+        encryptedTailscaleAuthKey.value,
+      );
+    }
+    if (tailscaleAuthKeyNonce.present) {
+      map['tailscale_auth_key_nonce'] = Variable<String>(
+        tailscaleAuthKeyNonce.value,
+      );
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -3200,6 +3329,8 @@ class VaultMetadataCompanion extends UpdateCompanion<VaultMetadataData> {
           ..write('verifierNonce: $verifierNonce, ')
           ..write('syncPassphraseCiphertext: $syncPassphraseCiphertext, ')
           ..write('syncPassphraseNonce: $syncPassphraseNonce, ')
+          ..write('encryptedTailscaleAuthKey: $encryptedTailscaleAuthKey, ')
+          ..write('tailscaleAuthKeyNonce: $tailscaleAuthKeyNonce, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -10966,6 +11097,8 @@ typedef $$VaultMetadataTableCreateCompanionBuilder =
       required String verifierNonce,
       Value<String?> syncPassphraseCiphertext,
       Value<String?> syncPassphraseNonce,
+      Value<String?> encryptedTailscaleAuthKey,
+      Value<String?> tailscaleAuthKeyNonce,
       required DateTime createdAt,
     });
 typedef $$VaultMetadataTableUpdateCompanionBuilder =
@@ -10979,6 +11112,8 @@ typedef $$VaultMetadataTableUpdateCompanionBuilder =
       Value<String> verifierNonce,
       Value<String?> syncPassphraseCiphertext,
       Value<String?> syncPassphraseNonce,
+      Value<String?> encryptedTailscaleAuthKey,
+      Value<String?> tailscaleAuthKeyNonce,
       Value<DateTime> createdAt,
     });
 
@@ -11033,6 +11168,16 @@ class $$VaultMetadataTableFilterComposer
 
   ColumnFilters<String> get syncPassphraseNonce => $composableBuilder(
     column: $table.syncPassphraseNonce,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get encryptedTailscaleAuthKey => $composableBuilder(
+    column: $table.encryptedTailscaleAuthKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tailscaleAuthKeyNonce => $composableBuilder(
+    column: $table.tailscaleAuthKeyNonce,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -11096,6 +11241,16 @@ class $$VaultMetadataTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get encryptedTailscaleAuthKey => $composableBuilder(
+    column: $table.encryptedTailscaleAuthKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tailscaleAuthKeyNonce => $composableBuilder(
+    column: $table.tailscaleAuthKeyNonce,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -11150,6 +11305,16 @@ class $$VaultMetadataTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get encryptedTailscaleAuthKey => $composableBuilder(
+    column: $table.encryptedTailscaleAuthKey,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get tailscaleAuthKeyNonce => $composableBuilder(
+    column: $table.tailscaleAuthKeyNonce,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 }
@@ -11198,6 +11363,8 @@ class $$VaultMetadataTableTableManager
                 Value<String> verifierNonce = const Value.absent(),
                 Value<String?> syncPassphraseCiphertext = const Value.absent(),
                 Value<String?> syncPassphraseNonce = const Value.absent(),
+                Value<String?> encryptedTailscaleAuthKey = const Value.absent(),
+                Value<String?> tailscaleAuthKeyNonce = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
               }) => VaultMetadataCompanion(
                 id: id,
@@ -11209,6 +11376,8 @@ class $$VaultMetadataTableTableManager
                 verifierNonce: verifierNonce,
                 syncPassphraseCiphertext: syncPassphraseCiphertext,
                 syncPassphraseNonce: syncPassphraseNonce,
+                encryptedTailscaleAuthKey: encryptedTailscaleAuthKey,
+                tailscaleAuthKeyNonce: tailscaleAuthKeyNonce,
                 createdAt: createdAt,
               ),
           createCompanionCallback:
@@ -11222,6 +11391,8 @@ class $$VaultMetadataTableTableManager
                 required String verifierNonce,
                 Value<String?> syncPassphraseCiphertext = const Value.absent(),
                 Value<String?> syncPassphraseNonce = const Value.absent(),
+                Value<String?> encryptedTailscaleAuthKey = const Value.absent(),
+                Value<String?> tailscaleAuthKeyNonce = const Value.absent(),
                 required DateTime createdAt,
               }) => VaultMetadataCompanion.insert(
                 id: id,
@@ -11233,6 +11404,8 @@ class $$VaultMetadataTableTableManager
                 verifierNonce: verifierNonce,
                 syncPassphraseCiphertext: syncPassphraseCiphertext,
                 syncPassphraseNonce: syncPassphraseNonce,
+                encryptedTailscaleAuthKey: encryptedTailscaleAuthKey,
+                tailscaleAuthKeyNonce: tailscaleAuthKeyNonce,
                 createdAt: createdAt,
               ),
           withReferenceMapper: (p0) => p0

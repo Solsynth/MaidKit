@@ -4600,15 +4600,28 @@ uname -r
     final identities = credential.type == CredentialType.privateKey
         ? SSHKeyPair.fromPem(credential.privateKey!, credential.keyPassphrase)
         : null;
-    final rawSocket = server.jumpHostServerId != null
-        ? await _socketThroughJumpHost(server)
-        : isTailnetAddress(server.host) && tailscaleSupported
-        ? await TailscaleSshSocket.connect(server.host, server.port)
-        : await _LowLatencySshSocket.connect(
-            server.host,
-            server.port,
-            proxy: proxy,
-          );
+    late final SSHSocket rawSocket;
+    if (server.jumpHostServerId != null) {
+      rawSocket = await _socketThroughJumpHost(server);
+    } else if (isTailnetAddress(server.host) && tailscaleSupported) {
+      try {
+        rawSocket = await TailscaleSshSocket.connect(server.host, server.port);
+      } on TailscaleConnectException {
+        // A tailnet IP may belong to the host's own Tailscale daemon. If the
+        // embedded node is logged out or unavailable, let the OS route it.
+        rawSocket = await _LowLatencySshSocket.connect(
+          server.host,
+          server.port,
+          proxy: proxy,
+        );
+      }
+    } else {
+      rawSocket = await _LowLatencySshSocket.connect(
+        server.host,
+        server.port,
+        proxy: proxy,
+      );
+    }
     final socket = _SafeSshSocket(rawSocket);
     final client = SSHClient(
       socket,

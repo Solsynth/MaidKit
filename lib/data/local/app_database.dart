@@ -79,6 +79,10 @@ class VaultMetadata extends Table {
   TextColumn get verifierNonce => text()();
   TextColumn get syncPassphraseCiphertext => text().nullable()();
   TextColumn get syncPassphraseNonce => text().nullable()();
+  // Tailscale auth keys are encrypted with the vault data key and travel with
+  // the vault so the embedded node can reconnect after a restart.
+  TextColumn get encryptedTailscaleAuthKey => text().nullable()();
+  TextColumn get tailscaleAuthKeyNonce => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
 }
 
@@ -327,7 +331,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -614,6 +618,25 @@ class AppDatabase extends _$AppDatabase {
       }
       if (from < 31) {
         await m.createTable(appSettings);
+      }
+      if (from < 32) {
+        final tailscaleColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('vault_metadata') "
+          "WHERE name IN ('encrypted_tailscale_auth_key', "
+          "'tailscale_auth_key_nonce')",
+        ).get();
+        final existing = tailscaleColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('encrypted_tailscale_auth_key')) {
+          await m.addColumn(
+            vaultMetadata,
+            vaultMetadata.encryptedTailscaleAuthKey,
+          );
+        }
+        if (!existing.contains('tailscale_auth_key_nonce')) {
+          await m.addColumn(vaultMetadata, vaultMetadata.tailscaleAuthKeyNonce);
+        }
       }
     },
   );

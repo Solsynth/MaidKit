@@ -335,6 +335,42 @@ class VaultService {
     return utf8.decode(clear);
   }
 
+  Future<void> storeTailscaleAuthKey(String authKey) async {
+    final encrypted = await encrypt(authKey, context: 'tailscale-auth-key');
+    final metadata = await _metadata();
+    await (_database.update(
+      _database.vaultMetadata,
+    )..where((table) => table.id.equals(metadata.id))).write(
+      VaultMetadataCompanion(
+        encryptedTailscaleAuthKey: Value(encrypted.bytes),
+        tailscaleAuthKeyNonce: Value(encrypted.nonce),
+      ),
+    );
+  }
+
+  Future<String?> tailscaleAuthKey() async {
+    final metadata = await _metadata();
+    final ciphertext = metadata.encryptedTailscaleAuthKey;
+    final nonce = metadata.tailscaleAuthKeyNonce;
+    if (ciphertext == null || nonce == null) return null;
+    return decrypt(
+      EncryptedValue(bytes: ciphertext, nonce: nonce),
+      context: 'tailscale-auth-key',
+    );
+  }
+
+  Future<void> clearTailscaleAuthKey() async {
+    final metadata = await _metadata();
+    await (_database.update(
+      _database.vaultMetadata,
+    )..where((table) => table.id.equals(metadata.id))).write(
+      const VaultMetadataCompanion(
+        encryptedTailscaleAuthKey: Value(null),
+        tailscaleAuthKeyNonce: Value(null),
+      ),
+    );
+  }
+
   /// Encrypts a portable archive with the supplied vault password instead of
   /// this device's data key, so another vault can import it.
   Future<String> encryptPortable(String value, String password) async {

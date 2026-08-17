@@ -9,11 +9,11 @@ import 'tailscale_service.dart';
 /// Reconnects the embedded Tailscale node with persisted credentials on app
 /// startup.
 ///
-/// A successful sign-in stores the node's session (auth key included) in the
-/// state directory. After a restart the node reports [NodeState.stopped] until
-/// [TailscaleService.up] is called again without a key — the UI would otherwise
-/// keep asking for a new auth key. This wrapper issues that one reconnect per
-/// launch, and skips the work entirely when no credentials are persisted.
+/// A successful sign-in stores the auth key in the vault. After a restart the
+/// node reports [NodeState.stopped] until [TailscaleService.up] is called with
+/// that key — the UI would otherwise keep asking for a new auth key. This
+/// wrapper issues that one reconnect per launch, and skips the work entirely
+/// when no credentials are persisted.
 class TailscaleAutoConnect extends ConsumerStatefulWidget {
   const TailscaleAutoConnect({super.key, required this.child});
 
@@ -42,6 +42,7 @@ class _TailscaleAutoConnectState extends ConsumerState<TailscaleAutoConnect> {
     if (!tailscaleSupported) return;
     final service = ref.read(tailscaleServiceProvider);
     try {
+      if (!await service.hasStoredAuthKey()) return;
       final status = await service.status();
       if (status.state == NodeState.stopped) {
         await service.up();
