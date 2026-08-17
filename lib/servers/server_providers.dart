@@ -174,6 +174,23 @@ class MaidCafePushStatusNotifier
   void set(MaidCafePushRegistrationStatus status) => state = status;
 }
 
+/// Waits for the startup cloud session, then registers push for this launch.
+/// Authentication can finish after the provider is first built.
+Future<void> _registerMaidCafePushAtLaunch(
+  Ref ref,
+  MaidCafePushService service,
+) async {
+  try {
+    final user = await ref.read(cloudUserProvider.future);
+    if (!ref.mounted || user == null) return;
+    await service.subscribe();
+  } catch (error, stackTrace) {
+    debugPrint(
+      '[MaidCafePush] Launch registration failed: $error\n$stackTrace',
+    );
+  }
+}
+
 /// FCM push for MaidCafe cloud notifications. Kept alive by `MaidKitApp`;
 /// subscribes once a Solar account is signed in (either at startup or on a
 /// later sign-in) and refreshes the Metoer feed when a push arrives while the
@@ -215,6 +232,7 @@ final maidCafePushProvider = Provider<MaidCafePushService>((ref) {
     final user = ref.read(cloudUserProvider).asData?.value;
     service.refreshStatus(signedIn: user != null);
     if (user != null) unawaited(service.subscribe());
+    unawaited(_registerMaidCafePushAtLaunch(ref, service));
   });
   return service;
 });

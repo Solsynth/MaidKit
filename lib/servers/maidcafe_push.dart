@@ -173,18 +173,30 @@ class MaidCafePushService {
   /// call (e.g. a token refresh or the next sign-in).
   Future<void> subscribe() {
     if (!firebaseSupported()) {
+      debugPrint(
+        '[MaidCafePush] Skipping registration: Firebase is unsupported on '
+        '${Platform.operatingSystem}.',
+      );
       onStatusChanged?.call(MaidCafePushRegistrationStatus.unsupported);
       return Future.value();
     }
     if (!pushAllowed()) {
+      debugPrint(
+        '[MaidCafePush] Skipping registration: configured MaidCafe cloud '
+        'does not support push.',
+      );
       onStatusChanged?.call(MaidCafePushRegistrationStatus.unavailable);
       return Future.value();
     }
     if (_subscribed) {
+      debugPrint('[MaidCafePush] Already registered this session.');
       onStatusChanged?.call(MaidCafePushRegistrationStatus.registered);
       return Future.value();
     }
     if (_pending != null) return _pending!;
+    debugPrint(
+      '[MaidCafePush] Starting ${Platform.operatingSystem} registration.',
+    );
     onStatusChanged?.call(MaidCafePushRegistrationStatus.registering);
     final attempt = _subscribe();
     _pending = attempt;
@@ -195,12 +207,19 @@ class MaidCafePushService {
     try {
       final registered = await _register();
       _subscribed = registered;
+      debugPrint(
+        registered
+            ? '[MaidCafePush] Server accepted the push subscription.'
+            : '[MaidCafePush] No device token is available yet.',
+      );
       onStatusChanged?.call(
         registered
             ? MaidCafePushRegistrationStatus.registered
             : MaidCafePushRegistrationStatus.waitingForToken,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('[MaidCafePush] Registration failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
       onStatusChanged?.call(MaidCafePushRegistrationStatus.failed);
       rethrow;
     } finally {
@@ -210,16 +229,32 @@ class MaidCafePushService {
 
   Future<bool> _register() async {
     if (!pushAllowed()) return false;
-    _attachListeners();
-    await FirebaseMessaging.instance.requestPermission(
+    final permission = await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
+    debugPrint(
+      '[MaidCafePush] Notification permission: '
+      '${permission.authorizationStatus}.',
+    );
+    if (!Platform.isAndroid) {
+      // Explicitly re-enable auto-init here. The plugin's native setter calls
+      // registerForRemoteNotifications(), which is needed when the launch-time
+      // native registration ran before Firebase.initializeApp() completed.
+      await FirebaseMessaging.instance.setAutoInitEnabled(true);
+      debugPrint('[MaidCafePush] Requested native APNs registration.');
+    }
     final deviceName = await _deviceName();
 
     if (Platform.isAndroid) {
+      _attachListeners();
       final token = await FirebaseMessaging.instance.getToken();
+      debugPrint(
+        token == null || token.isEmpty
+            ? '[MaidCafePush] FCM token was empty.'
+            : '[MaidCafePush] FCM token obtained.',
+      );
       if (token != null && token.isNotEmpty) {
         await client.registerPushSubscription(
           deviceToken: token,
@@ -231,9 +266,16 @@ class MaidCafePushService {
       return false;
     }
 
-    // iOS/macOS: the APNs token is the FCM identity; it may not be ready at
-    // cold start, so poll briefly (Solian polls the same way).
+    // iOS/macOS: obtain APNs before using the token as the Apple push
+    // subscription identity. The Firebase guide requires APNs to be ready
+    // before making other Apple messaging API calls.
     final apnsToken = await _apnsTokenWithRetry();
+    debugPrint(
+      apnsToken == null || apnsToken.isEmpty
+          ? '[MaidCafePush] APNs token was empty.'
+          : '[MaidCafePush] APNs token obtained.',
+    );
+    _attachListeners();
     if (apnsToken != null && apnsToken.isNotEmpty) {
       await client.registerPushSubscription(
         deviceToken: apnsToken,
@@ -252,9 +294,13 @@ class MaidCafePushService {
 
     FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
       if (!pushAllowed()) {
+        debugPrint(
+          '[MaidCafePush] Ignoring token refresh: push is not allowed.',
+        );
         onStatusChanged?.call(MaidCafePushRegistrationStatus.unavailable);
         return;
       }
+      debugPrint('[MaidCafePush] Token refresh received.');
       onStatusChanged?.call(MaidCafePushRegistrationStatus.registering);
       try {
         var registered = false;
@@ -277,12 +323,19 @@ class MaidCafePushService {
           }
         }
         _subscribed = registered;
+        debugPrint(
+          registered
+              ? '[MaidCafePush] Refreshed token registered.'
+              : '[MaidCafePush] Refreshed token was empty.',
+        );
         onStatusChanged?.call(
           registered
               ? MaidCafePushRegistrationStatus.registered
               : MaidCafePushRegistrationStatus.waitingForToken,
         );
-      } catch (_) {
+      } catch (error, stackTrace) {
+        debugPrint('[MaidCafePush] Token refresh registration failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
         onStatusChanged?.call(MaidCafePushRegistrationStatus.failed);
         // Registration is an upsert; the next token refresh or sign-in
         // retries it. Never let push bookkeeping crash the app.
