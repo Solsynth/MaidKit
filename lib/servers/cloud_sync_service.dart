@@ -216,7 +216,10 @@ class CloudSyncService {
        _dio = dio ?? Dio();
 
   static const apiBase = 'https://api.solian.app';
-  static const appId = 'dev.solsynth.maid';
+  // Flywheel app namespace for vault blobs. Keep stable: changing it orphans
+  // every existing blob and makes syncs 409 against the old revision. The
+  // MaidCafe Metoer notifications use their own maidCafeMetoerAppId.
+  static const appId = 'dev.solsynth.maidkit';
   static const _clientId = 'maidkit';
   static const _callbackScheme = 'maidkit';
   static const _redirectUri = '$_callbackScheme://oauth/callback';
