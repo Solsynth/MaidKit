@@ -119,32 +119,33 @@ class MaidCafeActionDefinition {
 /// current value", while an explicit null clears a nullable field.
 const _unset = Object();
 
-/// One alarm threshold the daemon evaluates locally against its metric
-/// samples (kind `cpu_percent` or `memory_used_percent`). Deployed as a
-/// `<kind>.toml` fragment under `daemon.alarmsDir`; the daemon merges the
-/// fragments at load and reports `daemon.alarm.<kind>` notifications to the
-/// cloud when a threshold is exceeded.
+/// One alarm condition the daemon evaluates locally. Percentage kinds use
+/// [threshold]; `container_down` optionally matches [target].
 class MaidCafeAlarmDefinition {
   const MaidCafeAlarmDefinition({
     required this.kind,
-    required this.threshold,
+    this.threshold = 0,
+    this.target = '',
     this.enabled = true,
     this.cooldownSeconds = 300,
   });
 
   final String kind;
   final double threshold;
+  final String target;
   final bool enabled;
   final int cooldownSeconds;
 
   MaidCafeAlarmDefinition copyWith({
     String? kind,
     double? threshold,
+    String? target,
     bool? enabled,
     int? cooldownSeconds,
   }) => MaidCafeAlarmDefinition(
     kind: kind ?? this.kind,
     threshold: threshold ?? this.threshold,
+    target: target ?? this.target,
     enabled: enabled ?? this.enabled,
     cooldownSeconds: cooldownSeconds ?? this.cooldownSeconds,
   );
@@ -906,21 +907,34 @@ void _validateMaidCafeConfigFields({
   final alarmKinds = <String>{};
   for (var i = 0; i < alarms.length; i++) {
     final alarm = alarms[i];
-    if (alarm.kind != 'cpu_percent' && alarm.kind != 'memory_used_percent') {
+    if (alarm.kind != 'cpu_percent' &&
+        alarm.kind != 'memory_used_percent' &&
+        alarm.kind != 'disk_used_percent' &&
+        alarm.kind != 'container_down') {
       throw ArgumentError.value(
         alarm.kind,
         'alarms[$i].kind',
-        'must be cpu_percent or memory_used_percent',
+        'must be a supported alarm kind',
       );
     }
-    if (!alarmKinds.add(alarm.kind)) {
+    final key = '${alarm.kind}\u0000${alarm.target}';
+    if (!alarmKinds.add(key)) {
       throw ArgumentError.value(alarm.kind, 'alarms[$i].kind', 'is duplicated');
     }
-    if (alarm.threshold <= 0 || alarm.threshold > 100) {
+    if (alarm.kind != 'container_down' &&
+        (alarm.threshold <= 0 || alarm.threshold > 100)) {
       throw ArgumentError.value(
         alarm.threshold,
         'alarms[$i].threshold',
         'must be between 0 and 100',
+      );
+    }
+    if (alarm.kind == 'container_down' &&
+        !RegExp(r'^[A-Za-z0-9_.:-]*$').hasMatch(alarm.target)) {
+      throw ArgumentError.value(
+        alarm.target,
+        'alarms[$i].target',
+        'must contain only letters, numbers, dots, underscores, colons, or hyphens',
       );
     }
     if (alarm.cooldownSeconds <= 0) {
@@ -1178,51 +1192,52 @@ Map<String, String> maidCafeActionFragments(
   };
 }
 
-/// Builds the `<kind>.toml` config fragment for each alarm, keyed by kind.
-/// The daemon merges every fragment in the alarms directory at load, so
-/// alarm changes never rewrite the main config file.
+/// Builds one fragment per alarm. Targeted container alarms use a distinct
+/// filename so multiple containers can be monitored independently.
 Map<String, String> maidCafeAlarmFragments(
   List<MaidCafeAlarmDefinition> alarms,
 ) {
-  return {for (final alarm in alarms) alarm.kind: _tomlAlarmFragment(alarm)};
+  return {
+    for (final alarm in alarms) _alarmSlug(alarm): _tomlAlarmFragment(alarm),
+  };
 }
+
+String _alarmSlug(MaidCafeAlarmDefinition alarm) =>
+    alarm.target.isEmpty ? alarm.kind : '${alarm.kind}_${alarm.target}';
 
 String _tomlAlarmFragment(MaidCafeAlarmDefinition alarm) =>
     '''
 kind = ${_tomlString(alarm.kind)}
-threshold = ${alarm.threshold.toStringAsFixed(2)}
+${alarm.kind == 'container_down' && alarm.target.isNotEmpty ? 'target = ${_tomlString(alarm.target)}\n' : ''}threshold = ${alarm.threshold.toStringAsFixed(2)}
 enabled = ${alarm.enabled}
 cooldownSeconds = ${alarm.cooldownSeconds}
 ''';
 
 /// Builds a privileged shell snippet that deploys alarm config fragments to
-/// `/etc/maidcafe/alarms/` and removes stale files. Each alarm gets a
-/// `<kind>.toml` fragment the daemon merges at load; fragments of removed
-/// alarms are deleted. Under systemd the daemon runs as `maidcafe`, so the
-/// fragments are group-readable only; stdio mode runs as the SSH user, so
-/// they are world-readable instead.
+/// `/etc/maidcafe/alarms/` and removes stale files.
 String buildMaidCafeAlarmFragmentsScript(
   List<MaidCafeAlarmDefinition> alarms, {
   required bool stdio,
 }) {
   final writes = <String>[];
-  final kinds = <String>[];
+  final slugs = <String>[];
   for (final alarm in alarms) {
+    final slug = _alarmSlug(alarm);
     final fragment = base64Encode(
-      utf8.encode(maidCafeAlarmFragments([alarm])[alarm.kind]!),
+      utf8.encode(maidCafeAlarmFragments([alarm])[slug]!),
     );
     writes.add(
       "printf '%s' '$fragment' | base64 -d | "
       'install -o root -g ${stdio ? "root" : "maidcafe"} '
       '-m ${stdio ? "0644" : "0640"} /dev/stdin '
-      '/etc/maidcafe/alarms/${alarm.kind}.toml',
+      '/etc/maidcafe/alarms/$slug.toml',
     );
-    kinds.add(alarm.kind);
+    slugs.add(slug);
   }
-  final keepChecks = kinds
+  final keepChecks = slugs
       .map(
-        (kind) =>
-            '  if [ "\$f" = "/etc/maidcafe/alarms/$kind.toml" ]; then\n'
+        (slug) =>
+            '  if [ "\$f" = "/etc/maidcafe/alarms/$slug.toml" ]; then\n'
             '    keep=true\n'
             '  fi',
       )

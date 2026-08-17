@@ -1071,7 +1071,7 @@ RelativeRect _relativeMenuPosition(Rect anchor, Size overlaySize) {
 IconData _tabIcon(SessionTab tab) => switch (tab.type) {
   SessionTabType.dashboard => Symbols.dashboard,
   SessionTabType.serverDetail => Symbols.dns,
-  SessionTabType.maidCafePayload => Symbols.code,
+  SessionTabType.maidCafePayload => Symbols.coffee,
   SessionTabType.terminal => Symbols.terminal,
   SessionTabType.fileManagement => Symbols.folder,
   SessionTabType.fileEditor => Symbols.edit_document,

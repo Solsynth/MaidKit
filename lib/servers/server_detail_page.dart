@@ -907,7 +907,7 @@ class _InspectorTabsState extends State<_InspectorTabs>
             ),
             IconLabelTab(
               icon: const Icon(Symbols.local_cafe, size: 18),
-              label: 'detailCafe'.tr(),
+              label: 'maidCafeTitle'.tr(),
             ),
           ],
         ),

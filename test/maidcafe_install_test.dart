@@ -627,7 +627,7 @@ command = "/bin/true"
         cloudSecret: '',
         transport: 'http',
         alarms: const [
-          MaidCafeAlarmDefinition(kind: 'disk_used_percent', threshold: 80),
+          MaidCafeAlarmDefinition(kind: 'filesystem_health', threshold: 80),
         ],
       ),
       throwsArgumentError,

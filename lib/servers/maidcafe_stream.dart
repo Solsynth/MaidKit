@@ -491,6 +491,7 @@ MaidCafeAlarmDefinition parseMaidCafeAlarmFragment(String fragment) =>
       kind: _configValue(fragment, 'kind') ?? '',
       threshold:
           double.tryParse(_configValue(fragment, 'threshold') ?? '') ?? 0,
+      target: _configValue(fragment, 'target') ?? '',
       enabled: _configBool(fragment, 'enabled', fallback: true),
       cooldownSeconds:
           int.tryParse(_configValue(fragment, 'cooldownSeconds') ?? '') ?? 300,

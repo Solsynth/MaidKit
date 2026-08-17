@@ -55,6 +55,11 @@ const _settingsCategories = [
     icon: Symbols.terminal,
   ),
   _SettingsCategory(
+    id: 'connections',
+    titleKey: 'settingsConnections',
+    icon: Symbols.lan,
+  ),
+  _SettingsCategory(
     id: 'agent',
     titleKey: 'settingsAgent',
     icon: Symbols.smart_toy,
@@ -64,17 +69,12 @@ const _settingsCategories = [
     titleKey: 'settingsStorage',
     icon: Symbols.storage,
   ),
-  _SettingsCategory(id: 'about', titleKey: 'settingsAbout', icon: Symbols.info),
   _SettingsCategory(
     id: 'solarNetwork',
     titleKey: 'settingsSolarNetwork',
     icon: Symbols.cloud,
   ),
-  _SettingsCategory(
-    id: 'connectionsTransfer',
-    titleKey: 'settingsConnectionsTransfer',
-    icon: Symbols.import_export,
-  ),
+  _SettingsCategory(id: 'about', titleKey: 'settingsAbout', icon: Symbols.info),
 ];
 
 class _SettingsCategory {
@@ -439,7 +439,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'storage') ...[
+                  if (selectedCategory.id == 'connections') ...[
                     _SettingsSection(
                       titleKey: 'settingsConnections',
                       padding: EdgeInsets.zero,
@@ -537,7 +537,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'storage') ...[
+                  if (selectedCategory.id == 'connections') ...[
                     _SettingsSection(
                       titleKey: 'settingsTailscale',
                       padding: EdgeInsets.zero,
@@ -1045,7 +1045,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'connectionsTransfer') ...[
+                  if (selectedCategory.id == 'storage') ...[
                     _SettingsSection(
                       titleKey: 'settingsConnectionsTransfer',
                       padding: EdgeInsets.zero,

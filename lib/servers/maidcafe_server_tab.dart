@@ -12,8 +12,10 @@ import 'package:maid_kit/theme.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'package:styled_widget/styled_widget.dart';
 
 import 'maidcafe_install.dart';
+import 'maidcafe_uninstall.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
 import 'maidcafe_service.dart';
@@ -761,6 +763,54 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
+  Future<void> _uninstall() async {
+    if (_busy || !widget.connected || _state != _MaidCafeState.running) {
+      return;
+    }
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('maidCafeUninstallConfirmTitle'.tr()),
+        content: Text('maidCafeUninstallConfirm'.tr()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('commonCancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text('maidCafeUninstall'.tr()),
+          ),
+        ],
+      ),
+    );
+    if (approved != true || !mounted) return;
+    _closeStream();
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final sudoPassword = await _sudoPassword();
+      await uninstallMaidCafeApplication(
+        ref: ref,
+        server: widget.server,
+        sudoPassword: sudoPassword,
+      );
+      if (mounted) {
+        setState(() {
+          _state = _MaidCafeState.notInstalled;
+          _latestVersion = null;
+          _message = 'maidCafeUninstallSuccess'.tr();
+        });
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _showDaemonLogs() async {
     if (!mounted || !widget.connected || _busy) return;
     final manager = ref.read(connectionManagerProvider);
@@ -1000,6 +1050,25 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
   }
 
+  Future<void> _sendTestNotification() async {
+    final stream = _stream;
+    if (stream == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await stream.sendTestNotification();
+      if (mounted) {
+        setState(() => _message = 'maidCafeTestNotificationSent'.tr());
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = error.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// Distinct action names present in the loaded audit entries, sorted.
   List<String> get _auditEntryNames {
     final names = <String>{for (final entry in _auditEntries) entry.name};
@@ -1215,23 +1284,31 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(Symbols.local_cafe, color: scheme.primary),
-              const SizedBox(width: 10),
-              Text('maidCafeTitle'.tr(), style: theme.textTheme.titleLarge),
-              const Spacer(),
-              IconButton(
-                tooltip: 'maidCafePayloadTab'.tr(),
-                onPressed: widget.connected
-                    ? () => ref
-                          .read(terminalTabsProvider.notifier)
-                          .openMaidCafePayload(widget.server)
-                    : null,
-                icon: const Icon(Symbols.code),
-              ),
-            ],
-          ),
+Row(
+              children: [
+                Icon(Symbols.local_cafe, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'maidCafeTitle'.tr(),
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      if (_streamStatus != null)
+                        Text(
+                          _streamStatus!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Icon(Symbols.check_circle, color: scheme.primary),
+              ],
+            ).padding(bottom: 8),
           if (!widget.connected)
             _connectionPrompt()
           else if (_state == _MaidCafeState.checking)
@@ -1329,19 +1406,27 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() => _showComposer = !_showComposer),
-                  icon: Icon(_showComposer ? Symbols.close : Symbols.add),
-                  label: Text(
-                    _showComposer
-                        ? 'maidCafeCancel'.tr()
-                        : 'maidCafeAddAction'.tr(),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() => _showComposer = !_showComposer),
+                    icon: Icon(_showComposer ? Symbols.close : Symbols.add),
+                    label: Text(
+                      _showComposer
+                          ? 'maidCafeCancel'.tr()
+                          : 'maidCafeAddAction'.tr(),
+                    ),
                   ),
-                ),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _sendTestNotification,
+                    icon: const Icon(Symbols.notifications_active),
+                    label: Text('maidCafeSendTestNotification'.tr()),
+                  ),
+                ],
               ),
               if (_showComposer) ...[
                 const SizedBox(height: 8),
@@ -1738,50 +1823,80 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     );
   }
 
-  Widget _installationRunning() => Card.outlined(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_streamStatus != null) Text(_streamStatus!),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _refreshMetrics,
-                icon: const Icon(Symbols.monitoring),
-                label: Text('maidCafeRefreshMetrics'.tr()),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _showDaemonLogs,
-                icon: const Icon(Symbols.article),
-                label: Text('maidCafeViewDaemonLogs'.tr()),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _checkForUpdate,
-                icon: const Icon(Symbols.update),
-                label: Text('maidCafeCheckUpdate'.tr()),
-              ),
-              if (_latestVersion != null)
-                FilledButton.icon(
-                  onPressed: _busy ? null : () => _install(updating: true),
-                  icon: const Icon(Symbols.download),
-                  label: Text('maidCafeUpdateApplication'.tr()),
+  Widget _installationRunning() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Card.outlined(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _sectionLabel(theme, 'maidCafeOperations'.tr()).padding(horizontal: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _refreshMetrics,
+                  icon: const Icon(Symbols.monitoring),
+                  label: Text('maidCafeRefreshMetrics'.tr()),
                 ),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _rotateApiSecret,
-                icon: const Icon(Symbols.key),
-                label: Text('maidCafeRotateApiSecret'.tr()),
-              ),
-            ],
-          ),
-        ],
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _showDaemonLogs,
+                  icon: const Icon(Symbols.article),
+                  label: Text('maidCafeViewDaemonLogs'.tr()),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _checkForUpdate,
+                  icon: const Icon(Symbols.update),
+                  label: Text('maidCafeCheckUpdate'.tr()),
+                ),
+                if (_latestVersion != null)
+                  FilledButton.icon(
+                    onPressed: _busy ? null : () => _install(updating: true),
+                    icon: const Icon(Symbols.download),
+                    label: Text('maidCafeUpdateApplication'.tr()),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _rotateApiSecret,
+                  icon: const Icon(Symbols.key),
+                  label: Text('maidCafeRotateApiSecret'.tr()),
+                ),
+              ],
+            ).padding(horizontal: 16),
+            const SizedBox(height: 16),
+            Divider(color: scheme.outlineVariant),
+            const SizedBox(height: 12),
+            _sectionLabel(theme, 'maidCafeDangerZone'.tr()).padding(horizontal: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'maidCafeUninstallHint'.tr(),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _busy ? null : _uninstall,
+                    style: ButtonStyle(
+                      foregroundColor: WidgetStatePropertyAll(scheme.error),
+                    ),
+                    icon: const Icon(Symbols.delete_outline),
+                    label: Text('maidCafeUninstall'.tr()),
+                  ),
+                ),
+              ],
+            ).padding(horizontal: 16),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   /// Lays out config fields in 1/2/3 columns depending on available width.
   Widget _configFieldGrid(BuildContext context, List<Widget> fields) {
@@ -1826,6 +1941,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         title: 'maidCafeGroupIdentity'.tr(),
         fields: [
           _configTextField(
+            readOnly: true,
             controller: _daemonIdController,
             label: 'maidCafeDaemonId'.tr(),
           ),
@@ -1844,6 +1960,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                   },
           ),
           _configTextField(
+            readOnly: true,
             controller: _versionController,
             label: 'maidCafeVersion'.tr(),
           ),
@@ -2029,12 +2146,18 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   }
 
   Widget _alarmChip(BuildContext context, MaidCafeAlarmDefinition alarm) {
-    final kindLabel = alarm.kind == 'cpu_percent'
-        ? 'maidCafeCpuAlarm'.tr()
-        : 'maidCafeMemoryAlarm'.tr();
+    final kindLabel = switch (alarm.kind) {
+      'cpu_percent' => 'maidCafeCpuAlarm'.tr(),
+      'memory_used_percent' => 'maidCafeMemoryAlarm'.tr(),
+      'disk_used_percent' => 'maidCafeDiskAlarm'.tr(),
+      _ => 'maidCafeContainerAlarm'.tr(),
+    };
+    final threshold = alarm.kind == 'container_down'
+        ? (alarm.target.isEmpty ? '' : ' · ${alarm.target}')
+        : ' · ${alarm.threshold.toStringAsFixed(0)}%';
     return InputChip(
       label: Text(
-        '$kindLabel · ${alarm.threshold.toStringAsFixed(0)}% · '
+        '$kindLabel$threshold · '
         '${'maidCafeAlarmCooldownLabel'.tr(args: ['${alarm.cooldownSeconds ~/ 60}'])}',
       ),
       onPressed: _busy ? null : () => _editAlarm(context, alarm),
@@ -2055,9 +2178,12 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     );
     if (alarm == null || !context.mounted) return;
     setState(() {
-      // One alarm per kind; editing an existing kind replaces it.
+      // One alarm per kind and target; editing the same condition replaces it.
       _alarms = List.unmodifiable([
-        ..._alarms.where((current) => current.kind != alarm.kind),
+        ..._alarms.where(
+          (current) =>
+              current.kind != alarm.kind || current.target != alarm.target,
+        ),
         alarm,
       ]);
     });
@@ -2094,6 +2220,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   Widget _configTextField({
     required TextEditingController controller,
     required String label,
+    bool readOnly = false,
     bool obscureText = false,
     TextInputType? keyboardType,
     ValueChanged<String>? onChanged,
@@ -2101,8 +2228,17 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     controller: controller,
     enabled: !_busy,
     obscureText: obscureText,
+    readOnly: readOnly,
     keyboardType: keyboardType,
+    style: readOnly
+        ? TextStyle(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.5),
+          )
+        : null,
     onChanged: onChanged,
+    onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
     decoration: InputDecoration(labelText: label),
   );
 }
@@ -3474,6 +3610,7 @@ class _AlarmEditorSheet extends StatefulWidget {
 
 class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
   late final TextEditingController _thresholdController;
+  late final TextEditingController _targetController;
   late final TextEditingController _cooldownController;
   late String _kind;
   String? _error;
@@ -3486,6 +3623,7 @@ class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
     _thresholdController = TextEditingController(
       text: initial == null ? '80' : initial.threshold.toStringAsFixed(0),
     );
+    _targetController = TextEditingController(text: initial?.target ?? '');
     _cooldownController = TextEditingController(
       text: initial == null ? '5' : '${initial.cooldownSeconds ~/ 60}',
     );
@@ -3494,14 +3632,15 @@ class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
   @override
   void dispose() {
     _thresholdController.dispose();
+    _targetController.dispose();
     _cooldownController.dispose();
     super.dispose();
   }
 
   void _submit() {
-    final threshold = double.tryParse(_thresholdController.text.trim());
+    final threshold = double.tryParse(_thresholdController.text.trim()) ?? 0;
     final minutes = int.tryParse(_cooldownController.text.trim());
-    if (threshold == null || threshold <= 0 || threshold > 100) {
+    if (_kind != 'container_down' && (threshold <= 0 || threshold > 100)) {
       setState(() => _error = 'maidCafeAlarmThresholdInvalid'.tr());
       return;
     }
@@ -3514,6 +3653,7 @@ class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
       MaidCafeAlarmDefinition(
         kind: _kind,
         threshold: threshold,
+        target: _targetController.text.trim(),
         cooldownSeconds: minutes * 60,
       ),
     );
@@ -3539,20 +3679,36 @@ class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
                 value: 'memory_used_percent',
                 child: Text('Memory'),
               ),
+              DropdownMenuItem(value: 'disk_used_percent', child: Text('Disk')),
+              DropdownMenuItem(
+                value: 'container_down',
+                child: Text('Container down'),
+              ),
             ],
             onChanged: (value) {
               if (value != null) setState(() => _kind = value);
             },
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _thresholdController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: 'maidCafeThreshold'.tr(),
-              errorText: _error,
+          if (_kind == 'container_down')
+            TextField(
+              controller: _targetController,
+              decoration: InputDecoration(
+                labelText: 'maidCafeAlarmTarget'.tr(),
+                hintText: 'maidCafeAlarmTargetHint'.tr(),
+              ),
+            )
+          else
+            TextField(
+              controller: _thresholdController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                labelText: 'maidCafeThreshold'.tr(),
+                errorText: _error,
+              ),
             ),
-          ),
           const SizedBox(height: 12),
           TextField(
             controller: _cooldownController,

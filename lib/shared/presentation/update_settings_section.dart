@@ -154,6 +154,7 @@ class _MaidKitUpdateSettingsSectionState
             label: const Text('checkForUpdates').tr(),
           ),
         ),
+        const SizedBox(height: 12),
       ],
     );
   }

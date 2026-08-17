@@ -134,29 +134,6 @@ class AboutPage extends ConsumerWidget {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'updateSection'.tr(),
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: ListTile(
-                      leading: const Icon(Symbols.update),
-                      title: Text('checkForUpdates'.tr()),
-                      subtitle: Text('checkForUpdatesHint'.tr()),
-                      trailing: const Icon(Symbols.chevron_right),
-                      onTap: () async {
-                        await UpdateService(
-                          apiBaseUrl: kMaidKitDistributionApiBaseUrl,
-                          channel: updateChannel,
-                          productId: kMaidKitDistributionProductId,
-                          enabled: true,
-                        ).checkForUpdates(context);
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
                     'aboutOtherWorks'.tr(),
                     style: theme.textTheme.titleMedium,
                   ),

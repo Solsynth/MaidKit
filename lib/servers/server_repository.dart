@@ -240,6 +240,21 @@ class ServerRepository {
     );
   }
 
+  Future<void> clearMaidCafeConfig(Server server) async {
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeDaemonUrl: const Value(null),
+        encryptedMaidCafeWebhookSecret: const Value(null),
+        maidCafeWebhookSecretNonce: const Value(null),
+        encryptedMaidCafeMetricsSecret: const Value(null),
+        maidCafeMetricsSecretNonce: const Value(null),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
   Future<String?> maidCafeWebhookSecretFor(Server server) async {
     final bytes = server.encryptedMaidCafeWebhookSecret;
     final nonce = server.maidCafeWebhookSecretNonce;

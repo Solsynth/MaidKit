@@ -238,6 +238,7 @@ class _PortForwardingTabState extends ConsumerState<PortForwardingTab> {
                         setState(() => _autoStartConfig = value ?? false),
                     title: Text('portForwardingAutoStart').tr(),
                   ),
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: _starting ? null : _start,
                   icon: _starting

@@ -234,6 +234,18 @@ threshold = 90
       expect(alarm.enabled, isTrue);
       expect(alarm.cooldownSeconds, 300);
     });
+    test('reads a targeted container alarm without a threshold', () {
+      final alarm = parseMaidCafeAlarmFragment('''
+kind = "container_down"
+target = "maid-worker"
+enabled = true
+cooldownSeconds = 60
+''');
+      expect(alarm.kind, 'container_down');
+      expect(alarm.target, 'maid-worker');
+      expect(alarm.threshold, 0);
+      expect(alarm.cooldownSeconds, 60);
+    });
   });
 
   group('parseMaidCafeConfigFiles', () {
