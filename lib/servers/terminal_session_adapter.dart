@@ -201,12 +201,15 @@ class TerminalClipboardBridge {
   final void Function(String text) _sendResponse;
   final _payload = BytesBuilder(copy: false);
   var _stage = 0;
+  var _tmuxStage = 0;
   var _disposed = false;
 
   /// Feeds raw terminal output into the OSC 52 recognizer.
   ///
   /// OSC sequences may be split across transport packets, so recognition is
   /// intentionally byte-oriented and retains only a possible OSC 52 payload.
+  /// tmux can wrap forwarded OSC sequences in a DCS passthrough envelope; that
+  /// envelope is unwrapped here before the same OSC parser handles its bytes.
   void add(Uint8List bytes) {
     if (_disposed) return;
     for (final byte in bytes) {
@@ -215,11 +218,71 @@ class TerminalClipboardBridge {
   }
 
   void _consume(int byte) {
-    if (_stage == 0) {
-      if (byte == _escape) _stage = 1;
+    if (_tmuxStage != 0) {
+      _consumeTmux(byte);
       return;
     }
 
+    // ESC Ptmux; ... ESC \ is tmux's passthrough form for terminal control
+    // sequences. The first ESC is already held by the OSC parser.
+    if (_stage == 1 && byte == 0x50) {
+      _stage = 0;
+      _tmuxStage = 1;
+      return;
+    }
+
+    if (_stage != 0) {
+      _consumeOsc(byte);
+      return;
+    }
+    if (byte == _escape) _stage = 1;
+  }
+
+  void _consumeTmux(int byte) {
+    const prefix = 'tmux;';
+    if (_tmuxStage <= prefix.length) {
+      if (byte == prefix.codeUnitAt(_tmuxStage - 1)) {
+        _tmuxStage++;
+        return;
+      }
+      _tmuxStage = 0;
+      _stage = 0;
+      _payload.clear();
+      _consume(byte);
+      return;
+    }
+
+    // tmux doubles ESC bytes inside the passthrough payload. An un-doubled
+    // ESC followed by '\' terminates the DCS envelope.
+    if (_tmuxStage == prefix.length + 1) {
+      if (byte == _escape) {
+        _tmuxStage++;
+      } else {
+        _consumeOsc(byte);
+      }
+      return;
+    }
+
+    if (byte == _escape) {
+      if (_stage == 0) {
+        _stage = 1;
+      } else {
+        _consumeOsc(_escape);
+      }
+      _tmuxStage = prefix.length + 1;
+    } else if (byte == _closeString) {
+      _tmuxStage = 0;
+      _stage = 0;
+      _payload.clear();
+    } else {
+      _tmuxStage = 0;
+      _stage = 0;
+      _payload.clear();
+      _consume(byte);
+    }
+  }
+
+  void _consumeOsc(int byte) {
     switch (_stage) {
       case 1:
         if (byte == 0x5d) {
@@ -270,7 +333,6 @@ class TerminalClipboardBridge {
         }
         return;
     }
-    return;
   }
 
   void _reset(int byte) {
@@ -317,6 +379,7 @@ class TerminalClipboardBridge {
   }
 
   bool _isClipboardSelection(String selection) =>
+      selection.isEmpty ||
       selection == 'c' ||
       selection == 'p' ||
       selection == 'q' ||
@@ -329,10 +392,10 @@ class TerminalClipboardBridge {
       selection == '5' ||
       selection == '6' ||
       selection == '7';
-
   void dispose() {
     _disposed = true;
     _stage = 0;
+    _tmuxStage = 0;
     _payload.clear();
   }
 }
