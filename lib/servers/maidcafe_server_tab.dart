@@ -2136,7 +2136,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                 List.unmodifiable(_alarms),
                 stdio: stdio,
               ) +
-              (stdio ? '' : '\nsystemctl restart maidcafe-daemon\n'),
+              (stdio
+                  ? ''
+                  : '\nsystemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemon\n'),
           onOutput: onOutput,
           sshUserIsRoot: widget.server.username == 'root',
           sudoPassword: sudoPassword,

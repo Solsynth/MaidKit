@@ -536,7 +536,9 @@ Future<void> _installMaidCafeDaemon({
 /// The systemd unit MaidKit owns for the daemon. sudo needs its setuid bit
 /// for user-switching actions, so `NoNewPrivileges` is dropped only when a
 /// run-as user is configured; the install and config-sync scripts keep this
-/// in lockstep with the sudoers rule.
+/// in lockstep with the sudoers rule. `ExecReload` lets `systemctl reload`
+/// hot-reload the daemon (SIGHUP) instead of restarting it; the config API
+/// needs the daemon user to be able to write /etc/maidcafe.
 String _maidCafeSystemdUnit(List<String> runAsUsers) =>
     '''
 [Unit]
@@ -547,8 +549,10 @@ After=network-online.target
 User=maidcafe
 Group=maidcafe
 ExecStart=/usr/local/bin/maidcafe-daemon --config /etc/maidcafe/config.toml
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 ${runAsUsers.isEmpty ? 'NoNewPrivileges=true' : '# NoNewPrivileges: actions run as another user through sudo'}
+ReadWritePaths=/etc/maidcafe
 PrivateTmp=true
 
 [Install]
@@ -854,7 +858,9 @@ EOF
 install -o root -g root -m 0644 "\$unit_tmp" /etc/systemd/system/maidcafe-daemon.service
 rm -f "\$unit_tmp"
 systemctl daemon-reload
-systemctl restart maidcafe-daemon
+# Prefer a hot reload (SIGHUP re-reads the config); old units without
+# ExecReload fall back to a restart, which picks the config up anyway.
+systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemon
 ''';
   final patched =
       patchMaidCafeConfigText(stripMaidCafeInlineActions(currentConfig), {

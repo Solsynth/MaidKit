@@ -29,6 +29,7 @@ enum MaidCafeStreamEventType {
   systemd,
   runtimes,
   databaseMetrics,
+  logs,
 }
 
 /// All streamable event types; the default whitelist for [MaidCafeStreamSession.openStream].
@@ -41,6 +42,7 @@ const Set<MaidCafeStreamEventType> maidCafeStreamAllEvents = {
   MaidCafeStreamEventType.systemd,
   MaidCafeStreamEventType.runtimes,
   MaidCafeStreamEventType.databaseMetrics,
+  MaidCafeStreamEventType.logs,
 };
 
 /// One decoded SSE frame from the daemon stream.
