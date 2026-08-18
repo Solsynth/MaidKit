@@ -22,6 +22,7 @@ import 'systemd_models.dart';
 import 'tailscale_ssh_socket.dart';
 import 'tailscale_service.dart';
 import 'terminal_session_adapter.dart';
+import 'terminal_branding.dart';
 import 'web_server_adapter.dart';
 import 'web_server_adapters.dart';
 import 'web_server_models.dart';
@@ -262,11 +263,19 @@ class SshConnectionManager {
       knownHostKeyFingerprint: knownHostKeyFingerprint,
       proxy: proxy,
     );
+    final brandingEnabled = _brandingEnvironmentEnabled();
+    final brandingDialect = brandingEnabled
+        ? await _detectRemoteShellDialect(client, server)
+        : null;
+    // Do not send the branding variable as an SSH environment request.
+    // Servers commonly reject TERM_PROGRAM unless it is listed in
+    // AcceptEnv; the dialect command below sets it inside the shell instead.
+    final shellEnvironment = <String, String>{...?environment};
     late SSHSession shell;
     try {
       shell = await client.shell(
         pty: const SSHPtyConfig(type: 'xterm-256color', width: 120, height: 36),
-        environment: environment,
+        environment: shellEnvironment.isEmpty ? null : shellEnvironment,
       );
     } catch (_) {
       client.close();
@@ -301,15 +310,11 @@ class SshConnectionManager {
       (_) => _closeTerminalAfterShellEnds(terminalId, shell),
       onError: (_, _) => _closeTerminalAfterShellEnds(terminalId, shell),
     );
-    if (_brandingEnvironmentEnabled()) {
+    if (brandingDialect != null) {
       // Neofetch prioritizes SSH_CONNECTION/SSH_TTY over TERM_PROGRAM. Keep
       // this scoped to the interactive shell so it can identify MaidKit
       // instead of displaying the server's allocated /dev/pts/* path.
-      shell.write(
-        utf8.encode(
-          'export TERM_PROGRAM=MaidKit; unset SSH_CONNECTION SSH_TTY\n',
-        ),
-      );
+      shell.write(utf8.encode(terminalBrandingCommand(brandingDialect)));
     }
     final directory = initialDirectory?.trim();
     if (directory != null && directory.isNotEmpty) {
@@ -329,6 +334,73 @@ class SshConnectionManager {
       adapter: terminal,
       done: shell.done,
     );
+  }
+
+  Future<RemoteShellDialect> _detectRemoteShellDialect(
+    SSHClient client,
+    Server server,
+  ) async {
+    // `getent` is a plain external command, so the probe itself is valid in
+    // POSIX shells and fish without relying on their assignment syntax.
+    final passwd = await _probeRemoteCommand(
+      client,
+      'getent passwd ${_shellSingleQuote(server.username)}',
+    );
+    final loginShell = _loginShellFromPasswd(passwd);
+    if (loginShell != null) return detectRemoteShellDialect(loginShell);
+
+    // Some minimal images do not install getent. `$SHELL` is shared by POSIX
+    // shells and fish, which covers the common fallback without assuming that
+    // `export` is available.
+    final shellVariable = await _probeRemoteCommand(
+      client,
+      r'''printf '%s' "$SHELL"''',
+    );
+    if (shellVariable.trim().isNotEmpty) {
+      return detectRemoteShellDialect(shellVariable);
+    }
+
+    // Windows OpenSSH commonly starts cmd.exe or PowerShell without setting
+    // SHELL. These probes are inert on Unix shells: their marker remains
+    // literal and is discarded.
+    final powershellVersion = await _probeRemoteCommand(
+      client,
+      r'''echo $PSVersionTable.PSVersion''',
+    );
+    if (RegExp(r'^\d+(?:\.\d+)+$').hasMatch(powershellVersion.trim())) {
+      return RemoteShellDialect.powershell;
+    }
+    final comspec = await _probeRemoteCommand(client, r'''echo %COMSPEC%''');
+    if (RegExp(
+      r'(?:[/\\])cmd(?:\.exe)?$',
+      caseSensitive: false,
+    ).hasMatch(comspec.trim())) {
+      return RemoteShellDialect.cmd;
+    }
+    return RemoteShellDialect.posix;
+  }
+
+  Future<String> _probeRemoteCommand(SSHClient client, String command) async {
+    try {
+      final session = await client.execute(command);
+      final stdout = utf8.decoder.bind(session.stdout).join();
+      final stderr = utf8.decoder.bind(session.stderr).join();
+      await session.done;
+      final output = await Future.wait([stdout, stderr]);
+      return output.first;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String? _loginShellFromPasswd(String output) {
+    for (final line in output.split(RegExp(r'\r?\n'))) {
+      final fields = line.split(':');
+      if (fields.length < 7) continue;
+      final shell = fields[6].trim();
+      if (shell.isNotEmpty) return shell;
+    }
+    return null;
   }
 
   /// POSIX-safe single-quoted string for remote shell commands.
