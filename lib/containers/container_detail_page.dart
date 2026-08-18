@@ -337,17 +337,32 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     }
     setState(() => _actionBusy = true);
     try {
-      await ref
-          .read(connectionManagerProvider)
-          .runContainerAction(
-            widget.server.id,
-            runtime: widget.runtime,
-            scope: widget.scope,
-            containerId: widget.containerId,
-            action: action,
-            force: forceRemove,
-            sudoPassword: await _sudoPassword(),
-          );
+      final session = await ref
+          .read(maidCafeSessionRegistryProvider)
+          .sessionFor(widget.server);
+      if (session != null) {
+        // Daemon present: run the native op. The daemon validates the
+        // target and elevates through sudo -n when needed.
+        final result = await session.runContainerAction(
+          widget.containerId,
+          action.name,
+          force: forceRemove,
+          invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+        );
+        result.ensureSuccess();
+      } else {
+        await ref
+            .read(connectionManagerProvider)
+            .runContainerAction(
+              widget.server.id,
+              runtime: widget.runtime,
+              scope: widget.scope,
+              containerId: widget.containerId,
+              action: action,
+              force: forceRemove,
+              sudoPassword: await _sudoPassword(),
+            );
+      }
       if (!mounted) return;
       showStyledSnackBar(
         title: 'containerActionSuccess'.tr(args: [action.pastLabel]),

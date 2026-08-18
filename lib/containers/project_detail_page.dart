@@ -991,6 +991,21 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (!_composeReady) {
       throw StateError('deploymentComposeMissing'.tr());
     }
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(host);
+    if (session != null) {
+      // Daemon present: run the native compose op (bounded result at
+      // completion, no live pull progress).
+      final result = await session.runComposeAction(
+        _composeName,
+        action.name,
+        _composeDirectory,
+        invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+      );
+      result.ensureSuccess();
+      return;
+    }
     await runComposeProjectActionWithTerminal(
       ref: ref,
       serverId: host.id,
@@ -1009,16 +1024,28 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (_containerRef.isEmpty) {
       throw StateError('deploymentContainerMissing'.tr());
     }
-    await ref
-        .read(connectionManagerProvider)
-        .runContainerAction(
-          host.id,
-          runtime: _runtime,
-          scope: _scope,
-          containerId: _containerRef,
-          action: action,
-          sudoPassword: await _sudoPassword(),
-        );
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(host);
+    if (session != null) {
+      final result = await session.runContainerAction(
+        _containerRef,
+        action.name,
+        invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+      );
+      result.ensureSuccess();
+    } else {
+      await ref
+          .read(connectionManagerProvider)
+          .runContainerAction(
+            host.id,
+            runtime: _runtime,
+            scope: _scope,
+            containerId: _containerRef,
+            action: action,
+            sudoPassword: await _sudoPassword(),
+          );
+    }
     if (mounted) {
       showStyledSnackBar(
         message: resource.name,
@@ -1053,15 +1080,27 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (unit.isEmpty) {
       throw StateError('deploymentSystemdMissing'.tr());
     }
-    await ref
-        .read(connectionManagerProvider)
-        .runSystemdUnitAction(
-          host.id,
-          unit: unit,
-          action: action,
-          sshUserIsRoot: host.username == 'root',
-          sudoPassword: await _sudoPassword(),
-        );
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(host);
+    if (session != null) {
+      final result = await session.runSystemdAction(
+        unit,
+        action.name,
+        invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+      );
+      result.ensureSuccess();
+    } else {
+      await ref
+          .read(connectionManagerProvider)
+          .runSystemdUnitAction(
+            host.id,
+            unit: unit,
+            action: action,
+            sshUserIsRoot: host.username == 'root',
+            sudoPassword: await _sudoPassword(),
+          );
+    }
     if (mounted) {
       final past = switch (action) {
         SystemdUnitAction.start => 'deploymentServiceStarted',

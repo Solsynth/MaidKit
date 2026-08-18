@@ -1072,7 +1072,6 @@
   "maidCafeNotificationBody": "通知内容",
   "maidCafeNotificationTitle": "通知标题",
   "maidCafeNotifications": "通知",
-  "maidCafeAllDaemons": "所有守护进程",
   "maidCafeNotificationDaemonOverride": "守护进程专属覆盖",
   "maidCafeNotificationPreferenceDefault": "使用默认值",
   "maidCafeNotificationPreferenceApplyAll": "设置所有主题",
@@ -2024,5 +2023,13 @@
   "dbUptime": "运行时间",
   "dbPerDatabase": "按数据库",
   "unknown": "未知",
-  "invokedBy": "调用者"
+  "invokedBy": "调用者",
+  "maidCafeNativeOpParamsTitle": "操作参数",
+  "maidCafeNativeOpFieldId": "容器 ID 或名称",
+  "maidCafeNativeOpFieldPid": "PID",
+  "maidCafeNativeOpFieldUnit": "systemd 单元",
+  "maidCafeNativeOpFieldProject": "Compose 项目",
+  "maidCafeNativeOpFieldDirectory": "Compose 目录",
+  "maidCafeNativeOpCancel": "取消",
+  "maidCafeNativeOpRun": "执行"
 }

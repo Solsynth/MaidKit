@@ -53,6 +53,47 @@ class MaidCafeStreamEvent {
   final Map<String, dynamic> data;
 }
 
+/// Result of a native operation executed by the daemon (container lifecycle,
+/// process kill, systemd, compose). Mirrors the daemon's executionResponse:
+/// bounded stdout/stderr plus the exit code.
+class MaidCafeOpResult {
+  const MaidCafeOpResult({
+    required this.ok,
+    required this.exitCode,
+    this.stdout = '',
+    this.stderr = '',
+  });
+
+  factory MaidCafeOpResult.parse(Map<String, dynamic> json) {
+    final rawExitCode = json['exit_code'];
+    return MaidCafeOpResult(
+      ok: json['ok'] == true,
+      exitCode: rawExitCode is int
+          ? rawExitCode
+          : rawExitCode is num
+          ? rawExitCode.toInt()
+          : -1,
+      stdout: json['stdout']?.toString() ?? '',
+      stderr: json['stderr']?.toString() ?? '',
+    );
+  }
+
+  final bool ok;
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+
+  /// Throws [StateError] with the daemon's stderr when the op failed, so
+  /// callers surface the same shape as SSH failures.
+  void ensureSuccess([String? context]) {
+    if (ok) return;
+    final detail = stderr.trim().isNotEmpty
+        ? stderr.trim()
+        : 'The operation failed with exit code $exitCode.';
+    throw StateError(context == null ? detail : '$context: $detail');
+  }
+}
+
 /// Parses raw SSE bytes into typed events.
 ///
 /// Standard SSE framing: `event:`/`data:` lines terminated by a blank line;
@@ -913,6 +954,82 @@ class MaidCafeStreamSession {
     String name, {
     Object? body,
     String? invokedBy,
+  }) {
+    return _postSigned(
+      '/api/v1/actions/${Uri.encodeComponent(name)}',
+      body: body,
+      invokedBy: invokedBy,
+    );
+  }
+
+  /// Runs one native container operation on the daemon. [verb] is the wire
+  /// verb (`start`, `stop`, `restart`, `pause`, `unpause`, `kill`, `remove`);
+  /// [force] maps to `rm -f` for remove. The daemon resolves the runtime and
+  /// elevates through `sudo -n` when needed.
+  Future<MaidCafeOpResult> runContainerAction(
+    String id,
+    String verb, {
+    bool force = false,
+    String? invokedBy,
+  }) async {
+    final result = await _postSigned(
+      '/api/v1/containers/${Uri.encodeComponent(id)}/$verb',
+      body: {'force': force},
+      invokedBy: invokedBy,
+    );
+    return MaidCafeOpResult.parse(result);
+  }
+
+  /// Sends SIGKILL to [pid] on the daemon host. The daemon refuses pids <= 1.
+  Future<MaidCafeOpResult> killProcess(int pid, {String? invokedBy}) async {
+    final result = await _postSigned(
+      '/api/v1/processes/$pid/kill',
+      body: const {},
+      invokedBy: invokedBy,
+    );
+    return MaidCafeOpResult.parse(result);
+  }
+
+  /// Runs one native systemd unit action on the daemon. [verb] is the wire
+  /// verb (`start`, `stop`, `restart`, `reload`, `enable`, `disable`); the
+  /// daemon normalizes bare names to `.service` units.
+  Future<MaidCafeOpResult> runSystemdAction(
+    String unit,
+    String verb, {
+    String? invokedBy,
+  }) async {
+    final result = await _postSigned(
+      '/api/v1/systemd/${Uri.encodeComponent(unit)}/$verb',
+      body: const {},
+      invokedBy: invokedBy,
+    );
+    return MaidCafeOpResult.parse(result);
+  }
+
+  /// Runs one native compose project action on the daemon. [verb] is the wire
+  /// verb (`up`, `stop`, `restart`, `pull`, `recreate`); [directory] must
+  /// hold the compose file, which compose resolves from the working
+  /// directory.
+  Future<MaidCafeOpResult> runComposeAction(
+    String project,
+    String verb,
+    String directory, {
+    String? invokedBy,
+  }) async {
+    final result = await _postSigned(
+      '/api/v1/compose/${Uri.encodeComponent(project)}/$verb',
+      body: {'directory': directory},
+      invokedBy: invokedBy,
+    );
+    return MaidCafeOpResult.parse(result);
+  }
+
+  /// POSTs [path] with a body signature like [invokeAction], returning the
+  /// decoded JSON response.
+  Future<Map<String, dynamic>> _postSigned(
+    String path, {
+    Object? body,
+    String? invokedBy,
   }) async {
     final payload = body == null ? '' : jsonEncode(body);
     final secret = _apiSecret;
@@ -920,7 +1037,7 @@ class MaidCafeStreamSession {
         ? null
         : await maidCafeHmacSignature(secret, utf8.encode(payload));
     return _post(
-      '/api/v1/actions/${Uri.encodeComponent(name)}',
+      path,
       body: payload,
       headers: {
         'X-MaidCafe-Signature': ?signature,

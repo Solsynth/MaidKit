@@ -610,4 +610,67 @@ cooldownSeconds = 60
       expect(unit.activeState, '');
     });
   });
+
+  group('MaidCafeOpResult', () {
+    test('parses a successful execution response', () {
+      final result = MaidCafeOpResult.parse({
+        'ok': true,
+        'name': 'container.restart',
+        'exit_code': 0,
+        'stdout': 'web\n',
+        'stderr': '',
+      });
+      expect(result.ok, isTrue);
+      expect(result.exitCode, 0);
+      expect(result.stdout, 'web\n');
+      expect(result.stderr, isEmpty);
+      expect(() => result.ensureSuccess(), returnsNormally);
+    });
+
+    test('parses a failed execution response', () {
+      final result = MaidCafeOpResult.parse({
+        'ok': false,
+        'name': 'container.restart',
+        'exit_code': 125,
+        'stdout': '',
+        'stderr': 'Error: no such container: web\n',
+      });
+      expect(result.ok, isFalse);
+      expect(result.exitCode, 125);
+      expect(
+        () => result.ensureSuccess(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('no such container'),
+          ),
+        ),
+      );
+    });
+
+    test('fails with the exit code when stderr is empty', () {
+      final result = MaidCafeOpResult.parse({
+        'ok': false,
+        'exit_code': 3,
+        'stdout': '',
+        'stderr': '',
+      });
+      expect(
+        () => result.ensureSuccess('restart'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('exit code 3'),
+          ),
+        ),
+      );
+    });
+
+    test('accepts a numeric exit code from JSON', () {
+      final result = MaidCafeOpResult.parse({'ok': false, 'exit_code': 1.0});
+      expect(result.exitCode, 1);
+    });
+  });
 }

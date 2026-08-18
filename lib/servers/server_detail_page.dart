@@ -1438,20 +1438,33 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
 
     setState(() => _killingPid = true);
     try {
-      final credential = await ref
-          .read(serverRepositoryProvider)
-          .credentialFor(widget.server);
-      final sudoPassword = credential.type == CredentialType.password
-          ? credential.password
-          : null;
-      await ref
-          .read(connectionManagerProvider)
-          .killProcess(
-            widget.server.id,
-            pid: process.pid,
-            sshUserIsRoot: widget.server.username == 'root',
-            sudoPassword: sudoPassword,
-          );
+      final session = await ref
+          .read(maidCafeSessionRegistryProvider)
+          .sessionFor(widget.server);
+      if (session != null) {
+        // Daemon present: kill through the native op. The daemon refuses
+        // pids <= 1 and elevates through sudo -n when needed.
+        final result = await session.killProcess(
+          process.pid,
+          invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+        );
+        result.ensureSuccess();
+      } else {
+        final credential = await ref
+            .read(serverRepositoryProvider)
+            .credentialFor(widget.server);
+        final sudoPassword = credential.type == CredentialType.password
+            ? credential.password
+            : null;
+        await ref
+            .read(connectionManagerProvider)
+            .killProcess(
+              widget.server.id,
+              pid: process.pid,
+              sshUserIsRoot: widget.server.username == 'root',
+              sudoPassword: sudoPassword,
+            );
+      }
       if (!mounted) return;
       showStyledSnackBar(
         title: 'detailKillProcessSuccess'.tr(args: ['${process.pid}']),

@@ -393,17 +393,32 @@ class _ContainerManagementTabState
       if (!approved || !mounted) return;
     }
     try {
-      await ref
-          .read(connectionManagerProvider)
-          .runContainerAction(
-            widget.server.id,
-            runtime: environment.runtime,
-            scope: environment.scope,
-            containerId: container.id,
-            action: action,
-            force: forceRemove,
-            sudoPassword: await _storedSudoPassword(),
-          );
+      final session = await _ensureMaidCafeStream();
+      if (session != null) {
+        // Daemon present: run the native op so the action also works without
+        // a workstation SSH session. The daemon validates the target and
+        // elevates through sudo -n when needed; failures surface as errors
+        // instead of silently retrying over SSH.
+        final result = await session.runContainerAction(
+          container.id,
+          action.name,
+          force: forceRemove,
+          invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+        );
+        result.ensureSuccess();
+      } else {
+        await ref
+            .read(connectionManagerProvider)
+            .runContainerAction(
+              widget.server.id,
+              runtime: environment.runtime,
+              scope: environment.scope,
+              containerId: container.id,
+              action: action,
+              force: forceRemove,
+              sudoPassword: await _storedSudoPassword(),
+            );
+      }
       if (!mounted) return;
       showStyledSnackBar(
         title: 'containerActionSuccess'.tr(args: [action.pastLabel]),

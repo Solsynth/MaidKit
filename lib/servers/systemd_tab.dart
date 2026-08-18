@@ -426,15 +426,27 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
     }
     await _run(
       () async {
-        await ref
-            .read(connectionManagerProvider)
-            .runSystemdUnitAction(
-              widget.server.id,
-              unit: unit.name,
-              action: action,
-              sshUserIsRoot: _isRoot,
-              sudoPassword: await _sudoPassword(),
-            );
+        final session = await _ensureMaidCafeStream();
+        if (session != null) {
+          // Daemon present: run the native systemd op. The daemon validates
+          // the unit name and elevates through sudo -n when needed.
+          final result = await session.runSystemdAction(
+            unit.name,
+            action.name,
+            invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+          );
+          result.ensureSuccess();
+        } else {
+          await ref
+              .read(connectionManagerProvider)
+              .runSystemdUnitAction(
+                widget.server.id,
+                unit: unit.name,
+                action: action,
+                sshUserIsRoot: _isRoot,
+                sudoPassword: await _sudoPassword(),
+              );
+        }
       },
       success: 'systemdSuccess'.tr(
         args: ['${action.trPastLabel} ${unit.name}'],

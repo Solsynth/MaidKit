@@ -65,6 +65,7 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 - The daemon runs on its own — MaidKit does not need to stay open — and only connects outbound, so no extra ports are opened to the internet
 - Fleet view with per-daemon live metrics (load, swap, disk, network) streamed over SSE in real time
 - Reusable action scripts with template variables, working directory, run-as user, environment, and per-action timeout
+- Native host operations through the daemon: container start/stop/restart/pause/kill/remove, process kill, systemd unit actions, and compose project actions — the container, process, systemd, and deployment views route through the daemon when it is installed (SSH stays the fallback), so these work from anywhere via the cloud relay, not just from a workstation SSH session
 - Alarm thresholds evaluated locally by the daemon, surfaced as notifications
 - Audit log with invocation provenance and captured output; clear and filter
 - API credentials for CI/CD, scoped to daemons, hosts, and actions; the cloud webhook relay delivers invocations to daemons that poll the cloud

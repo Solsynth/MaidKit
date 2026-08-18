@@ -339,17 +339,33 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     if (_actionBusy) return;
     setState(() => _actionBusy = true);
     try {
-      await runComposeProjectActionWithTerminal(
-        ref: ref,
-        serverId: widget.server.id,
-        serverName: widget.server.name,
-        runtime: widget.runtime,
-        scope: widget.scope,
-        projectName: widget.projectName,
-        directory: widget.directory,
-        action: action,
-        sudoPassword: await _sudoPassword(),
-      );
+      final session = await ref
+          .read(maidCafeSessionRegistryProvider)
+          .sessionFor(widget.server);
+      if (session != null) {
+        // Daemon present: run the native compose op. Output is returned
+        // bounded at completion instead of streamed, so progress bars from
+        // pull/up are not visible on this path.
+        final result = await session.runComposeAction(
+          widget.projectName,
+          action.name,
+          widget.directory,
+          invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+        );
+        result.ensureSuccess();
+      } else {
+        await runComposeProjectActionWithTerminal(
+          ref: ref,
+          serverId: widget.server.id,
+          serverName: widget.server.name,
+          runtime: widget.runtime,
+          scope: widget.scope,
+          projectName: widget.projectName,
+          directory: widget.directory,
+          action: action,
+          sudoPassword: await _sudoPassword(),
+        );
+      }
       if (!mounted) return;
       showStyledSnackBar(
         title: 'composeDetailActionSuccess'.tr(args: [action.label]),
@@ -376,16 +392,28 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     ContainerAction action,
   ) async {
     try {
-      await ref
-          .read(connectionManagerProvider)
-          .runContainerAction(
-            widget.server.id,
-            runtime: widget.runtime,
-            scope: widget.scope,
-            containerId: container.id,
-            action: action,
-            sudoPassword: await _sudoPassword(),
-          );
+      final session = await ref
+          .read(maidCafeSessionRegistryProvider)
+          .sessionFor(widget.server);
+      if (session != null) {
+        final result = await session.runContainerAction(
+          container.id,
+          action.name,
+          invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+        );
+        result.ensureSuccess();
+      } else {
+        await ref
+            .read(connectionManagerProvider)
+            .runContainerAction(
+              widget.server.id,
+              runtime: widget.runtime,
+              scope: widget.scope,
+              containerId: container.id,
+              action: action,
+              sudoPassword: await _sudoPassword(),
+            );
+      }
       if (!mounted) return;
       showStyledSnackBar(
         title: 'deploymentContainerSuccess'.tr(args: [action.pastLabel]),

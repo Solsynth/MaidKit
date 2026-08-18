@@ -460,16 +460,36 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
 
   /// Actions the daemon reported to the cloud, invoked through the relay:
   /// the cloud page asks the cloud, the cloud queues it, and the daemon
-  /// polls and runs it.
+  /// polls and runs it. Native operations prompt for their parameters
+  /// (container id, pid, unit, or compose project + directory) first.
   Future<void> _invokeCloudAction(
     BuildContext context,
     MaidCafeDaemon daemon,
     MaidCafeCloudAction action,
   ) async {
+    final fields = _nativeOpParamFields(action.name);
+    Map<String, dynamic> body = const {};
+    if (fields.isNotEmpty) {
+      final values = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => _NativeOpParamsDialog(
+          title: action.displayName.isNotEmpty
+              ? action.displayName
+              : action.name,
+          fields: fields,
+        ),
+      );
+      if (values == null || !context.mounted) return;
+      body = values;
+    }
     await _run(_daemonOp(daemon.id), () async {
       final result = await ref
           .read(maidCafeServiceProvider)
-          .invokeActionViaCloud(daemonId: daemon.id, actionName: action.name);
+          .invokeActionViaCloud(
+            daemonId: daemon.id,
+            actionName: action.name,
+            body: body,
+          );
       if (context.mounted) {
         final stdout = utf8.decode(result.body, allowMalformed: true).trim();
         final stderr = result.error?.trim() ?? '';
@@ -482,6 +502,27 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         );
       }
     });
+  }
+
+  /// The parameters a native operation slug requires, in prompt order.
+  /// Empty for configured actions, which carry no identity in the body.
+  static List<({String key, String label})> _nativeOpParamFields(String slug) {
+    if (slug.startsWith('container.')) {
+      return [(key: 'id', label: 'maidCafeNativeOpFieldId')];
+    }
+    if (slug == 'process.kill') {
+      return [(key: 'pid', label: 'maidCafeNativeOpFieldPid')];
+    }
+    if (slug.startsWith('systemd.')) {
+      return [(key: 'unit', label: 'maidCafeNativeOpFieldUnit')];
+    }
+    if (slug.startsWith('compose.')) {
+      return [
+        (key: 'project', label: 'maidCafeNativeOpFieldProject'),
+        (key: 'directory', label: 'maidCafeNativeOpFieldDirectory'),
+      ];
+    }
+    return const [];
   }
 
   Future<void> _requestPushNotification(
@@ -2683,4 +2724,74 @@ class _RequestNotificationSheetState extends State<_RequestNotificationSheet> {
       ),
     ),
   );
+}
+
+/// Collects the parameters a native operation (container id, pid, unit, or
+/// compose project + directory) needs before the cloud relays the invocation.
+class _NativeOpParamsDialog extends StatefulWidget {
+  const _NativeOpParamsDialog({required this.title, required this.fields});
+
+  final String title;
+  final List<({String key, String label})> fields;
+
+  @override
+  State<_NativeOpParamsDialog> createState() => _NativeOpParamsDialogState();
+}
+
+class _NativeOpParamsDialogState extends State<_NativeOpParamsDialog> {
+  late final List<TextEditingController> _controllers = List.generate(
+    widget.fields.length,
+    (_) => TextEditingController(),
+  );
+
+  @override
+  void dispose() {
+    for (final controller in _controllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < widget.fields.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: TextField(
+                  controller: _controllers[i],
+                  autofocus: i == 0,
+                  decoration: InputDecoration(
+                    labelText: widget.fields[i].label.tr(),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('maidCafeNativeOpCancel'.tr()),
+        ),
+        const SizedBox(width: 8),
+        FilledButton(
+          onPressed: () {
+            final values = <String, String>{
+              for (var i = 0; i < widget.fields.length; i++)
+                widget.fields[i].key: _controllers[i].text.trim(),
+            };
+            Navigator.pop(context, values);
+          },
+          child: Text('maidCafeNativeOpRun'.tr()),
+        ),
+      ],
+    );
+  }
 }

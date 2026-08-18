@@ -1073,7 +1073,6 @@
   "maidCafeNotificationBody": "Notification body",
   "maidCafeNotificationTitle": "Notification title",
   "maidCafeNotifications": "Notifications",
-  "maidCafeAllDaemons": "All daemons",
   "maidCafeNotificationDaemonOverride": "Daemon-specific override",
   "maidCafeNotificationPreferenceDefault": "Use default",
   "maidCafeNotificationPreferenceApplyAll": "Set all topics",
@@ -2026,5 +2025,13 @@
   "dbUptime": "Uptime",
   "dbPerDatabase": "Per database",
   "unknown": "Unknown",
-  "invokedBy": "Invoked by"
+  "invokedBy": "Invoked by",
+  "maidCafeNativeOpParamsTitle": "Operation parameters",
+  "maidCafeNativeOpFieldId": "Container id or name",
+  "maidCafeNativeOpFieldPid": "PID",
+  "maidCafeNativeOpFieldUnit": "Systemd unit",
+  "maidCafeNativeOpFieldProject": "Compose project",
+  "maidCafeNativeOpFieldDirectory": "Compose directory",
+  "maidCafeNativeOpCancel": "Cancel",
+  "maidCafeNativeOpRun": "Run"
 }
