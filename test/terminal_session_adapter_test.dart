@@ -466,6 +466,40 @@ void main() {
     expect(responses, isEmpty);
   });
 
+  test('OSC 52 unwraps tmux passthrough sequences', () async {
+    String? clipboard;
+    final bridge = TerminalClipboardBridge(
+      setClipboard: (text) async => clipboard = text,
+      getClipboard: () async => null,
+      sendResponse: (_) {},
+    );
+    addTearDown(bridge.dispose);
+
+    final encoded = base64.encode(utf8.encode('copied through tmux'));
+    final inner = '\x1b]52;c;$encoded\x07';
+    final wrapped = '\x1bPtmux;${inner.replaceAll('\x1b', '\x1b\x1b')}\x1b\\';
+    bridge.add(Uint8List.fromList(utf8.encode(wrapped)));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(clipboard, 'copied through tmux');
+  });
+
+  test('OSC 52 accepts an omitted selection', () async {
+    String? clipboard;
+    final bridge = TerminalClipboardBridge(
+      setClipboard: (text) async => clipboard = text,
+      getClipboard: () async => null,
+      sendResponse: (_) {},
+    );
+    addTearDown(bridge.dispose);
+
+    final encoded = base64.encode(utf8.encode('clipboard'));
+    bridge.add(Uint8List.fromList(utf8.encode('\x1b]52;;$encoded\x07')));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(clipboard, 'clipboard');
+  });
+
   test('OSC 52 accepts unpadded base64 payloads', () async {
     String? clipboard;
     final bridge = TerminalClipboardBridge(
