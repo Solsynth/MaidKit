@@ -17,7 +17,6 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
 import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_connect.dart';
-import 'package:maid_kit/servers/maidcafe_metoer.dart';
 import 'package:maid_kit/servers/maidcafe_preferences.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/server_providers.dart';
@@ -37,12 +36,15 @@ MaidCafeDaemon _daemon({
   hostId: 'host-42',
   disconnectedAt: disconnectedAt,
 );
-MaidCafeMetoerNotification _notification() => MaidCafeMetoerNotification(
+MaidCafeNotification _notification() => MaidCafeNotification(
   id: 'n1',
-  topic: 'maidcafe.daemon.alert',
+  accountId: 'account-1',
+  daemonId: 'daemon-1',
+  kind: 'maidcafe.daemon.alert',
   title: 'Webhook backup failed',
   body: 'exit code 1',
-  viewedAt: null,
+  metadata: const {},
+  readAt: null,
   createdAt: DateTime.utc(2026, 8, 13),
 );
 
@@ -198,7 +200,7 @@ void main() {
     List<MaidCafeMetric> metrics = const [],
     Future<List<MaidCafeMetric>> Function(Ref ref, String daemonId)?
     metricsLoader,
-    Future<List<MaidCafeMetoerNotification>> Function(Ref ref)?
+    Future<List<MaidCafeNotification>> Function(Ref ref, String workspaceId)?
     notificationsLoader,
   }) async {
     tester.view.physicalSize = const Size(1200, 1600);
@@ -237,16 +239,24 @@ void main() {
       maidCafeServiceProvider.overrideWithValue(
         service ?? _FakeMaidCafeService(),
       ),
-      maidCafeMetoerNotificationsProvider.overrideWith(
+      maidCafeNotificationsProvider.overrideWith(
         notificationsLoader ??
-            ((ref) => Future.value(
-              signedIn
-                  ? [_notification()]
-                  : const <MaidCafeMetoerNotification>[],
-            )),
+            ((ref, workspaceId) async =>
+                signedIn ? [_notification()] : const <MaidCafeNotification>[]),
       ),
-      maidCafeMetoerUnreadCountProvider.overrideWith(
-        (ref) => Future.value(signedIn ? 1 : 0),
+      maidCafeUnreadNotificationCountProvider.overrideWith(
+        (ref, workspaceId) async => signedIn ? 1 : 0,
+      ),
+      maidCafeNotificationTopicsProvider.overrideWith(
+        (ref, workspaceId) async => const [
+          MaidCafeNotificationTopic(
+            topic: 'maidcafe.daemon.alert',
+            description: 'Daemon alerts',
+          ),
+        ],
+      ),
+      maidCafeNotificationPreferencesProvider.overrideWith(
+        (ref, workspaceId) async => const <MaidCafeNotificationPreference>[],
       ),
     ];
     await tester.pumpWidget(
@@ -303,7 +313,7 @@ void main() {
     var fetches = 0;
     await pumpPage(
       tester,
-      notificationsLoader: (ref) async {
+      notificationsLoader: (ref, workspaceId) async {
         fetches++;
         return [_notification()];
       },
@@ -615,11 +625,23 @@ void main() {
               ),
             ),
             maidCafeServerConnectorProvider.overrideWithValue(connector),
-            maidCafeMetoerNotificationsProvider.overrideWith(
-              (ref) => Future.value([_notification()]),
+            maidCafeNotificationsProvider.overrideWith(
+              (ref, workspaceId) async => [_notification()],
             ),
-            maidCafeMetoerUnreadCountProvider.overrideWith(
-              (ref) => Future.value(1),
+            maidCafeUnreadNotificationCountProvider.overrideWith(
+              (ref, workspaceId) async => 1,
+            ),
+            maidCafeNotificationTopicsProvider.overrideWith(
+              (ref, workspaceId) async => const [
+                MaidCafeNotificationTopic(
+                  topic: 'maidcafe.daemon.alert',
+                  description: 'Daemon alerts',
+                ),
+              ],
+            ),
+            maidCafeNotificationPreferencesProvider.overrideWith(
+              (ref, workspaceId) async =>
+                  const <MaidCafeNotificationPreference>[],
             ),
           ],
           child: MaterialApp(

@@ -158,6 +158,42 @@ final maidCafeMetoerNotificationsProvider =
 final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
   (ref) => ref.watch(maidCafeMetoerClientProvider).unreadCount(),
 );
+final maidCafeNotificationsProvider =
+    FutureProvider.family<List<MaidCafeNotification>, String>((
+      ref,
+      workspaceId,
+    ) {
+      return ref
+          .watch(maidCafeServiceProvider)
+          .listNotifications(workspaceId: workspaceId);
+    });
+
+final maidCafeUnreadNotificationCountProvider =
+    FutureProvider.family<int, String>(
+      (ref, workspaceId) => ref
+          .watch(maidCafeServiceProvider)
+          .unreadNotificationCount(workspaceId: workspaceId),
+    );
+
+final maidCafeNotificationTopicsProvider =
+    FutureProvider.family<List<MaidCafeNotificationTopic>, String>((
+      ref,
+      workspaceId,
+    ) {
+      return ref
+          .watch(maidCafeServiceProvider)
+          .listNotificationTopics(workspaceId: workspaceId);
+    });
+
+final maidCafeNotificationPreferencesProvider =
+    FutureProvider.family<List<MaidCafeNotificationPreference>, String>((
+      ref,
+      workspaceId,
+    ) {
+      return ref
+          .watch(maidCafeServiceProvider)
+          .listNotificationPreferences(workspaceId: workspaceId);
+    });
 
 final maidCafePushStatusProvider =
     NotifierProvider<
@@ -193,10 +229,10 @@ Future<void> _registerMaidCafePushAtLaunch(
 
 /// FCM push for MaidCafe cloud notifications. Kept alive by `MaidKitApp`;
 /// subscribes once a Solar account is signed in (either at startup or on a
-/// later sign-in) and refreshes the Metoer feed when a push arrives while the
-/// app is running. Push is only registered when the configured MaidCafe cloud
-/// is a Solsynth-hosted instance (`maidCafeCloudSupportsPush`); self-hosted
-/// clouds have no Ring publisher.
+/// later sign-in) and refreshes the cloud notification history when a push
+/// arrives while the app is running. Push is only registered when the
+/// configured MaidCafe cloud is a Solsynth-hosted instance
+/// (`maidCafeCloudSupportsPush`); self-hosted clouds have no Ring publisher.
 final maidCafePushProvider = Provider<MaidCafePushService>((ref) {
   final status = ref.read(maidCafePushStatusProvider.notifier);
   final service = MaidCafePushService(
@@ -205,8 +241,8 @@ final maidCafePushProvider = Provider<MaidCafePushService>((ref) {
         maidCafeCloudSupportsPush(ref.read(maidCafeCloudUrlProvider)),
     onStatusChanged: status.set,
     onNotification: () {
-      ref.invalidate(maidCafeMetoerNotificationsProvider);
-      ref.invalidate(maidCafeMetoerUnreadCountProvider);
+      ref.invalidate(maidCafeNotificationsProvider);
+      ref.invalidate(maidCafeUnreadNotificationCountProvider);
     },
   );
   ref.listen(cloudUserProvider, (previous, next) {

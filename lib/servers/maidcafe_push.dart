@@ -85,8 +85,8 @@ Future<void> _showLocalNotification({
 }
 
 /// Cold-start and background FCM entry point. The isolate has no access to
-/// the widget tree, so it only surfaces the system notification; the feed
-/// refreshes on the next page load.
+/// the widget tree, so it only surfaces the system notification; the cloud
+/// history refreshes on the next page load.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -145,7 +145,7 @@ class MaidCafePushService {
   final bool Function() pushAllowed;
 
   /// Invoked when a push notification arrives while the app is running, so
-  /// the in-app Metoer feed can refresh.
+  /// the cloud notification history can refresh.
   final void Function() onNotification;
 
   /// Reports registration state to the settings UI.

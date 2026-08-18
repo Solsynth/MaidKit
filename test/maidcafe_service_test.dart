@@ -703,4 +703,45 @@ void main() {
       expect(history.samples[1].processCount, 0);
     },
   );
+  test('notification preference levels and daemon scope use cloud API', () async {
+    late RequestOptions request;
+    final dio = Dio()
+      ..httpClientAdapter = _Adapter((options) async {
+        request = options;
+        return ResponseBody.fromString('', 204);
+      });
+    final service = MaidCafeService(
+      baseUrl: 'https://mk.solsynth.dev',
+      cloudSync: CloudSyncService(vaultId: 'test'),
+      accessToken: () async => 'solar-token',
+      dio: dio,
+    );
+
+    await service.setNotificationPreference(
+      workspaceId: 'ws-1',
+      daemonId: 'daemon-1',
+      topic: 'webhook.failure',
+      preference: MaidCafeNotificationPreferenceLevel.silent,
+    );
+    expect(request.method, 'PUT');
+    expect(
+      request.uri.toString(),
+      'https://mk.solsynth.dev/api/daemons/daemon-1/notification-preferences/webhook.failure',
+    );
+    expect((request.data as Map)['preference'], 1);
+    expect((request.data as Map)['workspace_id'], 'ws-1');
+
+    final parsed = MaidCafeNotificationPreference.fromJson({
+      'id': 'pref-1',
+      'account_id': 'account-1',
+      'workspace_id': 'ws-1',
+      'daemon_id': '',
+      'topic': 'webhook.failure',
+      'preference': 2,
+      'created_at': '2026-08-13T00:00:00Z',
+      'updated_at': '2026-08-13T00:00:00Z',
+    });
+    expect(parsed.daemonId, isNull);
+    expect(parsed.preference, MaidCafeNotificationPreferenceLevel.reject);
+  });
 }

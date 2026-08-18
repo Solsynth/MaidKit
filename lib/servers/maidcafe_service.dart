@@ -138,6 +138,7 @@ class MaidCafeNotification {
     required this.kind,
     required this.title,
     required this.body,
+    this.subtitle = '',
     required this.metadata,
     required this.readAt,
     required this.createdAt,
@@ -148,6 +149,7 @@ class MaidCafeNotification {
   final String daemonId;
   final String kind;
   final String title;
+  final String subtitle;
   final String body;
   final Map<String, dynamic> metadata;
   final DateTime? readAt;
@@ -161,12 +163,85 @@ class MaidCafeNotification {
         kind: _requiredString(json, 'kind'),
         title: _requiredString(json, 'title'),
         body: _requiredString(json, 'body'),
+        subtitle: _optionalString(json, 'subtitle') ?? '',
         metadata: _metadata(json['metadata']),
         readAt: _optionalDate(json, 'read_at'),
         createdAt: _requiredDate(json, 'created_at'),
       );
 
   bool get unread => readAt == null;
+}
+
+enum MaidCafeNotificationPreferenceLevel {
+  normal(0),
+  silent(1),
+  reject(2);
+
+  const MaidCafeNotificationPreferenceLevel(this.value);
+
+  final int value;
+
+  static MaidCafeNotificationPreferenceLevel fromValue(Object? value) {
+    final numeric = value is num ? value.toInt() : int.tryParse('$value');
+    return values.firstWhere(
+      (level) => level.value == numeric,
+      orElse: () => normal,
+    );
+  }
+}
+
+class MaidCafeNotificationTopic {
+  const MaidCafeNotificationTopic({
+    required this.topic,
+    required this.description,
+  });
+
+  final String topic;
+  final String description;
+
+  factory MaidCafeNotificationTopic.fromJson(Map<String, dynamic> json) =>
+      MaidCafeNotificationTopic(
+        topic: _requiredString(json, 'topic'),
+        description: _requiredString(json, 'description'),
+      );
+}
+
+class MaidCafeNotificationPreference {
+  const MaidCafeNotificationPreference({
+    required this.id,
+    required this.accountId,
+    required this.workspaceId,
+    required this.daemonId,
+    required this.topic,
+    required this.preference,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String accountId;
+  final String workspaceId;
+  final String? daemonId;
+  final String topic;
+  final MaidCafeNotificationPreferenceLevel preference;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  factory MaidCafeNotificationPreference.fromJson(Map<String, dynamic> json) =>
+      MaidCafeNotificationPreference(
+        id: _requiredString(json, 'id'),
+        accountId: _requiredString(json, 'account_id'),
+        workspaceId: _requiredString(json, 'workspace_id'),
+        daemonId: (_optionalString(json, 'daemon_id')?.trim().isEmpty ?? true)
+            ? null
+            : _optionalString(json, 'daemon_id')!.trim(),
+        topic: _requiredString(json, 'topic'),
+        preference: MaidCafeNotificationPreferenceLevel.fromValue(
+          json['preference'],
+        ),
+        createdAt: _requiredDate(json, 'created_at'),
+        updatedAt: _requiredDate(json, 'updated_at'),
+      );
 }
 
 /// One action the daemon reported to the cloud for listing. The script body
@@ -528,7 +603,7 @@ class MaidCafeService {
         .toList(growable: false);
   }
 
-  Future<MaidCafeNotification> requestPushNotification(
+  Future<MaidCafeNotification?> requestPushNotification(
     String daemonId, {
     required String kind,
     required String title,
@@ -547,7 +622,149 @@ class MaidCafeService {
         options: _cloudOptions(token),
       ),
     );
+    if (response.statusCode == 204 || response.data == null) return null;
     return MaidCafeNotification.fromJson(_responseMap(response));
+  }
+
+  Future<List<MaidCafeNotification>> listNotifications({
+    required String workspaceId,
+    bool unread = false,
+    String? daemonId,
+    int limit = 100,
+    DateTime? before,
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/notifications',
+        queryParameters: {
+          'workspace_id': workspaceId,
+          'unread': unread,
+          'limit': limit,
+          ...?daemonId == null ? null : {'daemon_id': daemonId},
+          ...?before == null
+              ? null
+              : {'before': before.toUtc().toIso8601String()},
+        },
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseJson(response);
+    if (data is! List) {
+      throw _invalidResponse('Expected a notification list.');
+    }
+    return data
+        .map((item) => MaidCafeNotification.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+
+  Future<int> unreadNotificationCount({required String workspaceId}) async {
+    return (await listNotifications(
+      workspaceId: workspaceId,
+      unread: true,
+      limit: 100,
+    )).length;
+  }
+
+  Future<void> markNotificationRead(String notificationId) async {
+    await _cloudRequest(
+      (token) => _dio.post<dynamic>(
+        '$_apiBase/notifications/${_pathPart(notificationId)}/read',
+        options: _cloudOptions(token),
+      ),
+    );
+  }
+
+  Future<void> markAllNotificationsRead({required String workspaceId}) async {
+    await _cloudRequest(
+      (token) => _dio.post<dynamic>(
+        '$_apiBase/notifications/all/read',
+        queryParameters: {'workspace_id': workspaceId},
+        options: _cloudOptions(token),
+      ),
+    );
+  }
+
+  Future<List<MaidCafeNotificationTopic>> listNotificationTopics({
+    required String workspaceId,
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/notification-topics',
+        queryParameters: {'workspace_id': workspaceId},
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseJson(response);
+    if (data is! List) {
+      throw _invalidResponse('Expected a notification topic list.');
+    }
+    return data
+        .map((item) => MaidCafeNotificationTopic.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+
+  Future<List<MaidCafeNotificationPreference>> listNotificationPreferences({
+    required String workspaceId,
+    String? daemonId,
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/notification-preferences',
+        queryParameters: {
+          'workspace_id': workspaceId,
+          ...?daemonId == null ? null : {'daemon_id': daemonId},
+        },
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _responseJson(response);
+    if (data is! List) {
+      throw _invalidResponse('Expected a notification preference list.');
+    }
+    return data
+        .map((item) => MaidCafeNotificationPreference.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+
+  Future<void> setNotificationPreference({
+    required String workspaceId,
+    String? daemonId,
+    required String topic,
+    required MaidCafeNotificationPreferenceLevel preference,
+  }) async {
+    final path = daemonId == null
+        ? '$_apiBase/notification-preferences/${_pathPart(topic)}'
+        : '$_apiBase/daemons/${_pathPart(daemonId)}/notification-preferences/${_pathPart(topic)}';
+    final response = await _cloudRequest(
+      (token) => _dio.put<dynamic>(
+        path,
+        queryParameters: daemonId == null
+            ? {'workspace_id': workspaceId}
+            : null,
+        data: {'workspace_id': workspaceId, 'preference': preference.value},
+        options: _cloudOptions(token),
+      ),
+    );
+    if (response.statusCode != 204) {
+      throw _invalidResponse('MaidCafe did not confirm the preference update.');
+    }
+  }
+
+  Future<void> resetNotificationPreference({
+    required String workspaceId,
+    String? daemonId,
+    required String topic,
+  }) async {
+    final path = daemonId == null
+        ? '$_apiBase/notification-preferences/${_pathPart(topic)}'
+        : '$_apiBase/daemons/${_pathPart(daemonId)}/notification-preferences/${_pathPart(topic)}';
+    await _cloudRequest(
+      (token) => _dio.delete<dynamic>(
+        path,
+        queryParameters: {'workspace_id': workspaceId},
+        options: _cloudOptions(token),
+      ),
+    );
   }
 
   Future<MaidCafeDaemon> getDaemon(String daemonId) async {

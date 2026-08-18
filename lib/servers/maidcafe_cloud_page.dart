@@ -23,7 +23,8 @@ import 'server_providers.dart';
 
 /// Desktop workspace page for the MaidCafe cloud: Solarpass account and
 /// workspace selection, daemon registration (the one-time `[daemon]` config
-/// snippet), and the Metoer notification feed.
+/// snippet), notification delivery preferences, and the cloud notification
+/// history.
 ///
 /// The page is a tabbed console — fleet (daemon cards with live metric
 /// history), credentials and notifications — with the account and workspace
@@ -114,11 +115,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     final selectedWorkspaceId = ref.watch(maidCafeWorkspaceIdProvider);
     final effectiveWorkspaceId =
         selectedWorkspaceId ?? workspaces.asData?.value.firstOrNull?.id;
-    // The Metoer list endpoint marks the fetched page viewed server-side, so
-    // the unread count follows each feed refresh.
-    ref.listen(maidCafeMetoerNotificationsProvider, (previous, next) {
-      if (next.hasValue) ref.invalidate(maidCafeMetoerUnreadCountProvider);
-    });
     // Track when the fleet data was last fetched: on the initial load, each
     // poll tick, and after a manual refresh.
     if (effectiveWorkspaceId != null) {
@@ -171,7 +167,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             children: [
               _fleetTab(context, workspaceId),
               _credentialsTab(context),
-              _notificationsTab(context),
+              _notificationsTab(context, workspaceId),
             ],
           ),
         ),
@@ -508,8 +504,11 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             title: requested.title,
             body: requested.body,
           );
-      ref.invalidate(maidCafeMetoerNotificationsProvider);
-      ref.invalidate(maidCafeMetoerUnreadCountProvider);
+      final workspaceId = _effectiveWorkspaceId;
+      if (workspaceId != null) {
+        ref.invalidate(maidCafeNotificationsProvider(workspaceId));
+        ref.invalidate(maidCafeUnreadNotificationCountProvider(workspaceId));
+      }
     });
   }
 
@@ -788,8 +787,13 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   /// Notifications tab: a quiet, scan-friendly feed with pull-to-refresh.
   /// On desktop the refresh action appears when the pointer reaches the top
   /// edge, keeping the feed itself free of permanent toolbar chrome.
-  Widget _notificationsTab(BuildContext context) {
-    final unread = ref.watch(maidCafeMetoerUnreadCountProvider).asData?.value;
+  Widget _notificationsTab(BuildContext context, String? workspaceId) {
+    final unread = workspaceId == null
+        ? null
+        : ref
+              .watch(maidCafeUnreadNotificationCountProvider(workspaceId))
+              .asData
+              ?.value;
     return Stack(
       children: [
         RefreshIndicator(
@@ -800,7 +804,18 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             children: [
               _notificationsHeader(context, unread),
               const SizedBox(height: 16),
-              _notificationsBody(context),
+              if (workspaceId == null)
+                _SettingsSectionCard(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('maidCafeNoWorkspaces'.tr()),
+                  ),
+                )
+              else ...[
+                _notificationPreferencesBody(context, workspaceId),
+                const SizedBox(height: 16),
+                _notificationsBody(context, workspaceId),
+              ],
             ],
           ),
         ),
@@ -823,6 +838,54 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         ),
       ],
     );
+  }
+
+  Widget _notificationPreferencesBody(
+    BuildContext context,
+    String workspaceId,
+  ) {
+    return _MaidCafeNotificationPreferencesPanel(
+      workspaceId: workspaceId,
+      isBusy: (daemonId, topic) =>
+          _isBusy(_notificationPreferenceOp(daemonId, topic)),
+      onChanged: (daemonId, topic, preference) => _setNotificationPreference(
+        context,
+        workspaceId,
+        daemonId,
+        topic,
+        preference,
+      ),
+    );
+  }
+
+  String _notificationPreferenceOp(String? daemonId, String topic) =>
+      'notification-preference:${daemonId ?? 'all'}:$topic';
+
+  Future<void> _setNotificationPreference(
+    BuildContext context,
+    String workspaceId,
+    String? daemonId,
+    String topic,
+    MaidCafeNotificationPreferenceLevel? preference,
+  ) async {
+    await _run(_notificationPreferenceOp(daemonId, topic), () async {
+      final service = ref.read(maidCafeServiceProvider);
+      if (preference == null) {
+        await service.resetNotificationPreference(
+          workspaceId: workspaceId,
+          daemonId: daemonId,
+          topic: topic,
+        );
+      } else {
+        await service.setNotificationPreference(
+          workspaceId: workspaceId,
+          daemonId: daemonId,
+          topic: topic,
+          preference: preference,
+        );
+      }
+      ref.invalidate(maidCafeNotificationPreferencesProvider(workspaceId));
+    });
   }
 
   Widget _notificationsHeader(BuildContext context, int? unread) {
@@ -943,6 +1006,8 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
 
   Future<void> _refreshNotifications() async {
     if (_notificationsRefreshing) return;
+    final workspaceId = _effectiveWorkspaceId;
+    if (workspaceId == null) return;
     if (mounted) {
       setState(() {
         _notificationsRefreshing = true;
@@ -951,8 +1016,14 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     }
     try {
       await Future.wait([
-        ref.refresh(maidCafeMetoerNotificationsProvider.future),
-        ref.refresh(maidCafeMetoerUnreadCountProvider.future),
+        ref.refresh(maidCafeNotificationsProvider(workspaceId).future),
+        ref.refresh(
+          maidCafeUnreadNotificationCountProvider(workspaceId).future,
+        ),
+        ref.refresh(maidCafeNotificationTopicsProvider(workspaceId).future),
+        ref.refresh(
+          maidCafeNotificationPreferencesProvider(workspaceId).future,
+        ),
       ]);
     } finally {
       if (mounted) {
@@ -964,14 +1035,12 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     }
   }
 
-  Widget _notificationsBody(BuildContext context) {
-    final notifications = ref.watch(maidCafeMetoerNotificationsProvider);
+  Widget _notificationsBody(BuildContext context, String workspaceId) {
+    final notifications = ref.watch(maidCafeNotificationsProvider(workspaceId));
     return notifications.when(
       loading: () => _NotificationsLoading(),
       error: (error, _) => _SettingsSectionCard(
-        child: _recoverableError(context, error, () {
-          _refreshNotifications();
-        }),
+        child: _recoverableError(context, error, _refreshNotifications),
       ),
       data: (items) {
         final visibleItems = _notificationsUnreadOnly
@@ -995,18 +1064,15 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     );
   }
 
-  Widget _notificationTile(
-    BuildContext context,
-    MaidCafeMetoerNotification item,
-  ) {
+  Widget _notificationTile(BuildContext context, MaidCafeNotification item) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final daemonName = item.meta['daemon_name']?.toString();
-    final title = item.title?.trim().isNotEmpty == true
-        ? item.title!.trim()
-        : _notificationTopicLabel(item.topic);
+    final daemonName = item.metadata['daemon_name']?.toString();
+    final title = item.title.trim().isNotEmpty
+        ? item.title.trim()
+        : _notificationTopicLabel(item.kind);
     final metadata = [
-      item.topic,
+      item.kind,
       if (daemonName != null && daemonName.isNotEmpty)
         'maidCafeFromServer'.tr(args: [daemonName]),
     ];
@@ -1028,7 +1094,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(
-              _notificationIcon(item.topic),
+              _notificationIcon(item.kind),
               size: 20,
               color: item.unread
                   ? colors.onPrimaryContainer
@@ -1155,10 +1221,14 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   }
 
   Future<void> _markAllRead(BuildContext context) async {
+    final workspaceId = _effectiveWorkspaceId;
+    if (workspaceId == null) return;
     await _run(_notificationsOp, () async {
-      await ref.read(maidCafeMetoerClientProvider).markAllRead();
-      ref.invalidate(maidCafeMetoerNotificationsProvider);
-      ref.invalidate(maidCafeMetoerUnreadCountProvider);
+      await ref
+          .read(maidCafeServiceProvider)
+          .markAllNotificationsRead(workspaceId: workspaceId);
+      ref.invalidate(maidCafeNotificationsProvider(workspaceId));
+      ref.invalidate(maidCafeUnreadNotificationCountProvider(workspaceId));
     });
   }
 
@@ -2127,6 +2197,216 @@ class _NotificationsEmptyState extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MaidCafeNotificationPreferencesPanel extends ConsumerWidget {
+  const _MaidCafeNotificationPreferencesPanel({
+    required this.workspaceId,
+    required this.isBusy,
+    required this.onChanged,
+  });
+
+  final String workspaceId;
+  final bool Function(String? daemonId, String topic) isBusy;
+  final Future<void> Function(
+    String? daemonId,
+    String topic,
+    MaidCafeNotificationPreferenceLevel? preference,
+  )
+  onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final topics = ref.watch(maidCafeNotificationTopicsProvider(workspaceId));
+    final daemons = ref.watch(maidCafeDaemonsProvider(workspaceId));
+    final preferences = ref.watch(
+      maidCafeNotificationPreferencesProvider(workspaceId),
+    );
+    if (topics.hasError) {
+      return _SettingsSectionCard(
+        child: _preferenceError(
+          context,
+          topics.error!,
+          () => ref.invalidate(maidCafeNotificationTopicsProvider(workspaceId)),
+        ),
+      );
+    }
+    if (daemons.hasError) {
+      return _SettingsSectionCard(
+        child: _preferenceError(
+          context,
+          daemons.error!,
+          () => ref.invalidate(maidCafeDaemonsProvider(workspaceId)),
+        ),
+      );
+    }
+    if (preferences.hasError) {
+      return _SettingsSectionCard(
+        child: _preferenceError(
+          context,
+          preferences.error!,
+          () => ref.invalidate(
+            maidCafeNotificationPreferencesProvider(workspaceId),
+          ),
+        ),
+      );
+    }
+    if (!topics.hasValue || !daemons.hasValue || !preferences.hasValue) {
+      return const _SettingsSectionCard(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: LinearProgressIndicator(),
+        ),
+      );
+    }
+    final topicItems = topics.requireValue;
+    final daemonItems = daemons.requireValue;
+    final preferenceMap = <String, MaidCafeNotificationPreference>{
+      for (final preference in preferences.requireValue)
+        '${preference.daemonId ?? ''}|${preference.topic}': preference,
+    };
+    return _SettingsSectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'maidCafeNotificationPreferences'.tr(),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'maidCafeNotificationPreferencesDescription'.tr(),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _preferenceScope(
+            context,
+            title: 'maidCafeAllDaemons'.tr(),
+            daemonId: null,
+            topics: topicItems,
+            preferences: preferenceMap,
+          ),
+          for (final daemon in daemonItems)
+            ExpansionTile(
+              title: Text(daemon.name),
+              subtitle: Text(
+                'maidCafeNotificationDaemonOverride'.tr(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              children: [
+                _preferenceScope(
+                  context,
+                  title: daemon.name,
+                  daemonId: daemon.id,
+                  topics: topicItems,
+                  preferences: preferenceMap,
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _preferenceScope(
+    BuildContext context, {
+    required String title,
+    required String? daemonId,
+    required List<MaidCafeNotificationTopic> topics,
+    required Map<String, MaidCafeNotificationPreference> preferences,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (daemonId == null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Text(title, style: Theme.of(context).textTheme.titleSmall),
+          ),
+        for (final topic in topics)
+          _preferenceTile(
+            context,
+            daemonId: daemonId,
+            topic: topic,
+            current:
+                preferences['${daemonId ?? ''}|${topic.topic}']?.preference,
+          ),
+      ],
+    );
+  }
+
+  Widget _preferenceTile(
+    BuildContext context, {
+    required String? daemonId,
+    required MaidCafeNotificationTopic topic,
+    required MaidCafeNotificationPreferenceLevel? current,
+  }) {
+    final busy = isBusy(daemonId, topic.topic);
+    return ListTile(
+      dense: true,
+      title: Text(topic.description),
+      subtitle: Text(topic.topic),
+      trailing: SizedBox(
+        width: 170,
+        child: DropdownButton<MaidCafeNotificationPreferenceLevel?>(
+          value: current,
+          isExpanded: true,
+          isDense: true,
+          onChanged: busy
+              ? null
+              : (preference) => onChanged(daemonId, topic.topic, preference),
+          items: [
+            DropdownMenuItem<MaidCafeNotificationPreferenceLevel?>(
+              value: null,
+              child: Text('maidCafeNotificationPreferenceDefault'.tr()),
+            ),
+            for (final preference in MaidCafeNotificationPreferenceLevel.values)
+              DropdownMenuItem<MaidCafeNotificationPreferenceLevel?>(
+                value: preference,
+                child: Text(_preferenceLabel(preference)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _preferenceLabel(MaidCafeNotificationPreferenceLevel preference) =>
+      switch (preference) {
+        MaidCafeNotificationPreferenceLevel.normal =>
+          'maidCafeNotificationPreferenceNormal'.tr(),
+        MaidCafeNotificationPreferenceLevel.silent =>
+          'maidCafeNotificationPreferenceSilent'.tr(),
+        MaidCafeNotificationPreferenceLevel.reject =>
+          'maidCafeNotificationPreferenceReject'.tr(),
+      };
+
+  Widget _preferenceError(
+    BuildContext context,
+    Object error,
+    VoidCallback retry,
+  ) {
+    final message = error is MaidCafeException ? error.message : '$error';
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Expanded(child: Text(message)),
+          TextButton(onPressed: retry, child: Text('maidCafeRetry'.tr())),
+        ],
       ),
     );
   }
