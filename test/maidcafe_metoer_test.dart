@@ -44,6 +44,25 @@ Map<String, dynamic> _notification({String id = 'n1', bool unread = true}) => {
   'created_at': '2026-08-13T00:00:00Z',
 };
 
+Map<String, dynamic> _subscription({
+  int provider = 1,
+  String deviceId = 'install-1',
+}) => {
+  'id': 'sub-1',
+  'account_id': 'acc-1',
+  'app_id': 'dev.solsynth.maid',
+  'device_id': deviceId,
+  'device_token': 'secret-token',
+  'device_name': 'build-host',
+  'provider': provider,
+  'is_activated': true,
+  'deleted_at': null,
+  'count_delivered': 0,
+  'last_used_at': '2026-08-14T01:00:00Z',
+  'created_at': '2026-08-13T00:00:00Z',
+  'updated_at': '2026-08-14T01:00:00Z',
+};
+
 void main() {
   test('list sends app query with bearer token and parses the feed', () async {
     late RequestOptions request;
@@ -150,7 +169,7 @@ void main() {
   );
 
   test(
-    'registerPushSubscription puts the device identity and token with the MaidCafe app id',
+    'registerPushSubscription sends the OAuth device identity and token',
     () async {
       late RequestOptions request;
       final dio = Dio()
@@ -180,6 +199,57 @@ void main() {
       expect(body['provider'], 1);
       expect(body['device_name'], 'build-host');
       expect(body['app_id'], 'dev.solsynth.maid');
+    },
+  );
+
+  test(
+    'listPushSubscriptions filters by MaidKit app and parses device metadata',
+    () async {
+      late RequestOptions request;
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          request = options;
+          return _json([_subscription(deviceId: '', provider: 0)], 200);
+        });
+      final client = MaidCafeMetoerClient(
+        baseUrl: 'https://api.solian.app',
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+
+      final subscriptions = await client.listPushSubscriptions();
+
+      expect(request.method, 'GET');
+      expect(request.uri.path, '/metoer/notifications/subscription');
+      expect(request.uri.queryParameters['app'], 'dev.solsynth.maid');
+      expect(subscriptions.single.deviceId, isEmpty);
+      expect(subscriptions.single.provider, 0);
+      expect(subscriptions.single.countDelivered, 0);
+      expect(subscriptions.single.deletedAt, isNull);
+      expect(subscriptions.single.isActivated, isTrue);
+    },
+  );
+
+  test(
+    'deletePushSubscription deletes only the requested subscription',
+    () async {
+      late RequestOptions request;
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          request = options;
+          return ResponseBody.fromString('', 204);
+        });
+      final client = MaidCafeMetoerClient(
+        baseUrl: 'https://api.solian.app',
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+
+      await client.deletePushSubscription('sub-1');
+
+      expect(request.method, 'DELETE');
+      expect(request.uri.path, '/metoer/notifications/subscription/sub-1');
+      expect(request.headers['Authorization'], 'Bearer solar-token');
     },
   );
 

@@ -99,10 +99,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 /// Registers this device for FCM push of MaidCafe cloud notifications,
 /// mirroring Solian's `subscribePushNotification`
-/// (`lib/core/services/notify.universal.dart`). The Metoer subscription is
-/// identified by a persistent per-install device ID and carries the current
-/// device token, so only daemon notifications reach this device.
-/// Current device push-registration state shown in Solar Network settings.
+/// (`lib/core/services/notify.universal.dart`). The OAuth flow does not
+/// populate Metoer's session client ID, so this service supplies a persistent
+/// per-install device ID together with the current platform token.
 enum MaidCafePushRegistrationStatus {
   unknown,
   notSignedIn,
@@ -187,11 +186,11 @@ class MaidCafePushService {
     refreshStatus(signedIn: false);
   }
 
-  /// Registers this device once per session. Idempotent: concurrent calls
-  /// share one attempt and later calls are no-ops after a successful
-  /// registration. A missing token or failed attempt is retried by the next
-  /// call (e.g. a token refresh or the next sign-in).
-  Future<void> subscribe() {
+  /// Registers this device. A normal call is idempotent for the current
+  /// session; concurrent calls share one attempt. [force] repeats the
+  /// platform-token registration after a successful attempt so the settings
+  /// retry action can repair a stale server-side subscription.
+  Future<void> subscribe({bool force = false}) {
     if (!firebaseSupported()) {
       debugPrint(
         '[MaidCafePush] Skipping registration: Firebase is unsupported on '
@@ -208,7 +207,7 @@ class MaidCafePushService {
       onStatusChanged?.call(MaidCafePushRegistrationStatus.unavailable);
       return Future.value();
     }
-    if (_subscribed) {
+    if (_subscribed && !force) {
       debugPrint('[MaidCafePush] Already registered this session.');
       onStatusChanged?.call(MaidCafePushRegistrationStatus.registered);
       return Future.value();

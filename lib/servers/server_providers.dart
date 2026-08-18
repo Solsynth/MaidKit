@@ -158,6 +158,11 @@ final maidCafeMetoerNotificationsProvider =
 final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
   (ref) => ref.watch(maidCafeMetoerClientProvider).unreadCount(),
 );
+
+final maidCafeMetoerSubscriptionsProvider =
+    FutureProvider<List<MaidCafeMetoerPushSubscription>>((ref) {
+      return ref.watch(maidCafeMetoerClientProvider).listPushSubscriptions();
+    });
 final maidCafeNotificationsProvider =
     FutureProvider.family<List<MaidCafeNotification>, String>((
       ref,

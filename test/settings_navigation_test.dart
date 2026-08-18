@@ -29,6 +29,7 @@ void main() {
     WidgetTester tester, {
     Size size = const Size(1200, 800),
     bool settle = true,
+    bool withMaidCafeWorkspace = false,
   }) async {
     final router = AppRouter();
     addTearDown(router.dispose);
@@ -54,13 +55,54 @@ void main() {
             ),
             cloudUserProvider.overrideWith((ref) => Future.value(null)),
             cloudWorkspacesProvider.overrideWith(
-              (ref) => Future.value(const <CloudWorkspace>[]),
+              (ref) => Future.value(
+                withMaidCafeWorkspace
+                    ? const [
+                        CloudWorkspace(
+                          id: 'ws-1',
+                          slug: 'ws',
+                          name: 'Workspace',
+                        ),
+                      ]
+                    : const <CloudWorkspace>[],
+              ),
+            ),
+            maidCafeDaemonsProvider.overrideWith(
+              (ref, workspaceId) async => withMaidCafeWorkspace
+                  ? [
+                      MaidCafeDaemon(
+                        id: 'daemon-1',
+                        name: 'Backup host',
+                        enabled: true,
+                        lastSeenAt: DateTime.utc(2026, 8, 18),
+                        createdAt: DateTime.utc(2026, 8, 1),
+                        updatedAt: DateTime.utc(2026, 8, 18),
+                      ),
+                    ]
+                  : const <MaidCafeDaemon>[],
+            ),
+            maidCafeNotificationTopicsProvider.overrideWith(
+              (ref, workspaceId) async => withMaidCafeWorkspace
+                  ? const [
+                      MaidCafeNotificationTopic(
+                        topic: 'maidcafe.daemon.alert',
+                        description: 'Daemon alerts',
+                      ),
+                    ]
+                  : const <MaidCafeNotificationTopic>[],
+            ),
+            maidCafeNotificationPreferencesProvider.overrideWith(
+              (ref, workspaceId) async =>
+                  const <MaidCafeNotificationPreference>[],
             ),
             maidCafeMetoerNotificationsProvider.overrideWith(
               (ref) => Future.value(const <MaidCafeMetoerNotification>[]),
             ),
             maidCafeMetoerUnreadCountProvider.overrideWith(
               (ref) => Future.value(0),
+            ),
+            maidCafeMetoerSubscriptionsProvider.overrideWith(
+              (ref) => Future.value(const <MaidCafeMetoerPushSubscription>[]),
             ),
             maidCafeCredentialsProvider.overrideWith(
               (ref) => Future.value(const <MaidCafeCredential>[]),
@@ -196,6 +238,59 @@ void main() {
       expect(find.text('maidCafeSelfHostedPushHint'.tr()), findsOneWidget);
     },
   );
+  testWidgets('opens MaidCafe push subscription management from Settings', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+
+    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('settingsSolarNetwork'.tr()).first);
+    await tester.pumpAndSettle();
+
+    final subscriptionsTile = find.text('settingsPushSubscriptions'.tr());
+    expect(subscriptionsTile, findsOneWidget);
+    await tester.tap(subscriptionsTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text('settingsPushSubscriptionsEmpty'.tr()), findsOneWidget);
+  });
+  testWidgets('opens MaidCafe notification preferences in nested sheets', (
+    tester,
+  ) async {
+    await pumpApp(tester, withMaidCafeWorkspace: true);
+
+    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('settingsSolarNetwork'.tr()).first);
+    await tester.pumpAndSettle();
+
+    final preferencesTile = find.widgetWithText(
+      ListTile,
+      'maidCafeNotificationPreferences'.tr(),
+    );
+    expect(preferencesTile, findsOneWidget);
+    await tester.tap(preferencesTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeAllDaemons'.tr()), findsOneWidget);
+    expect(find.text('Backup host'), findsOneWidget);
+
+    await tester.tap(find.text('Backup host'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('maidCafeNotificationPreferenceApplyAll'.tr()),
+      findsOneWidget,
+    );
+    expect(find.text('Daemon alerts'), findsOneWidget);
+    await tester.tap(find.text('maidCafeNotificationPreferenceApplyAll'.tr()));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('maidCafeNotificationPreferenceApplyAllDescription'.tr()),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('hides MaidCafe Cloud from Assets on mobile', (
     WidgetTester tester,
   ) async {

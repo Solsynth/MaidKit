@@ -703,6 +703,34 @@ void main() {
       expect(history.samples[1].processCount, 0);
     },
   );
+  test(
+    'push notification accepts asynchronous empty acknowledgements',
+    () async {
+      for (final status in [200, 201, 202, 204, 300, 301, 302, 307, 399]) {
+        final dio = Dio()
+          ..httpClientAdapter = _Adapter(
+            (_) async => ResponseBody.fromString('', status),
+          );
+        final service = MaidCafeService(
+          baseUrl: 'https://mk.solsynth.dev',
+          cloudSync: CloudSyncService(vaultId: 'test'),
+          accessToken: () async => 'solar-token',
+          dio: dio,
+        );
+
+        expect(
+          await service.requestPushNotification(
+            'daemon-1',
+            kind: 'user.request',
+            title: 'Test',
+            body: 'Hello',
+          ),
+          isNull,
+        );
+      }
+    },
+  );
+
   test('notification preference levels and daemon scope use cloud API', () async {
     late RequestOptions request;
     final dio = Dio()
@@ -730,6 +758,25 @@ void main() {
     );
     expect((request.data as Map)['preference'], 1);
     expect((request.data as Map)['workspace_id'], 'ws-1');
+    await service.setAllDaemonNotificationPreferences(
+      workspaceId: 'ws-1',
+      daemonId: 'daemon-1',
+      preference: MaidCafeNotificationPreferenceLevel.reject,
+    );
+    expect(request.method, 'PUT');
+    expect(
+      request.uri.toString(),
+      'https://mk.solsynth.dev/api/daemons/daemon-1/notification-preferences',
+    );
+    expect((request.data as Map)['preference'], 2);
+    expect((request.data as Map)['workspace_id'], 'ws-1');
+
+    await service.resetAllDaemonNotificationPreferences(
+      workspaceId: 'ws-1',
+      daemonId: 'daemon-1',
+    );
+    expect(request.method, 'DELETE');
+    expect(request.uri.queryParameters['workspace_id'], 'ws-1');
 
     final parsed = MaidCafeNotificationPreference.fromJson({
       'id': 'pref-1',

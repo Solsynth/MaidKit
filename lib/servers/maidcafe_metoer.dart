@@ -72,6 +72,92 @@ class MaidCafeMetoerPage {
   final int total;
 }
 
+/// A push subscription registered for the current Solar account.
+///
+/// The device token is intentionally not exposed by the settings UI; it is a
+/// credential used only by the notification gateway.
+class MaidCafeMetoerPushSubscription {
+  const MaidCafeMetoerPushSubscription({
+    required this.id,
+    required this.accountId,
+    required this.deviceId,
+    required this.deviceToken,
+    required this.provider,
+    required this.isActivated,
+    required this.createdAt,
+    required this.updatedAt,
+    this.appId,
+    this.deviceName,
+    this.deletedAt,
+    this.countDelivered = 0,
+    this.lastUsedAt,
+  });
+
+  final String id;
+  final String accountId;
+  final String? appId;
+  final String deviceId;
+  final String deviceToken;
+  final String? deviceName;
+  final int provider;
+  final bool isActivated;
+  final int countDelivered;
+  final DateTime? deletedAt;
+  final DateTime? lastUsedAt;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  factory MaidCafeMetoerPushSubscription.fromJson(Map<String, dynamic> json) {
+    return MaidCafeMetoerPushSubscription(
+      id: _requiredString(json, 'id'),
+      accountId: _requiredString(json, 'account_id'),
+      appId: json['app_id']?.toString(),
+      // Older Metoer rows may not have a client-side device id. They are
+      // still valid subscriptions and must remain manageable.
+      deviceId: json['device_id']?.toString().trim() ?? '',
+      deviceToken: _requiredString(json, 'device_token'),
+      deviceName: _optionalString(json, 'device_name'),
+      provider: _number(json['provider']),
+      isActivated: json['is_activated'] == true,
+      countDelivered: _number(json['count_delivered']),
+      deletedAt: _optionalDate(json['deleted_at']),
+      lastUsedAt: _optionalDate(json['last_used_at']),
+      createdAt: _requiredDate(json, 'created_at'),
+      updatedAt: _requiredDate(json, 'updated_at'),
+    );
+  }
+}
+
+String _requiredString(Map<String, dynamic> json, String key) {
+  final value = json[key]?.toString().trim();
+  if (value == null || value.isEmpty) {
+    throw FormatException('Metoer response is missing "$key".');
+  }
+  return value;
+}
+
+String? _optionalString(Map<String, dynamic> json, String key) {
+  final value = json[key]?.toString().trim();
+  return value == null || value.isEmpty ? null : value;
+}
+
+DateTime _requiredDate(Map<String, dynamic> json, String key) {
+  final value = DateTime.tryParse(json[key]?.toString() ?? '');
+  if (value == null) {
+    throw FormatException('Metoer response has an invalid "$key".');
+  }
+  return value;
+}
+
+DateTime? _optionalDate(Object? value) {
+  if (value == null) return null;
+  return DateTime.tryParse(value.toString());
+}
+
+int _number(Object? value) {
+  return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+}
+
 class MaidCafeMetoerException implements Exception {
   const MaidCafeMetoerException(this.message, {this.statusCode, this.cause});
 
@@ -167,12 +253,49 @@ class MaidCafeMetoerClient {
     );
   }
 
+  /// Lists push subscriptions for MaidKit only. Keeping the app filter here
+  /// prevents this settings page from exposing subscriptions belonging to
+  /// another Solar app on the same account.
+  Future<List<MaidCafeMetoerPushSubscription>> listPushSubscriptions() async {
+    final response = await _request(
+      (token) => _dio.get<dynamic>(
+        '$baseUrl/metoer/notifications/subscription',
+        queryParameters: {'app': maidCafeMetoerAppId},
+        options: _options(token),
+      ),
+    );
+    final data = _responseJson(response);
+    if (data is! List) {
+      throw const MaidCafeMetoerException(
+        'Metoer returned an unexpected subscription list.',
+      );
+    }
+    return [
+      for (final entry in data)
+        if (entry is Map)
+          MaidCafeMetoerPushSubscription.fromJson(
+            Map<String, dynamic>.from(entry),
+          ),
+    ];
+  }
+
+  /// Removes a push subscription owned by the current Solar account.
+  Future<void> deletePushSubscription(String subscriptionId) async {
+    await _request(
+      (token) => _dio.delete<dynamic>(
+        '$baseUrl/metoer/notifications/subscription/$subscriptionId',
+        options: _options(token),
+      ),
+    );
+  }
+
   /// Registers (or updates) this device's push subscription for the MaidCafe
   /// app, mirroring Solian's `NotificationsApi.registerPushSubscription`
-  /// (`PUT /metoer/notifications/subscription`). [deviceId] is a persistent
-  /// per-install identifier used by Metoer to keep devices distinct;
-  /// [provider] is the `SnNotificationPushSubscription.Provider` wire value
-  /// (Apple APNs = 0, Google FCM = 1 — see
+  /// (`PUT /metoer/notifications/subscription`). [deviceId] is required for
+  /// OAuth sessions that do not provide a Solarpass client ID; Metoer uses it
+  /// to keep subscriptions distinct. [provider] is the
+  /// `SnNotificationPushSubscription.Provider` wire value (Apple APNs = 0,
+  /// Google FCM = 1 — see
   /// `SolarNetwork/Metoer/internal/model/notification.go`).
   Future<void> registerPushSubscription({
     required String deviceId,

@@ -765,7 +765,13 @@ class SettingsPage extends HookConsumerWidget {
                     _SettingsSection(
                       titleKey: 'settingsPushNotifications',
                       padding: EdgeInsets.zero,
-                      child: const _MaidCafePushStatusSection(),
+                      child: const _MaidCafePushSettingsSection(),
+                    ),
+                    const SizedBox(height: 24),
+                    _SettingsSection(
+                      titleKey: 'maidCafeNotifications',
+                      padding: EdgeInsets.zero,
+                      child: const _MaidCafeNotificationPreferencesSection(),
                     ),
                     const SizedBox(height: 24),
                     _SettingsSection(
@@ -2835,8 +2841,55 @@ class _SettingsCategoryTabsState extends State<_SettingsCategoryTabs>
   }
 }
 
+class _MaidCafePushSettingsSection extends ConsumerWidget {
+  const _MaidCafePushSettingsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(maidCafePushStatusProvider);
+    final canManage =
+        status != MaidCafePushRegistrationStatus.notSignedIn &&
+        status != MaidCafePushRegistrationStatus.unsupported &&
+        status != MaidCafePushRegistrationStatus.unavailable;
+    return Column(
+      children: [
+        _MaidCafePushStatusSection(position: _SettingsTilePosition.first),
+        ListTile(
+          contentPadding: _sectionTilePadding,
+          shape: RoundedRectangleBorder(
+            borderRadius: _sectionTileBorderRadius(_SettingsTilePosition.last),
+          ),
+          leading: const Icon(Symbols.cell_tower),
+          title: const Text('settingsPushSubscriptions').tr(),
+          subtitle: const Text('settingsPushSubscriptionsHint').tr(),
+          trailing: const Icon(Symbols.chevron_right),
+          enabled: canManage,
+          onTap: !canManage
+              ? null
+              : () async {
+                  final changed = await showModalBottomSheet<bool>(
+                    context: context,
+                    isScrollControlled: true,
+                    useSafeArea: true,
+                    builder: (_) => const _MaidCafePushSubscriptionsSheet(),
+                  );
+                  if (changed == true) {
+                    ref.invalidate(maidCafeMetoerSubscriptionsProvider);
+                    ref.invalidate(maidCafePushStatusProvider);
+                  }
+                },
+        ),
+      ],
+    );
+  }
+}
+
 class _MaidCafePushStatusSection extends ConsumerWidget {
-  const _MaidCafePushStatusSection();
+  const _MaidCafePushStatusSection({
+    this.position = _SettingsTilePosition.only,
+  });
+
+  final _SettingsTilePosition position;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2847,7 +2900,7 @@ class _MaidCafePushStatusSection extends ConsumerWidget {
         Symbols.notifications_active,
         colorScheme.primary,
         'settingsPushStatusRegistered',
-        false,
+        true,
       ),
       MaidCafePushRegistrationStatus.registering => (
         Symbols.sync,
@@ -2896,7 +2949,7 @@ class _MaidCafePushStatusSection extends ConsumerWidget {
     return ListTile(
       contentPadding: _sectionTilePadding,
       shape: RoundedRectangleBorder(
-        borderRadius: _sectionTileBorderRadius(_SettingsTilePosition.only),
+        borderRadius: _sectionTileBorderRadius(position),
       ),
       leading: Icon(icon, color: color),
       title: const Text('settingsPushRegistration').tr(),
@@ -2904,7 +2957,13 @@ class _MaidCafePushStatusSection extends ConsumerWidget {
       trailing: canRetry
           ? TextButton(
               onPressed: () => unawaited(
-                ref.read(maidCafePushProvider).subscribe().catchError((_) {}),
+                ref
+                    .read(maidCafePushProvider)
+                    .subscribe(
+                      force:
+                          status == MaidCafePushRegistrationStatus.registered,
+                    )
+                    .catchError((_) {}),
               ),
               child: const Text('settingsPushRetry').tr(),
             )
@@ -2912,6 +2971,765 @@ class _MaidCafePushStatusSection extends ConsumerWidget {
     );
   }
 }
+
+class _MaidCafePushSubscriptionsSheet extends ConsumerWidget {
+  const _MaidCafePushSubscriptionsSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final subscriptions = ref.watch(maidCafeMetoerSubscriptionsProvider);
+    return SheetScaffold(
+      titleText: 'settingsPushSubscriptions'.tr(),
+      heightFactor: 0.65,
+      child: subscriptions.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => _MaidCafeSheetError(
+          error: error,
+          onRetry: () => ref.invalidate(maidCafeMetoerSubscriptionsProvider),
+        ),
+        data: (items) => items.isEmpty
+            ? ListView(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                children: [const Text('settingsPushSubscriptionsEmpty').tr()],
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final subscription = items[index];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor: Theme.of(
+                        context,
+                      ).colorScheme.primaryContainer,
+                      child: Icon(
+                        _pushProviderIcon(subscription.provider),
+                        size: 18,
+                      ),
+                    ),
+                    title: Text(_pushProviderLabel(subscription.provider)),
+                    subtitle: Text(
+                      [
+                        if (subscription.deviceName?.isNotEmpty == true)
+                          subscription.deviceName!,
+                        if (subscription.deviceId.isNotEmpty)
+                          subscription.deviceId,
+                        subscription.isActivated
+                            ? 'settingsPushSubscriptionActive'.tr()
+                            : 'settingsPushSubscriptionInactive'.tr(),
+                      ].join('\n'),
+                    ),
+                    trailing: const Icon(Symbols.chevron_right),
+                    onTap: () async {
+                      final changed = await showModalBottomSheet<bool>(
+                        context: context,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        builder: (_) => _MaidCafePushSubscriptionDetailSheet(
+                          subscription: subscription,
+                        ),
+                      );
+                      if (changed == true) {
+                        ref.invalidate(maidCafeMetoerSubscriptionsProvider);
+                      }
+                    },
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class _MaidCafePushSubscriptionDetailSheet extends HookConsumerWidget {
+  const _MaidCafePushSubscriptionDetailSheet({required this.subscription});
+
+  final MaidCafeMetoerPushSubscription subscription;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isDeleting = useState(false);
+    final colors = Theme.of(context).colorScheme;
+
+    Future<void> deleteSubscription() async {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('settingsPushSubscriptionDelete').tr(),
+          content: const Text('settingsPushSubscriptionDeleteHint').tr(),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('commonCancel').tr(),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('settingsPushSubscriptionDelete').tr(),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      isDeleting.value = true;
+      try {
+        await ref
+            .read(maidCafeMetoerClientProvider)
+            .deletePushSubscription(subscription.id);
+        if (context.mounted) {
+          Navigator.pop(context, true);
+          showSnackBar('settingsSaved'.tr());
+        }
+      } catch (error) {
+        if (context.mounted) showSnackBar(error.toString());
+      } finally {
+        if (context.mounted) isDeleting.value = false;
+      }
+    }
+
+    return SheetScaffold(
+      titleText: 'settingsPushSubscriptionDetail'.tr(),
+      heightFactor: 0.5,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  _pushProviderIcon(subscription.provider),
+                  size: 32,
+                  color: colors.primary,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _pushProviderLabel(subscription.provider),
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                if (subscription.deviceName?.isNotEmpty == true) ...[
+                  const SizedBox(height: 4),
+                  Text(subscription.deviceName!),
+                ],
+                if (subscription.deviceId.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    subscription.deviceId,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: colors.outline),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      subscription.isActivated
+                          ? Symbols.check_circle
+                          : Symbols.cancel,
+                      size: 16,
+                      color: subscription.isActivated
+                          ? colors.primary
+                          : colors.outline,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      subscription.isActivated
+                          ? 'settingsPushSubscriptionActive'.tr()
+                          : 'settingsPushSubscriptionInactive'.tr(),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: Icon(Symbols.delete, color: colors.error),
+            title: Text(
+              'settingsPushSubscriptionDelete'.tr(),
+              style: TextStyle(color: colors.error),
+            ),
+            enabled: !isDeleting.value,
+            onTap: deleteSubscription,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MaidCafeSheetError extends StatelessWidget {
+  const _MaidCafeSheetError({required this.error, required this.onRetry});
+
+  final Object error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(error.toString(), textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: onRetry,
+              child: const Text('settingsPushRetry').tr(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _pushProviderLabel(int provider) => switch (provider) {
+  maidCafePushProviderApple => 'Apple Push (APNs)',
+  maidCafePushProviderFcm => 'Firebase Cloud Messaging',
+  _ => 'Push notification provider',
+};
+
+IconData _pushProviderIcon(int provider) => switch (provider) {
+  maidCafePushProviderApple => Symbols.phone_iphone,
+  maidCafePushProviderFcm => Symbols.android,
+  _ => Symbols.notifications,
+};
+
+class _MaidCafeNotificationPreferencesSection extends ConsumerWidget {
+  const _MaidCafeNotificationPreferencesSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final workspaceId =
+        ref.watch(maidCafeWorkspaceIdProvider) ??
+        ref.watch(cloudWorkspacesProvider).asData?.value.firstOrNull?.id;
+    final enabled = workspaceId != null;
+    return ListTile(
+      contentPadding: _sectionTilePadding,
+      shape: RoundedRectangleBorder(
+        borderRadius: _sectionTileBorderRadius(_SettingsTilePosition.only),
+      ),
+      leading: const Icon(Symbols.notifications),
+      title: const Text('maidCafeNotificationPreferences').tr(),
+      subtitle: Text(
+        enabled
+            ? 'maidCafeNotificationPreferencesDescription'.tr()
+            : 'maidCafeNoWorkspaces'.tr(),
+      ),
+      trailing: const Icon(Symbols.chevron_right),
+      enabled: enabled,
+      onTap: !enabled
+          ? null
+          : () async {
+              final changed = await showModalBottomSheet<bool>(
+                context: context,
+                isScrollControlled: true,
+                useSafeArea: true,
+                builder: (_) =>
+                    _MaidCafeNotificationScopesSheet(workspaceId: workspaceId),
+              );
+              if (changed == true && context.mounted) {
+                ref.invalidate(
+                  maidCafeNotificationPreferencesProvider(workspaceId),
+                );
+              }
+            },
+    );
+  }
+}
+
+class _MaidCafeNotificationScopesSheet extends ConsumerWidget {
+  const _MaidCafeNotificationScopesSheet({required this.workspaceId});
+
+  final String workspaceId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final topics = ref.watch(maidCafeNotificationTopicsProvider(workspaceId));
+    final daemons = ref.watch(maidCafeDaemonsProvider(workspaceId));
+    final preferences = ref.watch(
+      maidCafeNotificationPreferencesProvider(workspaceId),
+    );
+    final error = topics.error ?? daemons.error ?? preferences.error;
+    return SheetScaffold(
+      titleText: 'maidCafeNotificationPreferences'.tr(),
+      heightFactor: 0.8,
+      child: error != null
+          ? _MaidCafeSheetError(
+              error: error,
+              onRetry: () {
+                ref.invalidate(maidCafeNotificationTopicsProvider(workspaceId));
+                ref.invalidate(maidCafeDaemonsProvider(workspaceId));
+                ref.invalidate(
+                  maidCafeNotificationPreferencesProvider(workspaceId),
+                );
+              },
+            )
+          : !topics.hasValue || !daemons.hasValue || !preferences.hasValue
+          ? const Center(child: CircularProgressIndicator())
+          : _MaidCafeNotificationScopesList(
+              workspaceId: workspaceId,
+              topics: topics.requireValue,
+              daemons: daemons.requireValue,
+              preferences: preferences.requireValue,
+            ),
+    );
+  }
+}
+
+class _MaidCafeNotificationScopesList extends StatelessWidget {
+  const _MaidCafeNotificationScopesList({
+    required this.workspaceId,
+    required this.topics,
+    required this.daemons,
+    required this.preferences,
+  });
+
+  final String workspaceId;
+  final List<MaidCafeNotificationTopic> topics;
+  final List<MaidCafeDaemon> daemons;
+  final List<MaidCafeNotificationPreference> preferences;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+      children: [
+        Text(
+          'maidCafeNotificationPreferencesDescription'.tr(),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 16),
+        _scopeTile(
+          context,
+          title: 'maidCafeAllDaemons'.tr(),
+          subtitle: 'maidCafeNotificationPreferenceDefault'.tr(),
+          icon: Symbols.notifications,
+          daemonId: null,
+        ),
+        if (daemons.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          Text(
+            'maidCafeNotificationDaemonOverride'.tr(),
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+          for (final daemon in daemons)
+            _scopeTile(
+              context,
+              title: daemon.name,
+              subtitle: 'maidCafeNotificationDaemonOverride'.tr(),
+              icon: Symbols.dns,
+              daemonId: daemon.id,
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _scopeTile(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required String? daemonId,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        child: Icon(icon, size: 18),
+      ),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Symbols.chevron_right),
+      onTap: () async {
+        Navigator.pop(context);
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          builder: (_) => _MaidCafeNotificationTopicsSheet(
+            workspaceId: workspaceId,
+            scopeTitle: title,
+            daemonId: daemonId,
+            topics: topics,
+            preferences: preferences,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MaidCafeNotificationTopicsSheet extends StatelessWidget {
+  const _MaidCafeNotificationTopicsSheet({
+    required this.workspaceId,
+    required this.scopeTitle,
+    required this.daemonId,
+    required this.topics,
+    required this.preferences,
+  });
+
+  final String workspaceId;
+  final String scopeTitle;
+  final String? daemonId;
+  final List<MaidCafeNotificationTopic> topics;
+  final List<MaidCafeNotificationPreference> preferences;
+
+  @override
+  Widget build(BuildContext context) {
+    return SheetScaffold(
+      titleText: 'maidCafeNotificationPreferences'.tr(),
+      heightFactor: 0.8,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        children: [
+          Text(scopeTitle, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            daemonId == null
+                ? 'maidCafeNotificationPreferenceDefault'.tr()
+                : 'maidCafeNotificationDaemonOverride'.tr(),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (daemonId != null) ...[
+            FilledButton.tonalIcon(
+              onPressed: () => _openBatchPreferenceSheet(context),
+              icon: const Icon(Symbols.tune),
+              label: const Text('maidCafeNotificationPreferenceApplyAll').tr(),
+            ),
+            const SizedBox(height: 12),
+          ],
+          for (final topic in topics)
+            _topicTile(context, topic, _preferenceFor(topic.topic)),
+          if (topics.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32),
+              child: Text(
+                'maidCafeNoNotifications'.tr(),
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openBatchPreferenceSheet(BuildContext context) async {
+    Navigator.pop(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => _MaidCafeDaemonBatchPreferenceSheet(
+        workspaceId: workspaceId,
+        daemonId: daemonId!,
+        scopeTitle: scopeTitle,
+      ),
+    );
+  }
+
+  MaidCafeNotificationPreferenceLevel? _preferenceFor(String topic) {
+    for (final preference in preferences) {
+      if (preference.daemonId == daemonId && preference.topic == topic) {
+        return preference.preference;
+      }
+    }
+    return null;
+  }
+
+  Widget _topicTile(
+    BuildContext context,
+    MaidCafeNotificationTopic topic,
+    MaidCafeNotificationPreferenceLevel? current,
+  ) {
+    final effective = current ?? MaidCafeNotificationPreferenceLevel.normal;
+    final colors = Theme.of(context).colorScheme;
+    final color = _maidCafePreferenceColor(context, effective);
+    final label = daemonId == null || current != null
+        ? _maidCafePreferenceLabel(effective)
+        : 'maidCafeNotificationPreferenceDefault'.tr();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        backgroundColor: color.withValues(alpha: 0.14),
+        foregroundColor: color,
+        child: Icon(_maidCafePreferenceIcon(effective), size: 18),
+      ),
+      title: Text(topic.description),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            topic.topic,
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: colors.outline),
+          ),
+          const SizedBox(height: 2),
+          Text(label, style: TextStyle(color: color)),
+        ],
+      ),
+      trailing: const Icon(Symbols.chevron_right),
+      onTap: () async {
+        Navigator.pop(context);
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          builder: (_) => _MaidCafeNotificationPreferenceSheet(
+            workspaceId: workspaceId,
+            daemonId: daemonId,
+            topic: topic,
+            current: current,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MaidCafeDaemonBatchPreferenceSheet extends HookConsumerWidget {
+  const _MaidCafeDaemonBatchPreferenceSheet({
+    required this.workspaceId,
+    required this.daemonId,
+    required this.scopeTitle,
+  });
+
+  final String workspaceId;
+  final String daemonId;
+  final String scopeTitle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final busy = useState(false);
+
+    Future<void> save(MaidCafeNotificationPreferenceLevel? preference) async {
+      if (busy.value) return;
+      busy.value = true;
+      try {
+        final service = ref.read(maidCafeServiceProvider);
+        if (preference == null) {
+          await service.resetAllDaemonNotificationPreferences(
+            workspaceId: workspaceId,
+            daemonId: daemonId,
+          );
+        } else {
+          await service.setAllDaemonNotificationPreferences(
+            workspaceId: workspaceId,
+            daemonId: daemonId,
+            preference: preference,
+          );
+        }
+        ref.invalidate(maidCafeNotificationPreferencesProvider(workspaceId));
+        if (context.mounted) {
+          Navigator.pop(context, true);
+          showSnackBar('settingsSaved'.tr());
+        }
+      } catch (error) {
+        if (context.mounted) {
+          showSnackBar(
+            error is MaidCafeException ? error.message : error.toString(),
+          );
+        }
+      } finally {
+        busy.value = false;
+      }
+    }
+
+    return SheetScaffold(
+      titleText: 'maidCafeNotificationPreferences'.tr(),
+      heightFactor: 0.58,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        children: [
+          Text(scopeTitle, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            'maidCafeNotificationPreferenceApplyAllDescription'.tr(),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+          for (final preference in MaidCafeNotificationPreferenceLevel.values)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                _maidCafePreferenceIcon(preference),
+                color: _maidCafePreferenceColor(context, preference),
+              ),
+              title: Text(_maidCafePreferenceLabel(preference)),
+              subtitle: Text(_maidCafePreferenceDescription(preference)),
+              enabled: !busy.value,
+              onTap: () => save(preference),
+            ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Symbols.restore,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            title: const Text('maidCafeNotificationPreferenceResetAll').tr(),
+            enabled: !busy.value,
+            onTap: () => save(null),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MaidCafeNotificationPreferenceSheet extends HookConsumerWidget {
+  const _MaidCafeNotificationPreferenceSheet({
+    required this.workspaceId,
+    required this.daemonId,
+    required this.topic,
+    required this.current,
+  });
+
+  final String workspaceId;
+  final String? daemonId;
+  final MaidCafeNotificationTopic topic;
+  final MaidCafeNotificationPreferenceLevel? current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final busy = useState(false);
+    final selected = current ?? MaidCafeNotificationPreferenceLevel.normal;
+
+    Future<void> save(MaidCafeNotificationPreferenceLevel? preference) async {
+      if (busy.value) return;
+      busy.value = true;
+      try {
+        final service = ref.read(maidCafeServiceProvider);
+        if (preference == null) {
+          await service.resetNotificationPreference(
+            workspaceId: workspaceId,
+            daemonId: daemonId,
+            topic: topic.topic,
+          );
+        } else {
+          await service.setNotificationPreference(
+            workspaceId: workspaceId,
+            daemonId: daemonId,
+            topic: topic.topic,
+            preference: preference,
+          );
+        }
+        ref.invalidate(maidCafeNotificationPreferencesProvider(workspaceId));
+        if (context.mounted) {
+          Navigator.pop(context, true);
+          showSnackBar('settingsSaved'.tr());
+        }
+      } catch (error) {
+        if (context.mounted) {
+          showSnackBar(
+            error is MaidCafeException ? error.message : error.toString(),
+          );
+        }
+      } finally {
+        busy.value = false;
+      }
+    }
+
+    return SheetScaffold(
+      titleText: topic.description,
+      heightFactor: 0.52,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        children: [
+          for (final preference in MaidCafeNotificationPreferenceLevel.values)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                _maidCafePreferenceIcon(preference),
+                color: _maidCafePreferenceColor(context, preference),
+              ),
+              title: Text(_maidCafePreferenceLabel(preference)),
+              subtitle: Text(_maidCafePreferenceDescription(preference)),
+              trailing: selected == preference
+                  ? Icon(
+                      Symbols.check,
+                      color: Theme.of(context).colorScheme.primary,
+                    )
+                  : null,
+              enabled: !busy.value,
+              onTap: () => save(preference),
+            ),
+          if (current != null)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Symbols.restore,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              title: const Text('maidCafeNotificationPreferenceDefault').tr(),
+              enabled: !busy.value,
+              onTap: () => save(null),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _maidCafePreferenceLabel(
+  MaidCafeNotificationPreferenceLevel preference,
+) => switch (preference) {
+  MaidCafeNotificationPreferenceLevel.normal =>
+    'maidCafeNotificationPreferenceNormal'.tr(),
+  MaidCafeNotificationPreferenceLevel.silent =>
+    'maidCafeNotificationPreferenceSilent'.tr(),
+  MaidCafeNotificationPreferenceLevel.reject =>
+    'maidCafeNotificationPreferenceReject'.tr(),
+};
+
+String _maidCafePreferenceDescription(
+  MaidCafeNotificationPreferenceLevel preference,
+) => switch (preference) {
+  MaidCafeNotificationPreferenceLevel.normal =>
+    'maidCafeNotificationPreferenceNormalDesc'.tr(),
+  MaidCafeNotificationPreferenceLevel.silent =>
+    'maidCafeNotificationPreferenceSilentDesc'.tr(),
+  MaidCafeNotificationPreferenceLevel.reject =>
+    'maidCafeNotificationPreferenceRejectDesc'.tr(),
+};
+
+IconData _maidCafePreferenceIcon(
+  MaidCafeNotificationPreferenceLevel preference,
+) => switch (preference) {
+  MaidCafeNotificationPreferenceLevel.normal => Symbols.notifications,
+  MaidCafeNotificationPreferenceLevel.silent => Symbols.notifications_off,
+  MaidCafeNotificationPreferenceLevel.reject => Symbols.block,
+};
+
+Color _maidCafePreferenceColor(
+  BuildContext context,
+  MaidCafeNotificationPreferenceLevel preference,
+) => switch (preference) {
+  MaidCafeNotificationPreferenceLevel.normal => Theme.of(
+    context,
+  ).colorScheme.primary,
+  MaidCafeNotificationPreferenceLevel.silent => Theme.of(
+    context,
+  ).colorScheme.tertiary,
+  MaidCafeNotificationPreferenceLevel.reject => Theme.of(
+    context,
+  ).colorScheme.error,
+};
 
 class _SettingsSection extends StatelessWidget {
   const _SettingsSection({

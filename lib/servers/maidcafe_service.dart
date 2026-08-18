@@ -622,7 +622,13 @@ class MaidCafeService {
         options: _cloudOptions(token),
       ),
     );
-    if (response.statusCode == 204 || response.data == null) return null;
+    final data = response.data;
+    if (response.statusCode == 204 ||
+        data == null ||
+        data is String && data.trim().isEmpty ||
+        data is List<int> && data.isEmpty) {
+      return null;
+    }
     return MaidCafeNotification.fromJson(_responseMap(response));
   }
 
@@ -750,6 +756,43 @@ class MaidCafeService {
     }
   }
 
+  Future<void> setAllDaemonNotificationPreferences({
+    required String workspaceId,
+    required String daemonId,
+    required MaidCafeNotificationPreferenceLevel preference,
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.put<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/notification-preferences',
+        data: {'workspace_id': workspaceId, 'preference': preference.value},
+        options: _cloudOptions(token),
+      ),
+    );
+    if (response.statusCode != 204) {
+      throw _invalidResponse(
+        'MaidCafe did not confirm the batch preference update.',
+      );
+    }
+  }
+
+  Future<void> resetAllDaemonNotificationPreferences({
+    required String workspaceId,
+    required String daemonId,
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.delete<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/notification-preferences',
+        queryParameters: {'workspace_id': workspaceId},
+        options: _cloudOptions(token),
+      ),
+    );
+    if (response.statusCode != 204) {
+      throw _invalidResponse(
+        'MaidCafe did not confirm the batch preference reset.',
+      );
+    }
+  }
+
   Future<void> resetNotificationPreference({
     required String workspaceId,
     String? daemonId,
@@ -870,7 +913,6 @@ class MaidCafeService {
           responseType: ResponseType.bytes,
         ),
       ),
-      acceptStatuses: const {200},
     );
     final body = response.data;
     return MaidCafeWebhookResult(
@@ -1084,22 +1126,27 @@ class MaidCafeService {
     return _runRequest(() => request(token.trim()));
   }
 
-  Options _cloudOptions(String token) =>
-      Options(headers: {'Authorization': 'Bearer $token'});
+  Options _cloudOptions(String token) => Options(
+    headers: {'Authorization': 'Bearer $token'},
+    validateStatus: _acceptHttpStatus,
+  );
 
   Future<Response<T>> _localRequest<T>(
     Future<Response<T>> Function() request, {
-    Set<int> acceptStatuses = const {200},
+    Set<int>? acceptStatuses,
   }) => _runRequest(request, acceptStatuses: acceptStatuses);
 
   Future<Response<T>> _runRequest<T>(
     Future<Response<T>> Function() request, {
-    Set<int> acceptStatuses = const {200, 201, 204},
+    Set<int>? acceptStatuses,
   }) async {
     try {
       final response = await request();
       final status = response.statusCode ?? 0;
-      if (!acceptStatuses.contains(status)) {
+      final accepted = acceptStatuses == null
+          ? _acceptHttpStatus(status)
+          : acceptStatuses.contains(status);
+      if (!accepted) {
         throw _httpError(status, response.data);
       }
       return response;
@@ -1107,7 +1154,15 @@ class MaidCafeService {
       rethrow;
     } on DioException catch (error) {
       final status = error.response?.statusCode;
-      if (status != null) throw _httpError(status, error.response?.data);
+      if (status != null) {
+        final accepted = acceptStatuses == null
+            ? _acceptHttpStatus(status)
+            : acceptStatuses.contains(status);
+        if (accepted && error.response != null) {
+          return error.response! as Response<T>;
+        }
+        throw _httpError(status, error.response?.data);
+      }
       if (error.type == DioExceptionType.connectionTimeout ||
           error.type == DioExceptionType.sendTimeout ||
           error.type == DioExceptionType.receiveTimeout) {
@@ -1147,6 +1202,9 @@ class MaidCafeService {
 
   static String _pathPart(String value) => Uri.encodeComponent(value);
 }
+
+bool _acceptHttpStatus(int? status) =>
+    status != null && status >= 200 && status < 400;
 
 String normalizeMaidCafeUrl(String value) {
   final trimmed = value.trim();

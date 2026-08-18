@@ -576,6 +576,9 @@ List<String> parseMaidCafeTomlStringArray(String raw) {
 /// session goes through a short-lived SSH local TCP forward so requests only
 /// travel inside the encrypted SSH channel (or a Tailscale / MaidKit cloud
 /// relay path set up by the caller).
+bool _acceptHttpStatus(int? status) =>
+    status != null && status >= 200 && status < 400;
+
 class MaidCafeStreamSession {
   MaidCafeStreamSession._(
     this._manager,
@@ -691,6 +694,7 @@ class MaidCafeStreamSession {
       headers: apiSecret == null
           ? null
           : <String, String>{'Authorization': 'Bearer $apiSecret'},
+      validateStatus: _acceptHttpStatus,
       connectTimeout: const Duration(seconds: 3),
       sendTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 10),
@@ -927,8 +931,32 @@ class MaidCafeStreamSession {
 
   /// Pushes a test notification through the cloud to Ring/Metoer, verifying
   /// the whole daemon -> cloud -> notification-feed pipeline on demand.
+  ///
+  /// The notification endpoint is asynchronous and may acknowledge the
+  /// request with 201, 202, or 204 without a JSON body.
   Future<void> sendTestNotification() =>
-      _post('/api/v1/notifications/test').then((_) {});
+      _postWithoutResponse('/api/v1/notifications/test');
+
+  Future<void> _postWithoutResponse(String path) async {
+    _throwIfClosed();
+    try {
+      final response = await _dio.post<Object?>(
+        path,
+        options: Options(contentType: Headers.jsonContentType),
+      );
+      final status = response.statusCode ?? 500;
+      if (status < 200 || status >= 400) {
+        final data = response.data;
+        final message = data is Map ? data['error']?.toString() : null;
+        throw StateError(message ?? 'MaidCafe HTTP request failed ($status).');
+      }
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
+      throw StateError(_dioError(error));
+    }
+  }
 
   Future<Map<String, dynamic>> _get(String path) async {
     _throwIfClosed();
