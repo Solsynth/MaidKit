@@ -1672,6 +1672,8 @@
   "settingsVaultWorkspaceBound": "雲端工作區：{}",
   "settingsVaultWorkspaceUnbound": "無關聯雲端工作區",
   "settingsVaults": "保險庫",
+  "settingsUiScale": "介面縮放",
+  "settingsUiScaleHint": "調整 MaidKit 整個視窗及其內容的大小。",
   "settingsWindowOpacity": "視窗不透明度",
   "settingsWindowOpacityHint": "調整整個桌面視窗的透明度。",
   "settingsWorkspace": "工作區",

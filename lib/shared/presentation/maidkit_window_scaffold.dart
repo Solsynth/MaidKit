@@ -9,12 +9,62 @@ import 'package:flutter_localizations/flutter_localizations.dart'
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 
+import 'package:maid_kit/servers/app_theme_preferences.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
 import 'task_progress.dart';
 
 final desktopWindowProvider = Provider<bool>(
   (ref) => DesktopWindowFrame.isPlatformDesktop,
 );
+
+/// Scales the complete window subtree while keeping the native window bounds
+/// unchanged. The subtree receives a correspondingly smaller logical viewport,
+/// so responsive breakpoints and hit testing use the post-scale dimensions.
+class MaidKitUiScale extends StatelessWidget {
+  const MaidKitUiScale({super.key, required this.scale, required this.child});
+
+  final double scale;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedScale = scale
+        .clamp(AppThemePreferences.minUiScale, AppThemePreferences.maxUiScale)
+        .toDouble();
+    if (normalizedScale == 1) return child;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
+          return child;
+        }
+        final mediaQuery = flutter.MediaQuery.of(context);
+        final scaledMediaQuery = mediaQuery.copyWith(
+          size: flutter.Size(
+            constraints.maxWidth / normalizedScale,
+            constraints.maxHeight / normalizedScale,
+          ),
+          padding: mediaQuery.padding / normalizedScale,
+          viewPadding: mediaQuery.viewPadding / normalizedScale,
+          viewInsets: mediaQuery.viewInsets / normalizedScale,
+          systemGestureInsets: mediaQuery.systemGestureInsets / normalizedScale,
+        );
+        return flutter.FittedBox(
+          alignment: Alignment.topLeft,
+          fit: flutter.BoxFit.fill,
+          child: flutter.MediaQuery(
+            data: scaledMediaQuery,
+            child: SizedBox(
+              width: constraints.maxWidth / normalizedScale,
+              height: constraints.maxHeight / normalizedScale,
+              child: child,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class MaidKitWindowScaffold extends ConsumerWidget {
   const MaidKitWindowScaffold({super.key, required this.child, this.title});

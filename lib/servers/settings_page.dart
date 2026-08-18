@@ -36,6 +36,7 @@ import 'maidcafe_push.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
 import 'server_providers.dart';
+import 'app_theme_preferences.dart';
 import 'tailscale_settings_section.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
@@ -98,6 +99,7 @@ class SettingsPage extends HookConsumerWidget {
     final selectedCategoryId = useState(_settingsCategories.first.id);
     final themeMode = ref.watch(themeModeProvider);
     final appSeedColor = ref.watch(appSeedColorProvider);
+    final appUiScale = ref.watch(appUiScaleProvider);
     final biometricEnabled = ref.watch(biometricUnlockEnabledProvider);
     final adapterOptions = ref.watch(terminalSessionAdapterOptionsProvider);
     final selectedAdapter = ref.watch(selectedTerminalSessionAdapterProvider);
@@ -205,6 +207,27 @@ class SettingsPage extends HookConsumerWidget {
                                 ),
                                 const SizedBox(height: 16),
                                 const _LanguageSwitcher(),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'settingsUiScale',
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ).tr(),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'settingsUiScaleHint',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ).tr(),
+                                Slider(
+                                  value: appUiScale,
+                                  min: AppThemePreferences.minUiScale,
+                                  max: AppThemePreferences.maxUiScale,
+                                  divisions:
+                                      AppThemePreferences.uiScaleDivisions,
+                                  label: '${(appUiScale * 100).round()}%',
+                                  onChanged: (value) => ref
+                                      .read(appUiScaleProvider.notifier)
+                                      .setScale(value),
+                                ),
                               ],
                             ),
                           ),

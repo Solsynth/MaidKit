@@ -1719,6 +1719,8 @@
   "settingsVaultWorkspaceBound": "Cloud workspace: {}",
   "settingsVaultWorkspaceUnbound": "No cloud workspace linked",
   "settingsVaults": "Vaults",
+  "settingsUiScale": "UI scale",
+  "settingsUiScaleHint": "Adjust the size of the entire MaidKit window and its contents.",
   "settingsWindowOpacity": "Window opacity",
   "settingsWindowOpacityHint": "Adjust the transparency of the entire desktop window.",
   "settingsWorkspace": "Workspace",

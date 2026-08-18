@@ -1718,6 +1718,8 @@
   "settingsVaultWorkspaceBound": "云端工作区：{}",
   "settingsVaultWorkspaceUnbound": "无关联云端工作区",
   "settingsVaults": "保险库",
+  "settingsUiScale": "界面缩放",
+  "settingsUiScaleHint": "调整 MaidKit 整个窗口及其内容的大小。",
   "settingsWindowOpacity": "窗口不透明度",
   "settingsWindowOpacityHint": "调整整个桌面窗口的透明度。",
   "settingsWorkspace": "工作区",

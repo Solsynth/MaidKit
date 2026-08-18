@@ -857,6 +857,23 @@ class AppSeedColorNotifier extends Notifier<Color> {
   }
 }
 
+final appUiScaleProvider = NotifierProvider<AppUiScaleNotifier, double>(
+  AppUiScaleNotifier.new,
+);
+
+class AppUiScaleNotifier extends Notifier<double> {
+  @override
+  double build() => ref.read(appThemeSettingsProvider).uiScale;
+
+  Future<void> setScale(double scale) async {
+    final normalized = scale
+        .clamp(AppThemePreferences.minUiScale, AppThemePreferences.maxUiScale)
+        .toDouble();
+    await ref.read(appThemeSettingsProvider).saveUiScale(normalized);
+    state = normalized;
+  }
+}
+
 final dashboardCompactViewProvider =
     NotifierProvider<DashboardCompactViewNotifier, bool>(
       DashboardCompactViewNotifier.new,

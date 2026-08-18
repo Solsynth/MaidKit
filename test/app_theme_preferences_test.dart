@@ -52,4 +52,20 @@ void main() {
     expect(settings.compactDashboard, isFalse);
     expect(container.read(dashboardCompactViewProvider), isFalse);
   });
+  test('restores and saves the application UI scale', () async {
+    final settings = InMemoryAppThemeSettings(uiScale: 1.25);
+    final container = ProviderContainer(
+      overrides: [appThemeSettingsProvider.overrideWithValue(settings)],
+    );
+    addTearDown(container.dispose);
+
+    expect(container.read(appUiScaleProvider), 1.25);
+
+    await container
+        .read(appUiScaleProvider.notifier)
+        .setScale(AppThemePreferences.maxUiScale + 1);
+
+    expect(settings.uiScale, AppThemePreferences.maxUiScale);
+    expect(container.read(appUiScaleProvider), AppThemePreferences.maxUiScale);
+  });
 }

@@ -158,4 +158,54 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(SheetScaffold), findsNothing);
   });
+  testWidgets('scales the window subtree and its logical viewport', (
+    tester,
+  ) async {
+    tester.view
+      ..physicalSize = const flutter.Size(800, 400)
+      ..devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+
+    var tapped = false;
+    await tester.pumpWidget(
+      flutter.MaterialApp(
+        home: MaidKitUiScale(
+          scale: 2,
+          child: Builder(
+            builder: (context) => flutter.Container(
+              key: const flutter.ValueKey('scaled-child'),
+              color: flutter.Colors.red,
+              child: flutter.Stack(
+                children: [
+                  flutter.Align(
+                    alignment: flutter.Alignment.topCenter,
+                    child: flutter.Text(
+                      '${flutter.MediaQuery.sizeOf(context).width}',
+                    ),
+                  ),
+                  flutter.Positioned(
+                    top: 40,
+                    left: 60,
+                    child: flutter.ElevatedButton(
+                      onPressed: () => tapped = true,
+                      child: const flutter.Text('Tap'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('200.0'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const flutter.ValueKey('scaled-child'))),
+      const flutter.Size(200, 100),
+    );
+
+    await tester.tap(find.text('Tap'));
+    expect(tapped, isTrue);
+  });
 }
