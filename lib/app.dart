@@ -105,30 +105,35 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       routerConfig: appRouter.config(),
-      builder: (context, child) => Overlay(
-        key: maidKitOverlayKey,
-        initialEntries: [
-          OverlayEntry(
-            builder: (context) => MaidKitWindowScaffold(
-              title: 'title'.tr(),
-              // The gate needs a Navigator for standard Material controls
-              // such as a dropdown. The app router remains below it and is
-              // only exposed once the vault unlocks.
-              child: Navigator(
-                onGenerateRoute: (settings) => MaterialPageRoute<void>(
-                  settings: settings,
-                  builder: (context) => VaultGate(
-                    child: StartupConnectionBootstrap(
-                      child: TailscaleAutoConnect(
-                        child: child ?? const SizedBox.shrink(),
+      // This bridge is required while legacy Flutter widgets remain in the
+      // app and in third-party dependencies.
+      // ignore: deprecated_member_use
+      builder: (context, child) => MaterialUiCompatibilityBridge(
+        child: Overlay(
+          key: maidKitOverlayKey,
+          initialEntries: [
+            OverlayEntry(
+              builder: (context) => MaidKitWindowScaffold(
+                title: 'title'.tr(),
+                // The gate needs a Navigator for standard Material controls
+                // such as a dropdown. The app router remains below it and is
+                // only exposed once the vault unlocks.
+                child: Navigator(
+                  onGenerateRoute: (settings) => MaterialPageRoute<void>(
+                    settings: settings,
+                    builder: (context) => VaultGate(
+                      child: StartupConnectionBootstrap(
+                        child: TailscaleAutoConnect(
+                          child: child ?? const SizedBox.shrink(),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

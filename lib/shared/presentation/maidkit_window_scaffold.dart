@@ -43,7 +43,9 @@ class MaidKitWindowScaffold extends ConsumerWidget {
           delegates: const [
             // Both packages define distinct MaterialLocalizations types.
             ...GlobalMaterialLocalizations.delegates,
+            flutter_localizations.GlobalCupertinoLocalizations.delegate,
             flutter_localizations.GlobalMaterialLocalizations.delegate,
+            flutter_localizations.GlobalWidgetsLocalizations.delegate,
           ],
           child: flutter.Material(
             // Keep the frame's existing surface painting while providing the
