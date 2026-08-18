@@ -1,3 +1,5 @@
+import 'package:window_manager/window_manager.dart';
+
 import 'package:flutter/material.dart' as flutter;
 import 'package:maid_kit/theme.dart';
 import 'package:material_ui/material_ui.dart';
@@ -52,6 +54,10 @@ class MaidKitWindowScaffold extends ConsumerWidget {
             // Flutter SDK Material ancestor required by legacy controls.
             type: flutter.MaterialType.transparency,
             child: DesktopWindowFrame(
+              // Closing the custom title bar must terminate the native window.
+              // Hiding it leaves the Dart isolate (and local MCP server) alive,
+              // so every relaunch creates another background MaidKit process.
+              onClose: isDesktop ? windowManager.destroy : null,
               isDesktopPlatform: isDesktop,
               title: Text(
                 title ?? 'MaidKit',
