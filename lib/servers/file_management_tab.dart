@@ -26,6 +26,8 @@ import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
+import 'local_file_system.dart';
+import 'remote_file_system.dart';
 import 'transfer_conflict_preferences.dart';
 
 enum _FileSide { local, remote }
@@ -124,12 +126,14 @@ class _ClipboardEntry {
     required this.name,
     required this.isDirectory,
     this.serverId,
+    this.isSymbolicLink = false,
   });
 
   final _FileSide side;
   final String path;
   final String name;
   final bool isDirectory;
+  final bool isSymbolicLink;
 
   /// Set when this entry belongs to the optional second remote pane.
   final int? serverId;
@@ -185,8 +189,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   int? _leftServerId;
   var _leftRemotePath = '.';
   List<SftpName> _leftRemoteEntries = const [];
+  final _leftRemoteSymlinkPaths = <String>{};
   var _loadingLeftRemote = false;
   String? _leftRemoteError;
+  final _remoteSymlinkPaths = <String>{};
   late final TextEditingController _leftRemotePathController;
   late final FocusNode _leftRemotePathFocusNode;
   late final TextEditingController _remotePathController;
@@ -339,6 +345,35 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     return next;
   }
 
+  Future<List<SftpName>> _resolveRemoteEntries(
+    SftpClient sftp,
+    String directory,
+    List<SftpName> entries,
+    Set<String> symlinkPaths,
+  ) async {
+    return Future.wait(
+      entries.map((entry) async {
+        if (!entry.attr.isSymbolicLink) return entry;
+        final path = _joinRemotePath(directory, entry.filename);
+        symlinkPaths.add(path);
+        try {
+          final targetAttrs = await sftp.stat(path);
+          if (!isRemoteDirectoryEntry(entry.attr, followed: targetAttrs) &&
+              !isRemoteFileEntry(entry.attr, followed: targetAttrs)) {
+            return entry;
+          }
+          return SftpName(
+            filename: entry.filename,
+            longname: entry.longname,
+            attr: targetAttrs,
+          );
+        } catch (_) {
+          return entry;
+        }
+      }),
+    );
+  }
+
   Future<void> _refreshLeftRemote() async {
     if (!_leftIsRemote) return;
     setState(() {
@@ -348,9 +383,16 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     try {
       final sftp = await _leftSftp();
       final absolutePath = await sftp.absolute(_leftRemotePath);
-      final entries = await sftp.listdir(absolutePath);
-      entries.removeWhere(
+      final listedEntries = await sftp.listdir(absolutePath);
+      listedEntries.removeWhere(
         (entry) => entry.filename == '.' || entry.filename == '..',
+      );
+      final symlinkPaths = <String>{};
+      final entries = await _resolveRemoteEntries(
+        sftp,
+        absolutePath,
+        listedEntries,
+        symlinkPaths,
       );
       entries.sort((a, b) {
         final directoryOrder =
@@ -363,6 +405,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         setState(() {
           _leftRemotePath = absolutePath;
           _leftRemoteEntries = entries;
+          _leftRemoteSymlinkPaths
+            ..clear()
+            ..addAll(symlinkPaths);
           _selectedLocalPaths = _selectedLocalPaths
               .where(
                 (path) => entries.any(
@@ -410,6 +455,8 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       _releaseLeftSftp();
       setState(() {
         _leftServerId = null;
+        _leftRemoteEntries = const [];
+        _leftRemoteSymlinkPaths.clear();
         _selectedLocalPaths = {};
       });
       await _refreshLocal();
@@ -424,6 +471,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       _leftRemotePath = '.';
       _leftRemotePathController.text = _leftRemotePath;
       _leftRemoteEntries = const [];
+      _leftRemoteSymlinkPaths.clear();
       _selectedLocalPaths = {};
       _localAnchorIndex = null;
     });
@@ -458,10 +506,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       _localError = null;
     });
     try {
-      final entries = await _localDirectory.list().toList();
+      final entries = await _localDirectory.list(followLinks: false).toList();
       entries.sort((a, b) {
         final directoryOrder =
-            ((b is Directory) ? 1 : 0) - ((a is Directory) ? 1 : 0);
+            (isLocalDirectory(b) ? 1 : 0) - (isLocalDirectory(a) ? 1 : 0);
         return directoryOrder != 0
             ? directoryOrder
             : _entityName(
@@ -491,6 +539,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       setState(() {
         _loadingRemote = false;
         _remoteError = null;
+        _remoteSymlinkPaths.clear();
       });
       return;
     }
@@ -501,9 +550,16 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     try {
       final sftp = await _sftp();
       final absolutePath = await sftp.absolute(_remotePath);
-      final entries = await sftp.listdir(absolutePath);
-      entries.removeWhere(
+      final listedEntries = await sftp.listdir(absolutePath);
+      listedEntries.removeWhere(
         (entry) => entry.filename == '.' || entry.filename == '..',
+      );
+      final symlinkPaths = <String>{};
+      final entries = await _resolveRemoteEntries(
+        sftp,
+        absolutePath,
+        listedEntries,
+        symlinkPaths,
       );
       entries.sort((a, b) {
         final directoryOrder =
@@ -520,6 +576,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         setState(() {
           _remotePath = absolutePath;
           _remoteEntries = entries;
+          _remoteSymlinkPaths
+            ..clear()
+            ..addAll(symlinkPaths);
           _selectedRemotePaths = _selectedRemotePaths
               .where(paths.contains)
               .toSet();
@@ -551,9 +610,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<void> _openLocal(FileSystemEntity entry) async {
-    if (entry is! Directory) return;
+    if (!isLocalDirectory(entry)) return;
     setState(() {
-      _localDirectory = entry;
+      _localDirectory = Directory(entry.path);
       _selectedLocalPaths = {};
       _localAnchorIndex = null;
       _focusedSide = _FileSide.local;
@@ -972,6 +1031,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                 path: _joinRemotePath(_leftRemotePath, entry.filename),
                 name: entry.filename,
                 isDirectory: entry.attr.isDirectory,
+                isSymbolicLink: _leftRemoteSymlinkPaths.contains(
+                  _joinRemotePath(_leftRemotePath, entry.filename),
+                ),
               ),
         ];
       }
@@ -982,7 +1044,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
               side: _FileSide.local,
               path: entity.path,
               name: _entityName(entity),
-              isDirectory: entity is Directory,
+              isDirectory: isLocalDirectory(entity),
             ),
       ];
     }
@@ -996,6 +1058,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
             path: _joinRemotePath(_remotePath, entry.filename),
             name: entry.filename,
             isDirectory: entry.attr.isDirectory,
+            isSymbolicLink: _remoteSymlinkPaths.contains(
+              _joinRemotePath(_remotePath, entry.filename),
+            ),
           ),
     ];
   }
@@ -1005,7 +1070,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         side: _FileSide.local,
         path: entity.path,
         name: _entityName(entity),
-        isDirectory: entity is Directory,
+        isDirectory: isLocalDirectory(entity),
       );
 
   _ClipboardEntry _clipboardEntryForLeftRemote(SftpName entry) =>
@@ -1015,6 +1080,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         path: _joinRemotePath(_leftRemotePath, entry.filename),
         name: entry.filename,
         isDirectory: entry.attr.isDirectory,
+        isSymbolicLink: _leftRemoteSymlinkPaths.contains(
+          _joinRemotePath(_leftRemotePath, entry.filename),
+        ),
       );
 
   _ClipboardEntry _clipboardEntryForRemote(SftpName entry) => _ClipboardEntry(
@@ -1022,6 +1090,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     path: _joinRemotePath(_remotePath, entry.filename),
     name: entry.filename,
     isDirectory: entry.attr.isDirectory,
+    isSymbolicLink: _remoteSymlinkPaths.contains(
+      _joinRemotePath(_remotePath, entry.filename),
+    ),
   );
 
   _FileDragData _dragDataForLocal(FileSystemEntity entry) {
@@ -1537,7 +1608,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     required int serverId,
   }) async {
     final sftp = await _sftpForServer(serverId);
-    if (entry.isDirectory) {
+    if (entry.isSymbolicLink) {
+      await sftp.remove(entry.path);
+    } else if (entry.isDirectory) {
       await _deleteRemoteDirectory(sftp, entry.path);
     } else {
       await sftp.remove(entry.path);
@@ -1847,7 +1920,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         if (entry.side == _FileSide.local) {
           if (entry.serverId != null) {
             final sftp = await _sftpForServer(entry.serverId!);
-            if (entry.isDirectory) {
+            if (entry.isSymbolicLink) {
+              await sftp.remove(entry.path);
+            } else if (entry.isDirectory) {
               await _deleteRemoteDirectory(sftp, entry.path);
             } else {
               await sftp.remove(entry.path);
@@ -1863,7 +1938,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           }
         } else {
           final sftp = await _sftp();
-          if (entry.isDirectory) {
+          if (entry.isSymbolicLink) {
+            await sftp.remove(entry.path);
+          } else if (entry.isDirectory) {
             await _deleteRemoteDirectory(sftp, entry.path);
           } else {
             await sftp.remove(entry.path);
@@ -1930,8 +2007,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
-    if (entry is! File) return;
-    final totalBytes = await entry.length();
+    if (!isLocalFile(entry)) return;
+    final file = File(entry.path);
+    final totalBytes = await file.length();
     await _runTransfer(
       title: 'fileManagerUploading'.tr(args: [_entityName(entry)]),
       totalBytes: totalBytes,
@@ -1953,7 +2031,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         );
         try {
           var transferredBytes = 0;
-          await for (final chunk in entry.openRead().map(Uint8List.fromList)) {
+          await for (final chunk in file.openRead().map(Uint8List.fromList)) {
             await controller.waitIfPaused();
             await remoteFile.writeBytes(chunk, offset: transferredBytes);
             transferredBytes += chunk.length;
@@ -2023,23 +2101,29 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     _TransferController? controller,
     void Function(int)? reportProgress,
     int transferredBytes = 0,
+    Set<String>? visitedDirectories,
   }) async {
     await controller?.waitIfPaused();
+    final visited = visitedDirectories ?? <String>{};
+    final canonicalPath = await local.resolveSymbolicLinks();
+    if (!visited.add(canonicalPath)) return transferredBytes;
     await sftp.mkdir(remotePath);
     await for (final entity in local.list(followLinks: false)) {
       await controller?.waitIfPaused();
       final name = _entityName(entity);
       final childRemote = _joinRemotePath(remotePath, name);
-      if (entity is Directory) {
+      if (isLocalDirectory(entity)) {
         transferredBytes = await _uploadLocalDirectory(
           sftp,
-          entity,
+          Directory(entity.path),
           childRemote,
           controller: controller,
           reportProgress: reportProgress,
           transferredBytes: transferredBytes,
+          visitedDirectories: visited,
         );
-      } else if (entity is File) {
+      } else if (isLocalFile(entity)) {
+        final file = File(entity.path);
         final remoteFile = await sftp.open(
           childRemote,
           mode:
@@ -2049,7 +2133,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         );
         try {
           var fileOffset = 0;
-          await for (final chunk in entity.openRead().map(Uint8List.fromList)) {
+          await for (final chunk in file.openRead().map(Uint8List.fromList)) {
             await controller?.waitIfPaused();
             await remoteFile.writeBytes(chunk, offset: fileOffset);
             fileOffset += chunk.length;
@@ -2366,16 +2450,24 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
   Future<void> _copyLocalDirectory(
     Directory source,
-    Directory destination,
-  ) async {
+    Directory destination, {
+    Set<String>? visitedDirectories,
+  }) async {
+    final visited = visitedDirectories ?? <String>{};
+    final canonicalPath = await source.resolveSymbolicLinks();
+    if (!visited.add(canonicalPath)) return;
     await destination.create(recursive: true);
     await for (final entity in source.list(followLinks: false)) {
       final name = _entityName(entity);
       final child = destination.uri.resolve(name).toFilePath();
-      if (entity is Directory) {
-        await _copyLocalDirectory(entity, Directory(child));
-      } else if (entity is File) {
-        await entity.copy(child);
+      if (isLocalDirectory(entity)) {
+        await _copyLocalDirectory(
+          Directory(entity.path),
+          Directory(child),
+          visitedDirectories: visited,
+        );
+      } else if (isLocalFile(entity)) {
+        await File(entity.path).copy(child);
       }
     }
   }
@@ -2537,8 +2629,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   /// replace it. No-op when nothing exists at [path].
   Future<void> _removeRemoteEntry(SftpClient sftp, String path) async {
     try {
-      final attrs = await sftp.stat(path);
-      if (attrs.isDirectory) {
+      final linkAttrs = await sftp.stat(path, followLink: false);
+      if (linkAttrs.isSymbolicLink) {
+        await sftp.remove(path);
+        return;
+      }
+      if (linkAttrs.isDirectory) {
         await _deleteRemoteDirectory(sftp, path);
       } else {
         await sftp.remove(path);
@@ -2825,7 +2921,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         ? [_clipboardEntryForLocal(entry)]
         : selected;
     final onlyThis = entries.length == 1 && entries.first.path == entry.path;
-    final isDirectory = entry is Directory;
+    final isDirectory = isLocalDirectory(entry);
     final busy = _workingPath != null;
     final canPaste = _canPasteInto(_FileSide.local);
     final transferLabel = entries.length == 1
@@ -2838,10 +2934,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
             title: 'fileManagerOpen'.tr(),
             callback: () => _openLocal(entry),
           ),
-        if (onlyThis && entry is File)
+        if (onlyThis && isLocalFile(entry))
           MenuAction(
             title: 'fileManagerEdit'.tr(),
-            callback: () => _editLocal(entry),
+            callback: () => _editLocal(File(entry.path)),
           ),
         MenuAction(
           title: transferLabel,
@@ -3376,7 +3472,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       final entity = _localEntries
           .where((item) => item.path == entry.path)
           .firstOrNull;
-      if (entity is File) unawaited(_editLocal(entity));
+      if (entity != null && isLocalFile(entity)) {
+        unawaited(_editLocal(File(entity.path)));
+      }
     } else if (side == _FileSide.remote) {
       final sftpName = _remoteEntries
           .where(
@@ -3626,10 +3724,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                   range: _isRangeModifierPressed,
                 );
               },
-              onOpen: _openLocal,
               onEdit: (entry) {
-                if (entry is File) unawaited(_editLocal(entry));
+                if (isLocalFile(entry)) {
+                  unawaited(_editLocal(File(entry.path)));
+                }
               },
+              onOpen: _openLocal,
               dragDataFor: _dragDataForLocal,
               onContextPrepare: _ensureLocalContextSelection,
               menuProvider: _localEntryMenu,
@@ -4320,7 +4420,7 @@ class _LocalFileList extends StatelessWidget {
       itemCount: entries.length,
       itemBuilder: (context, index) {
         final entry = entries[index];
-        final isDirectory = entry is Directory;
+        final isDirectory = isLocalDirectory(entry);
         final name = _entityName(entry);
         final selected = selectedPaths.contains(entry.path);
         final dimmed = cutPaths.contains(entry.path);
