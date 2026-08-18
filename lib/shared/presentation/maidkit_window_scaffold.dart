@@ -31,7 +31,6 @@ class MaidKitUiScale extends StatelessWidget {
     final normalizedScale = scale
         .clamp(AppThemePreferences.minUiScale, AppThemePreferences.maxUiScale)
         .toDouble();
-    if (normalizedScale == 1) return child;
 
     return LayoutBuilder(
       builder: (context, constraints) {

@@ -1627,6 +1627,7 @@
   "settingsMcpReviewModeHint": "本地 MCP 服务器上的操作在执行前如何获得批准。与应用内置智能体的运行策略相互独立。",
   "settingsSecurity": "安全",
   "settingsStorage": "存储",
+  "settingsSaved": "设置已保存",
   "settingsSolarNetwork": "Solar Network",
   "settingsSolarNetworkAi": "Solar Network AI",
   "settingsTailscale": "Tailscale",

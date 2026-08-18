@@ -1628,6 +1628,7 @@
   "settingsMcpReviewModeHint": "How actions requested through the local MCP server are approved before they run. Independent of the in-app agent's run policy.",
   "settingsSecurity": "Security",
   "settingsStorage": "Storage",
+  "settingsSaved": "Settings saved",
   "settingsSolarNetwork": "Solar Network",
   "settingsSolarNetworkAi": "Solar Network AI",
   "settingsTailscale": "Tailscale",

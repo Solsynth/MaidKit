@@ -83,7 +83,6 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     final appRouter = ref.watch(appRouterProvider);
     final themeMode = ref.watch(themeModeProvider);
     final appSeedColor = ref.watch(appSeedColorProvider);
-    final appUiScale = ref.watch(appUiScaleProvider);
     ref.watch(serverMetricsRefreshSchedulerProvider);
     // Starts the local MCP server when the user enabled it, so other agents
     // can connect right after the app launches.
@@ -108,34 +107,36 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
       routerConfig: appRouter.config(),
       // This bridge is required while legacy Flutter widgets remain in the
       // app and in third-party dependencies.
-      builder: (context, child) => MaidKitUiScale(
-        scale: appUiScale,
-        // ignore: deprecated_member_use
-        child: MaterialUiCompatibilityBridge(
-          child: Overlay(
-            key: maidKitOverlayKey,
-            initialEntries: [
-              OverlayEntry(
-                builder: (context) => MaidKitWindowScaffold(
-                  title: 'title'.tr(),
-                  // The gate needs a Navigator for standard Material controls
-                  // such as a dropdown. The app router remains below it and is
-                  // only exposed once the vault unlocks.
-                  child: Navigator(
-                    onGenerateRoute: (settings) => MaterialPageRoute<void>(
-                      settings: settings,
-                      builder: (context) => VaultGate(
-                        child: StartupConnectionBootstrap(
-                          child: TailscaleAutoConnect(
-                            child: child ?? const SizedBox.shrink(),
+      // ignore: deprecated_member_use
+      builder: (context, child) => MaterialUiCompatibilityBridge(
+        child: Consumer(
+          builder: (context, ref, _) => MaidKitUiScale(
+            scale: ref.watch(appUiScaleProvider),
+            child: Overlay(
+              key: maidKitOverlayKey,
+              initialEntries: [
+                OverlayEntry(
+                  builder: (context) => MaidKitWindowScaffold(
+                    title: 'title'.tr(),
+                    // The gate needs a Navigator for standard Material controls
+                    // such as a dropdown. The app router remains below it and
+                    // is only exposed once the vault unlocks.
+                    child: Navigator(
+                      onGenerateRoute: (settings) => MaterialPageRoute<void>(
+                        settings: settings,
+                        builder: (context) => VaultGate(
+                          child: StartupConnectionBootstrap(
+                            child: TailscaleAutoConnect(
+                              child: child ?? const SizedBox.shrink(),
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

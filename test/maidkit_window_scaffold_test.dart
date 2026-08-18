@@ -208,4 +208,36 @@ void main() {
     await tester.tap(find.text('Tap'));
     expect(tapped, isTrue);
   });
+  testWidgets('retains child state when the scale changes', (tester) async {
+    var scale = 1.0;
+    late void Function(VoidCallback) rebuild;
+
+    await tester.pumpWidget(
+      flutter.MaterialApp(
+        home: flutter.Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              rebuild = setState;
+              return MaidKitUiScale(
+                scale: scale,
+                child: const flutter.TextField(
+                  key: flutter.ValueKey('persistent-field'),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(const flutter.ValueKey('persistent-field')),
+      'persisted',
+    );
+    scale = 1.5;
+    rebuild(() {});
+    await tester.pumpAndSettle();
+
+    expect(find.text('persisted'), findsOneWidget);
+  });
 }
