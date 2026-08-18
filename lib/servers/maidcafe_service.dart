@@ -286,6 +286,36 @@ class MaidCafeCloudAction {
       );
 }
 
+/// One uploaded container log line returned by the cloud. Upload is daemon
+/// opt-in; workspace members can query retained rows through [listLogs].
+class MaidCafeCloudLog {
+  const MaidCafeCloudLog({
+    required this.id,
+    required this.daemonId,
+    required this.containerId,
+    required this.timestamp,
+    required this.receivedAt,
+    required this.line,
+  });
+
+  final String id;
+  final String daemonId;
+  final String containerId;
+  final DateTime timestamp;
+  final DateTime receivedAt;
+  final String line;
+
+  factory MaidCafeCloudLog.fromJson(Map<String, dynamic> json) =>
+      MaidCafeCloudLog(
+        id: _requiredString(json, 'id'),
+        daemonId: _requiredString(json, 'daemon_id'),
+        containerId: _requiredString(json, 'container_id'),
+        timestamp: _requiredDate(json, 'timestamp'),
+        receivedAt: _requiredDate(json, 'received_at'),
+        line: json['line']?.toString() ?? '',
+      );
+}
+
 /// A user-level API credential for CI/CD: a labeled token scoped to a
 /// subset of daemons, hosts and action names. The plain token is returned
 /// once at creation ([token] is empty on list responses).
@@ -1007,6 +1037,38 @@ class MaidCafeService {
     }
     return data
         .map((item) => MaidCafeCredential.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+
+  /// Lists retained container log lines uploaded by a daemon. The cloud
+  /// endpoint is workspace-member authenticated; [before] is an optional
+  /// timestamp cursor and [containerId] narrows the result.
+  Future<List<MaidCafeCloudLog>> listLogs(
+    String daemonId, {
+    String? containerId,
+    int limit = 100,
+    DateTime? before,
+  }) async {
+    final query = <String, String>{'limit': '$limit'};
+    if (containerId != null && containerId.trim().isNotEmpty) {
+      query['container_id'] = containerId.trim();
+    }
+    if (before != null) {
+      query['before'] = before.toUtc().toIso8601String();
+    }
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/logs',
+        queryParameters: query,
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _map(_responseJson(response))['logs'];
+    if (data is! List) {
+      throw _invalidResponse('Expected a log list.');
+    }
+    return data
+        .map((item) => MaidCafeCloudLog.fromJson(_map(item)))
         .toList(growable: false);
   }
 
