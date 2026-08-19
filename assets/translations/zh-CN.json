@@ -1057,6 +1057,8 @@
   "maidCafeMaxConcurrentRuns": "最大并发运行数",
   "maidCafeMemoryAlarm": "内存告警",
   "maidCafeMetricsInterval": "指标间隔",
+  "maidCafeLogsInterval": "容器日志间隔",
+  "maidCafeLogsIntervalHint": "设为 0 以禁用容器日志跟踪",
   "maidCafeMetricsSecret": "指标密钥",
   "maidCafeNeverSeen": "从未连接",
   "maidCafeNoActions": "还没有操作。添加脚本并保存后即可在本页运行。",

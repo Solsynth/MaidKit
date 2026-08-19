@@ -204,8 +204,9 @@ void main() {
       daemonId: 'maidkit-1',
       cloudUrl: 'https://mk.solsynth.dev',
       cloudSecret: 'cloud-secret',
-      transport: 'http',
       apiSecret: 'new-secret',
+      transport: 'http',
+      logsInterval: '0',
       actions: const [
         MaidCafeActionDefinition(name: 'backup', script: 'echo hi'),
       ],
@@ -223,10 +224,11 @@ void main() {
     // The webhook block and comments survive the patch verbatim.
     expect(patched, contains('[[daemon.webhooks]]'));
     expect(patched, contains('name = "ci-deploy"'));
-    expect(patched, contains('secret = "webhook-secret"'));
     expect(patched, contains('command = "/usr/local/bin/deploy"'));
+    expect(patched, contains('secret = "webhook-secret"'));
     expect(patched, contains('# MaidKit-managed daemon'));
     expect(patched, contains('maxBodyBytes = 65536'));
+    expect(patched, contains('logsInterval = "0"'));
     // Legacy inline actions are migrated out; the fragment is deployed.
     expect(patched, isNot(contains('[[daemon.actions]]')));
     final fragment = decodeFragmentFromScript(script, 'backup');

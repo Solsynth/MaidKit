@@ -1028,6 +1028,8 @@
   "maidCafeMaxConcurrentRuns": "最大並行執行數",
   "maidCafeMemoryAlarm": "記憶體警報",
   "maidCafeMetricsInterval": "指標間隔",
+  "maidCafeLogsInterval": "容器日誌間隔",
+  "maidCafeLogsIntervalHint": "設為 0 以停用容器日誌追蹤",
   "maidCafeMetricsSecret": "指標密鑰",
   "maidCafeNeverSeen": "從未連線",
   "maidCafeNoActions": "尚無操作。新增腳本並儲存後即可在此頁執行。",

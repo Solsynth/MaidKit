@@ -137,6 +137,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   late final TextEditingController _cloudSecretController;
   late final TextEditingController _metricsSecretController;
   late final TextEditingController _metricsIntervalController;
+  late final TextEditingController _logsIntervalController;
   late final TextEditingController _requestTimeoutController;
   late final TextEditingController _scriptTimeoutController;
   late final TextEditingController _maxBodyBytesController;
@@ -203,6 +204,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _cloudSecretController = TextEditingController();
     _metricsSecretController = TextEditingController();
     _metricsIntervalController = TextEditingController(text: '1m');
+    _logsIntervalController = TextEditingController(text: '30s');
     _requestTimeoutController = TextEditingController(text: '10s');
     _scriptTimeoutController = TextEditingController(text: '30s');
     _maxBodyBytesController = TextEditingController(text: '65536');
@@ -240,6 +242,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _cloudSecretController.dispose();
     _metricsSecretController.dispose();
     _metricsIntervalController.dispose();
+    _logsIntervalController.dispose();
     _requestTimeoutController.dispose();
     _scriptTimeoutController.dispose();
     _maxBodyBytesController.dispose();
@@ -334,6 +337,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     setText(_cloudSecretController, config.cloudSecret);
     setText(_metricsSecretController, config.apiSecret);
     setText(_metricsIntervalController, config.metricsInterval);
+    setText(_logsIntervalController, config.logsInterval);
     setText(_requestTimeoutController, config.requestTimeout);
     setText(_scriptTimeoutController, config.scriptTimeout);
     if (config.maxBodyBytes != null) {
@@ -662,6 +666,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       port: port,
       apiSecret: apiSecret,
       metricsInterval: _configText(_metricsIntervalController, '1m'),
+      logsInterval: _configText(_logsIntervalController, '30s'),
       requestTimeout: _configText(_requestTimeoutController, '10s'),
       scriptTimeout: _configText(_scriptTimeoutController, '30s'),
       maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
@@ -737,6 +742,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         transport: _transport,
         listenHost: _configText(_listenHostController, '127.0.0.1'),
         metricsInterval: _configText(_metricsIntervalController, '1m'),
+        logsInterval: _configText(_logsIntervalController, '30s'),
         requestTimeout: _configText(_requestTimeoutController, '10s'),
         scriptTimeout: _configText(_scriptTimeoutController, '30s'),
         maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
@@ -877,6 +883,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             transport: _transport,
             listenHost: _configText(_listenHostController, '127.0.0.1'),
             metricsInterval: _configText(_metricsIntervalController, '1m'),
+            logsInterval: _configText(_logsIntervalController, '30s'),
             requestTimeout: _configText(_requestTimeoutController, '10s'),
             scriptTimeout: _configText(_scriptTimeoutController, '30s'),
             maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
@@ -954,6 +961,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             transport: _transport,
             listenHost: _configText(_listenHostController, '127.0.0.1'),
             metricsInterval: _configText(_metricsIntervalController, '1m'),
+            logsInterval: _configText(_logsIntervalController, '30s'),
             requestTimeout: _configText(_requestTimeoutController, '10s'),
             scriptTimeout: _configText(_scriptTimeoutController, '30s'),
             maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
@@ -2023,6 +2031,11 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             label: 'maidCafeMetricsInterval'.tr(),
           ),
           _configTextField(
+            controller: _logsIntervalController,
+            label: 'maidCafeLogsInterval'.tr(),
+            helperText: 'maidCafeLogsIntervalHint'.tr(),
+          ),
+          _configTextField(
             controller: _requestTimeoutController,
             label: 'maidCafeRequestTimeout'.tr(),
           ),
@@ -2237,6 +2250,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   Widget _configTextField({
     required TextEditingController controller,
     required String label,
+    String? helperText,
     bool readOnly = false,
     bool obscureText = false,
     TextInputType? keyboardType,
@@ -2255,8 +2269,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           )
         : null,
     onChanged: onChanged,
-    onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-    decoration: InputDecoration(labelText: label),
+    decoration: InputDecoration(labelText: label, helperText: helperText),
   );
 }
 

@@ -221,6 +221,7 @@ class MaidCafeDaemonAccess {
     this.cloudUrl,
     this.cloudSecret,
     this.metricsInterval,
+    this.logsInterval,
     this.requestTimeout,
     this.scriptTimeout,
     this.maxBodyBytes,
@@ -238,6 +239,7 @@ class MaidCafeDaemonAccess {
   final String? cloudUrl;
   final String? cloudSecret;
   final String? metricsInterval;
+  final String? logsInterval;
   final String? requestTimeout;
   final String? scriptTimeout;
   final int? maxBodyBytes;
@@ -451,6 +453,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     cloudUrl: _configValue(config, 'cloudUrl'),
     cloudSecret: _configValue(config, 'cloudSecret'),
     metricsInterval: _configValue(config, 'metricsInterval'),
+    logsInterval: _configValue(config, 'logsInterval'),
     requestTimeout: _configValue(config, 'requestTimeout'),
     scriptTimeout: _configValue(config, 'scriptTimeout'),
     maxBodyBytes: int.tryParse(_configValue(config, 'maxBodyBytes') ?? ''),

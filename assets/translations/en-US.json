@@ -1058,6 +1058,8 @@
   "maidCafeMaxConcurrentRuns": "Maximum concurrent runs",
   "maidCafeMemoryAlarm": "Memory alarm",
   "maidCafeMetricsInterval": "Metrics interval",
+  "maidCafeLogsInterval": "Container logs interval",
+  "maidCafeLogsIntervalHint": "Set to 0 to disable container log tracking",
   "maidCafeMetricsSecret": "Metrics secret",
   "maidCafeNeverSeen": "Never seen",
   "maidCafeNoActions": "No actions yet. Add a script and save it to run it from this page.",

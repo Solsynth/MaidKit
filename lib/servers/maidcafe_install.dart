@@ -407,6 +407,7 @@ Future<void> installMaidCafeApplication({
   String transport = 'http',
   String listenHost = '127.0.0.1',
   String metricsInterval = '1m',
+  String logsInterval = '30s',
   String requestTimeout = '10s',
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
@@ -422,6 +423,7 @@ Future<void> installMaidCafeApplication({
   transport: transport,
   listenHost: listenHost,
   metricsInterval: metricsInterval,
+  logsInterval: logsInterval,
   requestTimeout: requestTimeout,
   scriptTimeout: scriptTimeout,
   maxBodyBytes: maxBodyBytes,
@@ -445,6 +447,7 @@ Future<void> _installMaidCafeDaemon({
   required String transport,
   String listenHost = '127.0.0.1',
   String metricsInterval = '1m',
+  String logsInterval = '30s',
   String requestTimeout = '10s',
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
@@ -509,6 +512,7 @@ Future<void> _installMaidCafeDaemon({
           port: port,
           apiSecret: apiSecret,
           metricsInterval: metricsInterval,
+          logsInterval: logsInterval,
           requestTimeout: requestTimeout,
           scriptTimeout: scriptTimeout,
           maxBodyBytes: maxBodyBytes,
@@ -570,6 +574,7 @@ String buildMaidCafeDaemonInstallScript({
   int port = 8747,
   String apiSecret = '',
   String metricsInterval = '1m',
+  String logsInterval = '30s',
   String requestTimeout = '10s',
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
@@ -699,6 +704,7 @@ $restartHealth''';
         transport: transport,
         listenHost: listenHost,
         metricsInterval: metricsInterval,
+        logsInterval: logsInterval,
         requestTimeout: requestTimeout,
         scriptTimeout: scriptTimeout,
         maxBodyBytes: maxBodyBytes,
@@ -819,6 +825,7 @@ String buildMaidCafeDaemonConfigScript({
   int port = 8747,
   String apiSecret = '',
   String metricsInterval = '1m',
+  String logsInterval = '30s',
   String requestTimeout = '10s',
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
@@ -872,6 +879,7 @@ systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemo
         'cloudUrl': _tomlString(cloudUrl.trim()),
         'cloudSecret': _tomlString(cloudSecret),
         'metricsInterval': _tomlString(metricsInterval.trim()),
+        'logsInterval': _tomlString(logsInterval.trim()),
         'requestTimeout': _tomlString(requestTimeout.trim()),
         'scriptTimeout': _tomlString(scriptTimeout.trim()),
         'maxBodyBytes': '$maxBodyBytes',
@@ -1014,6 +1022,7 @@ String _maidCafeConfig({
   required String transport,
   String listenHost = '127.0.0.1',
   String metricsInterval = '1m',
+  String logsInterval = '30s',
   String requestTimeout = '10s',
   String scriptTimeout = '30s',
   int maxBodyBytes = 65536,
@@ -1035,6 +1044,7 @@ $versionLine transport = ${_tomlString(transport)}
 $listenLine$metricsSecretLine cloudUrl = ${_tomlString(cloudUrl)}
  cloudSecret = ${_tomlString(cloudSecret)}
  metricsInterval = ${_tomlString(metricsInterval)}
+ logsInterval = ${_tomlString(logsInterval)}
  requestTimeout = ${_tomlString(requestTimeout)}
  scriptTimeout = ${_tomlString(scriptTimeout)}
  maxBodyBytes = $maxBodyBytes

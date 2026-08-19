@@ -221,6 +221,7 @@ class MaidCafeServerConnectorImpl implements MaidCafeServerConnector {
           port: port,
           apiSecret: access.apiSecret ?? '',
           metricsInterval: access.metricsInterval ?? '1m',
+          logsInterval: access.logsInterval ?? '30s',
           requestTimeout: access.requestTimeout ?? '10s',
           scriptTimeout: access.scriptTimeout ?? '30s',
           maxBodyBytes: access.maxBodyBytes ?? 65536,
