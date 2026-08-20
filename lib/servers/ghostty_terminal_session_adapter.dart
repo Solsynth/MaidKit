@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flterm/flterm.dart' as flterm;
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
@@ -10,6 +9,7 @@ import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/theme.dart';
 import 'terminal_color_scheme.dart';
 import 'terminal_session_adapter.dart';
+import 'terminal_keyword_highlight.dart';
 
 /// Terminal adapter backed by flterm's libghostty-vt renderer.
 ///
@@ -22,12 +22,18 @@ class GhosttyTerminalSessionAdapterFactory
     required this.colorScheme,
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
+    this.selectToCopyEnabled = false,
+    this.shiftInsertPasteEnabled = true,
+    this.keywordHighlightEnabled = true,
   });
 
   final bool cursorAnimationEnabled;
   final TerminalColorScheme colorScheme;
   final bool transparentBackground;
   final String fontFamily;
+  final bool selectToCopyEnabled;
+  final bool shiftInsertPasteEnabled;
+  final bool keywordHighlightEnabled;
 
   @override
   TerminalSessionAdapter create() => GhosttyTerminalSessionAdapter(
@@ -35,6 +41,9 @@ class GhosttyTerminalSessionAdapterFactory
     colorScheme: colorScheme,
     transparentBackground: transparentBackground,
     fontFamily: fontFamily,
+    selectToCopyEnabled: selectToCopyEnabled,
+    shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+    keywordHighlightEnabled: keywordHighlightEnabled,
   );
 }
 
@@ -44,7 +53,13 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
     this.colorScheme = TerminalColorSchemes.defaultScheme,
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
-  }) : _controller = flterm.TerminalController(
+    bool selectToCopyEnabled = false,
+    bool shiftInsertPasteEnabled = true,
+    bool keywordHighlightEnabled = true,
+  })  : _selectToCopyEnabled = selectToCopyEnabled,
+        _shiftInsertPasteEnabled = shiftInsertPasteEnabled,
+        _keywordHighlightEnabled = keywordHighlightEnabled,
+        _controller = flterm.TerminalController(
          config: flterm.TerminalConfig(
            scrollbackLimit: 10 * 1024 * 1024,
            cursorBlink: cursorAnimationEnabled,
@@ -58,12 +73,18 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
       }
     };
     _controller.onResize = _onResize;
+    if (selectToCopyEnabled) {
+      _controller.addListener(_onSelectionMaybeChanged);
+    }
   }
 
   final bool cursorAnimationEnabled;
   final TerminalColorScheme colorScheme;
   final bool transparentBackground;
   final String fontFamily;
+  final bool _selectToCopyEnabled;
+  final bool _shiftInsertPasteEnabled;
+  final bool _keywordHighlightEnabled;
   final flterm.TerminalController _controller;
   late final TerminalClipboardBridge _clipboard;
   final _terminalViewKey = GlobalKey<flterm.TerminalViewState>();
@@ -74,6 +95,10 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
   final _resizeEvents = StreamController<TerminalResize>.broadcast();
   final _matches = <_FltermMatch>[];
   final _activity = TerminalActivityTracker();
+
+  /// Tracks the last auto-copied selection text so we only write to the
+  /// clipboard when the selection actually changes.
+  String? _lastAutoCopiedSelection;
 
   var _disposed = false;
   var _lastColumns = 80;
@@ -166,36 +191,49 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
       _controller.modeSet(flterm.TerminalMode.cursorVisible(), value: false);
     }
 
+    final effectiveKeyEvent = !readOnly && _shiftInsertPasteEnabled
+        ? _wrapKeyEventForShiftInsert(onKeyEvent)
+        : onKeyEvent;
+
+    final theme = flterm.TerminalTheme(
+      palette: flterm.ColorPalette(
+        ansiColors: colorScheme.ansiColors,
+        // Keep an opaque palette color for libghostty's color resolution.
+        // Transparency belongs to TerminalTheme.backgroundOpacity; passing
+        // an alpha-zero palette color is flattened to black by the renderer.
+        background: colorScheme.background,
+        foreground: colorScheme.foreground,
+      ),
+      cursor: flterm.CursorTheme(
+        color: flterm.DynamicColor.fixed(colorScheme.cursor),
+      ),
+      cursorMotionDuration: cursorAnimationEnabled
+          ? const Duration(milliseconds: 90)
+          : Duration.zero,
+      selection: flterm.SelectionTheme(
+        background: flterm.DynamicColor.fixed(colorScheme.selection),
+      ),
+      backgroundOpacity: (transparentBackground ?? this.transparentBackground)
+          ? 0
+          : 1,
+      fontFamily: fontFamily,
+      // Underline keyword matches without touching their ANSI colors.
+      hyperlink: _keywordHighlightEnabled
+          ? _keywordHyperlinkTheme
+          : const flterm.HyperlinkTheme(),
+    );
+
     Widget terminal = flterm.TerminalView(
       key: _terminalViewKey,
       controller: _controller,
       scrollController: _scrollController,
       autofocus: autofocus && !readOnly,
       showKeyboard: !readOnly,
-      onKeyEvent: onKeyEvent,
-      theme: flterm.TerminalTheme(
-        palette: flterm.ColorPalette(
-          ansiColors: colorScheme.ansiColors,
-          // Keep an opaque palette color for libghostty's color resolution.
-          // Transparency belongs to TerminalTheme.backgroundOpacity; passing
-          // an alpha-zero palette color is flattened to black by the renderer.
-          background: colorScheme.background,
-          foreground: colorScheme.foreground,
-        ),
-        cursor: flterm.CursorTheme(
-          color: flterm.DynamicColor.fixed(colorScheme.cursor),
-        ),
-        cursorMotionDuration: cursorAnimationEnabled
-            ? const Duration(milliseconds: 90)
-            : Duration.zero,
-        selection: flterm.SelectionTheme(
-          background: flterm.DynamicColor.fixed(colorScheme.selection),
-        ),
-        backgroundOpacity: (transparentBackground ?? this.transparentBackground)
-            ? 0
-            : 1,
-        fontFamily: fontFamily,
-      ),
+      onKeyEvent: effectiveKeyEvent,
+      linkSettings: _keywordHighlightEnabled
+          ? _buildKeywordLinkSettings()
+          : const flterm.LinkSettings(),
+      theme: theme,
     );
     if (readOnly) {
       terminal = _ReadOnlyLogSurface(
@@ -216,6 +254,83 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
       ),
       child: terminal,
     );
+  }
+
+  /// Underline style applied to idle keyword matches. Uses a single accent
+  /// color because the renderer shares one link style across all matches.
+  static const _keywordHyperlinkTheme = flterm.HyperlinkTheme(
+    idle: flterm.HyperlinkStyle(
+      underline: flterm.UnderlineStyle.single,
+      underlineColor: Color(0xFF80D8FF),
+    ),
+    highlighted: flterm.HyperlinkStyle(
+      underline: flterm.UnderlineStyle.single,
+      underlineColor: Color(0xFF80D8FF),
+    ),
+  );
+
+  flterm.LinkSettings _buildKeywordLinkSettings() => flterm.LinkSettings(
+        types: {flterm.LinkType.custom},
+        modifier: flterm.ActivationModifier.primary,
+        rules: [
+          for (final rule in terminalKeywordRules)
+            flterm.LinkRule.regex(
+              id: rule.category.name,
+              pattern: rule.pattern,
+              highlightMode: flterm.LinkHighlightMode.always,
+            ),
+        ],
+      );
+
+  FocusOnKeyEventCallback _wrapKeyEventForShiftInsert(
+    FocusOnKeyEventCallback? delegate,
+  ) =>
+      (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.insert &&
+            HardwareKeyboard.instance.isShiftPressed) {
+          unawaited(_pasteForShiftInsert());
+          return KeyEventResult.handled;
+        }
+        return delegate?.call(node, event) ?? KeyEventResult.ignored;
+      };
+
+  /// Pastes the current selection when select-to-copy is enabled, otherwise
+  /// the system clipboard. Triggered by Shift+Insert.
+  Future<void> _pasteForShiftInsert() async {
+    if (_disposed) return;
+    String? text;
+    if (_selectToCopyEnabled && _controller.hasSelection) {
+      final selected = _controller.selectedText();
+      if (selected.isNotEmpty) text = selected;
+    }
+    if (text == null) {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      text = data?.text;
+    }
+    if (text != null && text.isNotEmpty && !_disposed) {
+      _controller.paste(text);
+    }
+  }
+
+  /// Auto-copies the active selection to the clipboard (select-to-copy).
+  ///
+  /// The controller fires this on every state change, so we diff against the
+  /// last copied text and only write when it actually changes.
+  void _onSelectionMaybeChanged() {
+    if (_disposed || !_selectToCopyEnabled) return;
+    if (!_controller.hasSelection) {
+      _lastAutoCopiedSelection = null;
+      return;
+    }
+    final text = _controller.selectedText();
+    if (text.isEmpty) {
+      _lastAutoCopiedSelection = null;
+      return;
+    }
+    if (text == _lastAutoCopiedSelection) return;
+    _lastAutoCopiedSelection = text;
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
   }
 
   void _copySelectionToClipboard() {
@@ -294,6 +409,9 @@ class GhosttyTerminalSessionAdapter implements TerminalSessionAdapter {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    if (_selectToCopyEnabled) {
+      _controller.removeListener(_onSelectionMaybeChanged);
+    }
     _clipboard.dispose();
     _matches.clear();
     _controller.dispose();

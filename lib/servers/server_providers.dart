@@ -897,6 +897,13 @@ final terminalSessionAdapterOptionsProvider =
       final transparentBackground = ref.watch(
         transparentTerminalBackgroundProvider,
       );
+      final selectToCopyEnabled = ref.watch(selectToCopyEnabledProvider);
+      final shiftInsertPasteEnabled = ref.watch(
+        shiftInsertPasteEnabledProvider,
+      );
+      final keywordHighlightEnabled = ref.watch(
+        keywordHighlightEnabledProvider,
+      );
       return [
         TerminalSessionAdapterOption(
           id: 'ghostty',
@@ -907,6 +914,9 @@ final terminalSessionAdapterOptionsProvider =
             colorScheme: colorScheme,
             transparentBackground: transparentBackground,
             fontFamily: terminalFontFamily,
+            selectToCopyEnabled: selectToCopyEnabled,
+            shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+            keywordHighlightEnabled: keywordHighlightEnabled,
           ),
         ),
         TerminalSessionAdapterOption(
@@ -917,6 +927,9 @@ final terminalSessionAdapterOptionsProvider =
             colorScheme: colorScheme,
             transparentBackground: transparentBackground,
             fontFamily: terminalFontFamily,
+            selectToCopyEnabled: selectToCopyEnabled,
+            shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+            keywordHighlightEnabled: keywordHighlightEnabled,
           ),
         ),
       ];
@@ -1112,6 +1125,60 @@ class TerminalBrandingEnvironmentEnabledNotifier extends Notifier<bool> {
     await ref
         .read(terminalAdapterPreferencesProvider)
         .saveBrandingEnvironmentEnabled(enabled);
+    state = enabled;
+  }
+}
+
+final selectToCopyEnabledProvider =
+    NotifierProvider<SelectToCopyEnabledNotifier, bool>(
+      SelectToCopyEnabledNotifier.new,
+    );
+
+class SelectToCopyEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() =>
+      ref.read(terminalAdapterPreferencesProvider).selectToCopyEnabled;
+
+  Future<void> setEnabled(bool enabled) async {
+    await ref
+        .read(terminalAdapterPreferencesProvider)
+        .saveSelectToCopyEnabled(enabled);
+    state = enabled;
+  }
+}
+
+final shiftInsertPasteEnabledProvider =
+    NotifierProvider<ShiftInsertPasteEnabledNotifier, bool>(
+      ShiftInsertPasteEnabledNotifier.new,
+    );
+
+class ShiftInsertPasteEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() =>
+      ref.read(terminalAdapterPreferencesProvider).shiftInsertPasteEnabled;
+
+  Future<void> setEnabled(bool enabled) async {
+    await ref
+        .read(terminalAdapterPreferencesProvider)
+        .saveShiftInsertPasteEnabled(enabled);
+    state = enabled;
+  }
+}
+
+final keywordHighlightEnabledProvider =
+    NotifierProvider<KeywordHighlightEnabledNotifier, bool>(
+      KeywordHighlightEnabledNotifier.new,
+    );
+
+class KeywordHighlightEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() =>
+      ref.read(terminalAdapterPreferencesProvider).keywordHighlightEnabled;
+
+  Future<void> setEnabled(bool enabled) async {
+    await ref
+        .read(terminalAdapterPreferencesProvider)
+        .saveKeywordHighlightEnabled(enabled);
     state = enabled;
   }
 }

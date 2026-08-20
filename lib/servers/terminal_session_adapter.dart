@@ -15,6 +15,7 @@ import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/theme.dart';
 
 import 'terminal_color_scheme.dart';
+import 'terminal_keyword_highlight.dart';
 
 Menu terminalContextMenu({
   required bool hasSelection,
@@ -558,17 +559,26 @@ class XtermTerminalSessionAdapterFactory
     required this.colorScheme,
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
+    this.selectToCopyEnabled = false,
+    this.shiftInsertPasteEnabled = true,
+    this.keywordHighlightEnabled = true,
   });
 
   final TerminalColorScheme colorScheme;
   final bool transparentBackground;
   final String fontFamily;
+  final bool selectToCopyEnabled;
+  final bool shiftInsertPasteEnabled;
+  final bool keywordHighlightEnabled;
 
   @override
   TerminalSessionAdapter create() => XtermTerminalSessionAdapter(
     colorScheme: colorScheme,
     transparentBackground: transparentBackground,
     fontFamily: fontFamily,
+    selectToCopyEnabled: selectToCopyEnabled,
+    shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+    keywordHighlightEnabled: keywordHighlightEnabled,
   );
 }
 
@@ -586,7 +596,13 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     required this.colorScheme,
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
-  }) : _terminal = Terminal(maxLines: 10000) {
+    bool selectToCopyEnabled = false,
+    bool shiftInsertPasteEnabled = true,
+    bool keywordHighlightEnabled = true,
+  })  : _selectToCopyEnabled = selectToCopyEnabled,
+        _shiftInsertPasteEnabled = shiftInsertPasteEnabled,
+        _keywordHighlightEnabled = keywordHighlightEnabled,
+        _terminal = Terminal(maxLines: 10000) {
     _clipboard = createHostClipboardBridge(sendResponse: sendInput);
     _terminal.onOutput = (data) {
       if (!_disposed) {
@@ -606,12 +622,18 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         );
       }
     };
+    if (selectToCopyEnabled) {
+      _controller.addListener(_onSelectionMaybeChanged);
+    }
   }
 
   final Terminal _terminal;
   final TerminalColorScheme colorScheme;
   final bool transparentBackground;
   final String fontFamily;
+  final bool _selectToCopyEnabled;
+  final bool _shiftInsertPasteEnabled;
+  final bool _keywordHighlightEnabled;
   final TerminalController _controller = TerminalController();
   late final TerminalClipboardBridge _clipboard;
   final ScrollController _scrollController = ScrollController();
@@ -619,6 +641,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   final _outgoingBytes = StreamController<Uint8List>.broadcast();
   final _resizeEvents = StreamController<TerminalResize>.broadcast();
   final _highlights = <TerminalHighlight>[];
+  final _keywordHighlights = <TerminalHighlight>[];
   final _matches = <_BufferMatch>[];
   final _activity = TerminalActivityTracker();
   final _workingDirectory = TerminalWorkingDirectoryTracker();
@@ -627,6 +650,14 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   static const _hitColor = Color(0x66E5E510);
   static const _currentHitColor = Color(0xAA31FF26);
   static const _approxLineHeight = 18.0;
+  static const _maxKeywordHighlights = 1500;
+  static const _keywordScanDelay = Duration(milliseconds: 250);
+
+  /// Tracks the last auto-copied selection text so the select-to-copy
+  /// listener only writes to the clipboard when the selection changes.
+  String? _lastAutoCopiedSelection;
+
+  Timer? _keywordScanTimer;
 
   @override
   Stream<Uint8List> get outgoingBytes => _outgoingBytes.stream;
@@ -655,6 +686,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
       _clipboard.add(bytes);
       _activity.receivedOutput(bytes);
       _terminal.write(utf8.decode(bytes, allowMalformed: true));
+      if (_keywordHighlightEnabled) _scheduleKeywordScan();
     }
   }
 
@@ -820,6 +852,90 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     return KeyEventResult.handled;
   }
 
+  void _scheduleKeywordScan() {
+    if (!_keywordHighlightEnabled || _disposed) return;
+    _keywordScanTimer?.cancel();
+    _keywordScanTimer = Timer(_keywordScanDelay, _refreshKeywordHighlights);
+  }
+
+  void _refreshKeywordHighlights() {
+    if (!_keywordHighlightEnabled || _disposed) return;
+    for (final highlight in _keywordHighlights) {
+      highlight.dispose();
+    }
+    _keywordHighlights.clear();
+    final buffer = _terminal.buffer;
+    for (var y = 0; y < buffer.height; y++) {
+      final lineText = buffer.lines[y].getText();
+      for (final rule in terminalKeywordRules) {
+        for (final match in rule.pattern.allMatches(lineText)) {
+          if (_keywordHighlights.length >= _maxKeywordHighlights) return;
+          final start = match.start;
+          final end = match.end - 1;
+          if (end < start) continue;
+          _keywordHighlights.add(
+            _controller.highlight(
+              p1: buffer.createAnchor(start, y),
+              p2: buffer.createAnchor(end, y),
+              color: rule.color,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  FocusOnKeyEventCallback _wrapKeyEventForShiftInsert(
+    FocusOnKeyEventCallback? delegate,
+  ) => (node, event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.insert &&
+        HardwareKeyboard.instance.isShiftPressed) {
+      unawaited(_pasteForShiftInsert());
+      return KeyEventResult.handled;
+    }
+    return delegate?.call(node, event) ?? KeyEventResult.ignored;
+  };
+
+  /// Pastes the current selection when select-to-copy is enabled, otherwise
+  /// the system clipboard. Triggered by Shift+Insert.
+  Future<void> _pasteForShiftInsert() async {
+    if (_disposed) return;
+    String? text;
+    if (_selectToCopyEnabled) {
+      final selection = _controller.selection;
+      if (selection != null) {
+        final selected = _terminal.buffer.getText(selection);
+        if (selected.isNotEmpty) text = selected;
+      }
+    }
+    if (text == null) {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      text = data?.text;
+    }
+    if (text != null && text.isNotEmpty && !_disposed) {
+      _terminal.paste(text);
+      _controller.clearSelection();
+    }
+  }
+
+  /// Auto-copies the active selection to the clipboard (select-to-copy).
+  ///
+  /// The controller fires this on every state change, so we diff against the
+  /// last copied text and only write when it actually changes.
+  void _onSelectionMaybeChanged() {
+    if (_disposed || !_selectToCopyEnabled) return;
+    final selection = _controller.selection;
+    final text = selection == null ? '' : _terminal.buffer.getText(selection);
+    if (text.isEmpty) {
+      _lastAutoCopiedSelection = null;
+      return;
+    }
+    if (text == _lastAutoCopiedSelection) return;
+    _lastAutoCopiedSelection = text;
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
+  }
+
   @override
   Widget buildView({
     bool autofocus = false,
@@ -830,6 +946,9 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     FocusOnKeyEventCallback? onKeyEvent,
   }) {
     final theme = _xtermThemeFor(colorScheme, showCursor: showCursor);
+    final effectiveKeyEvent = !readOnly && _shiftInsertPasteEnabled
+        ? _wrapKeyEventForShiftInsert(onKeyEvent)
+        : onKeyEvent;
     final terminal = KeyedSubtree(
       key: ObjectKey(this),
       child: TerminalView(
@@ -851,7 +970,8 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         // skips both CustomTextEdit and CustomKeyboardListener, leaving no
         // Focus node for Cmd/Ctrl+C after selecting log text.
         hardwareKeyboardOnly: false,
-        onKeyEvent: onKeyEvent ?? (readOnly ? _handleReadOnlyKeyEvent : null),
+        onKeyEvent:
+            effectiveKeyEvent ?? (readOnly ? _handleReadOnlyKeyEvent : null),
         alwaysShowCursor: false,
         backgroundOpacity: (transparentBackground ?? this.transparentBackground)
             ? 0
@@ -860,14 +980,7 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         padding: const EdgeInsets.all(12),
         textStyle: TerminalStyle(
           fontFamily: fontFamily,
-          fontFamilyFallback: const [
-            'Menlo',
-            'Monaco',
-            'Consolas',
-            'Noto Sans Mono CJK SC',
-            'Noto Color Emoji',
-            'monospace',
-          ],
+          fontFamilyFallback: const [],
           fontSize: 14,
         ),
       ),
@@ -890,6 +1003,14 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _keywordScanTimer?.cancel();
+    if (_selectToCopyEnabled) {
+      _controller.removeListener(_onSelectionMaybeChanged);
+    }
+    for (final highlight in _keywordHighlights) {
+      highlight.dispose();
+    }
+    _keywordHighlights.clear();
     _clipboard.dispose();
     findClear();
     _terminal.onOutput = null;

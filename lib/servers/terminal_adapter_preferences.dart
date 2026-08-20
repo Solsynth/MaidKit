@@ -120,12 +120,29 @@ abstract interface class TerminalAdapterSettings {
   TerminalColorScheme get lightTheme;
   TerminalColorScheme get darkTheme;
 
+  /// Copy the current selection to the clipboard as soon as it is made.
+  ///
+  /// Default off: mirror Linux X11 select-to-copy behavior without affecting
+  /// the existing copy shortcuts or context menu.
+  bool get selectToCopyEnabled;
+
+  /// Paste the clipboard (or current selection when [selectToCopyEnabled]) on
+  /// Shift+Insert, matching traditional terminal paste.
+  bool get shiftInsertPasteEnabled;
+
+  /// Color keywords (errors, warnings, IPs, links) in terminal output,
+  /// MobaXterm-style, without overriding server ANSI colors.
+  bool get keywordHighlightEnabled;
+
   Future<void> saveSelectedAdapterId(String adapterId);
   Future<void> saveCursorAnimationEnabled(bool enabled);
   Future<void> saveBrandingEnvironmentEnabled(bool enabled);
   Future<void> saveTerminalFontFamily(String family);
   Future<void> saveLightTheme(TerminalColorScheme theme);
   Future<void> saveDarkTheme(TerminalColorScheme theme);
+  Future<void> saveSelectToCopyEnabled(bool enabled);
+  Future<void> saveShiftInsertPasteEnabled(bool enabled);
+  Future<void> saveKeywordHighlightEnabled(bool enabled);
 }
 
 class TerminalAdapterPreferences implements TerminalAdapterSettings {
@@ -137,6 +154,9 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
     this.terminalFontFamily,
     this.lightTheme,
     this.darkTheme,
+    this.selectToCopyEnabled,
+    this.shiftInsertPasteEnabled,
+    this.keywordHighlightEnabled,
   );
 
   static const _adapterIdKey = 'terminal_adapter_id';
@@ -146,6 +166,11 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   static const _terminalFontFamilyKey = 'terminal_font_family';
   static const _lightThemeKey = 'terminal_light_theme';
   static const _darkThemeKey = 'terminal_dark_theme';
+  static const _selectToCopyEnabledKey = 'terminal_select_to_copy_enabled';
+  static const _shiftInsertPasteEnabledKey =
+      'terminal_shift_insert_paste_enabled';
+  static const _keywordHighlightEnabledKey =
+      'terminal_keyword_highlight_enabled';
 
   final SharedPreferencesAsync _preferences;
   @override
@@ -160,6 +185,12 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   final TerminalColorScheme lightTheme;
   @override
   final TerminalColorScheme darkTheme;
+  @override
+  final bool selectToCopyEnabled;
+  @override
+  final bool shiftInsertPasteEnabled;
+  @override
+  final bool keywordHighlightEnabled;
 
   static Future<TerminalAdapterPreferences> load({
     SharedPreferencesAsync? preferences,
@@ -178,6 +209,9 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
           TerminalColorSchemes.defaultLightScheme,
       _decodeTheme(await store.getString(_darkThemeKey)) ??
           TerminalColorSchemes.defaultScheme,
+      await store.getBool(_selectToCopyEnabledKey) ?? false,
+      await store.getBool(_shiftInsertPasteEnabledKey) ?? true,
+      await store.getBool(_keywordHighlightEnabledKey) ?? true,
     );
   }
 
@@ -204,6 +238,18 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   @override
   Future<void> saveDarkTheme(TerminalColorScheme theme) =>
       _preferences.setString(_darkThemeKey, _encodeTheme(theme));
+
+  @override
+  Future<void> saveSelectToCopyEnabled(bool enabled) =>
+      _preferences.setBool(_selectToCopyEnabledKey, enabled);
+
+  @override
+  Future<void> saveShiftInsertPasteEnabled(bool enabled) =>
+      _preferences.setBool(_shiftInsertPasteEnabledKey, enabled);
+
+  @override
+  Future<void> saveKeywordHighlightEnabled(bool enabled) =>
+      _preferences.setBool(_keywordHighlightEnabledKey, enabled);
 
   static String _encodeTheme(TerminalColorScheme theme) => jsonEncode({
     'id': theme.id,
@@ -245,6 +291,9 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
     this.terminalFontFamily = TerminalFonts.defaultFamily,
     this.lightTheme = TerminalColorSchemes.defaultLightScheme,
     this.darkTheme = TerminalColorSchemes.defaultScheme,
+    this.selectToCopyEnabled = false,
+    this.shiftInsertPasteEnabled = true,
+    this.keywordHighlightEnabled = true,
   });
 
   @override
@@ -259,6 +308,12 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   TerminalColorScheme lightTheme;
   @override
   TerminalColorScheme darkTheme;
+  @override
+  bool selectToCopyEnabled;
+  @override
+  bool shiftInsertPasteEnabled;
+  @override
+  bool keywordHighlightEnabled;
 
   @override
   Future<void> saveSelectedAdapterId(String adapterId) async {
@@ -288,5 +343,20 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   @override
   Future<void> saveDarkTheme(TerminalColorScheme theme) async {
     darkTheme = theme;
+  }
+
+  @override
+  Future<void> saveSelectToCopyEnabled(bool enabled) async {
+    selectToCopyEnabled = enabled;
+  }
+
+  @override
+  Future<void> saveShiftInsertPasteEnabled(bool enabled) async {
+    shiftInsertPasteEnabled = enabled;
+  }
+
+  @override
+  Future<void> saveKeywordHighlightEnabled(bool enabled) async {
+    keywordHighlightEnabled = enabled;
   }
 }

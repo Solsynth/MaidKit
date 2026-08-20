@@ -107,6 +107,9 @@ class SettingsPage extends HookConsumerWidget {
     final brandingEnvironmentEnabled = ref.watch(
       terminalBrandingEnvironmentEnabledProvider,
     );
+    final selectToCopyEnabled = ref.watch(selectToCopyEnabledProvider);
+    final shiftInsertPasteEnabled = ref.watch(shiftInsertPasteEnabledProvider);
+    final keywordHighlightEnabled = ref.watch(keywordHighlightEnabledProvider);
     final terminalLightTheme = ref.watch(terminalLightThemeProvider);
     final terminalDarkTheme = ref.watch(terminalDarkThemeProvider);
     final connectOnStartup = ref.watch(connectOnStartupProvider);
@@ -455,6 +458,48 @@ class SettingsPage extends HookConsumerWidget {
                                   terminalBrandingEnvironmentEnabledProvider
                                       .notifier,
                                 )
+                                .setEnabled(enabled),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            contentPadding: _sectionTilePadding,
+                            title: const Text(
+                              'settingsTerminalSelectToCopy',
+                            ).tr(),
+                            subtitle: const Text(
+                              'settingsTerminalSelectToCopyHint',
+                            ).tr(),
+                            value: selectToCopyEnabled,
+                            onChanged: (enabled) => ref
+                                .read(selectToCopyEnabledProvider.notifier)
+                                .setEnabled(enabled),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            contentPadding: _sectionTilePadding,
+                            title: const Text(
+                              'settingsTerminalShiftInsertPaste',
+                            ).tr(),
+                            subtitle: const Text(
+                              'settingsTerminalShiftInsertPasteHint',
+                            ).tr(),
+                            value: shiftInsertPasteEnabled,
+                            onChanged: (enabled) => ref
+                                .read(shiftInsertPasteEnabledProvider.notifier)
+                                .setEnabled(enabled),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            contentPadding: _sectionTilePadding,
+                            title: const Text(
+                              'settingsTerminalKeywordHighlight',
+                            ).tr(),
+                            subtitle: const Text(
+                              'settingsTerminalKeywordHighlightHint',
+                            ).tr(),
+                            value: keywordHighlightEnabled,
+                            onChanged: (enabled) => ref
+                                .read(keywordHighlightEnabledProvider.notifier)
                                 .setEnabled(enabled),
                           ),
                         ],
