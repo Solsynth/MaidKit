@@ -1411,12 +1411,10 @@ class _ServerStats extends StatelessWidget {
       systemInfo?.kernel,
     ].whereType<String>().join(' · ');
 
-    return Column(
-      mainAxisAlignment: compact
-          ? MainAxisAlignment.end
-          : MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
         if (stats != null)
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1515,6 +1513,7 @@ class _ServerStats extends StatelessWidget {
           ).padding(horizontal: 4),
         ],
       ],
+      ),
     );
   }
 
