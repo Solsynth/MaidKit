@@ -8,6 +8,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 import 'package:tailscale/tailscale.dart';
+import 'package:flutter/services.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/github/github_workflow_strip.dart';
@@ -302,12 +303,59 @@ class _ServerGrid extends ConsumerStatefulWidget {
   ConsumerState<_ServerGrid> createState() => _ServerGridState();
 }
 
+class _SearchIntent extends Intent {
+  const _SearchIntent();
+}
+
 class _ServerGridState extends ConsumerState<_ServerGrid> {
   var _isReconnecting = false;
   var _isArranging = false;
   var _isSavingOrder = false;
   final _selectedTags = <String>{};
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  final _scrollController = ScrollController();
+  var _query = '';
+
+  var _showSearch = false;
   List<int>? _pendingOrder;
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.hasClients && _scrollController.offset > 400) {
+      _showSearchBar();
+    }
+  }
+
+  void _showSearchBar() {
+    if (_showSearch) return;
+    setState(() => _showSearch = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocusNode.requestFocus();
+    });
+  }
+
+  void _toggleSearch() {
+    if (_showSearch) {
+      setState(() => _showSearch = false);
+      _searchController.clear();
+      _query = '';
+    } else {
+      _showSearchBar();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchFocusNode.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
 
   List<Server> get _orderedServers {
     final pendingOrder = _pendingOrder;
@@ -371,9 +419,17 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
             .toSet()
             .toList()
           ..sort();
+    final query = _query.trim().toLowerCase();
     final visibleServers = _orderedServers.where((server) {
       final tags = decodeStringList(server.tags).toSet();
-      return _selectedTags.every(tags.contains);
+      if (!_selectedTags.every(tags.contains)) return false;
+      if (query.isEmpty) return true;
+      final name = server.name.toLowerCase();
+      final host = server.host.toLowerCase();
+      final tagsText = tags.join(' ').toLowerCase();
+      return name.contains(query) ||
+          host.contains(query) ||
+          tagsText.contains(query);
     }).toList();
     final disconnectedServers = visibleServers.where((server) {
       // The local machine is always reachable and never participates in
@@ -386,138 +442,198 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
           status != SessionStatus.connecting;
     }).toList();
 
-    return Column(
-      children: [
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 240),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          transitionBuilder: (child, animation) => SizeTransition(
-            sizeFactor: animation,
-            alignment: Alignment.topCenter,
-            child: FadeTransition(opacity: animation, child: child),
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyF, meta: true): _SearchIntent(),
+        SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _SearchIntent(),
+      },
+      child: Actions(
+        actions: {
+          _SearchIntent: CallbackAction<_SearchIntent>(
+            onInvoke: (_) {
+              _showSearchBar();
+              return null;
+            },
           ),
-          child: disconnectedServers.length > 1
-              ? Padding(
-                  key: const ValueKey('servers-reconnect-all'),
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                  child: _ReconnectAllCard(
-                    count: disconnectedServers.length,
-                    isReconnecting: _isReconnecting,
-                    onPressed: () => _reconnectAll(disconnectedServers),
-                  ),
-                )
-              : const SizedBox.shrink(key: ValueKey('servers-reconnect-none')),
-        ),
-        if (allTags.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final tag in allTags)
-                    FilterChip(
-                      label: Text(tag),
-                      visualDensity: VisualDensity.compact,
-                      selected: _selectedTags.contains(tag),
-                      onSelected: (selected) => setState(() {
-                        if (selected) {
-                          _selectedTags.add(tag);
-                        } else {
-                          _selectedTags.remove(tag);
-                        }
-                      }),
-                    ),
-                ],
+        },
+        child: Column(
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) => SizeTransition(
+                sizeFactor: animation,
+                alignment: Alignment.topCenter,
+                child: FadeTransition(opacity: animation, child: child),
               ),
-            ),
-          ),
-        if (visibleServers.isEmpty)
-          Expanded(
-            child: CustomScrollView(
-              slivers: [
-                const SliverToBoxAdapter(child: GithubWorkflowStatusStrip()),
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: _NoServersMatch()),
-                ),
-                SliverToBoxAdapter(child: _arrangeServersFooter(context)),
-              ],
-            ),
-          )
-        else
-          Expanded(
-            child: CustomScrollView(
-              slivers: [
-                const SliverToBoxAdapter(child: DashboardRuntimesSection()),
-                const SliverToBoxAdapter(child: GithubWorkflowStatusStrip()),
-                SliverPadding(
-                  padding: const EdgeInsets.all(24),
-                  sliver: SliverGrid(
-                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 380,
-                      mainAxisExtent: isCompactView ? 200 : 320,
-                      mainAxisSpacing: 16,
-                      crossAxisSpacing: 16,
+              child: disconnectedServers.length > 1
+                  ? Padding(
+                      key: const ValueKey('servers-reconnect-all'),
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                      child: _ReconnectAllCard(
+                        count: disconnectedServers.length,
+                        isReconnecting: _isReconnecting,
+                        onPressed: () => _reconnectAll(disconnectedServers),
+                      ),
+                    )
+                  : const SizedBox.shrink(
+                      key: ValueKey('servers-reconnect-none'),
                     ),
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      final server = visibleServers[index];
-                      final session = sessionsByServerId[server.id];
-                      final card = _ServerCard(
-                        server: server,
-                        session: session,
-                        compact: isCompactView,
-                        onConnect: () => widget.onConnect(server),
-                        onOpenDetail: () => widget.onOpenDetail(server),
-                        onOpenTerminal: () => widget.onOpenTerminal(server),
-                        onOpenFiles: () => widget.onOpenFiles(server),
-                        onRefresh: () => widget.onRefresh(server),
-                      );
-                      // The local machine is a virtual server: it is not in
-                      // the database, so it cannot be reordered, edited, or
-                      // deleted, and gets no context menu.
-                      final isLocal =
-                          server.connectionType ==
-                          ServerConnectionType.local.name;
-                      if (isLocal) return card;
-                      if (_isArranging) {
-                        return _ReorderableServerTile(
-                          server: server,
-                          isSavingOrder: _isSavingOrder,
-                          onMoveBefore: _moveBefore,
-                          child: card,
-                        );
-                      }
-                      return ContextMenuWidget(
-                        menuProvider: (_) => Menu(
-                          children: [
-                            MenuAction(
-                              title: 'serversEditServer'.tr(),
-                              callback: () => widget.onEdit(server),
-                            ),
-                            MenuSeparator(),
-                            MenuAction(
-                              title: 'serversDeleteServer'.tr(),
-                              attributes: const MenuActionAttributes(
-                                destructive: true,
-                              ),
-                              callback: () => widget.onDelete(server),
-                            ),
-                          ],
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) => SizeTransition(
+                sizeFactor: animation,
+                alignment: Alignment.topCenter,
+                child: FadeTransition(opacity: animation, child: child),
+              ),
+              child: _showSearch
+                  ? Padding(
+                      key: const ValueKey('servers-search'),
+                      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                      child: TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: 'serversSearchHint'.tr(),
+                          prefixIcon: const Icon(Symbols.search, size: 20),
+                          suffixIcon: _query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: 'commonClearSearch'.tr(),
+                                  icon: const Icon(Symbols.close, size: 18),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _query = '');
+                                  },
+                                ),
                         ),
-                        child: card,
-                      );
-                    }, childCount: visibleServers.length),
+                        onChanged: (value) => setState(() => _query = value),
+                      ),
+                    )
+                  : const SizedBox.shrink(key: ValueKey('servers-search-none')),
+            ),
+            if (allTags.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final tag in allTags)
+                        FilterChip(
+                          label: Text(tag),
+                          visualDensity: VisualDensity.compact,
+                          selected: _selectedTags.contains(tag),
+                          onSelected: (selected) => setState(() {
+                            if (selected) {
+                              _selectedTags.add(tag);
+                            } else {
+                              _selectedTags.remove(tag);
+                            }
+                          }),
+                        ),
+                    ],
                   ),
                 ),
-                SliverToBoxAdapter(child: _arrangeServersFooter(context)),
-              ],
-            ),
-          ),
-      ],
+              ),
+            if (visibleServers.isEmpty)
+              Expanded(
+                child: CustomScrollView(
+                  slivers: [
+                    const SliverToBoxAdapter(
+                      child: GithubWorkflowStatusStrip(),
+                    ),
+                    const SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(child: _NoServersMatch()),
+                    ),
+                    SliverToBoxAdapter(child: _arrangeServersFooter(context)),
+                  ],
+                ),
+              )
+            else
+              Expanded(
+                child: CustomScrollView(
+                  controller: _scrollController,
+                  slivers: [
+                    const SliverToBoxAdapter(child: DashboardRuntimesSection()),
+                    const SliverToBoxAdapter(
+                      child: GithubWorkflowStatusStrip(),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.all(24),
+                      sliver: SliverGrid(
+                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 380,
+                          mainAxisExtent: isCompactView ? 200 : 320,
+                          mainAxisSpacing: 16,
+                          crossAxisSpacing: 16,
+                        ),
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          final server = visibleServers[index];
+                          final session = sessionsByServerId[server.id];
+                          final card = _ServerCard(
+                            server: server,
+                            session: session,
+                            compact: isCompactView,
+                            onConnect: () => widget.onConnect(server),
+                            onOpenDetail: () => widget.onOpenDetail(server),
+                            onOpenTerminal: () => widget.onOpenTerminal(server),
+                            onOpenFiles: () => widget.onOpenFiles(server),
+                            onRefresh: () => widget.onRefresh(server),
+                          );
+                          // The local machine is a virtual server: it is not in
+                          // the database, so it cannot be reordered, edited, or
+                          // deleted, and gets no context menu.
+                          final isLocal =
+                              server.connectionType ==
+                              ServerConnectionType.local.name;
+                          if (isLocal) return card;
+                          if (_isArranging) {
+                            return _ReorderableServerTile(
+                              server: server,
+                              isSavingOrder: _isSavingOrder,
+                              onMoveBefore: _moveBefore,
+                              child: card,
+                            );
+                          }
+                          return ContextMenuWidget(
+                            menuProvider: (_) => Menu(
+                              children: [
+                                MenuAction(
+                                  title: 'serversEditServer'.tr(),
+                                  callback: () => widget.onEdit(server),
+                                ),
+                                MenuSeparator(),
+                                MenuAction(
+                                  title: 'serversDeleteServer'.tr(),
+                                  attributes: const MenuActionAttributes(
+                                    destructive: true,
+                                  ),
+                                  callback: () => widget.onDelete(server),
+                                ),
+                              ],
+                            ),
+                            child: card,
+                          );
+                        }, childCount: visibleServers.length),
+                      ),
+                    ),
+                    SliverToBoxAdapter(child: _arrangeServersFooter(context)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -552,6 +668,19 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                     ? () => setState(() => _isArranging = false)
                     : _startArranging,
               ),
+              const SizedBox(width: 8),
+              if (_showSearch)
+                FilledButton.icon(
+                  onPressed: _toggleSearch,
+                  icon: const Icon(Symbols.search, size: 18),
+                  label: Text('serversHideSearch'.tr()),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: _toggleSearch,
+                  icon: const Icon(Symbols.search, size: 18),
+                  label: Text('serversSearch'.tr()),
+                ),
             ],
           ),
           if (_isArranging) ...[

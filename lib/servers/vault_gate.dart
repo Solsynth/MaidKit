@@ -28,6 +28,8 @@ class _VaultGateState extends ConsumerState<VaultGate>
   final _password = TextEditingController();
   bool _unlocked = false;
   bool _busy = false;
+  bool _blankPasswordAttempted = false;
+  int _vaultGeneration = 0;
   Timer? _autoSyncTimer;
   bool _autoSyncing = false;
   String? _error;
@@ -91,6 +93,69 @@ class _VaultGateState extends ConsumerState<VaultGate>
   );
   void _retryVaultOpen() {
     ref.invalidate(vaultExistsProvider);
+  }
+
+  void _scheduleBlankPasswordUnlock({
+    required bool hasVault,
+    required String? activeFile,
+    required List<String> vaultFiles,
+  }) {
+    final onlyVaultIsActive = activeFile == null
+        ? vaultFiles.isEmpty
+        : vaultFiles.length == 1 && vaultFiles.single == activeFile;
+    if (!hasVault ||
+        !onlyVaultIsActive ||
+        _blankPasswordAttempted ||
+        _unlocked ||
+        _busy) {
+      return;
+    }
+    _blankPasswordAttempted = true;
+    final generation = _vaultGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          generation != _vaultGeneration ||
+          activeFile != ref.read(activeVaultFileProvider) ||
+          _unlocked ||
+          _busy) {
+        return;
+      }
+      unawaited(_unlockWithBlankPassword(generation, activeFile));
+    });
+  }
+
+  Future<void> _unlockWithBlankPassword(
+    int generation,
+    String? activeFile,
+  ) async {
+    setState(() {
+      _error = null;
+      _busy = true;
+    });
+    try {
+      final unlocked = await ref
+          .read(vaultServiceProvider)
+          .unlockWithPassword('');
+      if (!mounted ||
+          generation != _vaultGeneration ||
+          activeFile != ref.read(activeVaultFileProvider)) {
+        return;
+      }
+      if (unlocked) {
+        setState(() => _unlocked = true);
+        unawaited(_autoSync());
+      }
+    } catch (_) {
+      // A failed automatic attempt should leave the normal password prompt
+      // available without displaying an invalid-password error.
+    } finally {
+      if (mounted &&
+          generation == _vaultGeneration &&
+          activeFile == ref.read(activeVaultFileProvider) &&
+          !_unlocked) {
+        setState(() => _busy = false);
+      }
+    }
   }
 
   Future<void> _submit(bool exists) async {
@@ -219,12 +284,23 @@ class _VaultGateState extends ConsumerState<VaultGate>
   Widget build(BuildContext context) {
     ref.listen<String?>(activeVaultFileProvider, (previous, next) {
       if (previous != next && mounted) {
+        _vaultGeneration++;
         setState(() {
           _unlocked = false;
-          _error = null;
           _busy = false;
+          _blankPasswordAttempted = false;
+          _error = null;
           _password.clear();
         });
+      }
+    });
+    ref.listen<AsyncValue<bool>>(vaultExistsProvider, (_, next) {
+      if (next.asData?.value == true) {
+        _scheduleBlankPasswordUnlock(
+          hasVault: true,
+          activeFile: ref.read(activeVaultFileProvider),
+          vaultFiles: ref.read(vaultFilesProvider),
+        );
       }
     });
     final exists = ref.watch(vaultExistsProvider);
