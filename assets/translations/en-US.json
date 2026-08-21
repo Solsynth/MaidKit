@@ -1181,6 +1181,8 @@
   "maidCafeUploadsEmpty": "Nothing on the allowlist yet — every container uploads.",
   "maidCafeUploadsHint": "Changes persist on the daemon and hot-reload — no restart. An empty allowlist uploads every container.",
   "maidCafeUploadsInvalidConfig": "The daemon returned an invalid config response.",
+  "maidCafeUploadsLogsHint": "Sends collected managed log lines to the cloud; local log collection is separate.",
+  "maidCafeUploadsLogsSwitch": "Upload container logs",
   "maidCafeUploadsNeedSession": "Connect to the daemon to manage upload settings.",
   "maidCafeUploadsRetry": "Retry",
   "maidCafeUploadsSaved": "Daemon config updated",

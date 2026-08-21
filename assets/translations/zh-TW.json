@@ -1135,6 +1135,8 @@
   "maidCafeUploadsEmpty": "允許清單為空 —— 所有容器都會上傳。",
   "maidCafeUploadsHint": "變更會持久化到守護程式並熱重載 —— 無需重啟。允許清單為空時上傳所有容器。",
   "maidCafeUploadsInvalidConfig": "守護程式回傳了無效的設定回應。",
+  "maidCafeUploadsLogsHint": "將已收集的受管日誌傳送到雲端；本機日誌收集是獨立設定。",
+  "maidCafeUploadsLogsSwitch": "上傳容器日誌",
   "maidCafeUploadsNeedSession": "連線到守護程式後即可管理上傳設定。",
   "maidCafeUploadsRetry": "重試",
   "maidCafeUploadsSaved": "守護程式設定已更新",

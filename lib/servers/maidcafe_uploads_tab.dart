@@ -5,8 +5,8 @@ import 'package:material_ui/material_ui.dart';
 import 'maidcafe_stream.dart';
 
 /// Structured editor for the daemon's managed-container cloud upload
-/// settings: the `statusUploadEnabled` switch plus the `managedContainers`
-/// and `managedComposes` allowlists.
+/// settings: the `logsUploadEnabled` and `statusUploadEnabled` switches plus
+/// the `managedContainers` and `managedComposes` allowlists.
 ///
 /// Changes persist through [onPersist]: the host's root-owned
 /// `/etc/maidcafe/config.toml` is patched over SSH (the daemon user cannot
@@ -35,6 +35,7 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
   var _loading = true;
   Object? _error;
   var _statusUpload = false;
+  var _logsUpload = false;
   List<String> _managedContainers = const [];
   List<String> _managedComposes = const [];
   var _saving = false;
@@ -68,6 +69,7 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
       }
       if (!mounted) return;
       setState(() {
+        _logsUpload = view['logs_upload_enabled'] == true;
         _statusUpload = view['status_upload_enabled'] == true;
         _managedContainers = _stringList(view['managed_containers']);
         _managedComposes = _stringList(view['managed_composes']);
@@ -126,6 +128,11 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
     _patch({'statusUploadEnabled': value});
   }
 
+  void _toggleLogs(bool value) {
+    setState(() => _logsUpload = value);
+    _patch({'logsUploadEnabled': value});
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -163,6 +170,13 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('maidCafeUploadsLogsSwitch'.tr()),
+          subtitle: Text('maidCafeUploadsLogsHint'.tr()),
+          value: _logsUpload,
+          onChanged: _saving ? null : _toggleLogs,
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -238,10 +252,7 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
               child: TextField(
                 controller: controller,
                 enabled: !_saving,
-                decoration: InputDecoration(
-                  hintText: fieldHint,
-                  isDense: true,
-                ),
+                decoration: InputDecoration(hintText: fieldHint, isDense: true),
                 onSubmitted: (_) => add(),
               ),
             ),

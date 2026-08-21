@@ -1180,6 +1180,8 @@
   "maidCafeUploadsEmpty": "允许列表为空 —— 所有容器都会上传。",
   "maidCafeUploadsHint": "更改会持久化到守护进程并热重载 —— 无需重启。允许列表为空时上传所有容器。",
   "maidCafeUploadsInvalidConfig": "守护进程返回了无效的配置响应。",
+  "maidCafeUploadsLogsHint": "将已收集的受管日志发送到云端；本地日志收集是独立设置。",
+  "maidCafeUploadsLogsSwitch": "上传容器日志",
   "maidCafeUploadsNeedSession": "连接到守护进程后即可管理上传设置。",
   "maidCafeUploadsRetry": "重试",
   "maidCafeUploadsSaved": "守护进程配置已更新",
