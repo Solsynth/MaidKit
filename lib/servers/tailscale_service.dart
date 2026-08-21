@@ -27,7 +27,10 @@ Future<void> ensureTailscaleInitialized() async {
     );
   }
   final support = await getApplicationSupportDirectory();
-  Tailscale.init(stateDir: p.join(support.path, 'tailscale'));
+  Tailscale.init(
+    stateDir: p.join(support.path, 'tailscale'),
+    appId: 'dev.solsynth.maid',
+  );
   _tailscaleInitialized = true;
 }
 

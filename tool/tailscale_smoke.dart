@@ -8,7 +8,11 @@ import 'package:tailscale/tailscale.dart';
 Future<void> main() async {
   final dir = Directory.systemTemp.createTempSync('tailscale-smoke');
   try {
-    Tailscale.init(stateDir: dir.path, logLevel: TailscaleLogLevel.info);
+    Tailscale.init(
+      stateDir: dir.path,
+      logLevel: TailscaleLogLevel.info,
+      appId: 'dev.solsynth.maid',
+    );
     stdout.writeln('init ok');
 
     final status = await Tailscale.instance

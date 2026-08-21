@@ -586,8 +586,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/flutter_app_update"
-      ref: a936275e6e0e43de3eddbc0ed812308742e2b017
-      resolved-ref: a936275e6e0e43de3eddbc0ed812308742e2b017
+      ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
+      resolved-ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
       url: "https://src.solsynth.dev/SoSYS/Solian.git"
     source: git
     version: "3.2.4"
@@ -684,6 +684,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_markdown_plus:
+    dependency: transitive
+    description:
+      name: flutter_markdown_plus
+      sha256: fce641d6c2106cc495de1cd603f97a4f9d615a97a64011928ded380dbdade935
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.12"
   flutter_plugin_android_lifecycle:
     dependency: transitive
     description:
@@ -914,8 +922,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/island_ui_foundation"
-      ref: a936275e6e0e43de3eddbc0ed812308742e2b017
-      resolved-ref: a936275e6e0e43de3eddbc0ed812308742e2b017
+      ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
+      resolved-ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
       url: "https://src.solsynth.dev/SoSYS/Solian.git"
     source: git
     version: "1.0.0"
@@ -1552,8 +1560,8 @@ packages:
     dependency: transitive
     description:
       path: "packages/solar_network_foundation"
-      ref: a936275e6e0e43de3eddbc0ed812308742e2b017
-      resolved-ref: a936275e6e0e43de3eddbc0ed812308742e2b017
+      ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
+      resolved-ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
       url: "https://src.solsynth.dev/SoSYS/Solian.git"
     source: git
     version: "0.1.0"
@@ -1561,8 +1569,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/solsynth_express"
-      ref: a936275e6e0e43de3eddbc0ed812308742e2b017
-      resolved-ref: a936275e6e0e43de3eddbc0ed812308742e2b017
+      ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
+      resolved-ref: "40e890f92ea8e0f0b9812142db4c8c903c868afd"
       url: "https://src.solsynth.dev/SoSYS/Solian.git"
     source: git
     version: "0.1.0"
