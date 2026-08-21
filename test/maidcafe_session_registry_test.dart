@@ -45,6 +45,13 @@ class _FakeSession implements MaidCafeStreamSession {
   Future<Map<String, dynamic>> databaseMetrics() => throw UnimplementedError();
 
   @override
+  Future<Map<String, dynamic>> config() => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> patchConfig(Map<String, Object?> patch) =>
+      throw UnimplementedError();
+
+  @override
   Future<Map<String, dynamic>> watchedProcesses() => throw UnimplementedError();
 
   @override

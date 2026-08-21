@@ -805,6 +805,17 @@ class MaidCafeStreamSession {
   Future<Map<String, dynamic>> processHistory(String name, {int limit = 500}) =>
       _get('/api/v1/process-history?name=$name&limit=$limit');
 
+  /// The daemon's redacted configuration (GET /api/v1/config). Restart-
+  /// required settings are read-only here and secrets are redacted.
+  Future<Map<String, dynamic>> config() => _get('/api/v1/config');
+
+  /// Patches a whitelisted subset of `[daemon]` keys into the daemon's
+  /// config file (persisted host-side) and hot-reloads — no restart needed.
+  /// Covers e.g. `statusUploadEnabled`, `managedContainers`,
+  /// `managedComposes`, `logsUploadEnabled` and the collection intervals.
+  Future<Map<String, dynamic>> patchConfig(Map<String, Object?> patch) =>
+      _postSigned('/api/v1/config', body: patch);
+
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,
     DateTime? from,

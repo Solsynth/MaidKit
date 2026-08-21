@@ -144,6 +144,19 @@ class _FakeStreamSession implements MaidCafeStreamSession {
   Future<Map<String, dynamic>> metrics() async => {};
 
   @override
+  Future<Map<String, dynamic>> config() async => {
+    'config': {
+      'status_upload_enabled': false,
+      'managed_containers': <String>[],
+      'managed_composes': <String>[],
+    },
+  };
+
+  @override
+  Future<Map<String, dynamic>> patchConfig(Map<String, Object?> patch) async =>
+      {'ok': true};
+
+  @override
   Future<List<MaidCafeAuditEntry>> audit({int limit = 50}) async =>
       auditEntries;
 

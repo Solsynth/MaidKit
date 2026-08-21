@@ -18,6 +18,7 @@ import 'maidcafe_install.dart';
 import 'maidcafe_uninstall.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
+import 'maidcafe_uploads_tab.dart';
 import 'maidcafe_service.dart';
 import 'server_models.dart';
 import 'terminal_tabs_provider.dart';
@@ -1366,7 +1367,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   }
 
   Widget _payloadTabs(BuildContext context) => DefaultTabController(
-    length: 4,
+    length: 5,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1375,6 +1376,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             IconLabelTab(
               icon: const Icon(Symbols.settings, size: 18),
               label: 'maidCafeConfigTab'.tr(),
+            ),
+            IconLabelTab(
+              icon: const Icon(Symbols.cloud_upload, size: 18),
+              label: 'maidCafeUploadsTab'.tr(),
             ),
             IconLabelTab(
               icon: const Icon(Symbols.speed, size: 18),
@@ -1394,6 +1399,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           child: TabBarView(
             children: [
               _configEditor(context),
+              _uploadsTab(context),
               _alarmsTab(context),
               _actionsTab(context),
               _auditTab(context),
@@ -1403,6 +1409,22 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       ],
     ),
   );
+
+  Widget _uploadsTab(BuildContext context) {
+    final stream = _stream;
+    if (stream == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            'maidCafeUploadsNeedSession'.tr(),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return MaidCafeUploadsTab(session: stream);
+  }
 
   Widget _actionsTab(BuildContext context) {
     final theme = Theme.of(context);
