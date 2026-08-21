@@ -1378,8 +1378,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
               label: 'maidCafeConfigTab'.tr(),
             ),
             IconLabelTab(
-              icon: const Icon(Symbols.cloud_upload, size: 18),
-              label: 'maidCafeUploadsTab'.tr(),
+              icon: const Icon(Symbols.inventory_2, size: 18),
+              label: 'maidCafeContainersTab'.tr(),
             ),
             IconLabelTab(
               icon: const Icon(Symbols.speed, size: 18),
@@ -1441,7 +1441,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     final stdio = _transport == 'stdio';
     await runWithDeployTerminal(
       ref: ref,
-      title: 'maidCafeUploadsTab'.tr(),
+      title: 'maidCafeContainersTab'.tr(),
       subtitle: widget.server.name,
       command: 'write upload settings',
       run: (onOutput) => manager.runPrivilegedScriptSnippet(

@@ -22,13 +22,18 @@ class MaidCafeDaemonDetailPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(daemon.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: Text(
+            daemon.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           bottom: TabBar(
             tabs: [
               Tab(text: 'daemonDetailContainers'.tr()),
+              Tab(text: 'daemonDetailOperations'.tr()),
               Tab(text: 'daemonDetailLogs'.tr()),
               Tab(text: 'daemonDetailActions'.tr()),
             ],
@@ -37,6 +42,7 @@ class MaidCafeDaemonDetailPage extends ConsumerWidget {
         body: TabBarView(
           children: [
             _ContainersTab(daemonId: daemon.id),
+            _ActionsTab(daemonId: daemon.id, nativeOnly: true),
             _LogsTab(daemonId: daemon.id),
             _ActionsTab(daemonId: daemon.id),
           ],
@@ -66,11 +72,9 @@ class _ContainersTabState extends ConsumerState<_ContainersTab> {
     _future = _load();
   }
 
-  Future<List<MaidCafeCloudContainer>> _load() =>
-      ref.read(maidCafeServiceProvider).listContainers(
-            widget.daemonId,
-            limit: 200,
-          );
+  Future<List<MaidCafeCloudContainer>> _load() => ref
+      .read(maidCafeServiceProvider)
+      .listContainers(widget.daemonId, limit: 200);
 
   Future<void> _refresh() async {
     setState(() => _future = _load());
@@ -294,10 +298,10 @@ class _LogsTabState extends ConsumerState<_LogsTab> {
 /// The actions the daemon reported to the cloud, read-only; invocation stays
 /// on the fleet card.
 class _ActionsTab extends ConsumerStatefulWidget {
-  const _ActionsTab({required this.daemonId});
+  const _ActionsTab({required this.daemonId, this.nativeOnly = false});
 
   final String daemonId;
-
+  final bool nativeOnly;
   @override
   ConsumerState<_ActionsTab> createState() => _ActionsTabState();
 }
@@ -332,11 +336,19 @@ class _ActionsTabState extends ConsumerState<_ActionsTab> {
           if (snapshot.hasError) {
             return _ErrorView(error: snapshot.error!, onRetry: _refresh);
           }
-          final actions = snapshot.data ?? const <MaidCafeCloudAction>[];
+          final actions = (snapshot.data ?? const <MaidCafeCloudAction>[])
+              .where(
+                (action) => _isNativeOperation(action) == widget.nativeOnly,
+              )
+              .toList(growable: false);
           if (actions.isEmpty) {
             return _EmptyView(
-              icon: Symbols.bolt,
-              message: 'daemonDetailNoActions'.tr(),
+              icon: widget.nativeOnly ? Symbols.inventory_2 : Symbols.bolt,
+              message:
+                  (widget.nativeOnly
+                          ? 'daemonDetailNoOperations'
+                          : 'daemonDetailNoActions')
+                      .tr(),
             );
           }
           final colors = Theme.of(context).colorScheme;
@@ -365,6 +377,14 @@ class _ActionsTabState extends ConsumerState<_ActionsTab> {
       ),
     );
   }
+}
+
+bool _isNativeOperation(MaidCafeCloudAction action) {
+  final name = action.name;
+  return name.startsWith('container.') ||
+      name.startsWith('compose.') ||
+      name.startsWith('systemd.') ||
+      name == 'process.kill';
 }
 
 class _ErrorView extends StatelessWidget {
