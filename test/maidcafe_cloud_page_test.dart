@@ -15,6 +15,7 @@ import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
+import 'package:maid_kit/servers/maidcafe_daemon_detail_page.dart';
 import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_connect.dart';
 import 'package:maid_kit/servers/maidcafe_preferences.dart';
@@ -116,6 +117,28 @@ class _FakeMaidCafeService extends MaidCafeService {
       headers: const {},
     );
   }
+
+  @override
+  Future<List<MaidCafeCloudAction>> listActions(String daemonId) async => [
+    _cloudAction(),
+  ];
+
+  @override
+  Future<List<MaidCafeCloudContainer>> listContainers(
+    String daemonId, {
+    String? compose,
+    String? state,
+    DateTime? before,
+    int limit = 100,
+  }) async => const [];
+
+  @override
+  Future<List<MaidCafeCloudLog>> listLogs(
+    String daemonId, {
+    String? containerId,
+    DateTime? before,
+    int limit = 100,
+  }) async => const [];
 
   String? createdCredentialLabel;
   List<String> createdActionNames = const [];
@@ -283,6 +306,38 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> pumpDetail(
+    WidgetTester tester, {
+    required _FakeMaidCafeService service,
+  }) async {
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      EasyLocalization(
+        supportedLocales: const [Locale('en', 'US'), Locale('zh', 'CN')],
+        path: 'assets/translations',
+        fallbackLocale: const Locale('en', 'US'),
+        child: ProviderScope(
+          overrides: [maidCafeServiceProvider.overrideWithValue(service)],
+          child: MaterialApp(
+            theme: createMaidKitTheme(Brightness.light),
+            locale: const Locale('en', 'US'),
+            supportedLocales: const [Locale('en', 'US'), Locale('zh', 'CN')],
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            home: MaidCafeDaemonDetailPage(daemon: _daemon()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('signed out renders the Solarpass sign-in CTA', (tester) async {
     await pumpPage(tester, signedIn: false);
 
@@ -290,14 +345,13 @@ void main() {
     expect(find.text('maidCafeNoWorkspaces'.tr()), findsOneWidget);
   });
 
-  testWidgets('signed in renders daemon, unread badge, and notification', (
-    tester,
-  ) async {
+  testWidgets('signed in renders daemon and unread badge', (tester) async {
     await pumpPage(tester);
 
     expect(find.text('host-1'), findsOneWidget);
-    // Actions the daemon reported to the cloud render as invocable chips.
-    expect(find.text('Backup data'), findsOneWidget);
+    // Reported actions no longer occupy fleet cards; they live in the detail
+    // page's Actions tab.
+    expect(find.text('Backup data'), findsNothing);
 
     // The feed lives on the notifications tab.
     await tester.tap(find.text('maidCafeNotifications'.tr()));
@@ -447,11 +501,14 @@ void main() {
     expect(fetches, greaterThan(1));
   });
 
-  testWidgets('cloud action chips invoke through the relay', (tester) async {
+  testWidgets('detail actions invoke through the relay', (tester) async {
     final service = _FakeMaidCafeService();
-    await pumpPage(tester, service: service);
+    await pumpDetail(tester, service: service);
 
-    await tester.tap(find.text('Backup data'));
+    await tester.tap(find.text('daemonDetailActions'.tr()));
+    await tester.pumpAndSettle();
+    expect(find.text('maidCafeRequestNotification'.tr()), findsOneWidget);
+    await tester.tap(find.text('maidCafeNativeOpRun'.tr()));
     await tester.pumpAndSettle();
 
     expect(service.invokedActionName, 'backup');

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:auto_route/auto_route.dart';
@@ -11,13 +10,14 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/services/analytics_service.dart';
 import 'package:styled_widget/styled_widget.dart';
+
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
-import 'maidcafe_daemon_detail_page.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
 import 'server_providers.dart';
@@ -401,10 +401,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             _setDaemonEnabled(context, daemon, !daemon.enabled),
         onRotateSecret: (daemon) => _rotateSecret(context, daemon),
         onDisable: (daemon) => _disableDaemon(context, daemon),
-        onRequestNotification: (daemon) =>
-            _requestPushNotification(context, daemon),
-        onInvokeAction: (daemon, action) =>
-            _invokeCloudAction(context, daemon, action),
       );
 
   Future<void> _registerDaemon(BuildContext context, String workspaceId) async {
@@ -460,99 +456,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   }
 
   /// Actions the daemon reported to the cloud, invoked through the relay:
-  /// the cloud page asks the cloud, the cloud queues it, and the daemon
-  /// polls and runs it. Native operations prompt for their parameters
-  /// (container id, pid, unit, or compose project + directory) first.
-  Future<void> _invokeCloudAction(
-    BuildContext context,
-    MaidCafeDaemon daemon,
-    MaidCafeCloudAction action,
-  ) async {
-    final fields = _nativeOpParamFields(action.name);
-    Map<String, dynamic> body = const {};
-    if (fields.isNotEmpty) {
-      final values = await showDialog<Map<String, String>>(
-        context: context,
-        builder: (context) => _NativeOpParamsDialog(
-          title: action.displayName.isNotEmpty
-              ? action.displayName
-              : action.name,
-          fields: fields,
-        ),
-      );
-      if (values == null || !context.mounted) return;
-      body = values;
-    }
-    await _run(_daemonOp(daemon.id), () async {
-      final result = await ref
-          .read(maidCafeServiceProvider)
-          .invokeActionViaCloud(
-            daemonId: daemon.id,
-            actionName: action.name,
-            body: body,
-          );
-      if (context.mounted) {
-        final stdout = utf8.decode(result.body, allowMalformed: true).trim();
-        final stderr = result.error?.trim() ?? '';
-        showSnackBar(
-          stdout.isNotEmpty
-              ? stdout
-              : stderr.isNotEmpty
-              ? stderr
-              : 'maidCafeActionInvoked'.tr(),
-        );
-      }
-    });
-  }
-
-  /// The parameters a native operation slug requires, in prompt order.
-  /// Empty for configured actions, which carry no identity in the body.
-  static List<({String key, String label})> _nativeOpParamFields(String slug) {
-    if (slug.startsWith('container.')) {
-      return [(key: 'id', label: 'maidCafeNativeOpFieldId')];
-    }
-    if (slug == 'process.kill') {
-      return [(key: 'pid', label: 'maidCafeNativeOpFieldPid')];
-    }
-    if (slug.startsWith('systemd.')) {
-      return [(key: 'unit', label: 'maidCafeNativeOpFieldUnit')];
-    }
-    if (slug.startsWith('compose.')) {
-      return [
-        (key: 'project', label: 'maidCafeNativeOpFieldProject'),
-        (key: 'directory', label: 'maidCafeNativeOpFieldDirectory'),
-      ];
-    }
-    return const [];
-  }
-
-  Future<void> _requestPushNotification(
-    BuildContext context,
-    MaidCafeDaemon daemon,
-  ) async {
-    final requested = await showModalBottomSheet<({String title, String body})>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => const _RequestNotificationSheet(),
-    );
-    if (requested == null || !context.mounted) return;
-    await _run(_daemonOp(daemon.id), () async {
-      await ref
-          .read(maidCafeServiceProvider)
-          .requestPushNotification(
-            daemon.id,
-            kind: 'user.request',
-            title: requested.title,
-            body: requested.body,
-          );
-      final workspaceId = _effectiveWorkspaceId;
-      if (workspaceId != null) {
-        ref.invalidate(maidCafeNotificationsProvider(workspaceId));
-        ref.invalidate(maidCafeUnreadNotificationCountProvider(workspaceId));
-      }
-    });
-  }
 
   Future<void> _renameDaemon(
     BuildContext context,
@@ -1405,8 +1308,6 @@ class _DaemonGrid extends StatelessWidget {
     required this.onToggleEnabled,
     required this.onRotateSecret,
     required this.onDisable,
-    required this.onRequestNotification,
-    required this.onInvokeAction,
   });
 
   final List<MaidCafeDaemon> items;
@@ -1417,9 +1318,6 @@ class _DaemonGrid extends StatelessWidget {
   final ValueChanged<MaidCafeDaemon> onToggleEnabled;
   final ValueChanged<MaidCafeDaemon> onRotateSecret;
   final ValueChanged<MaidCafeDaemon> onDisable;
-  final ValueChanged<MaidCafeDaemon> onRequestNotification;
-  final void Function(MaidCafeDaemon daemon, MaidCafeCloudAction action)
-  onInvokeAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1445,8 +1343,6 @@ class _DaemonGrid extends StatelessWidget {
                   onToggleEnabled: () => onToggleEnabled(daemon),
                   onRotateSecret: () => onRotateSecret(daemon),
                   onDisable: () => onDisable(daemon),
-                  onRequestNotification: () => onRequestNotification(daemon),
-                  onInvokeAction: (action) => onInvokeAction(daemon, action),
                 ),
               ),
           ],
@@ -1456,8 +1352,8 @@ class _DaemonGrid extends StatelessWidget {
   }
 }
 
-/// One fleet card: status dot and name, the live metric strip, last-seen
-/// line, and the notification/action controls.
+/// One fleet card: status dot and name, the live metric strip, and daemon
+/// management controls.
 class _DaemonFleetCard extends ConsumerWidget {
   const _DaemonFleetCard({
     required this.daemon,
@@ -1466,8 +1362,6 @@ class _DaemonFleetCard extends ConsumerWidget {
     required this.onToggleEnabled,
     required this.onRotateSecret,
     required this.onDisable,
-    required this.onRequestNotification,
-    required this.onInvokeAction,
   });
 
   final MaidCafeDaemon daemon;
@@ -1476,8 +1370,6 @@ class _DaemonFleetCard extends ConsumerWidget {
   final VoidCallback onToggleEnabled;
   final VoidCallback onRotateSecret;
   final VoidCallback onDisable;
-  final VoidCallback onRequestNotification;
-  final ValueChanged<MaidCafeCloudAction> onInvokeAction;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1491,9 +1383,6 @@ class _DaemonFleetCard extends ConsumerWidget {
     final samples = ordered.length > 24
         ? ordered.sublist(ordered.length - 24)
         : ordered;
-    final actions =
-        ref.watch(maidCafeCloudActionsProvider(daemon.id)).asData?.value ??
-        const <MaidCafeCloudAction>[];
     final enabled = daemon.enabled;
     final disconnected = enabled && daemon.disconnectedAt != null;
     final lastSeen = daemon.lastSeenAt;
@@ -1519,19 +1408,16 @@ class _DaemonFleetCard extends ConsumerWidget {
                     color: disconnected
                         ? colors.error
                         : enabled
-                            ? colors.primary
-                            : colors.outline,
+                        ? colors.primary
+                        : colors.outline,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            MaidCafeDaemonDetailPage(daemon: daemon),
-                      ),
+                    onTap: () => context.router.push(
+                      MaidCafeDaemonDetailRoute(daemon: daemon),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1672,40 +1558,6 @@ class _DaemonFleetCard extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: OutlinedButton.icon(
-                onPressed: busy ? null : onRequestNotification,
-                icon: const Icon(Symbols.notifications, size: 18),
-                label: Text('maidCafeRequestNotification'.tr()),
-              ),
-            ),
-            if (actions.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Text(
-                  'maidCafeActions'.tr(),
-                  style: textTheme.titleSmall,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final action in actions)
-                      ActionChip(
-                        label: Text(action.label),
-                        onPressed: busy ? null : () => onInvokeAction(action),
-                      ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -2668,139 +2520,4 @@ class _RenameDaemonDialogState extends State<_RenameDaemonDialog> {
       ),
     ],
   );
-}
-
-class _RequestNotificationSheet extends StatefulWidget {
-  const _RequestNotificationSheet();
-
-  @override
-  State<_RequestNotificationSheet> createState() =>
-      _RequestNotificationSheetState();
-}
-
-class _RequestNotificationSheetState extends State<_RequestNotificationSheet> {
-  final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _bodyController = TextEditingController();
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _bodyController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    width: 560,
-    child: SheetScaffold(
-      titleText: 'maidCafeRequestNotification'.tr(),
-      heightFactor: 0.5,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        children: [
-          TextField(
-            controller: _titleController,
-            decoration: InputDecoration(
-              labelText: 'maidCafeNotificationTitle'.tr(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _bodyController,
-            decoration: InputDecoration(
-              labelText: 'maidCafeNotificationBody'.tr(),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text('maidCafeCancel'.tr()),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: () => Navigator.pop(context, (
-                  title: _titleController.text,
-                  body: _bodyController.text,
-                )),
-                child: Text('maidCafeRequest'.tr()),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-/// Collects the parameters a native operation (container id, pid, unit, or
-/// compose project + directory) needs before the cloud relays the invocation.
-class _NativeOpParamsDialog extends StatefulWidget {
-  const _NativeOpParamsDialog({required this.title, required this.fields});
-
-  final String title;
-  final List<({String key, String label})> fields;
-
-  @override
-  State<_NativeOpParamsDialog> createState() => _NativeOpParamsDialogState();
-}
-
-class _NativeOpParamsDialogState extends State<_NativeOpParamsDialog> {
-  late final List<TextEditingController> _controllers = List.generate(
-    widget.fields.length,
-    (_) => TextEditingController(),
-  );
-
-  @override
-  void dispose() {
-    for (final controller in _controllers) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < widget.fields.length; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: TextField(
-                  controller: _controllers[i],
-                  autofocus: i == 0,
-                  decoration: InputDecoration(
-                    labelText: widget.fields[i].label.tr(),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text('maidCafeNativeOpCancel'.tr()),
-        ),
-        const SizedBox(width: 8),
-        FilledButton(
-          onPressed: () {
-            final values = <String, String>{
-              for (var i = 0; i < widget.fields.length; i++)
-                widget.fields[i].key: _controllers[i].text.trim(),
-            };
-            Navigator.pop(context, values);
-          },
-          child: Text('maidCafeNativeOpRun'.tr()),
-        ),
-      ],
-    );
-  }
 }

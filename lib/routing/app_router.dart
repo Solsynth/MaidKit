@@ -15,7 +15,7 @@ final appRouterProvider = Provider<AppRouter>(
 /// Tab shells that host nested detail routes. Each renders an [AutoRouter]
 /// outlet, so pushed detail pages (project, compose, container, server, GitHub
 /// run) stay inside their tab's stack and the tab chrome (rail / bottom
-/// navigation) remains switchable while inspecting them.
+const MaidCafeTab = EmptyShellRoute('MaidCafeTab');
 const ServersTab = EmptyShellRoute('ServersTab');
 const AssetsTab = EmptyShellRoute('AssetsTab');
 const ProjectsTab = EmptyShellRoute('ProjectsTab');
@@ -67,7 +67,17 @@ class AppRouter extends RootStackRouter {
           ],
         ),
         AutoRoute(page: AgentRoute.page, path: 'agent'),
-        AutoRoute(page: MaidCafeCloudRoute.page, path: 'maidcafe'),
+        AutoRoute(
+          page: MaidCafeTab.page,
+          path: 'maidcafe',
+          children: [
+            AutoRoute(page: MaidCafeCloudRoute.page, path: '', initial: true),
+            AutoRoute(
+              page: MaidCafeDaemonDetailRoute.page,
+              path: 'daemon-detail',
+            ),
+          ],
+        ),
         AutoRoute(page: SettingsRoute.page, path: 'settings'),
       ],
     ),

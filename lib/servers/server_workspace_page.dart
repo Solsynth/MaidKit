@@ -27,7 +27,7 @@ class ServerWorkspacePage extends StatelessWidget {
         AssetsTab(),
         ProjectsTab(),
         AgentRoute(),
-        MaidCafeCloudRoute(),
+        MaidCafeTab(),
         SettingsRoute(),
       ],
       duration: const Duration(milliseconds: 180),
