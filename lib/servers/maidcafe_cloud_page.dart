@@ -17,6 +17,7 @@ import 'package:maid_kit/shared/services/analytics_service.dart';
 import 'package:styled_widget/styled_widget.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
+import 'maidcafe_daemon_detail_page.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
 import 'server_providers.dart';
@@ -1518,32 +1519,40 @@ class _DaemonFleetCard extends ConsumerWidget {
                     color: disconnected
                         ? colors.error
                         : enabled
-                        ? colors.primary
-                        : colors.outline,
+                            ? colors.primary
+                            : colors.outline,
                     shape: BoxShape.circle,
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        daemon.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.titleMedium,
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            MaidCafeDaemonDetailPage(daemon: daemon),
                       ),
-                      Text(
-                        daemon.id,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: textTheme.labelSmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          fontFamily: 'IBM Plex Mono',
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          daemon.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.titleMedium,
                         ),
-                      ),
-                    ],
+                        Text(
+                          daemon.id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.labelSmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                            fontFamily: 'IBM Plex Mono',
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 IconButton(

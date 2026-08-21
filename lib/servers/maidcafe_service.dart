@@ -315,6 +315,54 @@ class MaidCafeCloudLog {
         line: json['line']?.toString() ?? '',
       );
 }
+/// One managed container's cloud-reported status. The daemon uploads its
+/// managed set on the metrics tick when status upload is enabled; workspace
+/// members inspect it through [listContainers].
+class MaidCafeCloudContainer {
+  const MaidCafeCloudContainer({
+    required this.daemonId,
+    required this.containerId,
+    required this.name,
+    required this.image,
+    required this.state,
+    required this.status,
+    required this.composeProject,
+    required this.firstSeenAt,
+    required this.lastSeenAt,
+  });
+
+  final String daemonId;
+  final String containerId;
+  final String name;
+  final String image;
+  final String state;
+  final String status;
+  final String composeProject;
+  final DateTime firstSeenAt;
+  final DateTime lastSeenAt;
+
+  /// Whether the reported lifecycle state counts as running (mirrors the
+  /// local container tile: paused still counts).
+  bool get running {
+    final value = state.toLowerCase();
+    return value.contains('running') ||
+        value == 'up' ||
+        value.contains('paused');
+  }
+
+  factory MaidCafeCloudContainer.fromJson(Map<String, dynamic> json) =>
+      MaidCafeCloudContainer(
+        daemonId: _requiredString(json, 'daemon_id'),
+        containerId: _requiredString(json, 'container_id'),
+        name: json['name']?.toString() ?? '',
+        image: json['image']?.toString() ?? '',
+        state: json['state']?.toString() ?? '',
+        status: json['status']?.toString() ?? '',
+        composeProject: json['compose_project']?.toString() ?? '',
+        firstSeenAt: _requiredDate(json, 'first_seen_at'),
+        lastSeenAt: _requiredDate(json, 'last_seen_at'),
+      );
+}
 
 /// A user-level API credential for CI/CD: a labeled token scoped to a
 /// subset of daemons, hosts and action names. The plain token is returned
@@ -1069,6 +1117,41 @@ class MaidCafeService {
     }
     return data
         .map((item) => MaidCafeCloudLog.fromJson(_map(item)))
+        .toList(growable: false);
+  }
+  /// Lists the cloud-retained status of a daemon's managed containers. The
+  /// endpoint is workspace-member authenticated; [compose] and [state]
+  /// narrow the result and [before] is an optional last-seen cursor.
+  Future<List<MaidCafeCloudContainer>> listContainers(
+    String daemonId, {
+    String? compose,
+    String? state,
+    int limit = 100,
+    DateTime? before,
+  }) async {
+    final query = <String, String>{'limit': '$limit'};
+    if (compose != null && compose.trim().isNotEmpty) {
+      query['compose'] = compose.trim();
+    }
+    if (state != null && state.trim().isNotEmpty) {
+      query['state'] = state.trim();
+    }
+    if (before != null) {
+      query['before'] = before.toUtc().toIso8601String();
+    }
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/containers',
+        queryParameters: query,
+        options: _cloudOptions(token),
+      ),
+    );
+    final data = _map(_responseJson(response))['containers'];
+    if (data is! List) {
+      throw _invalidResponse('Expected a container status list.');
+    }
+    return data
+        .map((item) => MaidCafeCloudContainer.fromJson(_map(item)))
         .toList(growable: false);
   }
 

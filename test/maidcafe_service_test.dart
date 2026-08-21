@@ -791,4 +791,45 @@ void main() {
     expect(parsed.daemonId, isNull);
     expect(parsed.preference, MaidCafeNotificationPreferenceLevel.reject);
   });
+  test(
+    'cloud container status is fetched with the bearer and parsed',
+    () async {
+      late RequestOptions request;
+      final dio = Dio()
+        ..httpClientAdapter = _Adapter((options) async {
+          request = options;
+          return _json({
+            'containers': [
+              {
+                'daemon_id': 'daemon-1',
+                'container_id': 'abc123',
+                'name': 'web',
+                'image': 'nginx:1.27',
+                'state': 'running',
+                'status': 'Up 2 hours',
+                'compose_project': 'myapp',
+                'first_seen_at': '2026-08-20T10:00:00Z',
+                'last_seen_at': '2026-08-20T12:00:00Z',
+              },
+            ],
+          }, 200);
+        });
+      final service = MaidCafeService(
+        baseUrl: 'https://mk.solsynth.dev',
+        cloudSync: CloudSyncService(vaultId: 'test'),
+        accessToken: () async => 'solar-token',
+        dio: dio,
+      );
+      final containers = await service.listContainers('daemon-1');
+      expect(request.method, 'GET');
+      expect(request.uri.path, '/api/daemons/daemon-1/containers');
+      expect(request.uri.queryParameters['limit'], '100');
+      expect(request.headers['Authorization'], 'Bearer solar-token');
+      expect(containers, hasLength(1));
+      expect(containers.first.containerId, 'abc123');
+      expect(containers.first.running, isTrue);
+      expect(containers.first.composeProject, 'myapp');
+    },
+  );
+
 }
