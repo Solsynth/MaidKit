@@ -210,6 +210,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   _FileSide? _focusedSide;
   _FileClipboard? _clipboard;
   var _localCollapsed = false;
+  var _remoteCollapsed = false;
+  var _paneSplitRatio = 0.5;
+  double? _paneDragRatio;
   var _leftSearchOpen = false;
   var _rightSearchOpen = false;
   late final TextEditingController _leftSearchController;
@@ -219,6 +222,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
   /// Phone-width layouts always keep the local pane visible (no collapse).
   static const _mobileLocalBreakpoint = 900.0;
+  static const _paneDividerWidth = 1.0;
+  static const _paneDividerHitTargetWidth = 32.0;
+  static const _minimumPaneWidth = 280.0;
+  static const _paneCollapseThreshold = 0.08;
 
   bool get _isMobileLayout {
     final width = MediaQuery.sizeOf(context).width;
@@ -3320,6 +3327,76 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   /// True when the local pane is rendered and can receive focus.
   bool get _canFocusLocalPane => !_isMobileLayout && !_localCollapsed;
 
+  double _clampPaneSplitRatio(double ratio, double availableWidth) {
+    if (availableWidth <= 0) return 0.5;
+    final minimumRatio = math.min(0.5, _minimumPaneWidth / availableWidth);
+    return ratio.clamp(minimumRatio, 1.0 - minimumRatio).toDouble();
+  }
+
+  void _collapseLocalPane() {
+    if (_isMobileLayout) return;
+    setState(() {
+      _localCollapsed = true;
+      _remoteCollapsed = false;
+      _paneSplitRatio = 0.5;
+      if (_focusedSide == _FileSide.local) _focusedSide = _FileSide.remote;
+      if (_dropTargetSide == _FileSide.local) _dropTargetSide = null;
+    });
+  }
+
+  void _collapseRemotePane() {
+    if (_isMobileLayout) return;
+    setState(() {
+      _localCollapsed = false;
+      _remoteCollapsed = true;
+      _paneSplitRatio = 0.5;
+      if (_focusedSide == _FileSide.remote) _focusedSide = _FileSide.local;
+      if (_dropTargetSide == _FileSide.remote) _dropTargetSide = null;
+    });
+  }
+
+  void _expandLocalPane() {
+    setState(() {
+      _localCollapsed = false;
+      _paneSplitRatio = 0.5;
+    });
+  }
+
+  void _expandRemotePane() {
+    setState(() {
+      _remoteCollapsed = false;
+      _paneSplitRatio = 0.5;
+    });
+  }
+
+  void _startPaneResize() {
+    _paneDragRatio = _paneSplitRatio;
+  }
+
+  void _resizePanes(DragUpdateDetails details, double availableWidth) {
+    if (availableWidth <= 0) return;
+    final next =
+        (_paneDragRatio ?? _paneSplitRatio) + details.delta.dx / availableWidth;
+    _paneDragRatio = next;
+    if (next <= _paneCollapseThreshold) {
+      _paneDragRatio = null;
+      _collapseLocalPane();
+      return;
+    }
+    if (next >= 1.0 - _paneCollapseThreshold) {
+      _paneDragRatio = null;
+      _collapseRemotePane();
+      return;
+    }
+    setState(() {
+      _paneSplitRatio = _clampPaneSplitRatio(next, availableWidth);
+    });
+  }
+
+  void _endPaneResize() {
+    _paneDragRatio = null;
+  }
+
   int _displayedLength(_FileSide side) {
     if (side == _FileSide.local) {
       return _leftIsRemote
@@ -3701,27 +3778,6 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                 onPressed: _chooseLeftServer,
                 icon: const Icon(Symbols.swap_horiz, size: 18),
               ),
-              // Keep local visible on mobile; collapse is desktop/wide only.
-              if (!_isMobileLayout)
-                IconButton(
-                  tooltip: 'fileManagerHideLocal'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                  onPressed: () => setState(() {
-                    _localCollapsed = true;
-                    if (_focusedSide == _FileSide.local) {
-                      _focusedSide = _FileSide.remote;
-                    }
-                    if (_dropTargetSide == _FileSide.local) {
-                      _dropTargetSide = null;
-                    }
-                  }),
-                  icon: const Icon(Symbols.left_panel_close, size: 18),
-                ),
             ],
             child: _LocalFileList(
               entries: _displayedLocalEntries,
@@ -3790,6 +3846,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       loading: _loadingRemote,
       error: _remoteError,
       clipboardHint: _clipboardHint(_FileSide.remote),
+      aboveList: _isLocalMachine || _favoritePaths.isEmpty
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [_favoritePathsPanel(), const Divider(height: 1)],
+            ),
       backgroundMenu: () => _paneBackgroundMenu(_FileSide.remote),
       canAcceptDrop: (data) => data.side == _FileSide.local,
       onDragEntered: () => setState(() => _dropTargetSide = _FileSide.remote),
@@ -3801,10 +3863,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       onAcceptDrop: (data) => _handleInternalDrop(data, _FileSide.remote),
       headerActions: [
         _searchToggle(_FileSide.remote),
-        if (!_isLocalMachine) ...[
-          _favoriteToggleButton(),
-          _favoritePathsButton(),
-        ],
+        if (!_isLocalMachine) _favoriteToggleButton(),
         IconButton(
           tooltip: 'fileManagerCreateFolder'.tr(),
           visualDensity: VisualDensity.compact,
@@ -3815,15 +3874,6 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
               : null,
           icon: const Icon(Symbols.create_new_folder, size: 18),
         ),
-        if (_localCollapsed && !_isMobileLayout)
-          IconButton(
-            tooltip: 'fileManagerShowLocal'.tr(),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: () => setState(() => _localCollapsed = false),
-            icon: const Icon(Symbols.left_panel_open, size: 18),
-          ),
       ],
       child: _RemoteFileList(
         entries: _displayedRemoteEntries,
@@ -3855,45 +3905,77 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         menuProvider: _remoteEntryMenu,
       ),
     );
-
     final content = LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= _mobileLocalBreakpoint;
         // Mobile always shows the local pane; collapse is wide-layout only.
         final forceLocal = !wide;
-        final showExpanded = forceLocal || !_localCollapsed;
+        final showLocalTarget = forceLocal || !_localCollapsed;
+        final showRemoteTarget = !_remoteCollapsed;
+        final availableWidth =
+            constraints.maxWidth - _paneDividerHitTargetWidth;
+        final paneRatio = _clampPaneSplitRatio(_paneSplitRatio, availableWidth);
+        final baseLocalWidth = availableWidth * paneRatio;
+        final baseRemoteWidth = availableWidth - baseLocalWidth;
         return TweenAnimationBuilder<double>(
           duration: const Duration(milliseconds: 280),
           curve: Curves.easeInOutCubic,
-          tween: Tween<double>(end: showExpanded ? 1.0 : 0.0),
+          tween: Tween<double>(end: showLocalTarget ? 1.0 : 0.0),
           builder: (context, localFactor, _) {
-            final factor = forceLocal ? 1.0 : localFactor.clamp(0.0, 1.0);
-            final showLocal = forceLocal || factor > 0.001;
-            if (wide) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (showLocal) ...[
-                    ClipRect(
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: factor,
+            return TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeInOutCubic,
+              tween: Tween<double>(end: showRemoteTarget ? 1.0 : 0.0),
+              builder: (context, remoteFactor, _) {
+                if (!wide) return remotePane;
+
+                final localWidth = showRemoteTarget
+                    ? baseLocalWidth * localFactor
+                    : availableWidth - baseRemoteWidth * remoteFactor;
+                final remoteWidth = availableWidth - localWidth;
+                final showLocal = localWidth > 0.001;
+                final showRemote = remoteWidth > 0.001;
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (showLocal)
+                      ClipRect(
                         child: SizedBox(
-                          width: constraints.maxWidth / 2,
-                          child: Opacity(opacity: factor, child: localPane),
+                          width: localWidth,
+                          child: Opacity(
+                            opacity: localFactor,
+                            child: localPane,
+                          ),
                         ),
                       ),
+                    SizedBox(
+                      width: _paneDividerHitTargetWidth,
+                      child: _FilePaneDivider(
+                        dividerWidth: _paneDividerWidth,
+                        localCollapsed: !showLocal,
+                        remoteCollapsed: !showRemote,
+                        onExpandLocal: _expandLocalPane,
+                        onExpandRemote: _expandRemotePane,
+                        onDragStart: _startPaneResize,
+                        onDragUpdate: (details) =>
+                            _resizePanes(details, availableWidth),
+                        onDragEnd: _endPaneResize,
+                      ),
                     ),
-                    Opacity(
-                      opacity: factor,
-                      child: const VerticalDivider(width: 1),
-                    ),
+                    if (showRemote)
+                      ClipRect(
+                        child: SizedBox(
+                          width: remoteWidth,
+                          child: Opacity(
+                            opacity: remoteFactor,
+                            child: remotePane,
+                          ),
+                        ),
+                      ),
                   ],
-                  Expanded(child: remotePane),
-                ],
-              );
-            }
-            return remotePane;
+                );
+              },
+            );
           },
         );
       },
@@ -4024,15 +4106,6 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           onPressed: _chooseLeftServer,
           icon: const Icon(Symbols.swap_horiz, size: 18),
         ),
-        if (!_isMobileLayout)
-          IconButton(
-            tooltip: 'fileManagerHideLeftPane'.tr(),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: () => setState(() => _localCollapsed = true),
-            icon: const Icon(Symbols.left_panel_close, size: 18),
-          ),
       ],
       child: _RemoteFileList(
         entries: _displayedLeftRemoteEntries,
@@ -4140,56 +4213,69 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     await _navigateRemote(path);
   }
 
-  Future<void> _showFavoritePaths() async {
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      useSafeArea: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) {
-          final favorites = List<String>.of(_favoritePaths);
-          return SafeArea(
-            child: ListView(
-              shrinkWrap: true,
+  Widget _favoritePathsPanel() {
+    return ExpansionTile(
+      initiallyExpanded: true,
+      dense: true,
+      minTileHeight: _kFileRowExtent,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+      childrenPadding: EdgeInsets.zero,
+      shape: const Border(),
+      collapsedShape: const Border(),
+      title: Row(
+        children: [
+          Icon(
+            Symbols.folder_special,
+            size: 20,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'fileManagerFavoritePaths'.tr(
+                args: [_favoritePaths.length.toString()],
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+      children: [
+        for (final path in _favoritePaths)
+          ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: Row(
               children: [
-                ListTile(
-                  leading: const Icon(Symbols.star),
-                  title: Text('fileManagerFavoritePaths'.tr()),
+                Icon(
+                  Symbols.star,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                if (favorites.isEmpty)
-                  ListTile(
-                    leading: const Icon(Symbols.info, size: 18),
-                    title: Text('fileManagerNoFavoritePaths'.tr()),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    path,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                for (final path in favorites)
-                  ListTile(
-                    leading: const Icon(Symbols.folder_special, size: 20),
-                    title: Text(
-                      path,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () => Navigator.pop(sheetContext, path),
-                    trailing: IconButton(
-                      tooltip: 'fileManagerRemoveFavorite'.tr(),
-                      icon: const Icon(Symbols.delete, size: 18),
-                      onPressed: () async {
-                        await _toggleFavoritePath(path);
-                        setSheetState(() {});
-                      },
-                    ),
-                  ),
+                ),
               ],
             ),
-          );
-        },
-      ),
+            onTap: () => _navigateFavorite(path),
+            trailing: IconButton(
+              tooltip: 'fileManagerRemoveFavorite'.tr(),
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Symbols.delete, size: 18),
+              onPressed: () => _toggleFavoritePath(path),
+            ),
+          ),
+      ],
     );
-    if (selected != null && mounted) await _navigateFavorite(selected);
   }
 
   Widget _favoriteToggleButton() {
-    final currentPath = _isLocalMachine ? _localDirectory.path : _remotePath;
-    final favorite = _favoritePaths.contains(currentPath);
+    final favorite = _favoritePaths.contains(_remotePath);
     return IconButton(
       tooltip: favorite
           ? 'fileManagerRemoveFavorite'.tr()
@@ -4197,19 +4283,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-      onPressed: () => _toggleFavoritePath(currentPath),
+      onPressed: () => _toggleFavoritePath(_remotePath),
       icon: Icon(favorite ? Symbols.star : Symbols.star_border, size: 18),
     );
   }
-
-  Widget _favoritePathsButton() => IconButton(
-    tooltip: 'fileManagerFavoritePaths'.tr(),
-    visualDensity: VisualDensity.compact,
-    padding: EdgeInsets.zero,
-    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-    onPressed: _showFavoritePaths,
-    icon: const Icon(Symbols.folder_special, size: 18),
-  );
 }
 
 Future<String?> _showFileNameSheet(
@@ -4317,6 +4394,77 @@ String? _validateFileName(String? value) {
   return null;
 }
 
+class _FilePaneDivider extends StatelessWidget {
+  const _FilePaneDivider({
+    required this.dividerWidth,
+    required this.localCollapsed,
+    required this.remoteCollapsed,
+    required this.onExpandLocal,
+    required this.onExpandRemote,
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+  });
+
+  final double dividerWidth;
+  final bool localCollapsed;
+  final bool remoteCollapsed;
+  final VoidCallback onExpandLocal;
+  final VoidCallback onExpandRemote;
+  final VoidCallback onDragStart;
+  final ValueChanged<DragUpdateDetails> onDragUpdate;
+  final VoidCallback onDragEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => onDragStart(),
+        onHorizontalDragUpdate: onDragUpdate,
+        onHorizontalDragEnd: (_) => onDragEnd(),
+        onHorizontalDragCancel: onDragEnd,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: (dividerWidth - 1) / 2,
+              width: 1,
+              child: ColoredBox(
+                color: scheme.outlineVariant.withValues(alpha: 0.8),
+                child: const SizedBox.expand(),
+              ),
+            ),
+            if (localCollapsed)
+              IconButton(
+                tooltip: 'fileManagerShowLocal'.tr(),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: onExpandLocal,
+                icon: const Icon(Symbols.left_panel_open, size: 18),
+              )
+            else if (remoteCollapsed)
+              IconButton(
+                tooltip: 'Show remote',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: onExpandRemote,
+                icon: const Icon(Symbols.right_panel_open, size: 18),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _FilePane extends StatelessWidget {
   const _FilePane({
     required this.title,
@@ -4341,6 +4489,7 @@ class _FilePane extends StatelessWidget {
     this.searchInput,
     this.onCopyPath,
     this.onOpenTerminal,
+    this.aboveList,
     this.clipboardHint,
     this.headerActions = const [],
   });
@@ -4367,6 +4516,7 @@ class _FilePane extends StatelessWidget {
   final Widget? searchInput;
   final Future<void> Function()? onCopyPath;
   final Future<void> Function()? onOpenTerminal;
+  final Widget? aboveList;
   final String? clipboardHint;
   final List<Widget> headerActions;
 
@@ -4501,6 +4651,7 @@ class _FilePane extends StatelessWidget {
                   ),
                   const Divider(height: 1),
                   ?searchInput,
+                  ?aboveList,
                   Expanded(
                     child: loading
                         ? const Center(child: CircularProgressIndicator())
@@ -4611,12 +4762,23 @@ class _LocalFileList extends StatelessWidget {
             shape: const Border(),
             collapsedShape: const Border(),
             childrenPadding: EdgeInsets.zero,
-            leading: const Icon(Symbols.visibility_off, size: 18),
-            title: Text(
-              'fileManagerHiddenFiles'.tr(
-                args: [hiddenIndices.length.toString()],
-              ),
-              style: Theme.of(context).textTheme.bodySmall,
+            title: Row(
+              children: [
+                Icon(
+                  Symbols.visibility_off,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'fileManagerHiddenFiles'.tr(
+                      args: [hiddenIndices.length.toString()],
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
             ),
             children: [for (final index in hiddenIndices) buildRow(index)],
           ),
@@ -4718,12 +4880,23 @@ class _RemoteFileList extends StatelessWidget {
             shape: const Border(),
             collapsedShape: const Border(),
             childrenPadding: EdgeInsets.zero,
-            leading: const Icon(Symbols.visibility_off, size: 18),
-            title: Text(
-              'fileManagerHiddenFiles'.tr(
-                args: [hiddenIndices.length.toString()],
-              ),
-              style: Theme.of(context).textTheme.bodySmall,
+            title: Row(
+              children: [
+                Icon(
+                  Symbols.visibility_off,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'fileManagerHiddenFiles'.tr(
+                      args: [hiddenIndices.length.toString()],
+                    ),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
             ),
             children: [for (final index in hiddenIndices) buildRow(index)],
           ),
