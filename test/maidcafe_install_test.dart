@@ -110,7 +110,8 @@ void main() {
   );
 
   test('uploads patch script rewrites only the managed keys', () {
-    const base = '# kept comment\n[daemon]\nid = "host-1"\n'
+    const base =
+        '# kept comment\n[daemon]\nid = "host-1"\n'
         'logsUploadEnabled = false\nmanagedContainers = ["old"]\n\n'
         '[[daemon.actions]]\nname = "keep"\ncommand = "/bin/true"\n';
     final script = buildMaidCafeUploadsPatchScript(
@@ -122,9 +123,9 @@ void main() {
       }),
     );
     expect(script, contains('install -o root -g maidcafe -m 0660 /dev/stdin '));
-    final match = RegExp("printf '%s' '([^']+)' \\| base64 -d").firstMatch(
-      script,
-    );
+    final match = RegExp(
+      "printf '%s' '([^']+)' \\| base64 -d",
+    ).firstMatch(script);
     if (match == null) {
       fail('no embedded config in generated script');
     }

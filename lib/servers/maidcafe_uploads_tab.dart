@@ -1,4 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -95,16 +96,10 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
     try {
       await widget.onPersist(patch);
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(SnackBar(content: Text('maidCafeUploadsSaved'.tr())));
+      showSnackBar('maidCafeUploadsSaved'.tr());
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          content: Text('maidCafeUploadsSaveFailed'.tr(args: ['$error'])),
-        ),
-      );
+      showSnackBar('maidCafeUploadsSaveFailed'.tr(args: ['$error']));
       // The daemon may have rejected part of the change; resync with its
       // actual state.
       await _load();

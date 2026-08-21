@@ -607,10 +607,9 @@ class DeploySessionsRailButton extends ConsumerWidget {
                       : 'deployLogLabel'.tr(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: color,
-                    fontSize: 10,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: color, fontSize: 10),
                 ),
               ],
             ),

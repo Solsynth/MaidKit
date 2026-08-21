@@ -2708,6 +2708,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ),
                 ),
               ],
+              const SizedBox(height: 8),
               MaidKitCollapsibleSection(
                 initiallyExpanded: _fileManagementInitialPath.text.isNotEmpty,
                 tilePadding: const EdgeInsets.symmetric(horizontal: 12),

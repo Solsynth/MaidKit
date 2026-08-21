@@ -831,5 +831,4 @@ void main() {
       expect(containers.first.composeProject, 'myapp');
     },
   );
-
 }

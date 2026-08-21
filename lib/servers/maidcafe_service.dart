@@ -315,6 +315,7 @@ class MaidCafeCloudLog {
         line: json['line']?.toString() ?? '',
       );
 }
+
 /// One managed container's cloud-reported status. The daemon uploads its
 /// managed set on the metrics tick when status upload is enabled; workspace
 /// members inspect it through [listContainers].
@@ -1119,6 +1120,7 @@ class MaidCafeService {
         .map((item) => MaidCafeCloudLog.fromJson(_map(item)))
         .toList(growable: false);
   }
+
   /// Lists the cloud-retained status of a daemon's managed containers. The
   /// endpoint is workspace-member authenticated; [compose] and [state]
   /// narrow the result and [before] is an optional last-seen cursor.
