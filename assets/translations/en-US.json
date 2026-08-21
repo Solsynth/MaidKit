@@ -634,6 +634,7 @@
   "fileManagerClearSearch": "Clear search",
   "fileManagerCloseSearch": "Close search",
   "fileManagerCopied": "Copied",
+  "fileManagerSymbolicLink": "Symbolic link",
   "fileManagerCopyRemotePath": "Copy remote path",
   "fileManagerCouldNotOpen": "Could not open {}",
   "fileManagerCouldNotSave": "Could not save {}",

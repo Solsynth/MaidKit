@@ -634,6 +634,7 @@
   "fileManagerClearSearch": "清除搜尋",
   "fileManagerCloseSearch": "關閉搜尋",
   "fileManagerCopied": "已複製",
+  "fileManagerSymbolicLink": "符號連結",
   "fileManagerCopyRemotePath": "複製遠端路徑",
   "fileManagerCouldNotOpen": "無法開啟 {}",
   "fileManagerCouldNotSave": "無法儲存 {}",

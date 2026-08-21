@@ -3807,6 +3807,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       ],
       child: _RemoteFileList(
         entries: _displayedRemoteEntries,
+        symbolicLinkPaths: _remoteSymlinkPaths,
         scrollController: _rightRemoteListController,
         emptyMessage: _isLocalMachine
             ? 'fileManagerLocalMachineHint'.tr()
@@ -4014,6 +4015,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       ],
       child: _RemoteFileList(
         entries: _displayedLeftRemoteEntries,
+        symbolicLinkPaths: _leftRemoteSymlinkPaths,
         scrollController: _leftRemoteListController,
         emptyMessage: _leftSearchController.text.trim().isEmpty
             ? null
@@ -4425,6 +4427,7 @@ class _LocalFileList extends StatelessWidget {
         final selected = selectedPaths.contains(entry.path);
         final dimmed = cutPaths.contains(entry.path);
         final dragData = dragDataFor(entry);
+        final isSymbolicLink = entry is Link;
         return ContextMenuWidget(
           menuProvider: (_) {
             onContextPrepare(entry, index);
@@ -4432,9 +4435,12 @@ class _LocalFileList extends StatelessWidget {
           },
           child: _DraggableFileRow(
             dragData: dragData,
-            icon: isDirectory ? Symbols.folder : Symbols.description,
+            icon: _fileIcon(name, isDirectory: isDirectory),
             name: name,
-            detail: isDirectory ? 'fileManagerFolder'.tr() : null,
+            detail: _fileDetail(
+              isDirectory: isDirectory,
+              isSymbolicLink: isSymbolicLink,
+            ),
             selected: selected,
             dimmed: dimmed,
             onTap: () => onTapEntry(entry, index),
@@ -4451,6 +4457,7 @@ class _LocalFileList extends StatelessWidget {
 class _RemoteFileList extends StatelessWidget {
   const _RemoteFileList({
     required this.entries,
+    required this.symbolicLinkPaths,
     required this.currentPath,
     required this.selectedPaths,
     required this.cutPaths,
@@ -4468,6 +4475,7 @@ class _RemoteFileList extends StatelessWidget {
   final String currentPath;
   final Set<String> selectedPaths;
   final Set<String> cutPaths;
+  final Set<String> symbolicLinkPaths;
   final String? emptyMessage;
   final ScrollController? scrollController;
   final void Function(SftpName entry, int index) onTapEntry;
@@ -4494,6 +4502,7 @@ class _RemoteFileList extends StatelessWidget {
         final selected = selectedPaths.contains(path);
         final dimmed = cutPaths.contains(path);
         final dragData = dragDataFor(entry);
+        final isSymbolicLink = symbolicLinkPaths.contains(path);
         return ContextMenuWidget(
           menuProvider: (_) {
             onContextPrepare(entry, index);
@@ -4501,11 +4510,13 @@ class _RemoteFileList extends StatelessWidget {
           },
           child: _DraggableFileRow(
             dragData: dragData,
-            icon: isDirectory ? Symbols.folder : Symbols.description,
+            icon: _fileIcon(entry.filename, isDirectory: isDirectory),
             name: entry.filename,
-            detail: isDirectory
-                ? 'fileManagerFolder'.tr()
-                : _formatBytes(entry.attr.size),
+            detail: _fileDetail(
+              isDirectory: isDirectory,
+              isSymbolicLink: isSymbolicLink,
+              size: entry.attr.size,
+            ),
             selected: selected,
             dimmed: dimmed,
             onTap: () => onTapEntry(entry, index),
@@ -4698,6 +4709,167 @@ class _EmptyPane extends StatelessWidget {
     );
   }
 }
+
+const _configFileExtensions = {
+  '.conf',
+  '.config',
+  '.env',
+  '.ini',
+  '.json',
+  '.lock',
+  '.plist',
+  '.properties',
+  '.toml',
+  '.xml',
+  '.yaml',
+  '.yml',
+};
+
+const _scriptFileExtensions = {
+  '.app',
+  '.appimage',
+  '.bat',
+  '.bin',
+  '.c',
+  '.cc',
+  '.cmd',
+  '.cpp',
+  '.cs',
+  '.dart',
+  '.exe',
+  '.fish',
+  '.go',
+  '.h',
+  '.hpp',
+  '.java',
+  '.js',
+  '.jsx',
+  '.kt',
+  '.mjs',
+  '.php',
+  '.pl',
+  '.ps1',
+  '.py',
+  '.rb',
+  '.rs',
+  '.run',
+  '.sh',
+  '.swift',
+  '.ts',
+  '.tsx',
+  '.zsh',
+};
+
+const _documentFileExtensions = {
+  '.csv',
+  '.doc',
+  '.docx',
+  '.log',
+  '.md',
+  '.odt',
+  '.pdf',
+  '.rtf',
+  '.tex',
+  '.text',
+  '.txt',
+  '.xls',
+  '.xlsx',
+};
+
+const _archiveFileExtensions = {
+  '.7z',
+  '.bz2',
+  '.gz',
+  '.iso',
+  '.rar',
+  '.tar',
+  '.tgz',
+  '.xz',
+  '.zip',
+  '.zst',
+};
+
+const _imageFileExtensions = {
+  '.avif',
+  '.bmp',
+  '.gif',
+  '.heic',
+  '.jpeg',
+  '.jpg',
+  '.png',
+  '.svg',
+  '.tif',
+  '.tiff',
+  '.webp',
+};
+
+const _videoFileExtensions = {
+  '.avi',
+  '.flv',
+  '.m4v',
+  '.mkv',
+  '.mov',
+  '.mp4',
+  '.mpeg',
+  '.webm',
+  '.wmv',
+};
+
+const _audioFileExtensions = {'.aac', '.flac', '.m4a', '.mp3', '.ogg', '.wav'};
+
+const _databaseFileExtensions = {'.db', '.sqlite', '.sqlite3', '.sql'};
+
+String? _fileDetail({
+  required bool isDirectory,
+  required bool isSymbolicLink,
+  int? size,
+}) {
+  final base = isDirectory
+      ? 'fileManagerFolder'.tr()
+      : size == null
+      ? null
+      : _formatBytes(size);
+  if (!isSymbolicLink) return base;
+  final linkHint = 'fileManagerSymbolicLink'.tr();
+  return base == null ? linkHint : '$linkHint · $base';
+}
+
+IconData _fileIcon(String name, {required bool isDirectory}) {
+  if (isDirectory) return Symbols.folder;
+
+  final lowerName = name.toLowerCase();
+  if (lowerName == 'dockerfile' || lowerName == 'makefile') {
+    return Symbols.code;
+  }
+  if (_hasFileExtension(lowerName, _configFileExtensions)) {
+    return Symbols.settings;
+  }
+  if (_hasFileExtension(lowerName, _scriptFileExtensions)) {
+    return Symbols.code;
+  }
+  if (_hasFileExtension(lowerName, _databaseFileExtensions)) {
+    return Symbols.database;
+  }
+  if (_hasFileExtension(lowerName, _archiveFileExtensions)) {
+    return Symbols.archive;
+  }
+  if (_hasFileExtension(lowerName, _videoFileExtensions)) {
+    return Symbols.video_file;
+  }
+  if (_hasFileExtension(lowerName, _imageFileExtensions)) {
+    return Symbols.image;
+  }
+  if (_hasFileExtension(lowerName, _audioFileExtensions)) {
+    return Symbols.audio_file;
+  }
+  if (_hasFileExtension(lowerName, _documentFileExtensions)) {
+    return Symbols.article;
+  }
+  return Symbols.description;
+}
+
+bool _hasFileExtension(String name, Set<String> extensions) =>
+    extensions.any(name.endsWith);
 
 String _entityName(FileSystemEntity entry) =>
     entry.uri.pathSegments.lastWhere((segment) => segment.isNotEmpty);
