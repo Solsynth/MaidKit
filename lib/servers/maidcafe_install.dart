@@ -612,7 +612,9 @@ String buildMaidCafeDaemonInstallScript({
       : '/etc/maidcafe/config.toml';
   final configInstall = stdio
       ? 'install -o root -g root -m 0644'
-      : 'install -o root -g maidcafe -m 0640';
+      // 0660: group-writable by the daemon group so PATCH /api/v1/config can
+      // persist — the unit grants ReadWritePaths=/etc/maidcafe for it.
+      : 'install -o root -g maidcafe -m 0660';
   final encodedArtifactUrl = base64Encode(utf8.encode(artifactUrl));
   final binaryInstall =
       '''work_dir="\$(mktemp -d "\${TMPDIR:-/tmp}/maidcafe-install.XXXXXX")"
@@ -851,7 +853,10 @@ String buildMaidCafeDaemonConfigScript({
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
       : '/etc/maidcafe/config.toml';
-  final installMode = transport == 'stdio' ? '0644' : '0640';
+  // 0660: group-writable by the daemon group so PATCH /api/v1/config can
+  // persist — the unit grants ReadWritePaths=/etc/maidcafe for it. Also
+  // heals configs deployed by older MaidKit versions (0640).
+  final installMode = transport == 'stdio' ? '0644' : '0660';
   final installGroup = transport == 'stdio' ? 'root' : 'maidcafe';
   // The unit must match the sudoers state: NoNewPrivileges blocks sudo, so it
   // is dropped exactly when a run-as user is configured.

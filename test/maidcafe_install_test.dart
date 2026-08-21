@@ -92,6 +92,9 @@ void main() {
       expect(script, contains('printf \'%s\''));
       expect(script, contains('base64 -d'));
       expect(script, contains('http://127.0.0.1:8747/health'));
+      // Group-writable by the daemon group: PATCH /api/v1/config persists
+      // through the daemon itself (the unit grants ReadWritePaths for it).
+      expect(script, contains('install -o root -g maidcafe -m 0660 '));
       expect(script, contains('Authorization: Bearer \$metricsSecret'));
       expect(script, contains('systemctl restart maidcafe-daemon'));
       expect(script, contains('MaidCafe daemon did not become healthy.'));
@@ -187,7 +190,7 @@ void main() {
       script,
       isNot(
         contains(
-          'install -o root -g maidcafe -m 0640 /dev/stdin '
+          'install -o root -g maidcafe -m 0660 /dev/stdin '
           '/etc/maidcafe/config.toml',
         ),
       ),
