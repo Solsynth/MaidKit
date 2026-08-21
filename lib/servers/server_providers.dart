@@ -1259,13 +1259,24 @@ final platformBrightnessProvider =
 class PlatformBrightnessNotifier extends Notifier<Brightness> {
   @override
   Brightness build() {
-    final dispatcher = WidgetsBinding.instance.platformDispatcher;
-    dispatcher.onPlatformBrightnessChanged = () {
-      state = dispatcher.platformBrightness;
-    };
-    ref.onDispose(() => dispatcher.onPlatformBrightnessChanged = null);
-    return dispatcher.platformBrightness;
+    final observer = _PlatformBrightnessObserver(() {
+      state = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+    });
+    WidgetsBinding.instance.addObserver(observer);
+    ref.onDispose(() {
+      WidgetsBinding.instance.removeObserver(observer);
+    });
+    return WidgetsBinding.instance.platformDispatcher.platformBrightness;
   }
+}
+
+class _PlatformBrightnessObserver extends WidgetsBindingObserver {
+  _PlatformBrightnessObserver(this.onChange);
+
+  final void Function() onChange;
+
+  @override
+  void didChangePlatformBrightness() => onChange();
 }
 
 /// The brightness the app actually renders in, honoring the theme mode and

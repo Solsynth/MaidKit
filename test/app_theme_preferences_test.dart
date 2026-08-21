@@ -36,6 +36,22 @@ void main() {
     expect(container.read(themeModeProvider), ThemeMode.light);
   });
 
+  testWidgets('preserves Flutter brightness notifications for system themes', (
+    tester,
+  ) async {
+    final dispatcher = tester.platformDispatcher;
+    final frameworkCallback = dispatcher.onPlatformBrightnessChanged;
+    expect(frameworkCallback, isNotNull);
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    container.read(platformBrightnessProvider);
+
+    // MaterialApp's system ThemeMode depends on the framework callback to
+    // refresh the root MediaQuery when the OS appearance changes.
+    expect(dispatcher.onPlatformBrightnessChanged, same(frameworkCallback));
+  });
+
   test('restores and saves the compact dashboard preference', () async {
     final settings = InMemoryAppThemeSettings(compactDashboard: true);
     final container = ProviderContainer(
