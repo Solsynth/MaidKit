@@ -635,6 +635,47 @@ class _DraggablePaneTab extends StatelessWidget {
       onSelect: onSelect,
       onClose: onClose,
     );
+    final dragData = _TabDragData(tabId: tab.id, fromPaneId: paneId);
+    final feedback = Material(
+      elevation: 4,
+      color: scheme.surfaceContainerHighest,
+      child: SizedBox(
+        height: _paneTabBarHeight,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _TabActivityIcon(tab: tab),
+              const SizedBox(width: 6),
+              Text(
+                _tabLabel(tab),
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    final isMobile = switch (Theme.of(context).platform) {
+      TargetPlatform.android || TargetPlatform.iOS => true,
+      _ => false,
+    };
+    final draggable = isMobile
+        ? LongPressDraggable<_TabDragData>(
+            data: dragData,
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: feedback,
+            childWhenDragging: Opacity(opacity: 0.35, child: chip),
+            child: chip,
+          )
+        : Draggable<_TabDragData>(
+            data: dragData,
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: feedback,
+            childWhenDragging: Opacity(opacity: 0.35, child: chip),
+            child: chip,
+          );
 
     return DragTarget<_TabDragData>(
       onWillAcceptWithDetails: (details) => details.data.tabId != tab.id,
@@ -656,33 +697,7 @@ class _DraggablePaneTab extends StatelessWidget {
                   margin: const EdgeInsets.symmetric(vertical: 8),
                   color: scheme.primary,
                 ),
-              Draggable<_TabDragData>(
-                data: _TabDragData(tabId: tab.id, fromPaneId: paneId),
-                dragAnchorStrategy: pointerDragAnchorStrategy,
-                feedback: Material(
-                  elevation: 4,
-                  color: scheme.surfaceContainerHighest,
-                  child: SizedBox(
-                    height: _paneTabBarHeight,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _TabActivityIcon(tab: tab),
-                          const SizedBox(width: 6),
-                          Text(
-                            _tabLabel(tab),
-                            style: Theme.of(context).textTheme.labelMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                childWhenDragging: Opacity(opacity: 0.35, child: chip),
-                child: chip,
-              ),
+              draggable,
             ],
           ),
         );
