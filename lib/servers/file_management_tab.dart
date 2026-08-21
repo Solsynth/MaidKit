@@ -169,6 +169,7 @@ class FileManagementTabView extends ConsumerStatefulWidget {
 class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   late Directory _localDirectory;
   var _remotePath = '.';
+  List<String> _favoritePaths = [];
   List<FileSystemEntity> _localEntries = const [];
   List<SftpName> _remoteEntries = const [];
   var _loadingLocal = true;
@@ -224,38 +225,52 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     return width < _mobileLocalBreakpoint;
   }
 
-  List<FileSystemEntity> get _displayedLocalEntries {
-    final query = _leftSearchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _localEntries;
-    return [
-      for (final entry in _localEntries)
-        if (_entityName(entry).toLowerCase().contains(query)) entry,
-    ];
+  List<T> _displayFileEntries<T>({
+    required Iterable<T> entries,
+    required String Function(T) nameOf,
+    required String query,
+  }) {
+    final visible = <T>[];
+    final hidden = <T>[];
+    for (final entry in entries) {
+      final name = nameOf(entry);
+      final lowerName = name.toLowerCase();
+      final isHidden = _isHiddenFileName(name);
+      if (query.isNotEmpty && !lowerName.contains(query)) continue;
+      (isHidden ? hidden : visible).add(entry);
+    }
+    return [...visible, ...hidden];
   }
 
-  List<SftpName> get _displayedLeftRemoteEntries {
-    final query = _leftSearchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _leftRemoteEntries;
-    return [
-      for (final entry in _leftRemoteEntries)
-        if (entry.filename.toLowerCase().contains(query)) entry,
-    ];
-  }
+  List<FileSystemEntity> get _displayedLocalEntries => _displayFileEntries(
+    entries: _localEntries,
+    nameOf: _entityName,
+    query: _leftSearchController.text.trim().toLowerCase(),
+  );
 
-  List<SftpName> get _displayedRemoteEntries {
-    final query = _rightSearchController.text.trim().toLowerCase();
-    if (query.isEmpty) return _remoteEntries;
-    return [
-      for (final entry in _remoteEntries)
-        if (entry.filename.toLowerCase().contains(query)) entry,
-    ];
-  }
+  List<SftpName> get _displayedLeftRemoteEntries => _displayFileEntries(
+    entries: _leftRemoteEntries,
+    nameOf: (entry) => entry.filename,
+    query: _leftSearchController.text.trim().toLowerCase(),
+  );
+
+  List<SftpName> get _displayedRemoteEntries => _displayFileEntries(
+    entries: _remoteEntries,
+    nameOf: (entry) => entry.filename,
+    query: _rightSearchController.text.trim().toLowerCase(),
+  );
 
   @override
   void initState() {
     super.initState();
-    _localDirectory = Directory.current;
-    _remotePath = widget.tab.initialPath ?? '.';
+    final server = _serverRecord();
+    final configuredPath =
+        widget.tab.initialPath ?? server?.fileManagementInitialPath;
+    _localDirectory = _isLocalMachine && configuredPath != null
+        ? Directory(configuredPath)
+        : Directory.current;
+    _remotePath = configuredPath ?? '.';
+    _favoritePaths = decodeStringList(server?.fileManagementFavorites);
     _leftRemotePathController = TextEditingController(text: _leftRemotePath);
     _leftRemotePathFocusNode = FocusNode();
     _remotePathController = TextEditingController(text: _remotePath);
@@ -3710,6 +3725,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
             ],
             child: _LocalFileList(
               entries: _displayedLocalEntries,
+              expandHidden: _leftSearchController.text.trim().isNotEmpty,
               scrollController: _localListController,
               emptyMessage: _leftSearchController.text.trim().isEmpty
                   ? null
@@ -3785,6 +3801,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       onAcceptDrop: (data) => _handleInternalDrop(data, _FileSide.remote),
       headerActions: [
         _searchToggle(_FileSide.remote),
+        if (!_isLocalMachine) ...[
+          _favoriteToggleButton(),
+          _favoritePathsButton(),
+        ],
         IconButton(
           tooltip: 'fileManagerCreateFolder'.tr(),
           visualDensity: VisualDensity.compact,
@@ -3807,6 +3827,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       ],
       child: _RemoteFileList(
         entries: _displayedRemoteEntries,
+        expandHidden: _rightSearchController.text.trim().isNotEmpty,
         symbolicLinkPaths: _remoteSymlinkPaths,
         scrollController: _rightRemoteListController,
         emptyMessage: _isLocalMachine
@@ -4015,6 +4036,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       ],
       child: _RemoteFileList(
         entries: _displayedLeftRemoteEntries,
+        expandHidden: _leftSearchController.text.trim().isNotEmpty,
         symbolicLinkPaths: _leftRemoteSymlinkPaths,
         scrollController: _leftRemoteListController,
         emptyMessage: _leftSearchController.text.trim().isEmpty
@@ -4070,6 +4092,124 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         : 'local';
     return '$verb $count from $source · paste here';
   }
+
+  Server? _serverRecord() {
+    final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
+    return servers
+        .where((server) => server.id == widget.tab.serverId)
+        .firstOrNull;
+  }
+
+  Future<void> _toggleFavoritePath(String path) async {
+    final normalized = path.trim();
+    if (normalized.isEmpty) return;
+    final previous = List<String>.of(_favoritePaths);
+    final next = [...previous];
+    if (!next.remove(normalized)) {
+      next.add(normalized);
+    }
+    setState(() => _favoritePaths = next);
+    try {
+      await ref
+          .read(serverRepositoryProvider)
+          .updateFileManagementFavorites(widget.tab.serverId, next);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _favoritePaths = previous);
+      showStyledSnackBar(
+        message: error.toString(),
+        title: 'fileManagerFavoriteSaveFailed'.tr(),
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+  }
+
+  Future<void> _navigateFavorite(String path) async {
+    if (_isLocalMachine) {
+      final directory = Directory(path);
+      setState(() {
+        _localDirectory = directory;
+        _selectedLocalPaths = {};
+        _localAnchorIndex = null;
+        _focusedSide = _FileSide.local;
+      });
+      await _refreshLocal();
+      return;
+    }
+    await _navigateRemote(path);
+  }
+
+  Future<void> _showFavoritePaths() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      useSafeArea: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final favorites = List<String>.of(_favoritePaths);
+          return SafeArea(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                ListTile(
+                  leading: const Icon(Symbols.star),
+                  title: Text('fileManagerFavoritePaths'.tr()),
+                ),
+                if (favorites.isEmpty)
+                  ListTile(
+                    leading: const Icon(Symbols.info, size: 18),
+                    title: Text('fileManagerNoFavoritePaths'.tr()),
+                  ),
+                for (final path in favorites)
+                  ListTile(
+                    leading: const Icon(Symbols.folder_special, size: 20),
+                    title: Text(
+                      path,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => Navigator.pop(sheetContext, path),
+                    trailing: IconButton(
+                      tooltip: 'fileManagerRemoveFavorite'.tr(),
+                      icon: const Icon(Symbols.delete, size: 18),
+                      onPressed: () async {
+                        await _toggleFavoritePath(path);
+                        setSheetState(() {});
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    if (selected != null && mounted) await _navigateFavorite(selected);
+  }
+
+  Widget _favoriteToggleButton() {
+    final currentPath = _isLocalMachine ? _localDirectory.path : _remotePath;
+    final favorite = _favoritePaths.contains(currentPath);
+    return IconButton(
+      tooltip: favorite
+          ? 'fileManagerRemoveFavorite'.tr()
+          : 'fileManagerAddFavorite'.tr(),
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+      onPressed: () => _toggleFavoritePath(currentPath),
+      icon: Icon(favorite ? Symbols.star : Symbols.star_border, size: 18),
+    );
+  }
+
+  Widget _favoritePathsButton() => IconButton(
+    tooltip: 'fileManagerFavoritePaths'.tr(),
+    visualDensity: VisualDensity.compact,
+    padding: EdgeInsets.zero,
+    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+    onPressed: _showFavoritePaths,
+    icon: const Icon(Symbols.folder_special, size: 18),
+  );
 }
 
 Future<String?> _showFileNameSheet(
@@ -4394,6 +4534,7 @@ class _LocalFileList extends StatelessWidget {
     required this.dragDataFor,
     required this.onContextPrepare,
     required this.menuProvider,
+    required this.expandHidden,
     this.scrollController,
     this.emptyMessage,
   });
@@ -4409,47 +4550,77 @@ class _LocalFileList extends StatelessWidget {
   final _FileDragData Function(FileSystemEntity entry) dragDataFor;
   final void Function(FileSystemEntity entry, int index) onContextPrepare;
   final Menu Function(FileSystemEntity entry, int index) menuProvider;
+  final bool expandHidden;
 
   @override
   Widget build(BuildContext context) {
     if (entries.isEmpty) {
       return _EmptyPane(message: emptyMessage ?? 'This folder is empty.');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      itemExtent: _kFileRowExtent,
-      controller: scrollController,
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
-        final entry = entries[index];
-        final isDirectory = isLocalDirectory(entry);
-        final name = _entityName(entry);
-        final selected = selectedPaths.contains(entry.path);
-        final dimmed = cutPaths.contains(entry.path);
-        final dragData = dragDataFor(entry);
-        final isSymbolicLink = entry is Link;
-        return ContextMenuWidget(
-          menuProvider: (_) {
-            onContextPrepare(entry, index);
-            return menuProvider(entry, index);
-          },
-          child: _DraggableFileRow(
-            dragData: dragData,
-            icon: _fileIcon(name, isDirectory: isDirectory),
-            name: name,
-            detail: _fileDetail(
-              isDirectory: isDirectory,
-              isSymbolicLink: isSymbolicLink,
-            ),
-            selected: selected,
-            dimmed: dimmed,
-            onTap: () => onTapEntry(entry, index),
-            onDoubleTap: isDirectory
-                ? () => onOpen(entry)
-                : () => onEdit(entry),
+
+    final visibleIndices = <int>[];
+    final hiddenIndices = <int>[];
+    for (var index = 0; index < entries.length; index++) {
+      (_isHiddenFileName(_entityName(entries[index]))
+              ? hiddenIndices
+              : visibleIndices)
+          .add(index);
+    }
+
+    Widget buildRow(int index) {
+      final entry = entries[index];
+      final isDirectory = isLocalDirectory(entry);
+      final name = _entityName(entry);
+      final selected = selectedPaths.contains(entry.path);
+      final dimmed = cutPaths.contains(entry.path);
+      final dragData = dragDataFor(entry);
+      final isSymbolicLink = entry is Link;
+      return ContextMenuWidget(
+        menuProvider: (_) {
+          onContextPrepare(entry, index);
+          return menuProvider(entry, index);
+        },
+        child: _DraggableFileRow(
+          dragData: dragData,
+          icon: _fileIcon(name, isDirectory: isDirectory),
+          name: name,
+          detail: _fileDetail(
+            isDirectory: isDirectory,
+            isSymbolicLink: isSymbolicLink,
           ),
-        );
-      },
+          selected: selected,
+          dimmed: dimmed,
+          onTap: () => onTapEntry(entry, index),
+          onDoubleTap: isDirectory ? () => onOpen(entry) : () => onEdit(entry),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      controller: scrollController,
+      children: [
+        for (final index in visibleIndices) buildRow(index),
+        if (hiddenIndices.isNotEmpty)
+          ExpansionTile(
+            key: ValueKey('local-hidden-$expandHidden'),
+            initiallyExpanded: expandHidden,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            dense: true,
+            minTileHeight: _kFileRowExtent,
+            shape: const Border(),
+            collapsedShape: const Border(),
+            childrenPadding: EdgeInsets.zero,
+            leading: const Icon(Symbols.visibility_off, size: 18),
+            title: Text(
+              'fileManagerHiddenFiles'.tr(
+                args: [hiddenIndices.length.toString()],
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            children: [for (final index in hiddenIndices) buildRow(index)],
+          ),
+      ],
     );
   }
 }
@@ -4467,6 +4638,7 @@ class _RemoteFileList extends StatelessWidget {
     required this.dragDataFor,
     required this.onContextPrepare,
     required this.menuProvider,
+    required this.expandHidden,
     this.scrollController,
     this.emptyMessage,
   });
@@ -4484,48 +4656,78 @@ class _RemoteFileList extends StatelessWidget {
   final _FileDragData Function(SftpName entry) dragDataFor;
   final void Function(SftpName entry, int index) onContextPrepare;
   final Menu Function(SftpName entry, int index) menuProvider;
+  final bool expandHidden;
 
   @override
   Widget build(BuildContext context) {
     if (entries.isEmpty) {
       return _EmptyPane(message: emptyMessage ?? 'This folder is empty.');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      itemExtent: _kFileRowExtent,
-      controller: scrollController,
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
-        final entry = entries[index];
-        final isDirectory = entry.attr.isDirectory;
-        final path = _joinRemotePath(currentPath, entry.filename);
-        final selected = selectedPaths.contains(path);
-        final dimmed = cutPaths.contains(path);
-        final dragData = dragDataFor(entry);
-        final isSymbolicLink = symbolicLinkPaths.contains(path);
-        return ContextMenuWidget(
-          menuProvider: (_) {
-            onContextPrepare(entry, index);
-            return menuProvider(entry, index);
-          },
-          child: _DraggableFileRow(
-            dragData: dragData,
-            icon: _fileIcon(entry.filename, isDirectory: isDirectory),
-            name: entry.filename,
-            detail: _fileDetail(
-              isDirectory: isDirectory,
-              isSymbolicLink: isSymbolicLink,
-              size: entry.attr.size,
-            ),
-            selected: selected,
-            dimmed: dimmed,
-            onTap: () => onTapEntry(entry, index),
-            onDoubleTap: isDirectory
-                ? () => onOpen(entry)
-                : () => onEdit(entry),
+
+    final visibleIndices = <int>[];
+    final hiddenIndices = <int>[];
+    for (var index = 0; index < entries.length; index++) {
+      (_isHiddenFileName(entries[index].filename)
+              ? hiddenIndices
+              : visibleIndices)
+          .add(index);
+    }
+
+    Widget buildRow(int index) {
+      final entry = entries[index];
+      final isDirectory = entry.attr.isDirectory;
+      final path = _joinRemotePath(currentPath, entry.filename);
+      final selected = selectedPaths.contains(path);
+      final dimmed = cutPaths.contains(path);
+      final dragData = dragDataFor(entry);
+      final isSymbolicLink = symbolicLinkPaths.contains(path);
+      return ContextMenuWidget(
+        menuProvider: (_) {
+          onContextPrepare(entry, index);
+          return menuProvider(entry, index);
+        },
+        child: _DraggableFileRow(
+          dragData: dragData,
+          icon: _fileIcon(entry.filename, isDirectory: isDirectory),
+          name: entry.filename,
+          detail: _fileDetail(
+            isDirectory: isDirectory,
+            isSymbolicLink: isSymbolicLink,
+            size: entry.attr.size,
           ),
-        );
-      },
+          selected: selected,
+          dimmed: dimmed,
+          onTap: () => onTapEntry(entry, index),
+          onDoubleTap: isDirectory ? () => onOpen(entry) : () => onEdit(entry),
+        ),
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      controller: scrollController,
+      children: [
+        for (final index in visibleIndices) buildRow(index),
+        if (hiddenIndices.isNotEmpty)
+          ExpansionTile(
+            key: ValueKey('remote-hidden-$expandHidden'),
+            initiallyExpanded: expandHidden,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            dense: true,
+            minTileHeight: _kFileRowExtent,
+            shape: const Border(),
+            collapsedShape: const Border(),
+            childrenPadding: EdgeInsets.zero,
+            leading: const Icon(Symbols.visibility_off, size: 18),
+            title: Text(
+              'fileManagerHiddenFiles'.tr(
+                args: [hiddenIndices.length.toString()],
+              ),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            children: [for (final index in hiddenIndices) buildRow(index)],
+          ),
+      ],
     );
   }
 }
@@ -4870,6 +5072,8 @@ IconData _fileIcon(String name, {required bool isDirectory}) {
 
 bool _hasFileExtension(String name, Set<String> extensions) =>
     extensions.any(name.endsWith);
+
+bool _isHiddenFileName(String name) => name.startsWith('.');
 
 String _entityName(FileSystemEntity entry) =>
     entry.uri.pathSegments.lastWhere((segment) => segment.isNotEmpty);

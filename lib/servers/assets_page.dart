@@ -262,6 +262,10 @@ class ServerAssetsSection extends ConsumerWidget {
             environment: decodeEnvironmentMap(server.environment),
             initialSnippets: decodeSnippetIdList(server.initialSnippets),
             tags: decodeStringList(server.tags),
+            fileManagementInitialPath: server.fileManagementInitialPath,
+            fileManagementFavorites: decodeStringList(
+              server.fileManagementFavorites,
+            ),
             connectionType:
                 ServerConnectionType.values
                     .asNameMap()[server.connectionType] ??

@@ -349,7 +349,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       id: 'files-${DateTime.now().microsecondsSinceEpoch}',
       serverId: server.id,
       serverName: server.name,
-      initialPath: initialPath,
+      initialPath: initialPath ?? server.fileManagementInitialPath,
     );
     _insertTab(tab, targetPaneId: paneId);
   }

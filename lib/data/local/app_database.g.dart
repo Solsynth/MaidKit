@@ -408,6 +408,28 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _fileManagementInitialPathMeta =
+      const VerificationMeta('fileManagementInitialPath');
+  @override
+  late final GeneratedColumn<String> fileManagementInitialPath =
+      GeneratedColumn<String>(
+        'file_management_initial_path',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _fileManagementFavoritesMeta =
+      const VerificationMeta('fileManagementFavorites');
+  @override
+  late final GeneratedColumn<String> fileManagementFavorites =
+      GeneratedColumn<String>(
+        'file_management_favorites',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -446,6 +468,8 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     encryptedMaidCafeMetricsSecret,
     maidCafeMetricsSecretNonce,
     sortOrder,
+    fileManagementInitialPath,
+    fileManagementFavorites,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -744,6 +768,24 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta),
       );
     }
+    if (data.containsKey('file_management_initial_path')) {
+      context.handle(
+        _fileManagementInitialPathMeta,
+        fileManagementInitialPath.isAcceptableOrUnknown(
+          data['file_management_initial_path']!,
+          _fileManagementInitialPathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('file_management_favorites')) {
+      context.handle(
+        _fileManagementFavoritesMeta,
+        fileManagementFavorites.isAcceptableOrUnknown(
+          data['file_management_favorites']!,
+          _fileManagementFavoritesMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -897,6 +939,14 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         DriftSqlType.int,
         data['${effectivePrefix}sort_order'],
       ),
+      fileManagementInitialPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_management_initial_path'],
+      ),
+      fileManagementFavorites: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_management_favorites'],
+      ),
     );
   }
 
@@ -943,6 +993,8 @@ class Server extends DataClass implements Insertable<Server> {
   final String? encryptedMaidCafeMetricsSecret;
   final String? maidCafeMetricsSecretNonce;
   final int? sortOrder;
+  final String? fileManagementInitialPath;
+  final String? fileManagementFavorites;
   const Server({
     required this.id,
     required this.name,
@@ -980,6 +1032,8 @@ class Server extends DataClass implements Insertable<Server> {
     this.encryptedMaidCafeMetricsSecret,
     this.maidCafeMetricsSecretNonce,
     this.sortOrder,
+    this.fileManagementInitialPath,
+    this.fileManagementFavorites,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1086,6 +1140,16 @@ class Server extends DataClass implements Insertable<Server> {
     if (!nullToAbsent || sortOrder != null) {
       map['sort_order'] = Variable<int>(sortOrder);
     }
+    if (!nullToAbsent || fileManagementInitialPath != null) {
+      map['file_management_initial_path'] = Variable<String>(
+        fileManagementInitialPath,
+      );
+    }
+    if (!nullToAbsent || fileManagementFavorites != null) {
+      map['file_management_favorites'] = Variable<String>(
+        fileManagementFavorites,
+      );
+    }
     return map;
   }
 
@@ -1185,6 +1249,13 @@ class Server extends DataClass implements Insertable<Server> {
       sortOrder: sortOrder == null && nullToAbsent
           ? const Value.absent()
           : Value(sortOrder),
+      fileManagementInitialPath:
+          fileManagementInitialPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fileManagementInitialPath),
+      fileManagementFavorites: fileManagementFavorites == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fileManagementFavorites),
     );
   }
 
@@ -1248,6 +1319,12 @@ class Server extends DataClass implements Insertable<Server> {
         json['maidCafeMetricsSecretNonce'],
       ),
       sortOrder: serializer.fromJson<int?>(json['sortOrder']),
+      fileManagementInitialPath: serializer.fromJson<String?>(
+        json['fileManagementInitialPath'],
+      ),
+      fileManagementFavorites: serializer.fromJson<String?>(
+        json['fileManagementFavorites'],
+      ),
     );
   }
   @override
@@ -1300,6 +1377,12 @@ class Server extends DataClass implements Insertable<Server> {
         maidCafeMetricsSecretNonce,
       ),
       'sortOrder': serializer.toJson<int?>(sortOrder),
+      'fileManagementInitialPath': serializer.toJson<String?>(
+        fileManagementInitialPath,
+      ),
+      'fileManagementFavorites': serializer.toJson<String?>(
+        fileManagementFavorites,
+      ),
     };
   }
 
@@ -1340,6 +1423,8 @@ class Server extends DataClass implements Insertable<Server> {
     Value<String?> encryptedMaidCafeMetricsSecret = const Value.absent(),
     Value<String?> maidCafeMetricsSecretNonce = const Value.absent(),
     Value<int?> sortOrder = const Value.absent(),
+    Value<String?> fileManagementInitialPath = const Value.absent(),
+    Value<String?> fileManagementFavorites = const Value.absent(),
   }) => Server(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -1409,6 +1494,12 @@ class Server extends DataClass implements Insertable<Server> {
         ? maidCafeMetricsSecretNonce.value
         : this.maidCafeMetricsSecretNonce,
     sortOrder: sortOrder.present ? sortOrder.value : this.sortOrder,
+    fileManagementInitialPath: fileManagementInitialPath.present
+        ? fileManagementInitialPath.value
+        : this.fileManagementInitialPath,
+    fileManagementFavorites: fileManagementFavorites.present
+        ? fileManagementFavorites.value
+        : this.fileManagementFavorites,
   );
   Server copyWithCompanion(ServersCompanion data) {
     return Server(
@@ -1494,6 +1585,12 @@ class Server extends DataClass implements Insertable<Server> {
           ? data.maidCafeMetricsSecretNonce.value
           : this.maidCafeMetricsSecretNonce,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+      fileManagementInitialPath: data.fileManagementInitialPath.present
+          ? data.fileManagementInitialPath.value
+          : this.fileManagementInitialPath,
+      fileManagementFavorites: data.fileManagementFavorites.present
+          ? data.fileManagementFavorites.value
+          : this.fileManagementFavorites,
     );
   }
 
@@ -1539,7 +1636,9 @@ class Server extends DataClass implements Insertable<Server> {
             'encryptedMaidCafeMetricsSecret: $encryptedMaidCafeMetricsSecret, ',
           )
           ..write('maidCafeMetricsSecretNonce: $maidCafeMetricsSecretNonce, ')
-          ..write('sortOrder: $sortOrder')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('fileManagementInitialPath: $fileManagementInitialPath, ')
+          ..write('fileManagementFavorites: $fileManagementFavorites')
           ..write(')'))
         .toString();
   }
@@ -1582,6 +1681,8 @@ class Server extends DataClass implements Insertable<Server> {
     encryptedMaidCafeMetricsSecret,
     maidCafeMetricsSecretNonce,
     sortOrder,
+    fileManagementInitialPath,
+    fileManagementFavorites,
   ]);
   @override
   bool operator ==(Object other) =>
@@ -1624,7 +1725,9 @@ class Server extends DataClass implements Insertable<Server> {
           other.encryptedMaidCafeMetricsSecret ==
               this.encryptedMaidCafeMetricsSecret &&
           other.maidCafeMetricsSecretNonce == this.maidCafeMetricsSecretNonce &&
-          other.sortOrder == this.sortOrder);
+          other.sortOrder == this.sortOrder &&
+          other.fileManagementInitialPath == this.fileManagementInitialPath &&
+          other.fileManagementFavorites == this.fileManagementFavorites);
 }
 
 class ServersCompanion extends UpdateCompanion<Server> {
@@ -1664,6 +1767,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
   final Value<String?> encryptedMaidCafeMetricsSecret;
   final Value<String?> maidCafeMetricsSecretNonce;
   final Value<int?> sortOrder;
+  final Value<String?> fileManagementInitialPath;
+  final Value<String?> fileManagementFavorites;
   const ServersCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -1701,6 +1806,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.encryptedMaidCafeMetricsSecret = const Value.absent(),
     this.maidCafeMetricsSecretNonce = const Value.absent(),
     this.sortOrder = const Value.absent(),
+    this.fileManagementInitialPath = const Value.absent(),
+    this.fileManagementFavorites = const Value.absent(),
   });
   ServersCompanion.insert({
     this.id = const Value.absent(),
@@ -1739,6 +1846,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.encryptedMaidCafeMetricsSecret = const Value.absent(),
     this.maidCafeMetricsSecretNonce = const Value.absent(),
     this.sortOrder = const Value.absent(),
+    this.fileManagementInitialPath = const Value.absent(),
+    this.fileManagementFavorites = const Value.absent(),
   }) : name = Value(name),
        host = Value(host),
        username = Value(username);
@@ -1779,6 +1888,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Expression<String>? encryptedMaidCafeMetricsSecret,
     Expression<String>? maidCafeMetricsSecretNonce,
     Expression<int>? sortOrder,
+    Expression<String>? fileManagementInitialPath,
+    Expression<String>? fileManagementFavorites,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -1825,6 +1936,10 @@ class ServersCompanion extends UpdateCompanion<Server> {
       if (maidCafeMetricsSecretNonce != null)
         'maid_cafe_metrics_secret_nonce': maidCafeMetricsSecretNonce,
       if (sortOrder != null) 'sort_order': sortOrder,
+      if (fileManagementInitialPath != null)
+        'file_management_initial_path': fileManagementInitialPath,
+      if (fileManagementFavorites != null)
+        'file_management_favorites': fileManagementFavorites,
     });
   }
 
@@ -1865,6 +1980,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Value<String?>? encryptedMaidCafeMetricsSecret,
     Value<String?>? maidCafeMetricsSecretNonce,
     Value<int?>? sortOrder,
+    Value<String?>? fileManagementInitialPath,
+    Value<String?>? fileManagementFavorites,
   }) {
     return ServersCompanion(
       id: id ?? this.id,
@@ -1908,6 +2025,10 @@ class ServersCompanion extends UpdateCompanion<Server> {
       maidCafeMetricsSecretNonce:
           maidCafeMetricsSecretNonce ?? this.maidCafeMetricsSecretNonce,
       sortOrder: sortOrder ?? this.sortOrder,
+      fileManagementInitialPath:
+          fileManagementInitialPath ?? this.fileManagementInitialPath,
+      fileManagementFavorites:
+          fileManagementFavorites ?? this.fileManagementFavorites,
     );
   }
 
@@ -2032,6 +2153,16 @@ class ServersCompanion extends UpdateCompanion<Server> {
     if (sortOrder.present) {
       map['sort_order'] = Variable<int>(sortOrder.value);
     }
+    if (fileManagementInitialPath.present) {
+      map['file_management_initial_path'] = Variable<String>(
+        fileManagementInitialPath.value,
+      );
+    }
+    if (fileManagementFavorites.present) {
+      map['file_management_favorites'] = Variable<String>(
+        fileManagementFavorites.value,
+      );
+    }
     return map;
   }
 
@@ -2077,7 +2208,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
             'encryptedMaidCafeMetricsSecret: $encryptedMaidCafeMetricsSecret, ',
           )
           ..write('maidCafeMetricsSecretNonce: $maidCafeMetricsSecretNonce, ')
-          ..write('sortOrder: $sortOrder')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('fileManagementInitialPath: $fileManagementInitialPath, ')
+          ..write('fileManagementFavorites: $fileManagementFavorites')
           ..write(')'))
         .toString();
   }
@@ -10045,6 +10178,8 @@ typedef $$ServersTableCreateCompanionBuilder =
       Value<String?> encryptedMaidCafeMetricsSecret,
       Value<String?> maidCafeMetricsSecretNonce,
       Value<int?> sortOrder,
+      Value<String?> fileManagementInitialPath,
+      Value<String?> fileManagementFavorites,
     });
 typedef $$ServersTableUpdateCompanionBuilder =
     ServersCompanion Function({
@@ -10084,6 +10219,8 @@ typedef $$ServersTableUpdateCompanionBuilder =
       Value<String?> encryptedMaidCafeMetricsSecret,
       Value<String?> maidCafeMetricsSecretNonce,
       Value<int?> sortOrder,
+      Value<String?> fileManagementInitialPath,
+      Value<String?> fileManagementFavorites,
     });
 
 class $$ServersTableFilterComposer
@@ -10274,6 +10411,16 @@ class $$ServersTableFilterComposer
 
   ColumnFilters<int> get sortOrder => $composableBuilder(
     column: $table.sortOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fileManagementInitialPath => $composableBuilder(
+    column: $table.fileManagementInitialPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fileManagementFavorites => $composableBuilder(
+    column: $table.fileManagementFavorites,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -10468,6 +10615,16 @@ class $$ServersTableOrderingComposer
     column: $table.sortOrder,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get fileManagementInitialPath => $composableBuilder(
+    column: $table.fileManagementInitialPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get fileManagementFavorites => $composableBuilder(
+    column: $table.fileManagementFavorites,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$ServersTableAnnotationComposer
@@ -10632,6 +10789,16 @@ class $$ServersTableAnnotationComposer
 
   GeneratedColumn<int> get sortOrder =>
       $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+
+  GeneratedColumn<String> get fileManagementInitialPath => $composableBuilder(
+    column: $table.fileManagementInitialPath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get fileManagementFavorites => $composableBuilder(
+    column: $table.fileManagementFavorites,
+    builder: (column) => column,
+  );
 }
 
 class $$ServersTableTableManager
@@ -10702,6 +10869,8 @@ class $$ServersTableTableManager
                 Value<String?> maidCafeMetricsSecretNonce =
                     const Value.absent(),
                 Value<int?> sortOrder = const Value.absent(),
+                Value<String?> fileManagementInitialPath = const Value.absent(),
+                Value<String?> fileManagementFavorites = const Value.absent(),
               }) => ServersCompanion(
                 id: id,
                 name: name,
@@ -10739,6 +10908,8 @@ class $$ServersTableTableManager
                 encryptedMaidCafeMetricsSecret: encryptedMaidCafeMetricsSecret,
                 maidCafeMetricsSecretNonce: maidCafeMetricsSecretNonce,
                 sortOrder: sortOrder,
+                fileManagementInitialPath: fileManagementInitialPath,
+                fileManagementFavorites: fileManagementFavorites,
               ),
           createCompanionCallback:
               ({
@@ -10782,6 +10953,8 @@ class $$ServersTableTableManager
                 Value<String?> maidCafeMetricsSecretNonce =
                     const Value.absent(),
                 Value<int?> sortOrder = const Value.absent(),
+                Value<String?> fileManagementInitialPath = const Value.absent(),
+                Value<String?> fileManagementFavorites = const Value.absent(),
               }) => ServersCompanion.insert(
                 id: id,
                 name: name,
@@ -10819,6 +10992,8 @@ class $$ServersTableTableManager
                 encryptedMaidCafeMetricsSecret: encryptedMaidCafeMetricsSecret,
                 maidCafeMetricsSecretNonce: maidCafeMetricsSecretNonce,
                 sortOrder: sortOrder,
+                fileManagementInitialPath: fileManagementInitialPath,
+                fileManagementFavorites: fileManagementFavorites,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

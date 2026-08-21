@@ -66,6 +66,8 @@ class ServerDraft {
     this.environment = const {},
     this.initialSnippets = const [],
     this.tags = const [],
+    this.fileManagementInitialPath,
+    this.fileManagementFavorites = const [],
     this.connectionType = ServerConnectionType.ssh,
     this.serialConfig,
   });
@@ -97,6 +99,12 @@ class ServerDraft {
 
   /// [ScriptSnippets] ids whose scripts run when a terminal opens.
   final List<int> initialSnippets;
+
+  /// Saved directory opened by new file-management sessions.
+  final String? fileManagementInitialPath;
+
+  /// User-managed quick-access directories in the file manager.
+  final List<String> fileManagementFavorites;
 
   /// Free-form labels shown on the server card and usable as filters.
   final List<String> tags;

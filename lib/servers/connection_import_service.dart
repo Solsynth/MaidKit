@@ -288,6 +288,8 @@ class ConnectionImportService {
             proxy: connection.proxy,
             environment: connection.environment,
             tags: connection.tags,
+            fileManagementInitialPath: connection.fileManagementInitialPath,
+            fileManagementFavorites: connection.fileManagementFavorites,
             connectionType: connection.connectionType,
             serialConfig: connection.serialConfig,
           ),
@@ -435,6 +437,7 @@ class ConnectionImportService {
     }
 
     final rawTags = raw['tags'];
+    final rawFavorites = raw['fileManagementFavorites'];
     return ImportedConnection(
       name: _stringField(raw, 'name'),
       host: _stringField(raw, 'host'),
@@ -450,6 +453,15 @@ class ConnectionImportService {
           ? [
               for (final tag in rawTags)
                 if (tag is String && tag.isNotEmpty) tag,
+            ]
+          : const [],
+      fileManagementInitialPath: raw['fileManagementInitialPath'] is String
+          ? raw['fileManagementInitialPath'] as String
+          : null,
+      fileManagementFavorites: rawFavorites is List
+          ? [
+              for (final path in rawFavorites)
+                if (path is String && path.isNotEmpty) path,
             ]
           : const [],
       serialConfig: serialConfig,

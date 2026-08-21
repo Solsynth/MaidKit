@@ -62,6 +62,8 @@ void main() {
           environment: {'KUBECONFIG': '/etc/kubernetes/admin.conf'},
           initialSnippets: [3, 7],
           tags: ['prod', 'eu-west'],
+          fileManagementInitialPath: '/srv/projects',
+          fileManagementFavorites: ['/srv/projects', '/var/log'],
         ),
       );
 
@@ -70,6 +72,11 @@ void main() {
       });
       expect(decodeSnippetIdList(server.initialSnippets), [3, 7]);
       expect(decodeStringList(server.tags), ['prod', 'eu-west']);
+      expect(server.fileManagementInitialPath, '/srv/projects');
+      expect(decodeStringList(server.fileManagementFavorites), [
+        '/srv/projects',
+        '/var/log',
+      ]);
     });
 
     test('create and update persist chained jump hosts', () async {
@@ -172,6 +179,8 @@ void main() {
       expect(decodeEnvironmentMap(server.environment), isEmpty);
       expect(decodeSnippetIdList(server.initialSnippets), isEmpty);
       expect(decodeStringList(server.tags), isEmpty);
+      expect(server.fileManagementInitialPath, isNull);
+      expect(server.fileManagementFavorites, isNull);
     });
 
     test('create appends servers after existing ones', () async {

@@ -122,6 +122,10 @@ class ServerDashboardTab extends ConsumerWidget {
             environment: decodeEnvironmentMap(server.environment),
             initialSnippets: decodeSnippetIdList(server.initialSnippets),
             tags: decodeStringList(server.tags),
+            fileManagementInitialPath: server.fileManagementInitialPath,
+            fileManagementFavorites: decodeStringList(
+              server.fileManagementFavorites,
+            ),
             connectionType:
                 ServerConnectionType.values
                     .asNameMap()[server.connectionType] ??
@@ -1415,104 +1419,108 @@ class _ServerStats extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-        if (stats != null)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _StatTile(
-                  compact: compact,
-                  label: 'detailLoadAverage'.tr(),
-                  value: stats!.loadAverage?.toStringAsFixed(2) ?? '—',
-                  detail: compact ? null : _loadDetail(stats!.loadAverage),
-                  valueColor: _loadColor(stats!.loadAverage, colorScheme),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _StatTile(
-                  compact: compact,
-                  label: 'detailMemory'.tr(),
-                  value: memoryPercent == null ? '—' : '$memoryPercent%',
-                  detail:
-                      compact ||
-                          usedMemoryKb == null ||
-                          stats!.memoryTotalKb == null
-                      ? null
-                      : '${_formatBytes(usedMemoryKb * 1024)} / ${_formatBytes(stats!.memoryTotalKb! * 1024)}',
-                  progress: memoryRatio,
-                  progressColor: _memoryColor(memoryRatio, colorScheme),
-                  valueColor: _memoryColor(memoryRatio, colorScheme),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _StatTile(
-                  compact: compact,
-                  label: 'detailUptime'.tr(),
-                  value: _formatUptime(stats!.uptime),
-                  detail: compact ? null : _uptimeDetail(stats!.uptime),
-                ),
-              ),
-            ],
-          )
-        else if (collectStats)
-          _StatsMessage(
-            icon: Symbols.query_stats,
-            message: 'serversStatsUnavailable'.tr(),
-          ),
-        if (gpus.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _StatTile(
-                  compact: compact,
-                  label: 'detailGpu'.tr(),
-                  value: gpuUtilization == null
-                      ? '—'
-                      : '${gpuUtilization.toStringAsFixed(0)}%',
-                  detail: compact
-                      ? null
-                      : 'detailGpuCount'.tr(args: ['${gpus.length}']),
-                  progress: gpuMemoryUsedKb == null || gpuMemoryTotalKb == null
-                      ? null
-                      : (gpuMemoryUsedKb / gpuMemoryTotalKb).clamp(0.0, 1.0),
-                  progressColor: _memoryColor(
-                    gpuMemoryUsedKb == null || gpuMemoryTotalKb == null
-                        ? null
-                        : (gpuMemoryUsedKb / gpuMemoryTotalKb).clamp(0.0, 1.0),
-                    colorScheme,
+          if (stats != null)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _StatTile(
+                    compact: compact,
+                    label: 'detailLoadAverage'.tr(),
+                    value: stats!.loadAverage?.toStringAsFixed(2) ?? '—',
+                    detail: compact ? null : _loadDetail(stats!.loadAverage),
+                    valueColor: _loadColor(stats!.loadAverage, colorScheme),
                   ),
                 ),
-              ),
-            ],
-          ),
-        ],
-        if (!compact && systemLabel.isNotEmpty) ...[
-          const SizedBox(height: 8),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _StatTile(
+                    compact: compact,
+                    label: 'detailMemory'.tr(),
+                    value: memoryPercent == null ? '—' : '$memoryPercent%',
+                    detail:
+                        compact ||
+                            usedMemoryKb == null ||
+                            stats!.memoryTotalKb == null
+                        ? null
+                        : '${_formatBytes(usedMemoryKb * 1024)} / ${_formatBytes(stats!.memoryTotalKb! * 1024)}',
+                    progress: memoryRatio,
+                    progressColor: _memoryColor(memoryRatio, colorScheme),
+                    valueColor: _memoryColor(memoryRatio, colorScheme),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _StatTile(
+                    compact: compact,
+                    label: 'detailUptime'.tr(),
+                    value: _formatUptime(stats!.uptime),
+                    detail: compact ? null : _uptimeDetail(stats!.uptime),
+                  ),
+                ),
+              ],
+            )
+          else if (collectStats)
+            _StatsMessage(
+              icon: Symbols.query_stats,
+              message: 'serversStatsUnavailable'.tr(),
+            ),
+          if (gpus.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _StatTile(
+                    compact: compact,
+                    label: 'detailGpu'.tr(),
+                    value: gpuUtilization == null
+                        ? '—'
+                        : '${gpuUtilization.toStringAsFixed(0)}%',
+                    detail: compact
+                        ? null
+                        : 'detailGpuCount'.tr(args: ['${gpus.length}']),
+                    progress:
+                        gpuMemoryUsedKb == null || gpuMemoryTotalKb == null
+                        ? null
+                        : (gpuMemoryUsedKb / gpuMemoryTotalKb).clamp(0.0, 1.0),
+                    progressColor: _memoryColor(
+                      gpuMemoryUsedKb == null || gpuMemoryTotalKb == null
+                          ? null
+                          : (gpuMemoryUsedKb / gpuMemoryTotalKb).clamp(
+                              0.0,
+                              1.0,
+                            ),
+                      colorScheme,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (!compact && systemLabel.isNotEmpty) ...[
+            const SizedBox(height: 8),
 
-          Text(
-            systemLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: textTheme.labelSmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ).padding(horizontal: 4),
+            Text(
+              systemLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ).padding(horizontal: 4),
+          ],
+          if (!compact && stats?.updatedAt != null) ...[
+            Text(
+              'detailRefreshDetailsAt'.tr(
+                args: [_formatRelative(stats!.updatedAt)],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelSmall?.copyWith(color: colorScheme.outline),
+            ).padding(horizontal: 4),
+          ],
         ],
-        if (!compact && stats?.updatedAt != null) ...[
-          Text(
-            'detailRefreshDetailsAt'.tr(
-              args: [_formatRelative(stats!.updatedAt)],
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: textTheme.labelSmall?.copyWith(color: colorScheme.outline),
-          ).padding(horizontal: 4),
-        ],
-      ],
       ),
     );
   }
@@ -1819,6 +1827,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   final _snippetIds = <int>{};
   final _tags = <String>[];
   final _tagInput = TextEditingController();
+  final _fileManagementInitialPath = TextEditingController();
 
   @override
   void initState() {
@@ -1868,6 +1877,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       // blank keeps the existing password when saving.
     }
     _tags.addAll(initial.tags);
+    _fileManagementInitialPath.text = initial.fileManagementInitialPath ?? '';
     _snippetIds.addAll(initial.initialSnippets);
     for (final entry in initial.environment.entries) {
       _envRows.add((
@@ -1891,6 +1901,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       _proxyUsername,
       _proxyPassword,
       _tagInput,
+      _fileManagementInitialPath,
       _serialDevice,
     ]) {
       controller.dispose();
@@ -2139,6 +2150,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         },
         initialSnippets: _snippetIds.toList(),
         tags: List.of(_tags),
+        fileManagementInitialPath:
+            _fileManagementInitialPath.text.trim().isEmpty
+            ? null
+            : _fileManagementInitialPath.text.trim(),
         connectionType: _connectionType,
         serialConfig: _connectionType == ServerConnectionType.serial
             ? SerialConfig(
@@ -2693,6 +2708,22 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ),
                 ),
               ],
+              MaidKitCollapsibleSection(
+                initiallyExpanded: _fileManagementInitialPath.text.isNotEmpty,
+                tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                title: Text('serverFileManagementLabel'.tr()),
+                subtitle: Text('serverFileManagementHint'.tr()),
+                children: [
+                  TextFormField(
+                    controller: _fileManagementInitialPath,
+                    decoration: InputDecoration(
+                      labelText: 'serverFileManagementInitialPath'.tr(),
+                      helperText: 'serverFileManagementInitialPathHint'.tr(),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
               MaidKitCollapsibleSection(
                 initiallyExpanded: false,

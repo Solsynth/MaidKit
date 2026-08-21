@@ -22,6 +22,8 @@ class ImportedConnection {
     this.jumpHostSyncId,
     this.environment = const {},
     this.tags = const [],
+    this.fileManagementInitialPath,
+    this.fileManagementFavorites = const [],
     this.serialConfig,
     this.source = 'MaidKit',
   });
@@ -44,6 +46,8 @@ class ImportedConnection {
   final String? jumpHostSyncId;
 
   final Map<String, String> environment;
+  final String? fileManagementInitialPath;
+  final List<String> fileManagementFavorites;
   final List<String> tags;
   final SerialConfig? serialConfig;
 

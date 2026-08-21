@@ -55,6 +55,10 @@ class Servers extends Table {
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
+  // File-management preferences: an optional initial directory and JSON list
+  // of favorite paths, both scoped to this server.
+  TextColumn get fileManagementInitialPath => text().nullable()();
+  TextColumn get fileManagementFavorites => text().nullable()();
 }
 
 /// An encrypted SSH credential that may be linked to by more than one server.
@@ -331,7 +335,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 33;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -636,6 +640,22 @@ class AppDatabase extends _$AppDatabase {
         }
         if (!existing.contains('tailscale_auth_key_nonce')) {
           await m.addColumn(vaultMetadata, vaultMetadata.tailscaleAuthKeyNonce);
+        }
+      }
+      if (from < 33) {
+        final fileManagementColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name IN ('file_management_initial_path', "
+          "'file_management_favorites')",
+        ).get();
+        final existing = fileManagementColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('file_management_initial_path')) {
+          await m.addColumn(servers, servers.fileManagementInitialPath);
+        }
+        if (!existing.contains('file_management_favorites')) {
+          await m.addColumn(servers, servers.fileManagementFavorites);
         }
       }
     },

@@ -71,6 +71,10 @@ class ServerRepository {
                 encodeSnippetIdList(draft.initialSnippets),
               ),
               tags: Value(encodeStringList(draft.tags)),
+              fileManagementInitialPath: Value(draft.fileManagementInitialPath),
+              fileManagementFavorites: Value(
+                encodeStringList(draft.fileManagementFavorites),
+              ),
               connectionType: Value(draft.connectionType.name),
               serialConfig: Value(encodeSerialConfig(draft.serialConfig)),
               sortOrder: Value(nextOrder),
@@ -127,12 +131,29 @@ class ServerRepository {
         environment: Value(encodeEnvironmentMap(draft.environment)),
         initialSnippets: Value(encodeSnippetIdList(draft.initialSnippets)),
         tags: Value(encodeStringList(draft.tags)),
+        fileManagementInitialPath: Value(draft.fileManagementInitialPath),
+        fileManagementFavorites: Value(
+          encodeStringList(draft.fileManagementFavorites),
+        ),
         connectionType: Value(draft.connectionType.name),
         serialConfig: Value(encodeSerialConfig(draft.serialConfig)),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
   }
+
+  Future<void> updateFileManagementFavorites(
+    int serverId,
+    List<String> favorites,
+  ) =>
+      (_database.update(
+        _database.servers,
+      )..where((table) => table.id.equals(serverId))).write(
+        ServersCompanion(
+          fileManagementFavorites: Value(encodeStringList(favorites)),
+          updatedAt: Value(DateTime.now().toUtc()),
+        ),
+      );
 
   Future<void> setJumpHostServerId(int serverId, int? jumpHostServerId) =>
       (_database.update(
@@ -595,6 +616,8 @@ class ServerRepository {
             'environment': server.environment,
             'initialSnippets': server.initialSnippets,
             'tags': server.tags,
+            'fileManagementInitialPath': server.fileManagementInitialPath,
+            'fileManagementFavorites': server.fileManagementFavorites,
             'connectionType': server.connectionType,
             'serialConfig': server.serialConfig,
             'sortOrder': server.sortOrder,
@@ -648,6 +671,12 @@ class ServerRepository {
           proxyPasswordNonce: Value(value['proxyPasswordNonce'] as String?),
           environment: Value(value['environment'] as String?),
           initialSnippets: Value(value['initialSnippets'] as String?),
+          fileManagementInitialPath: Value(
+            value['fileManagementInitialPath'] as String?,
+          ),
+          fileManagementFavorites: Value(
+            value['fileManagementFavorites'] as String?,
+          ),
           tags: Value(value['tags'] as String?),
           connectionType: Value(value['connectionType'] as String? ?? 'ssh'),
           serialConfig: Value(value['serialConfig'] as String?),

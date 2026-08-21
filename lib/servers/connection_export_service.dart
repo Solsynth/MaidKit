@@ -144,6 +144,10 @@ class ConnectionExportService {
       'username': server.username,
       'authType': credentialsById[server.credentialId]?.credentialType,
       'tags': decodeStringList(server.tags),
+      'fileManagementInitialPath': server.fileManagementInitialPath,
+      'fileManagementFavorites': decodeStringList(
+        server.fileManagementFavorites,
+      ),
       'connectionType': server.connectionType,
       'syncId': server.syncId,
       'jumpHostSyncId': jumpHost?.syncId,

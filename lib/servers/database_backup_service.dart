@@ -543,6 +543,10 @@ class DatabaseBackupService {
                 environment: Value(server.environment),
                 initialSnippets: Value(server.initialSnippets),
                 tags: Value(server.tags),
+                fileManagementInitialPath: Value(
+                  server.fileManagementInitialPath,
+                ),
+                fileManagementFavorites: Value(server.fileManagementFavorites),
                 connectionType: Value(server.connectionType),
                 serialConfig: Value(server.serialConfig),
                 sortOrder: Value(server.sortOrder),
