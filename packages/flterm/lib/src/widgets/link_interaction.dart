@@ -61,6 +61,12 @@ final class LinkInteraction {
 
   CellRange? get highlighted => _highlighted;
 
+  /// Whether idle (always-visible) link styling is active.
+  ///
+  /// Snapshot invalidation only needs to reach the renderer when this is
+  /// true; hover-only link setups repaint from hover state alone.
+  bool get hasIdleStyling => _needsIdleSnapshot();
+
   /// Clears hover and press state without invalidating detected links.
   void cancel() => _clearInteraction();
 

@@ -487,6 +487,12 @@ class TerminalViewState extends State<TerminalView> {
     _binding.handleScroll(lines);
     _links.invalidateContent();
     _syncLinkInteraction();
+    // Idle link styling (always-on rules, OSC 8/text with idle style) is
+    // resolved per visible viewport. The snapshot is invalidated above, but
+    // the renderer only picks up the new snapshot on a rebuild, which output
+    // alone used to trigger. Scrolled-in rows stayed unstyled until the next
+    // unrelated state change.
+    if (_links.hasIdleStyling) setState(() {});
     _updateTextInputGeometry();
   }
 

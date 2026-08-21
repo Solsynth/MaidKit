@@ -599,10 +599,10 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     bool selectToCopyEnabled = false,
     bool shiftInsertPasteEnabled = true,
     bool keywordHighlightEnabled = true,
-  })  : _selectToCopyEnabled = selectToCopyEnabled,
-        _shiftInsertPasteEnabled = shiftInsertPasteEnabled,
-        _keywordHighlightEnabled = keywordHighlightEnabled,
-        _terminal = Terminal(maxLines: 10000) {
+  }) : _selectToCopyEnabled = selectToCopyEnabled,
+       _shiftInsertPasteEnabled = shiftInsertPasteEnabled,
+       _keywordHighlightEnabled = keywordHighlightEnabled,
+       _terminal = Terminal(maxLines: 10000) {
     _clipboard = createHostClipboardBridge(sendResponse: sendInput);
     _terminal.onOutput = (data) {
       if (!_disposed) {
@@ -624,6 +624,11 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     };
     if (selectToCopyEnabled) {
       _controller.addListener(_onSelectionMaybeChanged);
+    }
+    if (_keywordHighlightEnabled) {
+      // Highlights are viewport-scoped: scrolling brings unscanned rows into
+      // view, so rescan whenever the scroll position moves.
+      _scrollController.addListener(_scheduleKeywordScan);
     }
   }
 
@@ -652,6 +657,10 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
   static const _approxLineHeight = 18.0;
   static const _maxKeywordHighlights = 1500;
   static const _keywordScanDelay = Duration(milliseconds: 250);
+
+  /// TerminalView padding in [buildView]; matches the renderer's cell-origin
+  /// math used to map scroll offset to buffer lines.
+  static const _viewPadding = 12.0;
 
   /// Tracks the last auto-copied selection text so the select-to-copy
   /// listener only writes to the clipboard when the selection changes.
@@ -865,17 +874,17 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     }
     _keywordHighlights.clear();
     final buffer = _terminal.buffer;
-    for (var y = 0; y < buffer.height; y++) {
+    final (firstLine, lastLine) = _visibleLineRange(buffer.height);
+    for (var y = firstLine; y <= lastLine; y++) {
       final lineText = buffer.lines[y].getText();
       for (final rule in terminalKeywordRules) {
         for (final match in rule.pattern.allMatches(lineText)) {
           if (_keywordHighlights.length >= _maxKeywordHighlights) return;
-          final start = match.start;
           final end = match.end - 1;
-          if (end < start) continue;
+          if (end < match.start) continue;
           _keywordHighlights.add(
             _controller.highlight(
-              p1: buffer.createAnchor(start, y),
+              p1: buffer.createAnchor(match.start, y),
               p2: buffer.createAnchor(end, y),
               color: rule.color,
             ),
@@ -883,6 +892,36 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
         }
       }
     }
+  }
+
+  /// The buffer line range currently on screen, padded by one viewport so
+  /// highlights do not pop in at the edges while scrolling.
+  ///
+  /// Mirrors the renderer's own math: the first visible buffer line is
+  /// `scrollOffset ~/ cellHeight` with the view's top padding subtracted.
+  (int, int) _visibleLineRange(int bufferHeight) {
+    final viewHeight = _terminal.viewHeight.clamp(1, bufferHeight);
+    var first = 0;
+    if (_scrollController.hasClients &&
+        _scrollController.position.viewportDimension > 0) {
+      final position = _scrollController.position;
+      final charHeight =
+          (position.viewportDimension - _viewPadding * 2) / viewHeight;
+      if (charHeight > 0) {
+        first = ((position.pixels - _viewPadding) ~/ charHeight).clamp(
+          0,
+          bufferHeight - 1,
+        );
+      }
+    } else {
+      first = (bufferHeight - viewHeight).clamp(0, bufferHeight - 1);
+    }
+    final last = (first + viewHeight).clamp(first, bufferHeight - 1);
+    final margin = viewHeight;
+    return (
+      (first - margin).clamp(0, bufferHeight - 1),
+      (last + margin).clamp(0, bufferHeight - 1),
+    );
   }
 
   FocusOnKeyEventCallback _wrapKeyEventForShiftInsert(
@@ -1004,6 +1043,9 @@ class XtermTerminalSessionAdapter implements TerminalSessionAdapter {
     if (_disposed) return;
     _disposed = true;
     _keywordScanTimer?.cancel();
+    if (_keywordHighlightEnabled) {
+      _scrollController.removeListener(_scheduleKeywordScan);
+    }
     if (_selectToCopyEnabled) {
       _controller.removeListener(_onSelectionMaybeChanged);
     }
