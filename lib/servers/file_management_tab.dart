@@ -3912,8 +3912,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         final forceLocal = !wide;
         final showLocalTarget = forceLocal || !_localCollapsed;
         final showRemoteTarget = !_remoteCollapsed;
-        final availableWidth =
-            constraints.maxWidth - _paneDividerHitTargetWidth;
+        final availableWidth = constraints.maxWidth - _paneDividerWidth;
         final paneRatio = _clampPaneSplitRatio(_paneSplitRatio, availableWidth);
         final baseLocalWidth = availableWidth * paneRatio;
         final baseRemoteWidth = availableWidth - baseLocalWidth;
@@ -3935,23 +3934,45 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                 final remoteWidth = availableWidth - localWidth;
                 final showLocal = localWidth > 0.001;
                 final showRemote = remoteWidth > 0.001;
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                return Stack(
+                  fit: StackFit.expand,
+                  clipBehavior: Clip.none,
                   children: [
-                    if (showLocal)
-                      ClipRect(
-                        child: SizedBox(
-                          width: localWidth,
-                          child: Opacity(
-                            opacity: localFactor,
-                            child: localPane,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (showLocal)
+                          ClipRect(
+                            child: SizedBox(
+                              width: localWidth,
+                              child: Opacity(
+                                opacity: localFactor,
+                                child: localPane,
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    SizedBox(
+                        const SizedBox(width: _paneDividerWidth),
+                        if (showRemote)
+                          ClipRect(
+                            child: SizedBox(
+                              width: remoteWidth,
+                              child: Opacity(
+                                opacity: remoteFactor,
+                                child: remotePane,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    Positioned(
+                      left:
+                          localWidth +
+                          (_paneDividerWidth - _paneDividerHitTargetWidth) / 2,
+                      top: 0,
+                      bottom: 0,
                       width: _paneDividerHitTargetWidth,
                       child: _FilePaneDivider(
-                        dividerWidth: _paneDividerWidth,
+                        dividerWidth: _paneDividerHitTargetWidth,
                         localCollapsed: !showLocal,
                         remoteCollapsed: !showRemote,
                         onExpandLocal: _expandLocalPane,
@@ -3962,16 +3983,6 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                         onDragEnd: _endPaneResize,
                       ),
                     ),
-                    if (showRemote)
-                      ClipRect(
-                        child: SizedBox(
-                          width: remoteWidth,
-                          child: Opacity(
-                            opacity: remoteFactor,
-                            child: remotePane,
-                          ),
-                        ),
-                      ),
                   ],
                 );
               },
