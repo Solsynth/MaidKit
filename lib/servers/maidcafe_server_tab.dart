@@ -10,6 +10,7 @@ import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
@@ -1585,10 +1586,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           ],
         ),
         if (_auditLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: LinearProgressIndicator(),
-          )
+          const _AuditLoading()
         else if (_auditError != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -1768,13 +1766,38 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     ),
   );
 
-  Widget _checkingPrompt() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      const LinearProgressIndicator(),
-      const SizedBox(height: 8),
-      Text('maidCafeInstallChecking'.tr()),
-    ],
+  Widget _checkingPrompt() => Skeletonizer(
+    enabled: true,
+    child: Card.outlined(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Symbols.local_cafe),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('maidCafeTitle'.tr()),
+                      Text('maidCafeInstallChecking'.tr()),
+                    ],
+                  ),
+                ),
+                const Icon(Symbols.sync),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Text('Checking installation and opening a secure session'),
+            const SizedBox(height: 10),
+            const Text('Loading daemon configuration and metrics'),
+          ],
+        ),
+      ),
+    ),
   );
 
   Widget _conflictPrompt() => Card.outlined(
@@ -3822,6 +3845,29 @@ class _AlarmEditorSheetState extends State<_AlarmEditorSheet> {
           ),
         ],
       ),
+    ),
+  );
+}
+
+class _AuditLoading extends StatelessWidget {
+  const _AuditLoading();
+
+  @override
+  Widget build(BuildContext context) => Skeletonizer(
+    enabled: true,
+    child: Column(
+      children: [
+        for (var i = 0; i < 3; i++) ...[
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Symbols.receipt_long),
+            title: Text(i == 0 ? 'deploy-action' : 'health-check'),
+            subtitle: const Text('2026-08-21 12:00 · completed'),
+            trailing: const Icon(Symbols.chevron_right),
+          ),
+          if (i < 2) const Divider(height: 1),
+        ],
+      ],
     ),
   );
 }

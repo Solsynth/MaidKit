@@ -9,6 +9,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
@@ -222,11 +223,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
           return Row(
             children: [
               cloudUser.when(
-                loading: () => const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
+                loading: () => const _CloudUserLoading(),
                 error: (_, _) => _statusSignIn(context),
                 data: (user) => user == null
                     ? _statusSignIn(context)
@@ -300,11 +297,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   Widget _statusWorkspaceSelector(BuildContext context) {
     final workspaces = ref.watch(cloudWorkspacesProvider);
     return workspaces.when(
-      loading: () => const SizedBox(
-        width: 96,
-        height: 14,
-        child: LinearProgressIndicator(),
-      ),
+      loading: () => const _WorkspaceLoading(),
       error: (_, _) => const SizedBox.shrink(),
       data: (items) {
         if (items.isEmpty) return const SizedBox.shrink();
@@ -369,10 +362,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         _MaidCafeQuotaCard(workspaceId: workspaceId),
         const SizedBox(height: 16),
         daemons.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.all(16),
-            child: LinearProgressIndicator(),
-          ),
+          loading: () => const _DaemonLoadingGrid(),
           error: (error, _) => _SettingsSectionCard(
             child: _recoverableError(
               context,
@@ -605,10 +595,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   Widget _credentialsBody(BuildContext context) {
     final credentials = ref.watch(maidCafeCredentialsProvider);
     return credentials.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: LinearProgressIndicator(),
-      ),
+      loading: () => const _CredentialsLoading(),
       error: (error, _) => _recoverableError(
         context,
         error,
@@ -1955,69 +1942,182 @@ class _EmptyDaemons extends StatelessWidget {
   }
 }
 
+class _CloudUserLoading extends StatelessWidget {
+  const _CloudUserLoading();
+
+  @override
+  Widget build(BuildContext context) => Skeletonizer(
+    enabled: true,
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CircleAvatar(radius: 10),
+        SizedBox(width: 8),
+        SizedBox(width: 96, child: Text('Cloud account')),
+      ],
+    ),
+  );
+}
+
+class _WorkspaceLoading extends StatelessWidget {
+  const _WorkspaceLoading();
+
+  @override
+  Widget build(BuildContext context) => Skeletonizer(
+    enabled: true,
+    child: const SizedBox(
+      width: 112,
+      height: 20,
+      child: Text('Workspace name'),
+    ),
+  );
+}
+
+class _DaemonLoadingGrid extends StatelessWidget {
+  const _DaemonLoadingGrid();
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const gap = 16.0;
+      final columns = ((constraints.maxWidth + gap) / (380 + gap))
+          .floor()
+          .clamp(1, 4);
+      final cardWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
+      return Skeletonizer(
+        enabled: true,
+        child: Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (var i = 0; i < columns; i++)
+              SizedBox(width: cardWidth, child: const _DaemonLoadingCard()),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+class _DaemonLoadingCard extends StatelessWidget {
+  const _DaemonLoadingCard();
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: EdgeInsets.zero,
+    clipBehavior: Clip.antiAlias,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(radius: 4),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('MaidCafe daemon'),
+                    Text('maidkit-server-0000'),
+                  ],
+                ),
+              ),
+              for (var i = 0; i < 3; i++)
+                const Icon(Symbols.more_horiz, size: 20),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const SizedBox(height: 88, child: ColoredBox(color: Colors.white)),
+          const SizedBox(height: 10),
+          const Text('Enabled · Last seen 2026-08-21 12:00'),
+        ],
+      ),
+    ),
+  );
+}
+
+class _CredentialsLoading extends StatelessWidget {
+  const _CredentialsLoading();
+
+  @override
+  Widget build(BuildContext context) => _SettingsSectionCard(
+    child: Skeletonizer(
+      enabled: true,
+      child: Column(
+        children: [
+          for (var i = 0; i < 3; i++) ...[
+            const ListTile(
+              title: Text('Credential label'),
+              subtitle: Text('Last used recently\ndaemons: managed hosts'),
+              trailing: Icon(Symbols.delete_outline),
+            ),
+            if (i < 2) const Divider(height: 1, indent: 16, endIndent: 16),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
 class _NotificationsLoading extends StatelessWidget {
   const _NotificationsLoading();
 
   @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return _SettingsSectionCard(
+  Widget build(BuildContext context) => _SettingsSectionCard(
+    child: Skeletonizer(
+      enabled: true,
       child: Column(
         children: [
-          const LinearProgressIndicator(minHeight: 2),
           for (var i = 0; i < 3; i++) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: colors.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        FractionallySizedBox(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: i == 0 ? 0.72 : 0.58,
-                          child: Container(
-                            height: 14,
-                            color: colors.surfaceContainerHighest,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          height: 11,
-                          color: colors.surfaceContainerHighest,
-                        ),
-                        const SizedBox(height: 8),
-                        FractionallySizedBox(
-                          alignment: Alignment.centerLeft,
-                          widthFactor: 0.84,
-                          child: Container(
-                            height: 11,
-                            color: colors.surfaceContainerHighest,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _NotificationLoadingTile(index: i),
             if (i < 2) const Divider(height: 1, indent: 72, endIndent: 16),
           ],
         ],
       ),
-    );
-  }
+    ),
+  );
+}
+
+class _NotificationLoadingTile extends StatelessWidget {
+  const _NotificationLoadingTile({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(Symbols.notifications, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: index == 0 ? 0.72 : 0.58,
+                child: const Text('Notification title'),
+              ),
+              const SizedBox(height: 4),
+              const Text('A notification subtitle for the daemon'),
+              const SizedBox(height: 4),
+              const Text('Notification details and activity summary'),
+              const SizedBox(height: 7),
+              const Text('daemon · metric'),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _NotificationsEmptyState extends StatelessWidget {
