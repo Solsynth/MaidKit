@@ -142,7 +142,7 @@ void main() {
 
     await tester.tap(find.text('settingsTerminal'.tr()).first);
     await tester.pumpAndSettle();
-    expect(find.text('settingsTerminalRenderer'.tr()), findsOneWidget);
+    expect(find.text('settingsTerminalFont'.tr()), findsWidgets);
 
     await tester.tap(find.text('settingsAbout'.tr()).first);
     await tester.pumpAndSettle();
@@ -162,7 +162,7 @@ void main() {
     await tester.ensureVisible(terminalTab);
     await tester.tap(terminalTab);
     await tester.pumpAndSettle();
-    expect(find.text('settingsTerminalRenderer'.tr()), findsOneWidget);
+    expect(find.text('settingsTerminalFont'.tr()), findsWidgets);
   });
 
   testWidgets('opens Assets from the desktop navigation rail', (

@@ -11,9 +11,9 @@ import '../../servers/server_providers.dart';
 import '../../servers/terminal_find_host.dart';
 import '../../servers/terminal_session_adapter.dart';
 
-/// Read-only log surface that reuses the user's selected terminal adapter
-/// (Ghostty or xterm) so container logs and task output share the same VT
-/// parser, colors, and renderer as interactive sessions.
+/// Read-only log surface that reuses MaidTerm so container logs and task
+/// output share the same VT parser, colors, and renderer as interactive
+/// sessions.
 ///
 /// [streaming] mode is for live CLI output (compose pull, deploy, etc.):
 /// - appends only new suffix bytes instead of rebuilding the terminal
@@ -46,7 +46,6 @@ class AnsiLogView extends ConsumerStatefulWidget {
 
 class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
   TerminalSessionAdapter? _adapter;
-  String? _boundAdapterId;
   String _writtenText = '';
   var _writeGeneration = 0;
 
@@ -89,9 +88,8 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
   }
 
   void _bindAdapter({bool force = false}) {
-    final selectedId = ref.read(selectedTerminalSessionAdapterProvider);
     final factory = ref.read(terminalSessionAdapterFactoryProvider);
-    final recreate = force || _adapter == null || _boundAdapterId != selectedId;
+    final recreate = force || _adapter == null;
     if (!recreate) {
       if (widget.streaming) {
         _appendStreamDelta();
@@ -105,7 +103,6 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
     final adapter = factory.create();
     _writeGeneration++;
     _adapter = adapter;
-    _boundAdapterId = selectedId;
     _writtenText = '';
     _writeScheduled = false;
     setState(() {});
@@ -119,7 +116,7 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
     unawaited(previous?.dispose() ?? Future<void>.value());
   }
 
-  /// Wait two frames so Ghostty/xterm can size the grid before a bulk dump.
+  /// Wait two frames so MaidTerm can size the grid before a bulk dump.
   void _scheduleLogDump(TerminalSessionAdapter adapter) {
     final generation = ++_writeGeneration;
     _writeScheduled = true;
@@ -202,13 +199,6 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<String>(selectedTerminalSessionAdapterProvider, (
-      previous,
-      next,
-    ) {
-      if (previous != next) _bindAdapter(force: true);
-    });
-
     final adapter = _adapter;
     if (adapter == null) {
       return const Center(child: CircularProgressIndicator());
@@ -231,7 +221,7 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
     }
 
     // Clip bottom corners, expand so the terminal gets a bounded viewport, and
-    // enable mouse/trackpad drag devices for nested scrollables (xterm).
+    // enable mouse/trackpad drag devices for nested scrollables.
     return ClipRRect(
       borderRadius: widget.borderRadius,
       child: ColoredBox(

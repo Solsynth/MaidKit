@@ -21,9 +21,8 @@ enum TerminalKeywordCategory {
 /// A single keyword-highlight rule.
 ///
 /// [pattern] is matched against each terminal line (case-insensitive). [color]
-/// is the background tint applied by renderers that support per-span overlays
-/// (xterm). Renderers without per-color overlays (Ghostty) reuse [pattern] as a
-/// link rule and apply their own single underline style.
+/// is the background tint; MaidTerm instead reuses [pattern] as a link rule
+/// and applies its own single underline style.
 class TerminalKeywordHighlightRule {
   const TerminalKeywordHighlightRule({
     required this.category,
@@ -42,8 +41,8 @@ class TerminalKeywordHighlightRule {
 /// MobaXterm-style keyword rules.
 ///
 /// Patterns are word-anchored and case-insensitive. The colors are background
-/// tints (alpha ~0x44) used by the xterm renderer; the Ghostty renderer applies
-/// these same patterns as underline link rules.
+/// tints (alpha ~0x44); MaidTerm applies these same patterns as underline
+/// link rules.
 final List<TerminalKeywordHighlightRule> terminalKeywordRules = [
   TerminalKeywordHighlightRule(
     category: TerminalKeywordCategory.error,
@@ -73,10 +72,7 @@ final List<TerminalKeywordHighlightRule> terminalKeywordRules = [
   ),
   TerminalKeywordHighlightRule(
     category: TerminalKeywordCategory.url,
-    pattern: RegExp(
-      r'\bhttps?://[^\s<>)\]}]+',
-      caseSensitive: false,
-    ),
+    pattern: RegExp(r'\bhttps?://[^\s<>)\]}]+', caseSensitive: false),
     color: Color(0x444DFFFF),
   ),
   TerminalKeywordHighlightRule(

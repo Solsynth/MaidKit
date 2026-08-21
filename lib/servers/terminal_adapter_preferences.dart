@@ -113,7 +113,6 @@ abstract final class TerminalFonts {
 }
 
 abstract interface class TerminalAdapterSettings {
-  String get selectedAdapterId;
   bool get cursorAnimationEnabled;
   bool get brandingEnvironmentEnabled;
   String get terminalFontFamily;
@@ -134,7 +133,6 @@ abstract interface class TerminalAdapterSettings {
   /// MobaXterm-style, without overriding server ANSI colors.
   bool get keywordHighlightEnabled;
 
-  Future<void> saveSelectedAdapterId(String adapterId);
   Future<void> saveCursorAnimationEnabled(bool enabled);
   Future<void> saveBrandingEnvironmentEnabled(bool enabled);
   Future<void> saveTerminalFontFamily(String family);
@@ -148,7 +146,6 @@ abstract interface class TerminalAdapterSettings {
 class TerminalAdapterPreferences implements TerminalAdapterSettings {
   TerminalAdapterPreferences(
     this._preferences,
-    this.selectedAdapterId,
     this.cursorAnimationEnabled,
     this.brandingEnvironmentEnabled,
     this.terminalFontFamily,
@@ -159,7 +156,6 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
     this.keywordHighlightEnabled,
   );
 
-  static const _adapterIdKey = 'terminal_adapter_id';
   static const _cursorAnimationEnabledKey = 'cursor_animation_enabled';
   static const _brandingEnvironmentEnabledKey =
       'terminal_branding_environment_enabled';
@@ -173,8 +169,6 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
       'terminal_keyword_highlight_enabled';
 
   final SharedPreferencesAsync _preferences;
-  @override
-  final String selectedAdapterId;
   @override
   final bool cursorAnimationEnabled;
   @override
@@ -198,7 +192,6 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
     final store = preferences ?? SharedPreferencesAsync();
     return TerminalAdapterPreferences(
       store,
-      await store.getString(_adapterIdKey) ?? 'ghostty',
       await store.getBool(_cursorAnimationEnabledKey) ?? true,
       await store.getBool(_brandingEnvironmentEnabledKey) ?? true,
       TerminalFonts.sanitize(
@@ -214,10 +207,6 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
       await store.getBool(_keywordHighlightEnabledKey) ?? true,
     );
   }
-
-  @override
-  Future<void> saveSelectedAdapterId(String adapterId) =>
-      _preferences.setString(_adapterIdKey, adapterId);
 
   @override
   Future<void> saveCursorAnimationEnabled(bool enabled) =>
@@ -285,7 +274,6 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
 
 class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   InMemoryTerminalAdapterSettings({
-    this.selectedAdapterId = 'ghostty',
     this.cursorAnimationEnabled = true,
     this.brandingEnvironmentEnabled = true,
     this.terminalFontFamily = TerminalFonts.defaultFamily,
@@ -296,8 +284,6 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
     this.keywordHighlightEnabled = true,
   });
 
-  @override
-  String selectedAdapterId;
   @override
   bool cursorAnimationEnabled;
   @override
@@ -314,11 +300,6 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   bool shiftInsertPasteEnabled;
   @override
   bool keywordHighlightEnabled;
-
-  @override
-  Future<void> saveSelectedAdapterId(String adapterId) async {
-    selectedAdapterId = adapterId;
-  }
 
   @override
   Future<void> saveCursorAnimationEnabled(bool enabled) async {

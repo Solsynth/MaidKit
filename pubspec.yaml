@@ -74,8 +74,8 @@ dependencies:
       ref: 6fae92d21b4c80ce1b8f71c1190d7970cf722bd4
   local_auth: ^3.0.2
   logging: ^1.3.0
-  flterm:
-    path: packages/flterm
+  maidterm:
+    path: packages/maidterm
   http: ^1.6.0
   shared_preferences: ^2.5.5
   tailscale: ^0.8.0
@@ -83,8 +83,6 @@ dependencies:
   system_fonts: ^1.0.1
   uuid: ^4.6.0
   url_launcher: ^6.3.2
-  xterm:
-    path: packages/xterm
   yaml: ^3.1.3
 
   cupertino_icons: ^1.0.9

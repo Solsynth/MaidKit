@@ -26,7 +26,7 @@ import 'package:maid_kit/agent/billing_service.dart';
 import 'package:maid_kit/agent/personality_service.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'app_theme_preferences.dart';
-import 'ghostty_terminal_session_adapter.dart';
+import 'maidterm_session_adapter.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_preferences.dart';
 import 'maidcafe_push.dart';
@@ -889,52 +889,6 @@ class DashboardCompactViewNotifier extends Notifier<bool> {
   }
 }
 
-final terminalSessionAdapterOptionsProvider =
-    Provider<List<TerminalSessionAdapterOption>>((ref) {
-      final cursorAnimationEnabled = ref.watch(cursorAnimationEnabledProvider);
-      final colorScheme = ref.watch(terminalColorSchemeProvider);
-      final terminalFontFamily = ref.watch(terminalFontFamilyProvider);
-      final transparentBackground = ref.watch(
-        transparentTerminalBackgroundProvider,
-      );
-      final selectToCopyEnabled = ref.watch(selectToCopyEnabledProvider);
-      final shiftInsertPasteEnabled = ref.watch(
-        shiftInsertPasteEnabledProvider,
-      );
-      final keywordHighlightEnabled = ref.watch(
-        keywordHighlightEnabledProvider,
-      );
-      return [
-        TerminalSessionAdapterOption(
-          id: 'ghostty',
-          label: 'Ghostty',
-          description: 'The default libghostty-vt renderer for new terminals.',
-          factory: GhosttyTerminalSessionAdapterFactory(
-            cursorAnimationEnabled: cursorAnimationEnabled,
-            colorScheme: colorScheme,
-            transparentBackground: transparentBackground,
-            fontFamily: terminalFontFamily,
-            selectToCopyEnabled: selectToCopyEnabled,
-            shiftInsertPasteEnabled: shiftInsertPasteEnabled,
-            keywordHighlightEnabled: keywordHighlightEnabled,
-          ),
-        ),
-        TerminalSessionAdapterOption(
-          id: 'xterm',
-          label: 'xterm',
-          description: 'The built-in Flutter fallback renderer.',
-          factory: XtermTerminalSessionAdapterFactory(
-            colorScheme: colorScheme,
-            transparentBackground: transparentBackground,
-            fontFamily: terminalFontFamily,
-            selectToCopyEnabled: selectToCopyEnabled,
-            shiftInsertPasteEnabled: shiftInsertPasteEnabled,
-            keywordHighlightEnabled: keywordHighlightEnabled,
-          ),
-        ),
-      ];
-    });
-
 final terminalAdapterPreferencesProvider = Provider<TerminalAdapterSettings>(
   (ref) => InMemoryTerminalAdapterSettings(),
 );
@@ -1072,24 +1026,6 @@ class ConnectOnStartupNotifier extends Notifier<bool> {
         .read(startupConnectionSettingsProvider)
         .saveConnectOnStartup(value);
     state = value;
-  }
-}
-
-final selectedTerminalSessionAdapterProvider =
-    NotifierProvider<SelectedTerminalSessionAdapterNotifier, String>(
-      SelectedTerminalSessionAdapterNotifier.new,
-    );
-
-class SelectedTerminalSessionAdapterNotifier extends Notifier<String> {
-  @override
-  String build() =>
-      ref.read(terminalAdapterPreferencesProvider).selectedAdapterId;
-
-  Future<void> select(String adapterId) async {
-    await ref
-        .read(terminalAdapterPreferencesProvider)
-        .saveSelectedAdapterId(adapterId);
-    state = adapterId;
   }
 }
 
@@ -1330,13 +1266,28 @@ final terminalColorSchemeProvider = Provider<TerminalColorScheme>((ref) {
 
 final terminalSessionAdapterFactoryProvider =
     Provider<TerminalSessionAdapterFactory>((ref) {
-      final options = ref.watch(terminalSessionAdapterOptionsProvider);
-      final selectedId = ref.watch(selectedTerminalSessionAdapterProvider);
-      return options
-              .where((option) => option.id == selectedId)
-              .firstOrNull
-              ?.factory ??
-          options.first.factory;
+      final cursorAnimationEnabled = ref.watch(cursorAnimationEnabledProvider);
+      final colorScheme = ref.watch(terminalColorSchemeProvider);
+      final terminalFontFamily = ref.watch(terminalFontFamilyProvider);
+      final transparentBackground = ref.watch(
+        transparentTerminalBackgroundProvider,
+      );
+      final selectToCopyEnabled = ref.watch(selectToCopyEnabledProvider);
+      final shiftInsertPasteEnabled = ref.watch(
+        shiftInsertPasteEnabledProvider,
+      );
+      final keywordHighlightEnabled = ref.watch(
+        keywordHighlightEnabledProvider,
+      );
+      return MaidTermSessionAdapterFactory(
+        cursorAnimationEnabled: cursorAnimationEnabled,
+        colorScheme: colorScheme,
+        transparentBackground: transparentBackground,
+        fontFamily: terminalFontFamily,
+        selectToCopyEnabled: selectToCopyEnabled,
+        shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+        keywordHighlightEnabled: keywordHighlightEnabled,
+      );
     });
 
 final connectionManagerProvider = Provider<SshConnectionManager>((ref) {

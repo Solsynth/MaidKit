@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:flterm/flterm.dart' as flterm;
+import 'package:maidterm/maidterm.dart' as maidterm;
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// Wheel scrolling in the alternate screen buffer must not be dead.
 ///
 /// TUI programs (vim, less, opencode) render in the alternate screen, which
-/// has no scrollback. flterm converts wheel gestures there into input the
+/// has no scrollback. MaidTerm converts wheel gestures there into input the
 /// program understands: cursor keys when no mouse tracking is active, wheel
 /// button reports with SGR tracking. This used to break because the scroll
 /// position kept its primary-screen 0..0 extents after the screen switch,
@@ -20,14 +20,14 @@ void main() {
 
   Future<
     (
-      flterm.TerminalController,
-      flterm.TerminalScrollController,
+      maidterm.TerminalController,
+      maidterm.TerminalScrollController,
       List<List<int>>,
     )
   >
   pumpTerminal(WidgetTester tester) async {
-    final controller = flterm.TerminalController();
-    final scroll = flterm.TerminalScrollController();
+    final controller = maidterm.TerminalController();
+    final scroll = maidterm.TerminalScrollController();
     final bytes = <List<int>>[];
     controller.onOutput = bytes.add;
     await tester.pumpWidget(
@@ -36,7 +36,7 @@ void main() {
           body: SizedBox(
             width: 600,
             height: 400,
-            child: flterm.TerminalView(
+            child: maidterm.TerminalView(
               controller: controller,
               scrollController: scroll,
             ),
@@ -49,7 +49,7 @@ void main() {
   }
 
   Future<void> enterAlternateScreen(
-    flterm.TerminalController controller,
+    maidterm.TerminalController controller,
   ) async {
     controller.write(
       seq(const [0x1b, 0x5b, 0x3f, 0x31, 0x30, 0x34, 0x39, 0x68]),

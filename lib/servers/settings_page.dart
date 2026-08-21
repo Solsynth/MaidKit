@@ -101,8 +101,6 @@ class SettingsPage extends HookConsumerWidget {
     final appSeedColor = ref.watch(appSeedColorProvider);
     final appUiScale = ref.watch(appUiScaleProvider);
     final biometricEnabled = ref.watch(biometricUnlockEnabledProvider);
-    final adapterOptions = ref.watch(terminalSessionAdapterOptionsProvider);
-    final selectedAdapter = ref.watch(selectedTerminalSessionAdapterProvider);
     final cursorAnimationEnabled = ref.watch(cursorAnimationEnabledProvider);
     final brandingEnvironmentEnabled = ref.watch(
       terminalBrandingEnvironmentEnabledProvider,
@@ -137,11 +135,6 @@ class SettingsPage extends HookConsumerWidget {
     final agentPersonalityAgentAsync = ref.watch(agentPersonalityAgentProvider);
     final personalityAgentsAsync = ref.watch(personalityAgentsProvider);
     final billingPolicyAsync = ref.watch(personalityBillingPolicyProvider);
-
-    final selectedAdapterOption = adapterOptions.firstWhere(
-      (option) => option.id == selectedAdapter,
-      orElse: () => adapterOptions.first,
-    );
 
     return MaidKitAppScaffold(
       body: LayoutBuilder(
@@ -365,42 +358,6 @@ class SettingsPage extends HookConsumerWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                DropdownButtonFormField<String>(
-                                  initialValue: selectedAdapterOption.id,
-                                  decoration: InputDecoration(
-                                    labelText: 'settingsTerminalRenderer'.tr(),
-                                  ),
-                                  items: [
-                                    for (final option in adapterOptions)
-                                      DropdownMenuItem(
-                                        value: option.id,
-                                        child: Text(option.label),
-                                      ),
-                                  ],
-                                  onChanged: adapterOptions.length < 2
-                                      ? null
-                                      : (adapterId) async {
-                                          if (adapterId != null) {
-                                            await ref
-                                                .read(
-                                                  selectedTerminalSessionAdapterProvider
-                                                      .notifier,
-                                                )
-                                                .select(adapterId);
-                                          }
-                                        },
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  selectedAdapterOption.description,
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'settingsTerminalRendererHint',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ).tr(),
-                                const SizedBox(height: 16),
                                 const _TerminalFontDropdown(),
                                 const SizedBox(height: 16),
                                 _TerminalThemeTile(
@@ -432,16 +389,11 @@ class SettingsPage extends HookConsumerWidget {
                               'settingsAnimateCursorHint',
                             ).tr(),
                             value: cursorAnimationEnabled,
-                            onChanged: selectedAdapter == 'ghostty'
-                                ? (enabled) async {
-                                    await ref
-                                        .read(
-                                          cursorAnimationEnabledProvider
-                                              .notifier,
-                                        )
-                                        .setEnabled(enabled);
-                                  }
-                                : null,
+                            onChanged: (enabled) async {
+                              await ref
+                                  .read(cursorAnimationEnabledProvider.notifier)
+                                  .setEnabled(enabled);
+                            },
                           ),
                           const SizedBox(height: 8),
                           SwitchListTile(

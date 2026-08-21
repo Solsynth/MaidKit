@@ -6,9 +6,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:xterm/xterm.dart' as xterm;
-import 'package:flterm/flterm.dart' as flterm;
-import 'package:maid_kit/servers/ghostty_terminal_session_adapter.dart';
+import 'package:maidterm/maidterm.dart' as maidterm;
+import 'package:maid_kit/servers/maidterm_session_adapter.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_adapter_preferences.dart';
 import 'package:maid_kit/servers/terminal_color_scheme.dart';
@@ -17,28 +16,6 @@ import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 
 void main() {
-  test(
-    'persists the selected terminal adapter through the settings store',
-    () async {
-      final settings = InMemoryTerminalAdapterSettings();
-      final container = ProviderContainer(
-        overrides: [
-          terminalAdapterPreferencesProvider.overrideWithValue(settings),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      expect(container.read(selectedTerminalSessionAdapterProvider), 'ghostty');
-
-      await container
-          .read(selectedTerminalSessionAdapterProvider.notifier)
-          .select('xterm');
-
-      expect(container.read(selectedTerminalSessionAdapterProvider), 'xterm');
-      expect(settings.selectedAdapterId, 'xterm');
-    },
-  );
-
   test('persists separate light and dark terminal themes', () async {
     final settings = InMemoryTerminalAdapterSettings(
       lightTheme: TerminalColorSchemes.catppuccinLatte,
@@ -217,31 +194,19 @@ void main() {
     expect(options.single.family, 'CascadiaCode-Black');
   });
 
-  test('applies the selected palette to both terminal renderers', () async {
+  test('applies the selected palette to the terminal renderer', () async {
     final scheme = TerminalColorSchemes.catppuccinMocha;
-    final xtermAdapter = XtermTerminalSessionAdapter(colorScheme: scheme);
-    final ghostty = GhosttyTerminalSessionAdapter(colorScheme: scheme);
-    addTearDown(xtermAdapter.dispose);
-    addTearDown(ghostty.dispose);
+    final adapter = MaidTermSessionAdapter(colorScheme: scheme);
+    addTearDown(adapter.dispose);
 
-    final xtermMenuView = xtermAdapter.buildView() as AppContextMenuRegion;
-    final xtermView = xtermMenuView.child as KeyedSubtree;
-    expect(
-      (xtermView.child as xterm.TerminalView).theme.background,
-      scheme.background,
-    );
-
-    final ghosttyMenuView = ghostty.buildView() as AppContextMenuRegion;
-    final ghosttyView = ghosttyMenuView.child as flterm.TerminalView;
-    expect(ghosttyView.theme!.background, scheme.background);
-    expect(ghosttyView.theme!.foreground, scheme.foreground);
-    expect(
-      ghosttyView.theme!.cursorMotionDuration,
-      const Duration(milliseconds: 90),
-    );
+    final menuView = adapter.buildView() as AppContextMenuRegion;
+    final view = menuView.child as maidterm.TerminalView;
+    expect(view.theme!.background, scheme.background);
+    expect(view.theme!.foreground, scheme.foreground);
+    expect(view.theme!.cursorMotionDuration, const Duration(milliseconds: 90));
   });
   test('tracks the shell directory reported through OSC 7', () async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     addTearDown(adapter.dispose);
 
     adapter.write(
@@ -270,52 +235,97 @@ void main() {
   });
 
   test('Ghostty adapter encodes cursor keys for the remote shell', () async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     final output = adapter.outgoingBytes.first;
 
-    adapter.sendKey(flterm.Key.arrowUp);
+    adapter.sendKey(maidterm.Key.arrowUp);
 
     expect(utf8.decode(await output), '\u001b[A');
     await adapter.dispose();
   });
 
   test('Ghostty adapter encodes backspace for the remote shell', () async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     final output = adapter.outgoingBytes.first;
 
-    adapter.sendKey(flterm.Key.backspace);
+    adapter.sendKey(maidterm.Key.backspace);
 
     expect(utf8.decode(await output), '\u007f');
     await adapter.dispose();
   });
 
-  testWidgets('Ghostty adapter renders with flterm and reports its grid size', (
+  testWidgets(
+    'Ghostty adapter renders with MaidTerm and reports its grid size',
+    (tester) async {
+      final adapter = MaidTermSessionAdapter();
+      final resizes = <TerminalResize>[];
+      final subscription = adapter.resizeEvents.listen(resizes.add);
+      addTearDown(subscription.cancel);
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(width: 800, height: 600, child: adapter.buildView()),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(maidterm.TerminalView), findsOneWidget);
+      expect(resizes, isNotEmpty);
+      expect(resizes.last.columns, greaterThan(0));
+      expect(resizes.last.rows, greaterThan(0));
+      expect(adapter.cursorGlobalRect, isNotNull);
+    },
+  );
+
+  testWidgets('resize events carry real physical pixel metrics', (
     tester,
   ) async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     final resizes = <TerminalResize>[];
     final subscription = adapter.resizeEvents.listen(resizes.add);
     addTearDown(subscription.cancel);
     addTearDown(adapter.dispose);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: SizedBox(width: 800, height: 600, child: adapter.buildView()),
-      ),
-    );
-    await tester.pump();
+    Future<void> pumpAt(Size size) async {
+      await tester.binding.setSurfaceSize(size);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: adapter.buildView(),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
 
-    expect(find.byType(flterm.TerminalView), findsOneWidget);
+    await pumpAt(const Size(800, 600));
     expect(resizes, isNotEmpty);
-    expect(resizes.last.columns, greaterThan(0));
-    expect(resizes.last.rows, greaterThan(0));
-    expect(adapter.cursorGlobalRect, isNotNull);
+    final large = resizes.last;
+    // Real cell metrics times the device pixel ratio must exceed the
+    // legacy columns*8 / rows*18 logical-pixel estimates.
+    expect(large.pixelWidth, greaterThan(large.columns * 8));
+    expect(large.pixelHeight, greaterThan(large.rows * 18));
+    expect(large.pixelWidth, greaterThan(0));
+    expect(large.pixelHeight, greaterThan(0));
+
+    await pumpAt(const Size(400, 300));
+    expect(resizes.length, greaterThanOrEqualTo(2));
+    final small = resizes.last;
+    expect(small.columns, lessThanOrEqualTo(large.columns));
+    expect(small.rows, lessThanOrEqualTo(large.rows));
+    expect(small.pixelWidth, lessThan(large.pixelWidth));
+    expect(small.pixelHeight, lessThan(large.pixelHeight));
+
+    await tester.binding.setSurfaceSize(null);
   });
 
   testWidgets('terminal key callback preempts shell input shortcuts', (
     tester,
   ) async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     var shortcutCalls = 0;
     addTearDown(adapter.dispose);
 
@@ -339,7 +349,7 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.tap(find.byType(flterm.TerminalView));
+    await tester.tap(find.byType(maidterm.TerminalView));
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.equal);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.equal);
@@ -367,7 +377,7 @@ void main() {
         },
       );
 
-      final adapter = GhosttyTerminalSessionAdapter();
+      final adapter = MaidTermSessionAdapter();
       addTearDown(adapter.dispose);
 
       await tester.pumpWidget(
@@ -384,7 +394,7 @@ void main() {
       adapter.write(Uint8List.fromList(utf8.encode('hello world\r\n')));
 
       // Clicking the read-only surface must focus it.
-      await tester.tap(find.byType(flterm.TerminalView));
+      await tester.tap(find.byType(maidterm.TerminalView));
       await tester.pump();
 
       // Select the log text through the public find API.
@@ -406,7 +416,7 @@ void main() {
   testWidgets('read-only ghostty view blocks typing from mutating the log', (
     tester,
   ) async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     addTearDown(adapter.dispose);
 
     await tester.pumpWidget(
@@ -422,7 +432,7 @@ void main() {
 
     adapter.write(Uint8List.fromList(utf8.encode('original line\r\n')));
 
-    await tester.tap(find.byType(flterm.TerminalView));
+    await tester.tap(find.byType(maidterm.TerminalView));
     await tester.pump();
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
@@ -435,7 +445,7 @@ void main() {
   });
 
   test('Ghostty adapter sends terminal control sequences', () async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     final output = adapter.outgoingBytes.first;
 
     adapter.sendInput('\u0003\t\u001b');
@@ -530,55 +540,41 @@ void main() {
     expect(responses, ['\x1b]52;c;$encoded\x1b\\']);
   });
 
-  test(
-    'both terminal adapters synchronize OSC 52 with host clipboard',
-    () async {
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      final copied = <String>[];
-      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-        if (call.method == 'Clipboard.getData') {
-          return <String, String>{'text': 'host clipboard'};
-        }
-        if (call.method == 'Clipboard.setData') {
-          copied.add(
-            (call.arguments as Map<Object?, Object?>)['text']! as String,
-          );
-        }
-        return null;
-      });
-      addTearDown(
-        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
-      );
-      for (final adapter in <TerminalSessionAdapter>[
-        XtermTerminalSessionAdapter(
-          colorScheme: TerminalColorSchemes.defaultScheme,
-        ),
-        GhosttyTerminalSessionAdapter(),
-      ]) {
-        final output = adapter.outgoingBytes.first;
-        adapter.write(Uint8List.fromList(utf8.encode('\x1b]52;c;?\x07')));
-        expect(
-          utf8.decode(await output),
-          '\x1b]52;c;aG9zdCBjbGlwYm9hcmQ=\x1b\\',
-        );
-
-        adapter.write(
-          Uint8List.fromList(
-            utf8.encode(
-              '\x1b]52;c;${base64.encode(utf8.encode('from TUI'))}\x07',
-            ),
-          ),
-        );
-        await Future<void>.delayed(Duration.zero);
-        await adapter.dispose();
+  test('terminal adapter synchronizes OSC 52 with host clipboard', () async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final copied = <String>[];
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        return <String, String>{'text': 'host clipboard'};
       }
-      expect(copied, ['from TUI', 'from TUI']);
-    },
-  );
+      if (call.method == 'Clipboard.setData') {
+        copied.add(
+          (call.arguments as Map<Object?, Object?>)['text']! as String,
+        );
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    final adapter = MaidTermSessionAdapter();
+    final output = adapter.outgoingBytes.first;
+    adapter.write(Uint8List.fromList(utf8.encode('\x1b]52;c;?\x07')));
+    expect(utf8.decode(await output), '\x1b]52;c;aG9zdCBjbGlwYm9hcmQ=\x1b\\');
+
+    adapter.write(
+      Uint8List.fromList(
+        utf8.encode('\x1b]52;c;${base64.encode(utf8.encode('from TUI'))}\x07'),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(copied, ['from TUI']);
+    await adapter.dispose();
+  });
 
   test('terminal activity follows shell integration markers', () async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     addTearDown(adapter.dispose);
     final states = <bool>[];
     final subscription = adapter.taskRunning.listen(states.add);
@@ -593,7 +589,7 @@ void main() {
   });
 
   test('terminal activity exposes reported progress percentages', () async {
-    final adapter = GhosttyTerminalSessionAdapter();
+    final adapter = MaidTermSessionAdapter();
     addTearDown(adapter.dispose);
     final activities = <TerminalTaskActivity>[];
     final subscription = adapter.taskActivity.listen(activities.add);

@@ -1,8 +1,8 @@
-import 'package:flterm/flterm.dart' as flterm;
+import 'package:maidterm/maidterm.dart' as maidterm;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:maid_kit/servers/ghostty_terminal_session_adapter.dart';
+import 'package:maid_kit/servers/maidterm_session_adapter.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_color_scheme.dart';
 import 'package:maid_kit/servers/terminal_find_host.dart';
@@ -13,11 +13,8 @@ void main() {
   Widget buildApp({required bool transparent}) {
     return ProviderScope(
       overrides: [
-        selectedTerminalSessionAdapterProvider.overrideWith(
-          SelectedTerminalSessionAdapterNotifier.new,
-        ),
         terminalSessionAdapterFactoryProvider.overrideWithValue(
-          const GhosttyTerminalSessionAdapterFactory(
+          const MaidTermSessionAdapterFactory(
             cursorAnimationEnabled: false,
             colorScheme: TerminalColorSchemes.defaultScheme,
           ),
@@ -52,8 +49,8 @@ void main() {
         .toList();
     expect(backdropColors, contains(Colors.transparent));
 
-    final view = tester.widget<flterm.TerminalView>(
-      find.byType(flterm.TerminalView),
+    final view = tester.widget<maidterm.TerminalView>(
+      find.byType(maidterm.TerminalView),
     );
     expect(view.theme!.backgroundOpacity, 0);
   });
@@ -74,8 +71,8 @@ void main() {
         .toList();
     expect(backdropColors, contains(const Color(0xFF111315)));
 
-    final view = tester.widget<flterm.TerminalView>(
-      find.byType(flterm.TerminalView),
+    final view = tester.widget<maidterm.TerminalView>(
+      find.byType(maidterm.TerminalView),
     );
     expect(view.theme!.backgroundOpacity, 1);
   });
