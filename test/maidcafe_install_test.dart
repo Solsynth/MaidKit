@@ -109,6 +109,34 @@ void main() {
     },
   );
 
+  test('uploads patch script rewrites only the managed keys', () {
+    const base = '# kept comment\n[daemon]\nid = "host-1"\n'
+        'logsUploadEnabled = false\nmanagedContainers = ["old"]\n\n'
+        '[[daemon.actions]]\nname = "keep"\ncommand = "/bin/true"\n';
+    final script = buildMaidCafeUploadsPatchScript(
+      currentConfig: base,
+      values: maidCafeUploadsPatchTomlValues({
+        'statusUploadEnabled': true,
+        'managedContainers': ['web', 'db-'],
+        'managedComposes': ['myapp'],
+      }),
+    );
+    expect(script, contains('install -o root -g maidcafe -m 0660 /dev/stdin '));
+    final match = RegExp("printf '%s' '([^']+)' \\| base64 -d").firstMatch(
+      script,
+    );
+    if (match == null) {
+      fail('no embedded config in generated script');
+    }
+    final patched = utf8.decode(base64Decode(match.group(1)!));
+    expect(patched, contains('# kept comment'));
+    expect(patched, contains('statusUploadEnabled = true'));
+    expect(patched, contains('managedContainers = ["web", "db-"]'));
+    expect(patched, contains('managedComposes = ["myapp"]'));
+    expect(patched, contains('name = "keep"'));
+    expect(patched, isNot(contains('"old"')));
+  });
+
   test('installer script escapes TOML values', () {
     final script = buildMaidCafeDaemonInstallScript(
       daemonId: 'daemon"quoted',

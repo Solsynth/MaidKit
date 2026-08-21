@@ -8,14 +8,24 @@ import 'maidcafe_stream.dart';
 /// settings: the `statusUploadEnabled` switch plus the `managedContainers`
 /// and `managedComposes` allowlists.
 ///
-/// Every change PATCHes straight through `PATCH /api/v1/config`: the daemon
-/// writes its TOML atomically and hot-reloads, so no restart is involved.
-/// The tab needs the port-forwarded session; without it the server tab shows
-/// a connect hint instead.
+/// Changes persist through [onPersist]: the host's root-owned
+/// `/etc/maidcafe/config.toml` is patched over SSH (the daemon user cannot
+/// write it on managed hosts) and the daemon hot-reloads the file — no
+/// restart. The tab still needs the port-forwarded session to read the
+/// current values; without it the server tab shows a connect hint.
 class MaidCafeUploadsTab extends StatefulWidget {
-  const MaidCafeUploadsTab({super.key, required this.session});
+  const MaidCafeUploadsTab({
+    super.key,
+    required this.session,
+    required this.onPersist,
+  });
 
   final MaidCafeStreamSession session;
+
+  /// Persists a settings patch host-side: the root-owned config is patched
+  /// over SSH (same channel as the alarms editor) and the daemon's config
+  /// watcher hot-reloads it.
+  final Future<void> Function(Map<String, Object?> patch) onPersist;
 
   @override
   State<MaidCafeUploadsTab> createState() => _MaidCafeUploadsTabState();
@@ -81,7 +91,7 @@ class _MaidCafeUploadsTabState extends State<MaidCafeUploadsTab> {
   Future<void> _patch(Map<String, Object?> patch) async {
     setState(() => _saving = true);
     try {
-      await widget.session.patchConfig(patch);
+      await widget.onPersist(patch);
       if (!mounted) return;
       ScaffoldMessenger.maybeOf(
         context,

@@ -811,6 +811,47 @@ String patchMaidCafeConfigText(
   return result.join('\n');
 }
 
+/// Serializes a managed-upload patch (`statusUploadEnabled` bool,
+/// `managedContainers` / `managedComposes` string lists) into pre-formatted
+/// TOML literals for [buildMaidCafeUploadsPatchScript].
+Map<String, String> maidCafeUploadsPatchTomlValues(
+  Map<String, Object?> patch,
+) => {
+  for (final entry in patch.entries)
+    entry.key: switch (entry.value) {
+      final bool value => value.toString(),
+      final List<String> value =>
+        '[${[for (final item in value) _tomlString(item)].join(', ')}]',
+      _ => throw ArgumentError.value(
+        entry.value,
+        entry.key,
+        'must be bool or List<String>',
+      ),
+    },
+};
+
+/// Builds a root-owned script that patches only the managed-upload keys in
+/// [values] (pre-formatted TOML literals) into the existing
+/// `/etc/maidcafe/config.toml` — webhooks, comments and every other line are
+/// preserved verbatim, and the installed file stays group-writable so the
+/// daemon's own config API keeps working. The daemon's config watcher
+/// hot-reloads the file; the caller decides whether to also reload it.
+String buildMaidCafeUploadsPatchScript({
+  required String currentConfig,
+  required Map<String, String> values,
+  bool stdio = false,
+}) {
+  final patched = patchMaidCafeConfigText(currentConfig, values);
+  final encodedConfig = base64Encode(utf8.encode(patched));
+  final configPath = stdio
+      ? '/etc/maidcafe/config.stdio.toml'
+      : '/etc/maidcafe/config.toml';
+  final installMode = stdio ? '0644' : '0660';
+  final installGroup = stdio ? 'root' : 'maidcafe';
+  return '''set -eu
+printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath''';
+}
+
 /// Builds a root-owned MaidCafe save script: patches only the edited values
 /// into the existing `/etc/maidcafe/config.toml` (webhooks, comments and any
 /// other setting are preserved verbatim), migrates legacy inline

@@ -1423,7 +1423,43 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         ),
       );
     }
-    return MaidCafeUploadsTab(session: stream);
+    return MaidCafeUploadsTab(session: stream, onPersist: _persistUploadsPatch);
+  }
+
+  /// Persists managed-upload settings by patching the root-owned config over
+  /// SSH — the daemon user cannot write /etc/maidcafe/config.toml on
+  /// MaidKit-managed hosts — and letting the daemon's config watcher
+  /// hot-reload it.
+  Future<void> _persistUploadsPatch(Map<String, Object?> patch) async {
+    final credential = await ref
+        .read(serverRepositoryProvider)
+        .credentialFor(widget.server);
+    final sudoPassword = credential.type == CredentialType.password
+        ? credential.password
+        : null;
+    final manager = ref.read(connectionManagerProvider);
+    final stdio = _transport == 'stdio';
+    await runWithDeployTerminal(
+      ref: ref,
+      title: 'maidCafeUploadsTab'.tr(),
+      subtitle: widget.server.name,
+      command: 'write upload settings',
+      run: (onOutput) => manager.runPrivilegedScriptSnippet(
+        widget.server.id,
+        script:
+            buildMaidCafeUploadsPatchScript(
+              currentConfig: _serverConfigText,
+              values: maidCafeUploadsPatchTomlValues(patch),
+              stdio: stdio,
+            ) +
+            (stdio
+                ? ''
+                : '\nsystemctl reload maidcafe-daemon 2>/dev/null || true\n'),
+        onOutput: onOutput,
+        sshUserIsRoot: widget.server.username == 'root',
+        sudoPassword: sudoPassword,
+      ),
+    );
   }
 
   Widget _actionsTab(BuildContext context) {
