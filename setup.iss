@@ -44,6 +44,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Run]
 Filename: "{app}\maid_kit.exe"; Description: "Launch MaidKit"; Flags: nowait postinstall skipifsilent
+; Stop every MaidKit engine before removing files locked by Flutter/WebView2.
+
+[UninstallRun]
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM maid_kit.exe"; Flags: runhidden waituntilterminated skipifdoesntexist
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{userappdata}\dev.solsynth\MaidKit"
