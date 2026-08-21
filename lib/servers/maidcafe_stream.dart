@@ -814,7 +814,7 @@ class MaidCafeStreamSession {
   /// Covers e.g. `statusUploadEnabled`, `managedContainers`,
   /// `managedComposes`, `logsUploadEnabled` and the collection intervals.
   Future<Map<String, dynamic>> patchConfig(Map<String, Object?> patch) =>
-      _postSigned('/api/v1/config', body: patch);
+      _patchSigned('/api/v1/config', body: patch);
 
   Future<List<Map<String, dynamic>>> metricsHistory({
     int limit = 60,
@@ -1126,6 +1126,46 @@ class MaidCafeStreamSession {
       }
       throw StateError(_dioError(error));
     }
+  }
+
+  /// PATCH mirrors [_post] for endpoints registered with PATCH only (the
+  /// config API); Gin answers a wrong-method request with 404.
+  Future<Map<String, dynamic>> _patch(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) async {
+    _throwIfClosed();
+    try {
+      final response = await _dio.patch<Object?>(
+        path,
+        data: body,
+        options: Options(
+          headers: headers,
+          contentType: Headers.jsonContentType,
+        ),
+      );
+      return _responseMap(response);
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
+      throw StateError(_dioError(error));
+    }
+  }
+
+  /// Signed PATCH — same HMAC-over-body scheme as [_postSigned].
+  Future<Map<String, dynamic>> _patchSigned(String path, {Object? body}) async {
+    final payload = body == null ? '' : jsonEncode(body);
+    final secret = _apiSecret;
+    final signature = secret == null
+        ? null
+        : await maidCafeHmacSignature(secret, utf8.encode(payload));
+    return _patch(
+      path,
+      body: payload,
+      headers: {'X-MaidCafe-Signature': ?signature},
+    );
   }
 
   Future<Map<String, dynamic>> _delete(String path) async {
