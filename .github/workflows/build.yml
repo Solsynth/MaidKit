@@ -37,12 +37,28 @@ jobs:
         with:
           channel: stable
           cache: true
-      - run: flutter pub get
+      # Retry + HTTP/1.1: git deps clone from src.solsynth.dev behind
+      # Cloudflare, which intermittently resets large pack transfers (curl 56).
+      - name: flutter pub get
+        shell: bash
+        run: |
+          git config --global http.version HTTP/1.1
+          for attempt in 1 2 3; do
+            flutter pub get && break
+            echo "flutter pub get failed (attempt $attempt); retrying in 10s"
+            sleep 10
+          done
       # Patches pub-cache packages for Windows: cargokit's resolve_symlinks.ps1
       # (hidden AppData) and tailscale's hook (GOCACHE missing in the
       # native-assets hook environment). See buildtools/fix-cargokit-windows.ps1
       - name: Patch cargokit + tailscale for Windows build
         run: powershell -ExecutionPolicy Bypass -File buildtools/fix-cargokit-windows.ps1
+      # libghostty's native-assets hook compiles the pinned Ghostty source with
+      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon).
+      - name: Set up Zig (libghostty native build)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: flutter build windows --release --verbose --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Extract Version
@@ -86,6 +102,12 @@ jobs:
         with:
           channel: stable
           cache: true
+      # libghostty's native-assets hook compiles the pinned Ghostty source with
+      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon).
+      - name: Set up Zig (libghostty native build)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
       - name: Install dependencies
         run: |
           sudo apt-get update -y
@@ -97,7 +119,17 @@ jobs:
           sudo apt-get install -y libnotify-dev
           sudo apt-get install -y libsecret-1-dev
           sudo apt-get install -y libcurl4-openssl-dev
-      - run: flutter pub get
+      # Retry + HTTP/1.1: git deps clone from src.solsynth.dev behind
+      # Cloudflare, which intermittently resets large pack transfers (curl 56).
+      - name: flutter pub get
+        shell: bash
+        run: |
+          git config --global http.version HTTP/1.1
+          for attempt in 1 2 3; do
+            flutter pub get && break
+            echo "flutter pub get failed (attempt $attempt); retrying in 10s"
+            sleep 10
+          done
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: flutter build linux --release --no-tree-shake-icons --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Archive production artifacts
@@ -139,6 +171,12 @@ jobs:
         with:
           channel: stable
           cache: true
+      # libghostty's native-assets hook compiles the pinned Ghostty source with
+      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon).
+      - name: Set up Zig (libghostty native build)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
       - name: Configure Android signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -153,7 +191,17 @@ jobs:
             echo "keyAlias=$ANDROID_KEY_ALIAS"
             echo "keyPassword=$ANDROID_KEYSTORE_PASSWORD"
           } > android/key.properties
-      - run: flutter pub get
+      # Retry + HTTP/1.1: git deps clone from src.solsynth.dev behind
+      # Cloudflare, which intermittently resets large pack transfers (curl 56).
+      - name: flutter pub get
+        shell: bash
+        run: |
+          git config --global http.version HTTP/1.1
+          for attempt in 1 2 3; do
+            flutter pub get && break
+            echo "flutter pub get failed (attempt $attempt); retrying in 10s"
+            sleep 10
+          done
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: flutter build apk --release --split-per-abi --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Archive Android artifacts

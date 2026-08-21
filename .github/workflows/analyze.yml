@@ -13,6 +13,16 @@ jobs:
         with:
           channel: stable
           cache: true
-      - run: flutter pub get
+      # Retry + HTTP/1.1: git deps clone from src.solsynth.dev behind
+      # Cloudflare, which intermittently resets large pack transfers (curl 56).
+      - name: flutter pub get
+        shell: bash
+        run: |
+          git config --global http.version HTTP/1.1
+          for attempt in 1 2 3; do
+            flutter pub get && break
+            echo "flutter pub get failed (attempt $attempt); retrying in 10s"
+            sleep 10
+          done
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: flutter analyze lib
