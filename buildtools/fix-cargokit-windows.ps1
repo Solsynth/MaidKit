@@ -117,9 +117,17 @@ func closeAllUdpBindings() {}
         if ($content.Contains($marker)) {
             Write-Host "OK (already patched): $tcp"
         } elseif ($content.Contains('type TcpFdConn struct')) {
-            $content = $content.Replace(
-                "import (`n`t`"errors`"`n`t`"net`"`n`t`"time`"`n)",
-                "import (`n`t`"errors`"`n`t`"net`"`n`t`"sync`"`n`t`"time`"`n)")
+            # 0.8.0 and earlier: errors, net, time. 0.9.0 inserts "fmt" between
+            # errors and net. Insert "sync" after the "errors" line either way.
+            if ($content.Contains("`t`"errors`"`n`t`"fmt`"`n`t`"net`"")) {
+                $content = $content.Replace(
+                    "`t`"errors`"`n`t`"fmt`"",
+                    "`t`"errors`"`n`t`"fmt`"`n`t`"sync`"")
+            } else {
+                $content = $content.Replace(
+                    "`t`"errors`"`n`t`"net`"",
+                    "`t`"errors`"`n`t`"sync`"`n`t`"net`"")
+            }
             $content = $content.Replace(
                 "`tRemotePort    int`n}",
                 "`tRemotePort    int`n`t// Identity is the resolved identity of the remote node, attached at`n`t// accept time. Never populated on Windows: TcpAcceptFd is unsupported.`n`tIdentity *nodeIdentity`n}")
