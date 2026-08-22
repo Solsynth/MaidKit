@@ -58,7 +58,7 @@ jobs:
       # pre-0.12 filename (zig-linux-x86_64-*) which 404s for 0.16.0; v2 builds
       # the correct zig-x86_64-*-0.16.0 name.
       - name: Set up Zig (libghostty native build)
-        uses: https://codeberg.org/mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
       - run: dart run build_runner build --delete-conflicting-outputs
@@ -109,7 +109,7 @@ jobs:
       # pre-0.12 filename (zig-linux-x86_64-*) which 404s for 0.16.0; v2 builds
       # the correct zig-x86_64-*-0.16.0 name.
       - name: Set up Zig (libghostty native build)
-        uses: https://codeberg.org/mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
       - name: Install dependencies
@@ -180,7 +180,7 @@ jobs:
       # pre-0.12 filename (zig-linux-x86_64-*) which 404s for 0.16.0; v2 builds
       # the correct zig-x86_64-*-0.16.0 name.
       - name: Set up Zig (libghostty native build)
-        uses: https://codeberg.org/mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
       - name: Configure Android signing
