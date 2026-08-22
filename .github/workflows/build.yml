@@ -54,15 +54,13 @@ jobs:
       - name: Patch cargokit + tailscale for Windows build
         run: powershell -ExecutionPolicy Bypass -File buildtools/fix-cargokit-windows.ps1
       # libghostty's native-assets hook compiles the pinned Ghostty source with
-      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon).
-      # Direct install: mlugg/setup-zig requests the pre-0.12 filename
-      # (zig-linux-x86_64-*) which 404s for 0.16.0 on every mirror.
-      - name: Install Zig (libghostty native build)
-        shell: bash
-        run: |
-          curl -fsSL -o zig.zip https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip
-          tar xf zig.zip
-          echo "$(cygpath -w "$PWD/zig-x86_64-windows-0.16.0")" >> "$GITHUB_PATH"
+      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon). v1 requested the
+      # pre-0.12 filename (zig-linux-x86_64-*) which 404s for 0.16.0; v2 builds
+      # the correct zig-x86_64-*-0.16.0 name.
+      - name: Set up Zig (libghostty native build)
+        uses: https://codeberg.org/mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - run: dart run build_runner build --delete-conflicting-outputs
       - run: flutter build windows --release --verbose --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Extract Version
@@ -107,15 +105,13 @@ jobs:
           channel: stable
           cache: true
       # libghostty's native-assets hook compiles the pinned Ghostty source with
-      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon).
-      # Direct install: mlugg/setup-zig requests the pre-0.12 filename
-      # (zig-linux-x86_64-*) which 404s for 0.16.0 on every mirror.
-      - name: Install Zig (libghostty native build)
-        shell: bash
-        run: |
-          curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon). v1 requested the
+      # pre-0.12 filename (zig-linux-x86_64-*) which 404s for 0.16.0; v2 builds
+      # the correct zig-x86_64-*-0.16.0 name.
+      - name: Set up Zig (libghostty native build)
+        uses: https://codeberg.org/mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - name: Install dependencies
         run: |
           sudo apt-get update -y
@@ -180,15 +176,13 @@ jobs:
           channel: stable
           cache: true
       # libghostty's native-assets hook compiles the pinned Ghostty source with
-      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon).
-      # Direct install: mlugg/setup-zig requests the pre-0.12 filename
-      # (zig-linux-x86_64-*) which 404s for 0.16.0 on every mirror.
-      - name: Install Zig (libghostty native build)
-        shell: bash
-        run: |
-          curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-          tar xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+      # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon). v1 requested the
+      # pre-0.12 filename (zig-linux-x86_64-*) which 404s for 0.16.0; v2 builds
+      # the correct zig-x86_64-*-0.16.0 name.
+      - name: Set up Zig (libghostty native build)
+        uses: https://codeberg.org/mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - name: Configure Android signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
