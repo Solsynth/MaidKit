@@ -1092,8 +1092,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/maidterm"
-      ref: dc94a82a16763bce0527d1c508a473108aaf8f23
-      resolved-ref: dc94a82a16763bce0527d1c508a473108aaf8f23
+      ref: "3de1d0624dc9f793770da7127287f15e92fff107"
+      resolved-ref: "3de1d0624dc9f793770da7127287f15e92fff107"
       url: "https://src.solsynth.dev/Solsynth/MaidTerm.git"
     source: git
     version: "0.0.4+maidkit.1"
