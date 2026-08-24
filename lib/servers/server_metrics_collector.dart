@@ -69,7 +69,7 @@ vm_stat 2>/dev/null || true
 echo --SWAP--
 sysctl -n vm.swapusage 2>/dev/null || true
 echo --DISK--
-df -Pk / 2>/dev/null || true
+df -Pk 2>/dev/null || true
 echo --GPU--
 nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || true
 echo --UPTIME--
@@ -102,7 +102,7 @@ $load = if ($cpuCount -gt 0) { $loadPercent * $cpuCount / 100 } else { $null }
 $pageFiles = @(Get-CimInstance Win32_PageFileUsage)
 $swapTotalKb = [int64](($pageFiles | Measure-Object AllocatedBaseSize -Sum).Sum)
 $swapUsedKb = [int64](($pageFiles | Measure-Object CurrentUsage -Sum).Sum)
-$disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+$disks = @(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 -or $_.DriveType -eq 4 })
 Write-Output '--LOAD--'
 if ($null -ne $load) { $load.ToString('0.##', [Globalization.CultureInfo]::InvariantCulture) }
 Write-Output '--CPU--'
@@ -114,8 +114,9 @@ Write-Output '--SWAP--'
 "SwapTotal: $swapTotalKb"
 "SwapFree: $([math]::Max(0, $swapTotalKb - $swapUsedKb))"
 Write-Output '--DISK--'
-"DiskTotal: $([int64]($disk.Size / 1KB))"
-"DiskAvailable: $([int64]($disk.FreeSpace / 1KB))"
+foreach ($disk in $disks) {
+  "Disk $($disk.DeviceID) $([int64]($disk.Size / 1KB)) $([int64]($disk.FreeSpace / 1KB)) $($disk.VolumeName)"
+}
 Write-Output '--GPU--'
 if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
   & nvidia-smi.exe '--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu' '--format=csv,noheader,nounits' 2>$null
@@ -141,7 +142,7 @@ class LinuxProcfsMetricsCollector implements ServerMetricsCollector {
   Future<ServerStats?> collect(SSHClient client) async {
     final output = await _run(
       client,
-      "sh -c 'cat /proc/loadavg; echo --CPU--; getconf _NPROCESSORS_ONLN 2>/dev/null || nproc; echo --MEM--; cat /proc/meminfo; echo --DISK--; df -Pk / | tail -n 1; echo --GPU--; nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || true; echo --UPTIME--; cut -d. -f1 /proc/uptime'",
+      "sh -c 'cat /proc/loadavg; echo --CPU--; getconf _NPROCESSORS_ONLN 2>/dev/null || nproc; echo --MEM--; cat /proc/meminfo; echo --DISK--; df -Pk; echo --GPU--; nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || true; echo --UPTIME--; cut -d. -f1 /proc/uptime'",
     );
     final sections = output.split('--CPU--');
     if (sections.length != 2) return null;
@@ -160,7 +161,8 @@ class LinuxProcfsMetricsCollector implements ServerMetricsCollector {
       return match == null ? null : int.tryParse(match.group(1)!);
     }
 
-    final diskFields = diskAndGpu[0].trim().split(RegExp(r'\s+'));
+    final disks = parseDiskUsageLines(diskAndGpu[0]);
+    final root = rootDiskUsage(disks);
 
     return ServerStats(
       collectorId: id,
@@ -173,12 +175,11 @@ class LinuxProcfsMetricsCollector implements ServerMetricsCollector {
       memoryAvailableKb: valueFor('MemAvailable'),
       swapTotalKb: valueFor('SwapTotal'),
       swapFreeKb: valueFor('SwapFree'),
-      diskTotalKb: diskFields.length > 1 ? int.tryParse(diskFields[1]) : null,
-      diskAvailableKb: diskFields.length > 3
-          ? int.tryParse(diskFields[3])
-          : null,
+      diskTotalKb: root?.totalKb,
+      diskAvailableKb: root?.availableKb,
       gpus: parseNvidiaGpuMetricsOutput(gpuAndUptime[0]),
       uptime: Duration(seconds: int.tryParse(gpuAndUptime[1].trim()) ?? 0),
+      disks: disks,
     );
   }
 }
@@ -194,7 +195,8 @@ ServerStats? parseMacosMetricsOutput(String output, {DateTime? now}) {
     _metricSection(output, 'VMSTAT'),
   );
   final swap = _parseMacosSwap(_metricSection(output, 'SWAP'));
-  final diskFields = _lastDataRowFields(_metricSection(output, 'DISK'));
+  final disks = parseDiskUsageLines(_metricSection(output, 'DISK'));
+  final root = rootDiskUsage(disks);
   final bootSeconds = RegExp(
     r'sec\s*=\s*(\d+)',
   ).firstMatch(_metricSection(output, 'UPTIME'))?.group(1);
@@ -220,10 +222,11 @@ ServerStats? parseMacosMetricsOutput(String output, {DateTime? now}) {
     memoryAvailableKb: availableBytes == null ? null : availableBytes ~/ 1024,
     swapTotalKb: swap.$1,
     swapFreeKb: swap.$2,
-    diskTotalKb: diskFields.length > 1 ? int.tryParse(diskFields[1]) : null,
-    diskAvailableKb: diskFields.length > 3 ? int.tryParse(diskFields[3]) : null,
+    diskTotalKb: root?.totalKb,
+    diskAvailableKb: root?.availableKb,
     gpus: parseNvidiaGpuMetricsOutput(_metricSection(output, 'GPU')),
     uptime: uptime,
+    disks: disks,
   );
 }
 
@@ -273,6 +276,8 @@ ServerStats? parseWindowsMetricsOutput(String output, {DateTime? now}) {
 
   final currentTime = now ?? DateTime.now();
   final uptimeSeconds = int.tryParse(_metricSection(output, 'UPTIME').trim());
+  final disks = parseDiskUsageLines(_metricSection(output, 'DISK'));
+  final root = rootDiskUsage(disks);
   return ServerStats(
     collectorId: 'windows-powershell',
     updatedAt: currentTime,
@@ -282,23 +287,119 @@ ServerStats? parseWindowsMetricsOutput(String output, {DateTime? now}) {
     memoryAvailableKb: value('MEM', 'MemAvailable'),
     swapTotalKb: value('SWAP', 'SwapTotal'),
     swapFreeKb: value('SWAP', 'SwapFree'),
-    diskTotalKb: value('DISK', 'DiskTotal'),
-    diskAvailableKb: value('DISK', 'DiskAvailable'),
+    diskTotalKb: root?.totalKb,
+    diskAvailableKb: root?.availableKb,
     gpus: parseNvidiaGpuMetricsOutput(_metricSection(output, 'GPU')),
     uptime: uptimeSeconds == null
         ? null
         : Duration(seconds: uptimeSeconds.clamp(0, 0x7fffffffffffffff)),
+    disks: disks,
   );
 }
 
-List<String> _lastDataRowFields(String output) {
-  final lines = output
-      .trim()
-      .split('\n')
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
-      .toList();
-  return lines.isEmpty ? const [] : lines.last.split(RegExp(r'\s+'));
+/// Filesystem identifiers that never back user data; `df` rows for these are
+/// skipped so the disk list stays limited to physical and network storage.
+const _virtualFilesystems = <String>{
+  'tmpfs',
+  'devtmpfs',
+  'devfs',
+  'udev',
+  'proc',
+  'sysfs',
+  'cgroup',
+  'cgroup2',
+  'overlay',
+  'squashfs',
+  'ramfs',
+  'hugetlbfs',
+  'mqueue',
+  'shm',
+  'devpts',
+  'debugfs',
+  'tracefs',
+  'securityfs',
+  'configfs',
+  'fusectl',
+  'pstore',
+  'efivarfs',
+  'autofs',
+  'binfmt_misc',
+  'rpc_pipefs',
+  'nsfs',
+  'bpf',
+  'iso9660',
+  'udf',
+  'none',
+  'map',
+};
+
+bool _isReportableFilesystem(String filesystem) {
+  if (_virtualFilesystems.contains(filesystem)) return false;
+  return filesystem.startsWith('/dev/') ||
+      filesystem.startsWith('//') || // SMB/CIFS share
+      filesystem.contains(':'); // NFS `host:/export`
+}
+
+/// Parses a `--DISK--` section into per-filesystem capacity snapshots.
+///
+/// Two shapes are accepted:
+/// - `df -Pk` tabular output (Linux/macOS): a data row has six or more
+///   whitespace-separated fields with numeric 1024-block, used, and available
+///   columns and a capacity column ending in `%`. The locale-dependent header
+///   is skipped by that shape check, so non-English `df` output still parses.
+/// - Windows per-disk lines emitted by the PowerShell collectors:
+///   `Disk C: <totalKb> <availableKb> [VolumeName]`.
+///
+/// Virtual filesystems and duplicate devices (bind mounts, macOS synthesized
+/// snapshots) are skipped; the list keeps `df` order, root first.
+List<DiskUsage> parseDiskUsageLines(String output) {
+  final disks = <DiskUsage>[];
+  final seenFilesystems = <String>{};
+  for (final rawLine in output.split('\n')) {
+    final line = rawLine.trim();
+    if (line.isEmpty) continue;
+    final fields = line.split(RegExp(r'\s+'));
+    DiskUsage? disk;
+    if (fields.length >= 4 && fields[0] == 'Disk' && fields[1].endsWith(':')) {
+      final total = int.tryParse(fields[2]);
+      final available = int.tryParse(fields[3]);
+      if (total == null || available == null) continue;
+      disk = DiskUsage(
+        filesystem: fields[1],
+        mount: fields[1],
+        totalKb: total,
+        availableKb: available,
+      );
+    } else if (fields.length >= 6 &&
+        int.tryParse(fields[1]) != null &&
+        int.tryParse(fields[2]) != null &&
+        int.tryParse(fields[3]) != null &&
+        fields[4].endsWith('%')) {
+      final filesystem = fields[0];
+      if (!_isReportableFilesystem(filesystem)) continue;
+      disk = DiskUsage(
+        filesystem: filesystem,
+        mount: fields.sublist(5).join(' '),
+        totalKb: int.tryParse(fields[1]),
+        availableKb: int.tryParse(fields[3]),
+      );
+    }
+    if (disk == null) continue;
+    final filesystem = disk.filesystem;
+    if (filesystem != null && !seenFilesystems.add(filesystem)) continue;
+    disks.add(disk);
+  }
+  return disks;
+}
+
+/// The root/boot filesystem for aggregate views and legacy fields: the disk
+/// mounted at '/' on POSIX hosts, otherwise the first reported disk (C: on
+/// Windows). Null when no disk was collected.
+DiskUsage? rootDiskUsage(List<DiskUsage> disks) {
+  for (final disk in disks) {
+    if (disk.mount == '/') return disk;
+  }
+  return disks.isEmpty ? null : disks.first;
 }
 
 /// A portable fallback for POSIX-like hosts where procfs is unavailable.

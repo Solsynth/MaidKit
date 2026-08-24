@@ -1,3 +1,5 @@
+import 'server_models.dart';
+
 /// One point in the live activity history used by the Activity tab charts.
 class ActivitySample {
   const ActivitySample({
@@ -18,6 +20,7 @@ class ActivitySample {
     this.netRxBps,
     this.netTxBps,
     this.uptime,
+    this.disks = const [],
   });
 
   final DateTime at;
@@ -41,6 +44,10 @@ class ActivitySample {
   final double? netRxBps;
   final double? netTxBps;
   final Duration? uptime;
+
+  /// Every reportable mounted filesystem, root first; empty for legacy
+  /// single-disk samples.
+  final List<DiskUsage> disks;
 
   double? get memoryPercent {
     final used = memoryUsedKb;
@@ -94,6 +101,7 @@ class ActivityCounters {
     this.netRxBps,
     this.netTxBps,
     this.uptime,
+    this.disks = const [],
   });
 
   final DateTime at;
@@ -119,6 +127,10 @@ class ActivityCounters {
   final double? netTxBps;
   final int? netTxBytes;
   final Duration? uptime;
+
+  /// Every reportable mounted filesystem, root first; empty for legacy
+  /// single-disk counters.
+  final List<DiskUsage> disks;
   ActivitySample toSample({ActivityCounters? previous}) {
     double? cpuPercent = this.cpuPercent;
     double? netRxBps = this.netRxBps;
@@ -175,6 +187,7 @@ class ActivityCounters {
       netRxBps: netRxBps,
       netTxBps: netTxBps,
       uptime: uptime,
+      disks: disks,
     );
   }
 }
@@ -212,6 +225,16 @@ ActivityCounters? parseMaidCafeMetrics(Map<String, dynamic> response) {
     swapFreeKb: _metricInt(response['swap_free_kb']),
     diskTotalKb: _metricInt(response['disk_total_kb']),
     diskAvailableKb: _metricInt(response['disk_available_kb']),
+    disks: [
+      for (final item in (response['disks'] as List? ?? const []))
+        if (item is Map)
+          DiskUsage(
+            mount: item['mount']?.toString() ?? '',
+            filesystem: item['filesystem']?.toString(),
+            totalKb: _metricInt(item['total_kb']),
+            availableKb: _metricInt(item['available_kb']),
+          ),
+    ],
     netRxBytes: _metricInt(response['net_rx_bytes']),
     netTxBytes: _metricInt(response['net_tx_bytes']),
     uptime: uptimeSeconds == null ? null : Duration(seconds: uptimeSeconds),

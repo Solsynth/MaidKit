@@ -51,13 +51,15 @@ class LocalMachineMetricsCollector {
     final cpuCount = await _run('sysctl', const ['-n', 'hw.ncpu']);
     final bootTime = await _run('sysctl', const ['-n', 'kern.boottime']);
     final swapUsage = await _run('sysctl', const ['-n', 'vm.swapusage']);
-    final disk = await _run('df', const ['-Pk', '/']);
+    final disk = await _run('df', const ['-Pk']);
     final gpus = await _collectGpuStats();
 
     final loads = _parseLoads(load);
     final totalBytes = int.tryParse((memoryBytes ?? '').trim());
     final availableBytes = _parseVmStat(vmStat);
     final swap = _parseSwapUsage(swapUsage);
+    final disks = parseDiskUsageLines(disk ?? '');
+    final root = rootDiskUsage(disks);
     return ServerStats(
       collectorId: 'local',
       updatedAt: DateTime.now(),
@@ -69,9 +71,10 @@ class LocalMachineMetricsCollector {
       memoryAvailableKb: availableBytes == null ? null : availableBytes ~/ 1024,
       swapTotalKb: swap.$1,
       swapFreeKb: swap.$2,
-      diskTotalKb: _diskField(disk, 1),
+      diskTotalKb: root?.totalKb,
       gpus: gpus,
-      diskAvailableKb: _diskField(disk, 3),
+      diskAvailableKb: root?.availableKb,
+      disks: disks,
       uptime: _uptimeFromBootTime(bootTime),
     );
   }
@@ -82,7 +85,7 @@ class LocalMachineMetricsCollector {
     final uptime = await _readFile('/proc/uptime');
     final cpuCount = await _run('nproc', const []);
     final gpus = await _collectGpuStats();
-    final disk = await _run('df', const ['-Pk', '/']);
+    final disk = await _run('df', const ['-Pk']);
 
     final loads = _parseLoads(load);
     int? memKb(String label) {
@@ -96,6 +99,8 @@ class LocalMachineMetricsCollector {
     final uptimeSeconds = double.tryParse(
       (uptime ?? '').trim().split(' ').first,
     );
+    final disks = parseDiskUsageLines(disk ?? '');
+    final root = rootDiskUsage(disks);
     return ServerStats(
       collectorId: 'local',
       updatedAt: DateTime.now(),
@@ -107,8 +112,9 @@ class LocalMachineMetricsCollector {
       memoryAvailableKb: memKb('MemAvailable'),
       swapTotalKb: memKb('SwapTotal'),
       swapFreeKb: memKb('SwapFree'),
-      diskTotalKb: _diskField(disk, 1),
-      diskAvailableKb: _diskField(disk, 3),
+      diskTotalKb: root?.totalKb,
+      diskAvailableKb: root?.availableKb,
+      disks: disks,
       gpus: gpus,
       uptime: uptimeSeconds == null
           ? null
@@ -197,15 +203,6 @@ class LocalMachineMetricsCollector {
     return Duration(
       seconds: DateTime.now().millisecondsSinceEpoch ~/ 1000 - boot,
     );
-  }
-
-  /// Extracts a field from `df -Pk` output's data row (0-based field index:
-  /// 1 = 1024-blocks, 3 = available).
-  int? _diskField(String? output, int fieldIndex) {
-    final lines = (output ?? '').trim().split('\n');
-    if (lines.length < 2) return null;
-    final fields = lines[1].trim().split(RegExp(r'\s+'));
-    return fields.length > fieldIndex ? int.tryParse(fields[fieldIndex]) : null;
   }
 
   String _osName(String operatingSystem) => switch (operatingSystem) {

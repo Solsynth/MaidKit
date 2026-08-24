@@ -800,7 +800,7 @@ if [ -r /proc/stat ]; then
   echo --MEM--
   cat /proc/meminfo 2>/dev/null || true
   echo --DISK--
-  df -Pk / 2>/dev/null | tail -n 1 || true
+  df -Pk 2>/dev/null || true
   echo --NET--
   cat /proc/net/dev 2>/dev/null || true
   echo --UPTIME--
@@ -819,7 +819,7 @@ else
   echo --SWAP--
   sysctl -n vm.swapusage 2>/dev/null || true
   echo --DISK--
-  df -Pk / 2>/dev/null || true
+  df -Pk 2>/dev/null || true
   echo --NET--
   netstat -ib 2>/dev/null || true
   echo --UPTIME--
@@ -932,14 +932,8 @@ fi
       return (amount * multiplier).round();
     }
 
-    final diskLines = section('DISK')
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    final diskFields = diskLines.isEmpty
-        ? const <String>[]
-        : diskLines.last.split(RegExp(r'\s+'));
+    final disks = parseDiskUsageLines(section('DISK'));
+    final root = rootDiskUsage(disks);
     var netRx = 0;
     var netTx = 0;
     var hasNet = false;
@@ -992,20 +986,6 @@ fi
       hasNet = true;
     }
 
-    final windowsDiskTotal = int.tryParse(
-      RegExp(
-            r'^DiskTotal:\s*(\d+)',
-            multiLine: true,
-          ).firstMatch(section('DISK'))?.group(1) ??
-          '',
-    );
-    final windowsDiskAvailable = int.tryParse(
-      RegExp(
-            r'^DiskAvailable:\s*(\d+)',
-            multiLine: true,
-          ).firstMatch(section('DISK'))?.group(1) ??
-          '',
-    );
     final uptimeText = section('UPTIME');
     var uptimeSeconds = int.tryParse(uptimeText);
     if (uptimeSeconds == null) {
@@ -1033,12 +1013,9 @@ fi
           (macAvailableBytes() == null ? null : macAvailableBytes()! ~/ 1024),
       swapTotalKb: memValue('SwapTotal') ?? macSwapValue('total'),
       swapFreeKb: memValue('SwapFree') ?? macSwapValue('free'),
-      diskTotalKb:
-          windowsDiskTotal ??
-          (diskFields.length > 1 ? int.tryParse(diskFields[1]) : null),
-      diskAvailableKb:
-          windowsDiskAvailable ??
-          (diskFields.length > 3 ? int.tryParse(diskFields[3]) : null),
+      diskTotalKb: root?.totalKb,
+      diskAvailableKb: root?.availableKb,
+      disks: disks,
       netRxBytes: hasNet ? netRx : null,
       netTxBytes: hasNet ? netTx : null,
       uptime: uptimeSeconds == null || uptimeSeconds < 0
@@ -5020,7 +4997,7 @@ $load = if ($cpuCount -gt 0) { $loadPercent * $cpuCount / 100 } else { 0 }
 $pageFiles = @(Get-CimInstance Win32_PageFileUsage)
 $swapTotalKb = [int64](($pageFiles | Measure-Object AllocatedBaseSize -Sum).Sum)
 $swapUsedKb = [int64](($pageFiles | Measure-Object CurrentUsage -Sum).Sum)
-$disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+$disks = @(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 -or $_.DriveType -eq 4 })
 $net = @(Get-NetAdapterStatistics -ErrorAction SilentlyContinue)
 $rx = [int64](($net | Measure-Object ReceivedBytes -Sum).Sum)
 $tx = [int64](($net | Measure-Object SentBytes -Sum).Sum)
@@ -5038,9 +5015,8 @@ Write-Output '--SWAP--'
 "SwapTotal: $swapTotalKb"
 "SwapFree: $([math]::Max(0, $swapTotalKb - $swapUsedKb))"
 Write-Output '--DISK--'
-if ($null -ne $disk) {
-  "DiskTotal: $([int64]($disk.Size / 1KB))"
-  "DiskAvailable: $([int64]($disk.FreeSpace / 1KB))"
+foreach ($disk in $disks) {
+  "Disk $($disk.DeviceID) $([int64]($disk.Size / 1KB)) $([int64]($disk.FreeSpace / 1KB)) $($disk.VolumeName)"
 }
 Write-Output '--NET--'
 "RxBytes: $rx"

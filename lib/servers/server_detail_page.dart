@@ -1171,6 +1171,7 @@ class _MetricGrid extends StatelessWidget {
     final swapUsed = stats!.swapTotalKb == null || stats!.swapFreeKb == null
         ? null
         : stats!.swapTotalKb! - stats!.swapFreeKb!;
+    final disks = stats!.disks;
     return Column(
       children: [
         _MetricCard(
@@ -1210,16 +1211,31 @@ class _MetricGrid extends StatelessWidget {
           progress: _ratio(memoryUsed, stats!.memoryTotalKb),
         ),
         const SizedBox(height: 8),
-        _MetricCard(
-          icon: Symbols.storage,
-          label: 'detailRootDisk',
-          value: diskUsed == null ? '—' : _formatKb(diskUsed),
-          detail: stats!.diskTotalKb == null
-              ? null
-              : 'detailOf'.tr(args: [_formatKb(stats!.diskTotalKb!)]),
-          progress: _ratio(diskUsed, stats!.diskTotalKb),
-        ),
-        const SizedBox(height: 8),
+        if (disks.isEmpty) ...[
+          _MetricCard(
+            icon: Symbols.storage,
+            label: 'detailRootDisk',
+            value: diskUsed == null ? '—' : _formatKb(diskUsed),
+            detail: stats!.diskTotalKb == null
+                ? null
+                : 'detailOf'.tr(args: [_formatKb(stats!.diskTotalKb!)]),
+            progress: _ratio(diskUsed, stats!.diskTotalKb),
+          ),
+          const SizedBox(height: 8),
+        ] else
+          for (final disk in disks) ...[
+            _MetricCard(
+              icon: Symbols.storage,
+              label: disk.mount == '/' ? 'detailRootDisk' : disk.mount,
+              value: disk.usedKb == null ? '—' : _formatKb(disk.usedKb!),
+              detail: disk.totalKb == null
+                  ? null
+                  : '${'detailOf'.tr(args: [_formatKb(disk.totalKb!)])}'
+                        '${disk.percent == null ? '' : ' · ${disk.percent!.toStringAsFixed(0)}%'}',
+              progress: _ratio(disk.usedKb, disk.totalKb),
+            ),
+            const SizedBox(height: 8),
+          ],
         _MetricCard(
           icon: Symbols.timer,
           label: 'detailUptime',

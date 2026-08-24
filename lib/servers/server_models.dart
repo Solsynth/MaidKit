@@ -305,6 +305,40 @@ class ServerGpuStats {
   final double? temperatureC;
 }
 
+/// One mounted filesystem's capacity snapshot (root, data volumes, network
+/// mounts). Mirrors the `df -Pk` "available" semantics: used = total −
+/// available, so the numbers match what `df` prints.
+class DiskUsage {
+  const DiskUsage({
+    required this.mount,
+    this.filesystem,
+    this.totalKb,
+    this.availableKb,
+  });
+
+  /// Mount point ('/', '/data', 'C:').
+  final String mount;
+
+  /// Device or filesystem identifier ('/dev/vda1', 'C:').
+  final String? filesystem;
+  final int? totalKb;
+  final int? availableKb;
+
+  int? get usedKb {
+    final total = totalKb;
+    final available = availableKb;
+    if (total == null || available == null) return null;
+    return total - available;
+  }
+
+  double? get percent {
+    final used = usedKb;
+    final total = totalKb;
+    if (used == null || total == null || total == 0) return null;
+    return (used / total * 100).clamp(0, 100);
+  }
+}
+
 class ServerStats {
   const ServerStats({
     required this.collectorId,
@@ -321,6 +355,7 @@ class ServerStats {
     this.diskAvailableKb,
     this.uptime,
     this.gpus = const [],
+    this.disks = const [],
   });
 
   final String collectorId;
@@ -337,6 +372,11 @@ class ServerStats {
   final int? diskAvailableKb;
   final Duration? uptime;
   final List<ServerGpuStats> gpus;
+
+  /// Every reportable mounted filesystem (physical partitions and network
+  /// mounts), root first. Empty when the collector only exposes the root
+  /// aggregate.
+  final List<DiskUsage> disks;
 }
 
 class ServerProcess {

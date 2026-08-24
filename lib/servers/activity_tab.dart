@@ -10,6 +10,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'activity_models.dart';
 import 'server_providers.dart';
+import 'server_models.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
 
@@ -734,7 +735,9 @@ class _ChartCard extends StatelessWidget {
   }
 }
 
-/// Compact root-disk usage — not a time-series chart, so no empty chart area.
+/// Compact disk usage — not a time-series chart, so no empty chart area.
+/// Shows every mounted filesystem when the collector reports them, falling
+/// back to the root/boot volume for legacy single-disk sources.
 class _DiskCard extends StatelessWidget {
   const _DiskCard({required this.sample});
 
@@ -744,6 +747,9 @@ class _DiskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    final disks = sample.disks;
+    final showAll = disks.length > 1;
     final progress = ((sample.diskPercent ?? 0) / 100).clamp(0.0, 1.0);
     final subtitle = sample.diskUsedKb == null || sample.diskTotalKb == null
         ? '—'
@@ -771,38 +777,113 @@ class _DiskCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text('detailRootDisk'.tr(), style: theme.textTheme.titleSmall),
+                Text(
+                  showAll ? 'detailDisks'.tr() : 'detailRootDisk'.tr(),
+                  style: theme.textTheme.titleSmall,
+                ),
                 const Spacer(),
-                Flexible(
-                  child: Text(
-                    subtitle,
-                    textAlign: TextAlign.end,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                if (!showAll)
+                  Flexible(
+                    child: Text(
+                      subtitle,
+                      textAlign: TextAlign.end,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
             const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 8,
-                backgroundColor: scheme.surfaceContainerHighest,
-                color: progress >= 0.9
-                    ? scheme.error
-                    : progress >= 0.75
-                    ? scheme.tertiary
-                    : scheme.primary,
+            if (showAll)
+              for (final disk in disks) ...[
+                _DiskUsageRow(disk: disk),
+                if (disk != disks.last) const SizedBox(height: 10),
+              ]
+            else
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 8,
+                  backgroundColor: scheme.surfaceContainerHighest,
+                  color: progress >= 0.9
+                      ? scheme.error
+                      : progress >= 0.75
+                      ? scheme.tertiary
+                      : scheme.primary,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One mounted filesystem's usage row in the multi-disk card.
+class _DiskUsageRow extends StatelessWidget {
+  const _DiskUsageRow({required this.disk});
+
+  final DiskUsage disk;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final percent = disk.percent;
+    final progress = ((percent ?? 0) / 100).clamp(0.0, 1.0);
+    final used = disk.usedKb;
+    final total = disk.totalKb;
+    final label = disk.mount == '/' ? 'detailRootDisk'.tr() : disk.mount;
+    final subtitle = used == null || total == null
+        ? '—'
+        : '${_formatKb(used)} / ${_formatKb(total)}'
+              '${percent == null ? '' : ' · ${percent.toStringAsFixed(0)}%'}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 6,
+            backgroundColor: scheme.surfaceContainerHighest,
+            color: progress >= 0.9
+                ? scheme.error
+                : progress >= 0.75
+                ? scheme.tertiary
+                : scheme.primary,
+          ),
+        ),
+      ],
     );
   }
 }

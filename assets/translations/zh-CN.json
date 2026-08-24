@@ -554,6 +554,7 @@
   "detailCpu": "CPU",
   "detailCpuCount": "{} 个 CPU",
   "detailCrontab": "定时任务",
+  "detailDisks": "磁盘",
   "detailFilterProcesses": "筛选进程",
   "detailFirewall": "防火墙",
   "detailGpu": "GPU",

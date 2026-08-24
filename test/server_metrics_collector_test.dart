@@ -23,6 +23,9 @@ total = 4096.00M  used = 1024.00M  free = 3072.00M
 --DISK--
 Filesystem 1024-blocks Used Available Capacity Mounted on
 /dev/disk3s1 104857600 52428800 52428800 50% /
+/dev/disk3s5 209715200 104857600 104857600 50% /System/Volumes/Data
+devfs 100 50 50 50% /dev
+map auto_home 0 0 0 0% /System/Volumes/Data/home
 --GPU--
 0, NVIDIA A100, 12.5, 1024, 40960, 45
 1, NVIDIA A100, 0, 0, 40960, N/A
@@ -44,6 +47,11 @@ Filesystem 1024-blocks Used Available Capacity Mounted on
     expect(stats.diskTotalKb, 104857600);
     expect(stats.diskAvailableKb, 52428800);
     expect(stats.uptime, const Duration(days: 1));
+    expect(stats.disks, hasLength(2));
+    expect(stats.disks[0].mount, '/');
+    expect(stats.disks[0].percent, 50);
+    expect(stats.disks[1].mount, '/System/Volumes/Data');
+    expect(stats.disks[1].filesystem, '/dev/disk3s5');
   });
 
   test('rejects output without a macOS load average', () {
@@ -65,8 +73,8 @@ MemAvailable: 8388608
 SwapTotal: 4194304
 SwapFree: 3145728
 --DISK--
-DiskTotal: 52428800
-DiskAvailable: 26214400
+Disk C: 52428800 26214400 System
+Disk D: 209715200 104857600 New Volume
 --UPTIME--
 86400
 ''', now: now);
@@ -83,7 +91,12 @@ DiskAvailable: 26214400
     expect(stats.diskAvailableKb, 26214400);
     expect(stats.uptime, const Duration(days: 1));
     expect(stats.updatedAt, now);
+    expect(stats.disks, hasLength(2));
+    expect(stats.disks[0].mount, 'C:');
+    expect(stats.disks[0].percent, 50);
+    expect(stats.disks[1].mount, 'D:');
   });
+
   test('parses all NVIDIA GPUs and converts memory to KiB', () {
     final gpus = parseNvidiaGpuMetricsOutput('''
 0, NVIDIA A100, 12.5, 1024, 40960, 45
@@ -112,6 +125,7 @@ DiskAvailable: 26214400
     expect(sample.cpuPercent, 37.5);
     expect(sample.memoryUsedKb, 75);
   });
+
   test('parses MaidCafe metrics into activity counters', () {
     final counters = parseMaidCafeMetrics({
       'sent_at': '2026-08-15T12:00:00Z',
@@ -119,6 +133,22 @@ DiskAvailable: 26214400
       'memory_used_bytes': 768000,
       'memory_total_bytes': 1024000,
       'uptime_seconds': 60,
+      'disk_total_kb': 1000,
+      'disk_available_kb': 500,
+      'disks': [
+        {
+          'mount': '/',
+          'filesystem': '/dev/vda1',
+          'total_kb': 1000,
+          'available_kb': 500,
+        },
+        {
+          'mount': '/data',
+          'filesystem': '/dev/vdb1',
+          'total_kb': 4000,
+          'available_kb': 1000,
+        },
+      ],
     });
 
     expect(counters, isNotNull);
@@ -127,5 +157,71 @@ DiskAvailable: 26214400
     expect(counters.memoryAvailableKb, 250);
     expect(counters.uptime, const Duration(minutes: 1));
     expect(counters.toSample().memoryUsedKb, 750);
+    expect(counters.disks, hasLength(2));
+    expect(counters.disks[0].mount, '/');
+    expect(counters.disks[0].percent, 50);
+    expect(counters.disks[1].mount, '/data');
+    expect(counters.toSample().disks, hasLength(2));
+  });
+
+  test(
+    'parseDiskUsageLines keeps physical and network disks, skips virtual',
+    () {
+      final disks = parseDiskUsageLines('''
+Filesystem 1024-blocks Used Available Capacity Mounted on
+/dev/vda1 104857600 58654720 47104000 56% /
+/dev/vdb1 516555776 77594624 412876800 16% /data
+tmpfs 8171520 0 8171520 0% /dev/shm
+tmpfs 8171520 839680 7331840 11% /run
+10.0.0.5:/export 209715200 104857600 104857600 50% /mnt/nfs
+''');
+
+      expect(disks, hasLength(3));
+      expect(disks[0].mount, '/');
+      expect(disks[0].filesystem, '/dev/vda1');
+      // percent is derived from total − available, not df's rounded column.
+      expect(disks[0].usedKb, 57753600);
+      expect(disks[0].percent, closeTo(55.08, 0.01));
+      expect(disks[1].mount, '/data');
+      expect(disks[1].availableKb, 412876800);
+      expect(disks[2].mount, '/mnt/nfs');
+      expect(disks[2].filesystem, '10.0.0.5:/export');
+      expect(rootDiskUsage(disks)!.mount, '/');
+    },
+  );
+
+  test('parseDiskUsageLines handles localized df headers', () {
+    final disks = parseDiskUsageLines('''
+文件系统 1024-blocks 已用 可用 容量 挂载点
+/dev/vda1 104857600 58654720 47104000 56% /
+/dev/vdb1 516555776 77594624 412876800 16% /data
+''');
+
+    expect(disks, hasLength(2));
+  });
+
+  test('parseDiskUsageLines dedupes a device mounted twice', () {
+    final disks = parseDiskUsageLines('''
+Filesystem 1024-blocks Used Available Capacity Mounted on
+/dev/vda1 100 50 50 50% /
+/dev/vda1 100 50 50 50% /var/lib/docker
+''');
+
+    expect(disks, hasLength(1));
+    expect(disks.single.mount, '/');
+  });
+
+  test('parseDiskUsageLines parses Windows per-disk lines', () {
+    final disks = parseDiskUsageLines('''
+Disk C: 524288000 262144000 System
+Disk D: 2097152000 1048576000 New Volume
+''');
+
+    expect(disks, hasLength(2));
+    expect(disks[0].mount, 'C:');
+    expect(disks[0].filesystem, 'C:');
+    expect(disks[0].totalKb, 524288000);
+    expect(disks[1].mount, 'D:');
+    expect(rootDiskUsage(disks)!.mount, 'C:');
   });
 }
