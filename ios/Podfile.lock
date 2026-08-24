@@ -1,5 +1,7 @@
 PODS:
   - Flutter (1.0.0)
+  - flutter_app_update (0.0.1):
+    - Flutter
   - irondash_engine_context (0.0.1):
     - Flutter
   - super_native_extensions (0.0.1):
@@ -7,19 +9,23 @@ PODS:
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - flutter_app_update (from `.symlinks/plugins/flutter_app_update/ios`)
   - irondash_engine_context (from `.symlinks/plugins/irondash_engine_context/ios`)
   - super_native_extensions (from `.symlinks/plugins/super_native_extensions/ios`)
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  flutter_app_update:
+    :path: ".symlinks/plugins/flutter_app_update/ios"
   irondash_engine_context:
     :path: ".symlinks/plugins/irondash_engine_context/ios"
   super_native_extensions:
     :path: ".symlinks/plugins/super_native_extensions/ios"
 
 SPEC CHECKSUMS:
-  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  flutter_app_update: 816fdb2e30e4832a7c45e3f108d391c42ef040a9
   irondash_engine_context: 8e58ca8e0212ee9d1c7dc6a42121849986c88486
   super_native_extensions: b763c02dc3a8fd078389f410bf15149179020cb4
 
