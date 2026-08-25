@@ -44,12 +44,15 @@ bool maidCafeCloudSupportsPush(String cloudUrl) {
 final FlutterLocalNotificationsPlugin _localNotifications =
     FlutterLocalNotificationsPlugin();
 
-/// Shows a system notification for a MaidCafe cloud push. Safe to call from
-/// any isolate; the plugin is created fresh so the background FCM isolate
-/// does not share main-isolate state.
-Future<void> _showLocalNotification({
+/// Shows a system notification. Safe to call from any isolate; the plugin is
+/// created fresh so the background FCM isolate does not share main-isolate
+/// state.
+Future<void> showSystemNotification({
   required String title,
   required String body,
+  required String channelId,
+  required String channelName,
+  String channelDescription = '',
 }) async {
   final plugin = _localNotifications;
   const settings = InitializationSettings(
@@ -62,20 +65,20 @@ Future<void> _showLocalNotification({
     id: 0,
     title: title,
     body: body.isEmpty ? null : body,
-    notificationDetails: const NotificationDetails(
+    notificationDetails: NotificationDetails(
       android: AndroidNotificationDetails(
-        'maidcafe_cloud',
-        'MaidCafe Cloud',
-        channelDescription: 'Notifications from the MaidCafe cloud',
+        channelId,
+        channelName,
+        channelDescription: channelDescription,
         importance: Importance.max,
         priority: Priority.high,
       ),
-      iOS: DarwinNotificationDetails(
+      iOS: const DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
       ),
-      macOS: DarwinNotificationDetails(
+      macOS: const DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
@@ -94,7 +97,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final title = data['title']?.toString() ?? 'MaidCafe';
   final body = data['body']?.toString() ?? data['content']?.toString() ?? '';
   if (body.isEmpty && title == 'MaidCafe') return;
-  await _showLocalNotification(title: title, body: body);
+  await showSystemNotification(
+    title: title,
+    body: body,
+    channelId: 'maidcafe_cloud',
+    channelName: 'MaidCafe Cloud',
+    channelDescription: 'Notifications from the MaidCafe cloud',
+  );
 }
 
 /// Registers this device for FCM push of MaidCafe cloud notifications,
@@ -378,7 +387,15 @@ class MaidCafePushService {
       final body =
           data['body']?.toString() ?? data['content']?.toString() ?? '';
       if (title == 'MaidCafe' && body.isEmpty) return;
-      unawaited(_showLocalNotification(title: title, body: body));
+      unawaited(
+        showSystemNotification(
+          title: title,
+          body: body,
+          channelId: 'maidcafe_cloud',
+          channelName: 'MaidCafe Cloud',
+          channelDescription: 'Notifications from the MaidCafe cloud',
+        ),
+      );
       onNotification();
     });
   }

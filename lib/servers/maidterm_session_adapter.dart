@@ -4,9 +4,12 @@ import 'package:maidterm/maidterm.dart' as maidterm;
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/theme.dart';
+import 'maidcafe_push.dart';
 import 'terminal_color_scheme.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_keyword_highlight.dart';
@@ -72,6 +75,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
       }
     };
     _controller.onResize = _onResize;
+    _controller.onNotification = _handleNotification;
     if (selectToCopyEnabled) {
       _controller.addListener(_onSelectionMaybeChanged);
     }
@@ -175,6 +179,43 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
         pixelHeight: pixelHeight,
       ),
     );
+  }
+
+  /// Surfaces OSC 9 / OSC 777;notify / OSC 99 desktop notification requests
+  /// from the remote shell as system notifications, mirroring MaidTerm's own
+  /// local-session behavior. Suppressed while the user is attending the app.
+  Future<void> _handleNotification(String title, String body) async {
+    if (_disposed || await _userAttending()) return;
+    try {
+      await showSystemNotification(
+        // OSC 9 carries no title; fall back to the app name like MaidTerm.
+        title: title.trim().isEmpty ? 'MaidKit' : title.trim(),
+        body: body,
+        channelId: 'maidterm_session',
+        channelName: 'Terminal sessions',
+        channelDescription: 'Notifications from remote terminal sessions',
+      );
+    } catch (_) {
+      // No notification plugin (tests, web): drop the request quietly.
+    }
+  }
+
+  /// Whether the user is currently looking at the app: window focus on
+  /// desktop, lifecycle state elsewhere. A missing window manager (tests,
+  /// the WebView2 title-bar engine) counts as attended so notifications are
+  /// never shown from a surface that cannot see the terminal.
+  Future<bool> _userAttending() async {
+    if (!kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.linux)) {
+      try {
+        return await windowManager.isFocused();
+      } catch (_) {
+        return true;
+      }
+    }
+    return WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
   }
 
   @override

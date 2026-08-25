@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:maidterm/maidterm.dart' as maidterm;
@@ -669,6 +670,92 @@ void main() {
       await stderr.close();
     },
   );
+  test('surfaces remote OSC 9 notifications as system notifications', () async {
+    final shown = await _mockNotificationChannels(focused: false);
+    final adapter = MaidTermSessionAdapter();
+    addTearDown(adapter.dispose);
+
+    // OSC 9 carries no title; the adapter falls back to the app name.
+    adapter.write(Uint8List.fromList(utf8.encode('\x1b]9;build done\x07')));
+    await pumpEventQueue();
+
+    expect(shown, hasLength(1));
+    expect(shown.single.toString(), contains('MaidKit'));
+    expect(shown.single.toString(), contains('build done'));
+  });
+
+  test('suppresses remote notifications while the window is focused', () async {
+    final shown = await _mockNotificationChannels(focused: true);
+    final adapter = MaidTermSessionAdapter();
+    addTearDown(adapter.dispose);
+
+    adapter.write(Uint8List.fromList(utf8.encode('\x1b]9;build done\x07')));
+    await pumpEventQueue();
+
+    expect(shown, isEmpty);
+  });
+
+  test('forwards OSC 777 and chunked OSC 99 notification payloads', () async {
+    final shown = await _mockNotificationChannels(focused: false);
+    final adapter = MaidTermSessionAdapter();
+    addTearDown(adapter.dispose);
+
+    adapter.write(
+      Uint8List.fromList(utf8.encode('\x1b]777;notify;Deploy;all green\x07')),
+    );
+    await pumpEventQueue();
+
+    // Chunked kitty OSC 99: d=0 opens the title, the body chunk completes it.
+    adapter.write(Uint8List.fromList(utf8.encode('\x1b]99;i=7:d=0;Build\x1b\\')));
+    adapter.write(
+      Uint8List.fromList(utf8.encode('\x1b]99;i=7:p=body;passed\x1b\\')),
+    );
+    await pumpEventQueue();
+
+    expect(shown, hasLength(2));
+    expect(shown.first.toString(), contains('Deploy'));
+    expect(shown.first.toString(), contains('all green'));
+    expect(shown.last.toString(), contains('Build'));
+    expect(shown.last.toString(), contains('passed'));
+  });
+}
+
+/// Mocks the window-manager focus probe and the local-notification channel,
+/// returning the captured `show` payloads.
+Future<List<Object?>> _mockNotificationChannels({required bool focused}) async {
+  debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+  addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+  const windowManagerChannel = MethodChannel('window_manager');
+  const notificationsChannel = MethodChannel(
+    'dexterous.com/flutter/local_notifications',
+  );
+  // Production code registers this via the plugin's generated plugin class;
+  // tests have no plugin registry and must register manually.
+  MacOSFlutterLocalNotificationsPlugin.registerWith();
+  final shown = <Object?>[];
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(windowManagerChannel, (call) async {
+    if (call.method == 'isFocused') return focused;
+    return null;
+  });
+  messenger.setMockMethodCallHandler(notificationsChannel, (call) async {
+    switch (call.method) {
+      case 'initialize':
+        return true;
+      case 'show':
+        shown.add(call.arguments);
+        return null;
+      default:
+        return null;
+    }
+  });
+  addTearDown(() {
+    messenger.setMockMethodCallHandler(windowManagerChannel, null);
+    messenger.setMockMethodCallHandler(notificationsChannel, null);
+  });
+  return shown;
 }
 
 class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
