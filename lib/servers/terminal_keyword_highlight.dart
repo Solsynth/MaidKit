@@ -20,9 +20,10 @@ enum TerminalKeywordCategory {
 
 /// A single keyword-highlight rule.
 ///
-/// [pattern] is matched against each terminal line (case-insensitive). [color]
-/// is the background tint; MaidTerm instead reuses [pattern] as a link rule
-/// and applies its own single underline style.
+/// [pattern] is matched against each terminal line (case-insensitive).
+/// Matches render as a semi-transparent [color] fill behind the cells so the
+/// original ANSI foreground color stays readable (never overrides server
+/// colors). Hovering adds an underline in [accentColor].
 class TerminalKeywordHighlightRule {
   const TerminalKeywordHighlightRule({
     required this.category,
@@ -33,6 +34,15 @@ class TerminalKeywordHighlightRule {
   final TerminalKeywordCategory category;
   final RegExp pattern;
 
+  /// Fully opaque variant of [color], used for the hover underline so each
+  /// category keeps its own hue when activated.
+  Color get accentColor => Color.fromARGB(
+    0xFF,
+    (color.r * 255).round(),
+    (color.g * 255).round(),
+    (color.b * 255).round(),
+  );
+
   /// Semi-transparent background tint so the original ANSI foreground color of
   /// the matched cell stays readable (never overrides server colors).
   final Color color;
@@ -41,8 +51,8 @@ class TerminalKeywordHighlightRule {
 /// MobaXterm-style keyword rules.
 ///
 /// Patterns are word-anchored and case-insensitive. The colors are background
-/// tints (alpha ~0x44); MaidTerm applies these same patterns as underline
-/// link rules.
+/// tints (alpha ~0x44) painted behind the matched cells; hovering adds an
+/// underline in the rule's [TerminalKeywordHighlightRule.accentColor].
 final List<TerminalKeywordHighlightRule> terminalKeywordRules = [
   TerminalKeywordHighlightRule(
     category: TerminalKeywordCategory.error,

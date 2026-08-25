@@ -4,7 +4,7 @@ import 'package:maidterm/maidterm.dart' as maidterm;
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
@@ -272,7 +272,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
       onKeyEvent: effectiveKeyEvent,
       linkSettings: _keywordHighlightEnabled
           ? _buildKeywordLinkSettings()
-          : const maidterm.LinkSettings(),
+          : const maidterm.LinkSettings(detectFilePaths: false),
       theme: theme,
     );
     if (readOnly) {
@@ -296,8 +296,8 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     );
   }
 
-  /// Underline style applied to idle keyword matches. Uses a single accent
-  /// color because the renderer shares one link style across all matches.
+  /// Underline style for built-in links (OSC 8 and detected URLs). Keyword
+  /// rules carry their own per-category background styles.
   static const _keywordHyperlinkTheme = maidterm.HyperlinkTheme(
     idle: maidterm.HyperlinkStyle(
       underline: maidterm.UnderlineStyle.single,
@@ -309,18 +309,62 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     ),
   );
 
+  /// Keyword rules ride on top of MaidTerm's built-in recognizers: OSC 8
+  /// hyperlinks and text URLs stay enabled (file paths are off — remote
+  /// paths are meaningless on this device), with custom rules winning
+  /// overlap resolution (priority 0 beats the built-in text detector's -1).
+  ///
+  /// Each category paints its own semi-transparent background tint; hovering
+  /// adds a matching full-opacity underline.
   maidterm.LinkSettings _buildKeywordLinkSettings() => maidterm.LinkSettings(
-    types: {maidterm.LinkType.custom},
+    types: {
+      maidterm.LinkType.osc8,
+      maidterm.LinkType.text,
+      maidterm.LinkType.custom,
+    },
+    detectFilePaths: false,
     modifier: maidterm.ActivationModifier.primary,
+    onActivate: _activateLink,
     rules: [
       for (final rule in terminalKeywordRules)
         maidterm.LinkRule.regex(
           id: rule.category.name,
           pattern: rule.pattern,
           highlightMode: maidterm.LinkHighlightMode.always,
+          idleStyle: maidterm.HyperlinkStyle(
+            backgroundColor: rule.color,
+          ),
+          highlightedStyle: maidterm.HyperlinkStyle(
+            backgroundColor: rule.color,
+            underline: maidterm.UnderlineStyle.single,
+            underlineColor: rule.accentColor,
+          ),
         ),
     ],
   );
+
+  /// Opens built-in links (OSC 8 and text-detected URLs/paths) with the
+  /// platform handler. Keyword-highlight matches are visual only and never
+  /// activate — clicking "error" must not try to launch a URL.
+  Future<void> _activateLink(maidterm.ActivatedLink link) async {
+    if (_disposed || link.type == maidterm.LinkType.custom) return;
+    try {
+      final uri = link.uri;
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+      final file = link.file;
+      if (file != null) {
+        final path = file.resolvedPath ?? file.path;
+        if (path.isNotEmpty) {
+          await launchUrl(Uri.file(path), mode: LaunchMode.externalApplication);
+        }
+      }
+    } catch (_) {
+      // No handler for this scheme or path on the host platform.
+    }
+  }
 
   FocusOnKeyEventCallback _wrapKeyEventForShiftInsert(
     FocusOnKeyEventCallback? delegate,

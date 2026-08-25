@@ -78,7 +78,7 @@ dependencies:
     git:
       url: https://src.solsynth.dev/Solsynth/MaidTerm.git
       path: packages/maidterm
-      ref: 647e585242bb9a1da607a85f98de5ca3e2d42203
+      ref: 06643c7200530256580561debe76567362aebb11
   http: ^1.6.0
   shared_preferences: ^2.5.5
   tailscale: ^0.9.0
@@ -128,7 +128,6 @@ dev_dependencies:
 
 dependency_overrides:
   device_info_plus: ^12.4.0
-  hooks: ^2.0.2
   libghostty:
     git:
       url: https://github.com/elias8/libghostty.git

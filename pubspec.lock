@@ -831,7 +831,7 @@ packages:
     source: hosted
     version: "2.2.3"
   hooks:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
       name: hooks
       sha256: eaac480a35ec0814146c2c48d96aaa829e0e44a7662c88ae84c9edf4bc35651f
@@ -1092,8 +1092,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/maidterm"
-      ref: "647e585242bb9a1da607a85f98de5ca3e2d42203"
-      resolved-ref: "647e585242bb9a1da607a85f98de5ca3e2d42203"
+      ref: "06643c7200530256580561debe76567362aebb11"
+      resolved-ref: "06643c7200530256580561debe76567362aebb11"
       url: "https://src.solsynth.dev/Solsynth/MaidTerm.git"
     source: git
     version: "0.0.4+maidkit.1"
