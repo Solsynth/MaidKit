@@ -13,6 +13,17 @@ import 'package:maid_kit/servers/app_theme_preferences.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
 import 'task_progress.dart';
 
+/// Closes the desktop window without a visible teardown stall.
+///
+/// On Windows, `windowManager.destroy()` only posts WM_QUIT; the window stays
+/// on screen while the engines (Flutter, plus WebView2's title-bar engine)
+/// shut down and stop pumping messages, which reads as a freeze. Hide first,
+/// then quit. On macOS/Linux `destroy()` tears down immediately either way.
+Future<void> closeMaidKitWindow() async {
+  await windowManager.hide();
+  await windowManager.destroy();
+}
+
 final desktopWindowProvider = Provider<bool>(
   (ref) => DesktopWindowFrame.isPlatformDesktop,
 );
@@ -106,7 +117,7 @@ class MaidKitWindowScaffold extends ConsumerWidget {
               // Closing the custom title bar must terminate the native window.
               // Hiding it leaves the Dart isolate (and local MCP server) alive,
               // so every relaunch creates another background MaidKit process.
-              onClose: isDesktop ? windowManager.destroy : null,
+              onClose: isDesktop ? closeMaidKitWindow : null,
               isDesktopPlatform: isDesktop,
               title: Text(
                 title ?? 'MaidKit',
