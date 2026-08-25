@@ -530,6 +530,76 @@ abstract interface class TerminalSessionAdapterFactory {
   TerminalSessionAdapter create();
 }
 
+/// Answers remote `sudo` password prompts with the connection's stored
+/// password.
+///
+/// The watcher inspects outgoing remote output for the localized sudo
+/// password prompt. While such a prompt is the last thing on screen, a bare
+/// Enter key press is replaced with the stored secret followed by Enter.
+/// Any other keystroke disarms interception so manual entry still works, and
+/// the flag re-evaluates on every output chunk, so failed attempts ("Sorry,
+/// try again") naturally re-arm once the prompt is redrawn.
+class SudoPromptAutofill {
+  SudoPromptAutofill(this.secret);
+
+  /// Matches `[sudo] password for alice:` and zh_CN locales' `[sudo] alice
+  /// 的密码：`. The `[sudo]` marker keeps unrelated questions (`su`, nested
+  /// `ssh`, MySQL) out of scope so the SSH password never leaks to them.
+  static final RegExp _prompt = RegExp(
+    r'\[\s*sudo\s*\]\s*'
+    r'(?:password(?:\s+for\s+[^:：\r\n]*)?|[^:：\r\n]*的密码)\s*[:：]\s*$',
+  );
+
+  /// Control sequences must not contribute characters to the matcher.
+  static final RegExp _escapeSequences = RegExp(
+    r'\x1B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])',
+  );
+
+  final String? secret;
+
+  /// Printable tail of the current output line used for prompt matching.
+  var _lineTail = '';
+
+  /// Whether the remote currently shows a sudo password prompt.
+  var prompting = false;
+
+  bool get _enabled => secret != null && secret!.isNotEmpty;
+
+  /// Updates the prompt state from a chunk of remote output.
+  void inspect(Uint8List bytes) {
+    if (!_enabled) return;
+    final text = utf8
+        .decode(bytes, allowMalformed: true)
+        .replaceAll(_escapeSequences, '');
+    for (var i = 0; i < text.length; i++) {
+      final char = text[i];
+      if (char == '\r' || char == '\n') {
+        _lineTail = '';
+      } else {
+        _lineTail += char;
+        const maxTail = 160;
+        if (_lineTail.length > maxTail) {
+          _lineTail = _lineTail.substring(_lineTail.length - maxTail);
+        }
+      }
+    }
+    prompting = _prompt.hasMatch(_lineTail);
+  }
+
+  /// Returns the bytes to forward for one keyboard input event.
+  ///
+  /// A bare Enter at an active prompt becomes `<secret>\r`; anything else is
+  /// forwarded untouched and disarms further interception.
+  Uint8List intercept(Uint8List bytes) {
+    if (!prompting || !_enabled) return bytes;
+    prompting = false;
+    final isBareEnter =
+        bytes.length == 1 && (bytes[0] == 0x0d || bytes[0] == 0x0a);
+    if (!isBareEnter) return bytes;
+    return Uint8List.fromList(utf8.encode('${secret!}\r'));
+  }
+}
+
 /// Wires a terminal adapter to one shell's byte streams without coupling the
 /// adapter contract to a specific SSH implementation.
 class TerminalSessionBinding {
@@ -539,12 +609,16 @@ class TerminalSessionBinding {
     required Stream<Uint8List> stderr,
     required void Function(Uint8List bytes) send,
     required void Function(TerminalResize resize) resize,
+    String? autoFillSecret,
     this.outputFlushDelay = const Duration(milliseconds: 8),
   }) : // Public parameter names preserve the adapter binding API.
        // ignore: prefer_initializing_formals
        _send = send,
        // ignore: prefer_initializing_formals
        _resize = resize,
+       _autofill = autoFillSecret == null || autoFillSecret.isEmpty
+           ? null
+           : SudoPromptAutofill(autoFillSecret),
        _subscriptions = [] {
     _subscriptions.addAll([
       stdout.listen(_queueTerminalOutput, onError: _ignoreTransportError),
@@ -557,6 +631,7 @@ class TerminalSessionBinding {
   final TerminalSessionAdapter adapter;
   final void Function(Uint8List bytes) _send;
   final void Function(TerminalResize resize) _resize;
+  final SudoPromptAutofill? _autofill;
   final List<StreamSubscription<Object?>> _subscriptions;
   final Duration outputFlushDelay;
   final _outputBuffer = BytesBuilder(copy: false);
@@ -572,7 +647,7 @@ class TerminalSessionBinding {
   void _sendTerminalInput(Uint8List bytes) {
     if (_closed) return;
     try {
-      _send(bytes);
+      _send(_autofill?.intercept(bytes) ?? bytes);
     } catch (_) {
       // The SSH channel can close between delivering input and teardown.
     }
@@ -594,6 +669,7 @@ class TerminalSessionBinding {
   /// update per SSH packet. Large bursts bypass the timer to bound memory.
   void _queueTerminalOutput(Uint8List bytes) {
     if (_closed || bytes.isEmpty) return;
+    _autofill?.inspect(bytes);
     _outputBuffer.add(bytes);
     if (_outputBuffer.length >= 16 * 1024) {
       _flushTerminalOutput();

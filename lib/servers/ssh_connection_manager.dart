@@ -294,6 +294,11 @@ class SshConnectionManager {
         event.pixelWidth,
         event.pixelHeight,
       ),
+      // Password-type credentials double as the sudo autofill secret for the
+      // interactive shell; key-based connections have no secret to send.
+      autoFillSecret: credential.type == CredentialType.password
+          ? credential.password
+          : null,
     );
     _terminals[terminalId] = _TerminalConnection(
       serverId: server.id,
