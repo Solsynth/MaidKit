@@ -528,21 +528,22 @@ class CloudSyncService {
           revision == configuration.revision) {
         return configuration;
       }
-      final response = await _dio.put<Map<String, dynamic>>(
-        '$apiBase${_flywheelAppPath(configuration.workspaceId)}/blobs/'
-        '${configuration.blobId}',
-        data: FormData.fromMap({
-          // Flywheel binds these multipart fields to its C# [FromForm]
-          // properties. JSON's snake_case convention does not apply here.
-          'File': MultipartFile.fromBytes(
-            utf8.encode(uploadArchive),
-            filename: 'vault.mkb',
-          ),
-          'SchemeVersion': _schemeVersion,
-          'ExpectedRevision': revision,
-        }),
-        options: Options(
-          headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      final response = await _authorizedRequest(
+        session,
+        (accessToken) => _dio.put<Map<String, dynamic>>(
+          '$apiBase${_flywheelAppPath(configuration.workspaceId)}/blobs/'
+          '${configuration.blobId}',
+          data: FormData.fromMap({
+            // Flywheel binds these multipart fields to its C# [FromForm]
+            // properties. JSON's snake_case convention does not apply here.
+            'File': MultipartFile.fromBytes(
+              utf8.encode(uploadArchive),
+              filename: 'vault.mkb',
+            ),
+            'SchemeVersion': _schemeVersion,
+            'ExpectedRevision': revision,
+          }),
+          options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
         ),
       );
       revision =
@@ -578,12 +579,15 @@ class CloudSyncService {
     CloudSyncConfiguration configuration,
     _Session session,
   ) async {
-    final content = await _dio.get<List<int>>(
-      '$apiBase${_flywheelAppPath(configuration.workspaceId)}/blobs/'
-      '${configuration.blobId}/content',
-      options: Options(
-        headers: {'Authorization': 'Bearer ${session.accessToken}'},
-        responseType: ResponseType.bytes,
+    final content = await _authorizedRequest(
+      session,
+      (accessToken) => _dio.get<List<int>>(
+        '$apiBase${_flywheelAppPath(configuration.workspaceId)}/blobs/'
+        '${configuration.blobId}/content',
+        options: Options(
+          headers: {'Authorization': 'Bearer $accessToken'},
+          responseType: ResponseType.bytes,
+        ),
       ),
     );
     return utf8.decode(content.data ?? const []);
@@ -692,11 +696,34 @@ class CloudSyncService {
   Future<_Session?> _validSession() async {
     final session = await _readSession();
     if (session == null || !session.needsRefresh) return session;
+    debugPrint('[Solarpass] Access token is nearing expiry; refreshing.');
+    return _refreshSessionFor(session);
+  }
+
+  // The account session is shared by every vault-specific service instance.
+  // Keep refresh-token rotation single-use within this process.
+  static Future<_Session?>? _refreshFuture;
+
+  Future<_Session?> _refreshSessionFor(_Session session) async {
     if (session.refreshToken == null || session.refreshToken!.isEmpty) {
+      debugPrint('[Solarpass] Cannot refresh: no refresh token is stored.');
       return null;
     }
+    final current = await _readSession();
+    if (current == null) {
+      debugPrint('[Solarpass] Cannot refresh: session was removed.');
+      return null;
+    }
+    if (!current.matches(session)) {
+      debugPrint('[Solarpass] Using a session refreshed by another request.');
+      return current;
+    }
     final inFlight = _refreshFuture;
-    if (inFlight != null) return inFlight;
+    if (inFlight != null) {
+      debugPrint('[Solarpass] Waiting for an in-flight token refresh.');
+      return inFlight;
+    }
+    debugPrint('[Solarpass] Requesting a rotated token pair.');
     final refresh = _refreshSession(session);
     _refreshFuture = refresh;
     try {
@@ -706,10 +733,6 @@ class CloudSyncService {
     }
   }
 
-  // The account session is shared by every vault-specific service instance.
-  // Keep refresh-token rotation single-use within this process.
-  static Future<_Session?>? _refreshFuture;
-
   Future<_Session?> _refreshSession(_Session session) async {
     try {
       final refreshed = await _exchange((await _discover()).tokenEndpoint, {
@@ -718,9 +741,17 @@ class CloudSyncService {
         'refresh_token': session.refreshToken!,
       }, previous: session);
       await _saveSession(refreshed);
+      debugPrint('[Solarpass] Token refresh succeeded; rotated pair saved.');
       return refreshed;
     } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      debugPrint(
+        '[Solarpass] Token refresh failed (HTTP ${status ?? 'network'}).',
+      );
       if (_isInvalidRefreshResponse(error)) {
+        debugPrint(
+          '[Solarpass] Refresh grant is invalid; clearing stored session.',
+        );
         await _clearSessionIfUnchanged(session);
       }
       return null;
@@ -742,6 +773,7 @@ class CloudSyncService {
       return;
     }
     await _storage.delete(key: _sessionKey);
+    debugPrint('[Solarpass] Cleared the invalid stored session.');
   }
 
   Future<_OidcConfiguration> _discover() async {
@@ -756,12 +788,34 @@ class CloudSyncService {
   }
 
   Future<Response<dynamic>> _authorizedGet(String path, _Session session) =>
-      _dio.get<dynamic>(
-        '$apiBase$path',
-        options: Options(
-          headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      _authorizedRequest(
+        session,
+        (accessToken) => _dio.get<dynamic>(
+          '$apiBase$path',
+          options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
         ),
       );
+
+  Future<T> _authorizedRequest<T>(
+    _Session session,
+    Future<T> Function(String accessToken) request,
+  ) async {
+    try {
+      return await request(session.accessToken);
+    } on DioException catch (error) {
+      if (error.response?.statusCode != 401) rethrow;
+      debugPrint('[Solarpass] Bearer request returned 401; refreshing once.');
+      final refreshed = await _refreshSessionFor(session);
+      if (refreshed == null) {
+        debugPrint(
+          '[Solarpass] Bearer request cannot be retried: refresh failed.',
+        );
+        rethrow;
+      }
+      debugPrint('[Solarpass] Retrying bearer request with the rotated token.');
+      return request(refreshed.accessToken);
+    }
+  }
 
   Future<_Session> _exchange(
     Uri endpoint,
@@ -832,6 +886,9 @@ class _Session {
   final String accessToken;
   final String? refreshToken;
   final DateTime? expiresAt;
+
+  bool matches(_Session other) =>
+      accessToken == other.accessToken && refreshToken == other.refreshToken;
   bool get needsRefresh =>
       expiresAt != null &&
       DateTime.now().isAfter(expiresAt!.subtract(const Duration(seconds: 30)));

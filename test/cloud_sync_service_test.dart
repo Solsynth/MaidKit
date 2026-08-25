@@ -307,6 +307,64 @@ void main() {
     expect(requestedPaths, ['/stargate/accounts/me']);
   });
 
+  test(
+    'refreshes and retries a bearer request rejected before local expiry',
+    () async {
+      final storage = _MemoryStorage()
+        ..values[_sessionKey] = jsonEncode({
+          'access_token': 'rejected-token',
+          'refresh_token': 'refresh-token',
+          'expires_at': DateTime.now()
+              .add(const Duration(minutes: 5))
+              .toUtc()
+              .toIso8601String(),
+        });
+      final bearerTokens = <String?>[];
+      var refreshes = 0;
+      final dio = Dio()
+        ..httpClientAdapter = _CannedAdapter((options) async {
+          switch (options.uri.path) {
+            case '/stargate/accounts/me':
+              bearerTokens.add(options.headers['Authorization'] as String?);
+              return bearerTokens.last == 'Bearer rejected-token'
+                  ? _json({'error': 'unauthorized'}, 401)
+                  : _json({'name': 'littlesheep', 'nick': 'Little Sheep'}, 200);
+            case '/.well-known/openid-configuration':
+              return _json({
+                'authorization_endpoint': 'https://id.solian.app/authorize',
+                'token_endpoint': 'https://id.solian.app/token',
+              }, 200);
+            case '/token':
+              refreshes++;
+              expect(options.data, {
+                'grant_type': 'refresh_token',
+                'client_id': 'maidkit',
+                'refresh_token': 'refresh-token',
+              });
+              return _json({
+                'access_token': 'rotated-token',
+                'refresh_token': 'rotated-refresh-token',
+                'expires_in': 3600,
+              }, 200);
+            default:
+              return _json({}, 404);
+          }
+        });
+      final service = CloudSyncService(
+        vaultId: 'test-vault',
+        secureStorage: storage,
+        dio: dio,
+      );
+
+      final user = await service.currentUser();
+
+      expect(user?.name, 'Little Sheep');
+      expect(refreshes, 1);
+      expect(bearerTokens, ['Bearer rejected-token', 'Bearer rotated-token']);
+      expect(storage.values[_sessionKey], contains('rotated-refresh-token'));
+    },
+  );
+
   test('shares one in-flight refresh across service instances', () async {
     final storage = _MemoryStorage();
     var tokenExchanges = 0;
