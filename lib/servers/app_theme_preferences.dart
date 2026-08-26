@@ -6,11 +6,13 @@ abstract interface class AppThemeSettings {
   ThemeMode get themeMode;
   bool get compactDashboard;
   double get uiScale;
+  String get uiFontFamily;
 
   Future<void> saveSeedColor(Color color);
   Future<void> saveThemeMode(ThemeMode mode);
   Future<void> saveCompactDashboard(bool compact);
   Future<void> saveUiScale(double scale);
+  Future<void> saveUiFontFamily(String family);
 }
 
 class AppThemePreferences implements AppThemeSettings {
@@ -20,13 +22,16 @@ class AppThemePreferences implements AppThemeSettings {
     this.themeMode,
     this.compactDashboard,
     this.uiScale,
+    this.uiFontFamily,
   );
 
   static const _seedColorKey = 'app_theme_seed_color';
   static const _themeModeKey = 'app_theme_mode';
   static const _compactDashboardKey = 'app_dashboard_compact_view';
   static const _uiScaleKey = 'app_ui_scale';
+  static const _uiFontFamilyKey = 'app_ui_font_family';
   static const _defaultSeedColor = Color(0xFF0F766E);
+  static const defaultUiFontFamily = 'IBM Plex Sans';
   static const defaultUiScale = 1.0;
   static const minUiScale = 0.75;
   static const maxUiScale = 2.0;
@@ -41,6 +46,8 @@ class AppThemePreferences implements AppThemeSettings {
   final bool compactDashboard;
   @override
   final double uiScale;
+  @override
+  final String uiFontFamily;
 
   static Future<AppThemePreferences> load({
     SharedPreferencesAsync? preferences,
@@ -52,6 +59,7 @@ class AppThemePreferences implements AppThemeSettings {
       _decodeThemeMode(await store.getString(_themeModeKey)),
       await store.getBool(_compactDashboardKey) ?? false,
       _normalizeUiScale(await store.getDouble(_uiScaleKey)),
+      _decodeUiFontFamily(await store.getString(_uiFontFamilyKey)),
     );
   }
 
@@ -62,6 +70,11 @@ class AppThemePreferences implements AppThemeSettings {
   static double _normalizeUiScale(double? value) {
     if (value == null || !value.isFinite) return defaultUiScale;
     return value.clamp(minUiScale, maxUiScale).toDouble();
+  }
+
+  static String _decodeUiFontFamily(String? value) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? defaultUiFontFamily : trimmed;
   }
 
   @override
@@ -80,6 +93,11 @@ class AppThemePreferences implements AppThemeSettings {
   @override
   Future<void> saveUiScale(double scale) =>
       _preferences.setDouble(_uiScaleKey, _normalizeUiScale(scale));
+  @override
+  Future<void> saveUiFontFamily(String family) => _preferences.setString(
+    _uiFontFamilyKey,
+    family.trim().isEmpty ? defaultUiFontFamily : family.trim(),
+  );
 }
 
 class InMemoryAppThemeSettings implements AppThemeSettings {
@@ -88,6 +106,7 @@ class InMemoryAppThemeSettings implements AppThemeSettings {
     this.themeMode = ThemeMode.system,
     this.compactDashboard = false,
     this.uiScale = AppThemePreferences.defaultUiScale,
+    this.uiFontFamily = AppThemePreferences.defaultUiFontFamily,
   });
 
   @override
@@ -98,6 +117,8 @@ class InMemoryAppThemeSettings implements AppThemeSettings {
   bool compactDashboard;
   @override
   double uiScale;
+  @override
+  String uiFontFamily;
 
   @override
   Future<void> saveSeedColor(Color color) async => seedColor = color;
@@ -114,5 +135,13 @@ class InMemoryAppThemeSettings implements AppThemeSettings {
     uiScale = scale
         .clamp(AppThemePreferences.minUiScale, AppThemePreferences.maxUiScale)
         .toDouble();
+  }
+
+  @override
+  Future<void> saveUiFontFamily(String family) async {
+    final trimmed = family.trim();
+    uiFontFamily = trimmed.isEmpty
+        ? AppThemePreferences.defaultUiFontFamily
+        : trimmed;
   }
 }

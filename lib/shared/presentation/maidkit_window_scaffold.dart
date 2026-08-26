@@ -10,6 +10,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 
 import 'package:maid_kit/servers/app_theme_preferences.dart';
+import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
 import 'task_progress.dart';
 
@@ -96,10 +97,11 @@ class MaidKitWindowScaffold extends ConsumerWidget {
         }
         return KeyEventResult.ignored;
       },
-      // Island's frame still reads Flutter's Material theme while MaidKit
-      // uses the modular material_ui package.
       child: flutter.Theme(
-        data: _createWindowFrameTheme(Theme.of(context)),
+        data: _createWindowFrameTheme(
+          Theme.of(context),
+          fontFamily: ref.watch(appUiFontFamilyProvider),
+        ),
         child: flutter.Localizations.override(
           context: context,
           delegates: const [
@@ -143,7 +145,10 @@ class MaidKitWindowScaffold extends ConsumerWidget {
 ///
 /// `material_ui` and Flutter's Material library expose separate Theme
 /// inherited widgets, so the frame otherwise falls back to Flutter defaults.
-flutter.ThemeData _createWindowFrameTheme(ThemeData theme) {
+flutter.ThemeData _createWindowFrameTheme(
+  ThemeData theme, {
+  String? fontFamily,
+}) {
   final colors = theme.colorScheme;
   final colorScheme =
       flutter.ColorScheme.fromSeed(
@@ -162,7 +167,7 @@ flutter.ThemeData _createWindowFrameTheme(ThemeData theme) {
   return flutter.ThemeData(
     brightness: colors.brightness,
     useMaterial3: true,
-    fontFamily: MaidKitFonts.sans,
+    fontFamily: fontFamily ?? MaidKitFonts.sans,
     colorScheme: colorScheme,
     inputDecorationTheme: flutter.InputDecorationTheme(
       border: flutter.OutlineInputBorder(

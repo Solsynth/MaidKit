@@ -84,6 +84,7 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     final themeMode = ref.watch(themeModeProvider);
     final appSeedColor = ref.watch(appSeedColorProvider);
     ref.watch(serverMetricsRefreshSchedulerProvider);
+    final appUiFontFamily = ref.watch(appUiFontFamilyProvider);
     // Starts the local MCP server when the user enabled it, so other agents
     // can connect right after the app launches.
     ref.watch(localMcpServerProvider);
@@ -94,9 +95,16 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     IslandUIFoundation.configureNavigator(maidKitNavigatorKey);
     return MaterialApp.router(
       title: 'title'.tr(),
-      debugShowCheckedModeBanner: true,
-      theme: createMaidKitTheme(Brightness.light, seedColor: appSeedColor),
-      darkTheme: createMaidKitTheme(Brightness.dark, seedColor: appSeedColor),
+      theme: createMaidKitTheme(
+        Brightness.light,
+        seedColor: appSeedColor,
+        fontFamily: appUiFontFamily,
+      ),
+      darkTheme: createMaidKitTheme(
+        Brightness.dark,
+        seedColor: appSeedColor,
+        fontFamily: appUiFontFamily,
+      ),
       themeMode: themeMode,
       localizationsDelegates: [
         ...context.localizationDelegates,

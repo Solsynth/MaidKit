@@ -9,7 +9,11 @@ abstract final class MaidKitFonts {
 
 /// The application-wide Material theme. Keep feature widgets dependent on this
 /// shared foundation instead of creating local colour schemes or chrome.
-ThemeData createMaidKitTheme(Brightness brightness, {Color? seedColor}) {
+ThemeData createMaidKitTheme(
+  Brightness brightness, {
+  Color? seedColor,
+  String? fontFamily,
+}) {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: seedColor ?? const Color(0xFF0F766E),
     brightness: brightness,
@@ -19,7 +23,7 @@ ThemeData createMaidKitTheme(Brightness brightness, {Color? seedColor}) {
     useMaterial3: true,
     colorScheme: colorScheme,
     brightness: brightness,
-    fontFamily: MaidKitFonts.sans,
+    fontFamily: fontFamily ?? MaidKitFonts.sans,
     appBarTheme: const AppBarTheme(centerTitle: false),
     navigationRailTheme: const NavigationRailThemeData(
       groupAlignment: -1,

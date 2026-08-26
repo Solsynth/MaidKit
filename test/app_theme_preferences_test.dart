@@ -68,20 +68,37 @@ void main() {
     expect(settings.compactDashboard, isFalse);
     expect(container.read(dashboardCompactViewProvider), isFalse);
   });
-  test('restores and saves the application UI scale', () async {
-    final settings = InMemoryAppThemeSettings(uiScale: 1.25);
+
+  test('restores and saves the application UI font family', () async {
+    final settings = InMemoryAppThemeSettings(uiFontFamily: 'Arial');
     final container = ProviderContainer(
       overrides: [appThemeSettingsProvider.overrideWithValue(settings)],
     );
     addTearDown(container.dispose);
 
-    expect(container.read(appUiScaleProvider), 1.25);
+    expect(container.read(appUiFontFamilyProvider), 'Arial');
 
     await container
-        .read(appUiScaleProvider.notifier)
-        .setScale(AppThemePreferences.maxUiScale + 1);
+        .read(appUiFontFamilyProvider.notifier)
+        .setFontFamily('Georgia');
 
-    expect(settings.uiScale, AppThemePreferences.maxUiScale);
-    expect(container.read(appUiScaleProvider), AppThemePreferences.maxUiScale);
+    expect(settings.uiFontFamily, 'Georgia');
+    expect(container.read(appUiFontFamilyProvider), 'Georgia');
+  });
+
+  test('falls back to the default UI font when blank', () async {
+    final settings = InMemoryAppThemeSettings(uiFontFamily: 'Arial');
+    final container = ProviderContainer(
+      overrides: [appThemeSettingsProvider.overrideWithValue(settings)],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(appUiFontFamilyProvider.notifier).setFontFamily('   ');
+
+    expect(settings.uiFontFamily, AppThemePreferences.defaultUiFontFamily);
+    expect(
+      container.read(appUiFontFamilyProvider),
+      AppThemePreferences.defaultUiFontFamily,
+    );
   });
 }

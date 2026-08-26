@@ -1767,6 +1767,8 @@
   "settingsVaultWorkspaceBound": "云端工作区：{}",
   "settingsVaultWorkspaceUnbound": "无关联云端工作区",
   "settingsVaults": "保险库",
+  "settingsUiFont": "界面字体",
+  "settingsUiFontHint": "MaidKit 界面使用的字体。可直接选择系统已安装的字体；选择后立即生效。",
   "settingsUiScale": "界面缩放",
   "settingsUiScaleHint": "调整 MaidKit 整个窗口及其内容的大小。",
   "settingsWindowOpacity": "窗口不透明度",

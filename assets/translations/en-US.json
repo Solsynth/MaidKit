@@ -1691,6 +1691,8 @@
   "settingsTerminalThemeForeground": "Foreground",
   "settingsTerminalThemeHint": "Palette used by new terminals in this mode. Reopen existing terminals to apply changes.",
   "settingsTerminalThemeLight": "Light theme",
+  "settingsUiFont": "UI font",
+  "settingsUiFontHint": "Font used across the MaidKit interface. Installed system fonts can be selected directly; choosing one applies immediately.",
   "settingsTerminalThemeNormal": "Normal colors",
   "settingsTerminalThemePreset": "Preset",
   "settingsTerminalThemeSelection": "Selection",

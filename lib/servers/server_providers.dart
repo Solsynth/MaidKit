@@ -874,6 +874,37 @@ class AppUiScaleNotifier extends Notifier<double> {
   }
 }
 
+final appUiFontFamilyProvider =
+    NotifierProvider<AppUiFontFamilyNotifier, String>(
+      AppUiFontFamilyNotifier.new,
+    );
+
+class AppUiFontFamilyNotifier extends Notifier<String> {
+  @override
+  String build() {
+    final value = ref.read(appThemeSettingsProvider).uiFontFamily;
+    unawaited(_loadFont(value));
+    return value;
+  }
+
+  Future<void> setFontFamily(String family) async {
+    final value = family.trim().isEmpty
+        ? AppThemePreferences.defaultUiFontFamily
+        : family.trim();
+    await _loadFont(value);
+    await ref.read(appThemeSettingsProvider).saveUiFontFamily(value);
+    state = value;
+  }
+
+  Future<void> _loadFont(String family) async {
+    try {
+      await SystemFonts().loadFont(family);
+    } on Object {
+      // Font not available on this system; rendering falls back.
+    }
+  }
+}
+
 final dashboardCompactViewProvider =
     NotifierProvider<DashboardCompactViewNotifier, bool>(
       DashboardCompactViewNotifier.new,

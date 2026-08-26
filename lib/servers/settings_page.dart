@@ -204,6 +204,8 @@ class SettingsPage extends HookConsumerWidget {
                                 const SizedBox(height: 16),
                                 const _LanguageSwitcher(),
                                 const SizedBox(height: 16),
+                                const _UiFontDropdown(),
+                                const SizedBox(height: 16),
                                 Text(
                                   'settingsUiScale',
                                   style: Theme.of(context).textTheme.titleSmall,
@@ -219,6 +221,9 @@ class SettingsPage extends HookConsumerWidget {
                                   max: AppThemePreferences.maxUiScale,
                                   divisions:
                                       AppThemePreferences.uiScaleDivisions,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 8,
+                                  ),
                                   label: '${(appUiScale * 100).round()}%',
                                   onChanged: (value) => ref
                                       .read(appUiScaleProvider.notifier)
@@ -332,6 +337,9 @@ class SettingsPage extends HookConsumerWidget {
                                     min: 0.4,
                                     max: 1.0,
                                     divisions: 12,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
                                     label:
                                         '${((windowOpacity.asData?.value ?? 1.0) * 100).round()}%',
                                     onChanged: (value) =>
@@ -4520,6 +4528,126 @@ class _LanguageSwitcher extends StatelessWidget {
   }
 }
 
+class _UiFontDropdown extends HookConsumerWidget {
+  const _UiFontDropdown();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final fonts = ref.watch(availableTerminalFontsProvider);
+    final current = ref.watch(appUiFontFamilyProvider);
+    final all = fonts.value ?? const <TerminalFontOption>[];
+    final filtered = [...all];
+    if (!filtered.any((option) => option.family == current)) {
+      filtered.insert(0, TerminalFontOption(label: current, family: current));
+    }
+
+    final loaded = useState<Set<String>>(const {});
+    useEffect(() {
+      var cancelled = false;
+      final missing = filtered
+          .map((option) => option.family)
+          .where((family) => !loaded.value.contains(family))
+          .toList();
+      if (missing.isEmpty) return null;
+
+      Future<void> loadMissingFonts() async {
+        for (final family in missing) {
+          if (cancelled) return;
+          try {
+            await SystemFonts().loadFont(family);
+          } on Object {
+            // Bundled or unavailable fonts need no engine loading.
+          }
+          if (cancelled) return;
+          loaded.value = {...loaded.value, family};
+        }
+      }
+
+      unawaited(loadMissingFonts());
+      return () => cancelled = true;
+    }, [filtered.map((option) => option.family).join(','), fonts.value]);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fontHint = Text(
+          'settingsUiFontHint',
+          style: Theme.of(context).textTheme.bodySmall,
+        ).tr();
+
+        void setFontFamily(String? family) {
+          if (family != null) {
+            ref.read(appUiFontFamilyProvider.notifier).setFontFamily(family);
+          }
+        }
+
+        final isDefault = current == AppThemePreferences.defaultUiFontFamily;
+
+        final fontDropdown = constraints.maxWidth < 420
+            ? DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: current,
+                decoration: InputDecoration(labelText: 'settingsUiFont'.tr()),
+                items: [
+                  for (final option in filtered)
+                    DropdownMenuItem(
+                      value: option.family,
+                      child: Text(
+                        option.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontFamily: option.family),
+                      ),
+                    ),
+                ],
+                onChanged: setFontFamily,
+              )
+            : DropdownMenu<String>(
+                width: constraints.maxWidth,
+                enableFilter: true,
+                initialSelection: current,
+                label: Text('settingsUiFont'.tr()),
+                onSelected: setFontFamily,
+                dropdownMenuEntries: [
+                  for (final option in filtered)
+                    DropdownMenuEntry(
+                      value: option.family,
+                      label: option.label,
+                      labelWidget: Text(
+                        option.label,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontFamily: option.family),
+                      ),
+                    ),
+                ],
+              );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: fontDropdown),
+                if (!isDefault) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'maidCafeReset'.tr(),
+                    onPressed: () => ref
+                        .read(appUiFontFamilyProvider.notifier)
+                        .setFontFamily(AppThemePreferences.defaultUiFontFamily),
+                    icon: const Icon(Symbols.restart_alt),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 4),
+            fontHint,
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _TerminalFontDropdown extends HookConsumerWidget {
   const _TerminalFontDropdown();
 
@@ -5179,6 +5307,7 @@ class _ColorChannelSlider extends StatelessWidget {
             min: 0,
             max: 255,
             divisions: 255,
+            padding: const EdgeInsets.symmetric(vertical: 8),
             label: '$value',
             onChanged: (value) => onChanged(value.round()),
           ),
