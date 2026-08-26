@@ -16,11 +16,14 @@ void main() {
       expect(autofill.prompting, isFalse);
     });
 
-    test('matches the zh_CN prompt locale', () {
+    test('matches the sudo-rs prompt used by Ubuntu 26', () {
       final autofill = SudoPromptAutofill('hunter2');
-      autofill.inspect(_bytes('[sudo] alice 的密码：'));
+      autofill.inspect(_bytes('[sudo: authenticate] Password: '));
       expect(autofill.prompting, isTrue);
-      expect(autofill.intercept(_bytes('\n')), _bytes('hunter2\r'));
+      expect(autofill.intercept(_bytes('\r')), _bytes('hunter2\r'));
+      // Case-insensitive for locale capitalisation.
+      autofill.inspect(_bytes('[sudo: authenticate] password: '));
+      expect(autofill.prompting, isTrue);
     });
 
     test('ignores non-sudo password questions', () {

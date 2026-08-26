@@ -542,12 +542,14 @@ abstract interface class TerminalSessionAdapterFactory {
 class SudoPromptAutofill {
   SudoPromptAutofill(this.secret);
 
-  /// Matches `[sudo] password for alice:` and zh_CN locales' `[sudo] alice
-  /// 的密码：`. The `[sudo]` marker keeps unrelated questions (`su`, nested
-  /// `ssh`, MySQL) out of scope so the SSH password never leaks to them.
+  /// Matches `[sudo] password for alice:`, sudo-rs' `[sudo: authenticate]
+  /// Password:` (Ubuntu 25.10+/26.04 default), and zh_CN locales' `[sudo]
+  /// alice 的密码：`. The `[sudo` marker keeps unrelated questions (`su`,
+  /// nested `ssh`, MySQL) out of scope so the SSH password never leaks to
+  /// them.
   static final RegExp _prompt = RegExp(
-    r'\[\s*sudo\s*\]\s*'
-    r'(?:password(?:\s+for\s+[^:：\r\n]*)?|[^:：\r\n]*的密码)\s*[:：]\s*$',
+    r'\[\s*sudo[^\]]*\]\s*(?:password\b[^:：\r\n]*|[^:：\r\n]*密码)\s*[:：]\s*$',
+    caseSensitive: false,
   );
 
   /// Control sequences must not contribute characters to the matcher.
