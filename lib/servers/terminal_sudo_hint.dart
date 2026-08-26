@@ -61,21 +61,17 @@ class _TerminalSudoAutofillHintState extends State<TerminalSudoAutofillHint> {
           widget.child,
           if (reason != null && rect != null)
             Positioned(
-              // Anchor the chip above the cursor row, flipping below when the
-              // cursor sits in the first row. The cursor rect is in global
-              // coordinates; the Stack fills the same bounds, so the global
-              // offset cancels out.
-              left: (rect.left - 8).clamp(
+              // Align the chip with the cursor row and place it to the right
+              // of the cursor cell, keeping it inside the viewport. The cursor
+              // rect is in global coordinates; the Stack fills the same
+              // bounds, so the global offset cancels out.
+              left: (rect.right + 6).clamp(
                 0.0,
                 (constraints.maxWidth - 240).clamp(0.0, double.infinity),
               ),
-              top: rect.top < 40 ? rect.bottom + 6 : null,
-              bottom: rect.top < 40
-                  ? null
-                  : (constraints.maxHeight - rect.top + 6).clamp(
-                      0.0,
-                      constraints.maxHeight,
-                    ),
+              // Center the chip on the cursor row so it reads as sitting on
+              // the same line as the prompt.
+              top: rect.top + rect.height / 2 - 12,
               child: _HintChip(reason: reason),
             ),
         ],
@@ -106,24 +102,30 @@ class _HintChip extends StatelessWidget {
             ),
           ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                reason == SudoPromptReason.prompt
-                    ? Symbols.key
-                    : Symbols.terminal,
-                size: 14,
-                color: scheme.onInverseSurface,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'terminalSudoAutofillHint'.tr(),
-                style: TextStyle(fontSize: 12, color: scheme.onInverseSurface),
-              ),
-            ],
+        child: SizedBox(
+          height: 22,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  reason == SudoPromptReason.prompt
+                      ? Symbols.key
+                      : Symbols.terminal,
+                  size: 14,
+                  color: scheme.onInverseSurface,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'terminalSudoAutofillHint'.tr(),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onInverseSurface,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

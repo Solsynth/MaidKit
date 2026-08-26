@@ -52,6 +52,19 @@ void main() {
 
       // initState reads the ready reason immediately.
       expect(find.text('Press Enter to fill saved password'), findsOneWidget);
+
+      // The chip sits to the right of the cursor, centered on its row.
+      final cursor = adapter.cursorGlobalRect!;
+      final chipTopLeft = tester.getTopLeft(
+        find.text('Press Enter to fill saved password'),
+      );
+      final chipBottomRight = tester.getBottomRight(
+        find.text('Press Enter to fill saved password'),
+      );
+      expect(chipTopLeft.dx, greaterThan(cursor.right));
+      final chipCenterY = (chipTopLeft.dy + chipBottomRight.dy) / 2;
+      final cursorCenterY = (cursor.top + cursor.bottom) / 2;
+      expect((chipCenterY - cursorCenterY).abs(), lessThan(6));
     });
 
     testWidgets('hides the hint once the session no longer wants a password', (
