@@ -74,6 +74,9 @@ class _RecordingTerminalAdapter implements TerminalSessionAdapter {
   String? get currentDirectory => null;
 
   @override
+  SudoPromptReason? get sudoAutofillReady => null;
+
+  @override
   void write(Uint8List bytes) {}
 
   @override

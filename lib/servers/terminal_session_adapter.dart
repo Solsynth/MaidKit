@@ -127,6 +127,12 @@ abstract interface class TerminalSessionAdapter {
   /// Current shell directory reported through OSC 7, when available.
   String? get currentDirectory;
 
+  /// Latest reason the remote wants the saved password autofilled, or null.
+  ///
+  /// A sudo password prompt is on screen, or a `sudo …` command is awaiting
+  /// its password. UI can surface a hint and Enter fills the secret.
+  SudoPromptReason? get sudoAutofillReady;
+
   /// Displays bytes received from the remote shell.
   void write(Uint8List bytes);
 
@@ -530,15 +536,20 @@ abstract interface class TerminalSessionAdapterFactory {
   TerminalSessionAdapter create();
 }
 
-/// Answers remote `sudo` password prompts with the connection's stored
+/// Why the terminal currently wants the stored password, or null when the
+/// user should type it manually.
+enum SudoPromptReason { prompt, sudoCommand }
+
+/// Answers a remote `sudo` password prompt with the connection's stored
 /// password.
 ///
 /// The watcher inspects outgoing remote output for the localized sudo
-/// password prompt. While such a prompt is the last thing on screen, a bare
-/// Enter key press is replaced with the stored secret followed by Enter.
-/// Any other keystroke disarms interception so manual entry still works, and
-/// the flag re-evaluates on every output chunk, so failed attempts ("Sorry,
-/// try again") naturally re-arm once the prompt is redrawn.
+/// password prompt (or a bare `sudo …` command whose output has not yet
+/// appeared). While that state is the last thing on screen, a bare Enter key
+/// press is replaced with the stored secret followed by Enter. Any other
+/// keystroke disarms interception so manual entry still works, and the flag
+/// re-evaluates on every output chunk, so failed attempts ("Sorry, try
+/// again") naturally re-arm once the prompt is redrawn.
 class SudoPromptAutofill {
   SudoPromptAutofill(this.secret);
 
@@ -552,6 +563,11 @@ class SudoPromptAutofill {
     caseSensitive: false,
   );
 
+  /// Matches a bare `sudo …` command typed at a fresh shell prompt. The
+  /// `user@host:~$ ` prompt prefix is optional; a space-delimited command
+  /// keeps `sudoers`-style text from arming on its own.
+  static final RegExp _sudoCommand = RegExp(r'(?:^|[:$>]\s)(?:sudo|doas)\s+\S');
+
   /// Control sequences must not contribute characters to the matcher.
   static final RegExp _escapeSequences = RegExp(
     r'\x1B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])',
@@ -559,11 +575,22 @@ class SudoPromptAutofill {
 
   final String? secret;
 
+  /// Whether the remote currently shows a sudo password prompt.
+  var prompting = false;
+
+  /// Why the terminal currently wants the stored password, or null.
+  ///
+  /// Falls back to [SudoPromptReason.prompt] when a prompt is visible;
+  /// [SudoPromptReason.sudoCommand] covers the window between typing a sudo
+  /// command and the prompt being rendered. Updated only on output, so the
+  /// reason stays stable while the user is entering text.
+  SudoPromptReason? reason;
+
   /// Printable tail of the current output line used for prompt matching.
   var _lineTail = '';
 
-  /// Whether the remote currently shows a sudo password prompt.
-  var prompting = false;
+  /// Last non-empty text lines (newline-separated), newest last, capped.
+  final _history = <String>[];
 
   bool get _enabled => secret != null && secret!.isNotEmpty;
 
@@ -576,6 +603,7 @@ class SudoPromptAutofill {
     for (var i = 0; i < text.length; i++) {
       final char = text[i];
       if (char == '\r' || char == '\n') {
+        _commitLine(_lineTail);
         _lineTail = '';
       } else {
         _lineTail += char;
@@ -585,7 +613,32 @@ class SudoPromptAutofill {
         }
       }
     }
-    prompting = _prompt.hasMatch(_lineTail);
+    if (_prompt.hasMatch(_lineTail)) {
+      prompting = true;
+      reason = SudoPromptReason.prompt;
+    } else if (_commandJustTyped()) {
+      prompting = true;
+      reason = SudoPromptReason.sudoCommand;
+    } else {
+      prompting = false;
+      reason = null;
+    }
+  }
+
+  /// The most recent complete line is a sudo command with no output yet.
+  bool _commandJustTyped() {
+    if (_history.isEmpty) return false;
+    return _sudoCommand.hasMatch(_history.last.trim());
+  }
+
+  void _commitLine(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) return;
+    _history.add(trimmed);
+    const maxHistory = 6;
+    if (_history.length > maxHistory) {
+      _history.removeRange(0, _history.length - maxHistory);
+    }
   }
 
   /// Returns the bytes to forward for one keyboard input event.
@@ -621,6 +674,7 @@ class TerminalSessionBinding {
        _autofill = autoFillSecret == null || autoFillSecret.isEmpty
            ? null
            : SudoPromptAutofill(autoFillSecret),
+       _autofillReady = StreamController<SudoPromptReason?>.broadcast(),
        _subscriptions = [] {
     _subscriptions.addAll([
       stdout.listen(_queueTerminalOutput, onError: _ignoreTransportError),
@@ -634,6 +688,12 @@ class TerminalSessionBinding {
   final void Function(Uint8List bytes) _send;
   final void Function(TerminalResize resize) _resize;
   final SudoPromptAutofill? _autofill;
+
+  /// Latest reason the terminal wants the saved password autofilled, or null
+  /// once the user should type it manually.
+  Stream<SudoPromptReason?> get autofillReady => _autofillReady.stream;
+
+  late final StreamController<SudoPromptReason?> _autofillReady;
   final List<StreamSubscription<Object?>> _subscriptions;
   final Duration outputFlushDelay;
   final _outputBuffer = BytesBuilder(copy: false);
@@ -672,6 +732,7 @@ class TerminalSessionBinding {
   void _queueTerminalOutput(Uint8List bytes) {
     if (_closed || bytes.isEmpty) return;
     _autofill?.inspect(bytes);
+    _autofillReady.add(_autofill?.reason);
     _outputBuffer.add(bytes);
     if (_outputBuffer.length >= 16 * 1024) {
       _flushTerminalOutput();
@@ -695,6 +756,7 @@ class TerminalSessionBinding {
     await Future.wait(
       _subscriptions.map((subscription) => subscription.cancel()),
     );
+    await _autofillReady.close();
     await adapter.dispose();
   }
 }

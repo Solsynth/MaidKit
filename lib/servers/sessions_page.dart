@@ -24,6 +24,7 @@ import 'server_providers.dart';
 import 'terminal_command_palette.dart';
 import 'terminal_find_host.dart';
 import 'terminal_session_adapter.dart';
+import 'terminal_sudo_hint.dart';
 import 'terminal_tabs_provider.dart';
 
 /// Unified server workspace with dashboard, terminal, and file-management tabs.
@@ -934,29 +935,32 @@ class _SessionTabBody extends ConsumerWidget {
           ? Colors.transparent
           : const Color(0xFF111315),
       child: ClipRect(
-        child: TerminalFindHost(
-          key: key,
+        child: TerminalSudoAutofillHint(
           adapter: terminalTab.terminal,
-          autofocus: autofocus,
-          transparentBackground: ref.watch(
-            transparentTerminalBackgroundProvider,
+          child: TerminalFindHost(
+            key: key,
+            adapter: terminalTab.terminal,
+            autofocus: autofocus,
+            transparentBackground: ref.watch(
+              transparentTerminalBackgroundProvider,
+            ),
+            onOpenFileManagement: () =>
+                unawaited(_openFilesForTerminal(context, ref, terminalTab)),
+            onKeyEvent: (_, event) {
+              if (!_isTerminalSnippetShortcut(event)) {
+                return KeyEventResult.ignored;
+              }
+              unawaited(
+                _showTerminalSnippetPopover(
+                  context,
+                  ref,
+                  terminalId: terminalTab.id,
+                  anchorRect: terminalTab.terminal.cursorGlobalRect,
+                ),
+              );
+              return KeyEventResult.handled;
+            },
           ),
-          onOpenFileManagement: () =>
-              unawaited(_openFilesForTerminal(context, ref, terminalTab)),
-          onKeyEvent: (_, event) {
-            if (!_isTerminalSnippetShortcut(event)) {
-              return KeyEventResult.ignored;
-            }
-            unawaited(
-              _showTerminalSnippetPopover(
-                context,
-                ref,
-                terminalId: terminalTab.id,
-                anchorRect: terminalTab.terminal.cursorGlobalRect,
-              ),
-            );
-            return KeyEventResult.handled;
-          },
         ),
       ),
     );

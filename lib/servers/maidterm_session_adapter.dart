@@ -98,6 +98,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   final _resizeEvents = StreamController<TerminalResize>.broadcast();
   final _matches = <_MaidTermMatch>[];
   final _activity = TerminalActivityTracker();
+  StreamSubscription<SudoPromptReason?>? _sudoSub;
 
   /// Tracks the last auto-copied selection text so we only write to the
   /// clipboard when the selection actually changes.
@@ -127,6 +128,23 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   @override
   String? get currentDirectory =>
       TerminalWorkingDirectoryTracker.decode(_controller.pwd);
+
+  /// Latest sudo autofill reason, driven by the session binding when one is
+  /// attached (SSH sessions). Local and serial sessions have no secret and
+  /// never arm.
+  @override
+  SudoPromptReason? get sudoAutofillReady => _sudoAutofillReady;
+
+  SudoPromptReason? _sudoAutofillReady;
+
+  /// Attaches the binding's autofill reason stream to this adapter.
+  ///
+  /// Called by the SSH connection manager when a terminal session is wired,
+  /// so the terminal UI can show an autofill hint at the cursor.
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {
+    _sudoSub?.cancel();
+    _sudoSub = reasons.listen((reason) => _sudoAutofillReady = reason);
+  }
 
   @override
   void write(Uint8List bytes) {
@@ -331,9 +349,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
           id: rule.category.name,
           pattern: rule.pattern,
           highlightMode: maidterm.LinkHighlightMode.always,
-          idleStyle: maidterm.HyperlinkStyle(
-            backgroundColor: rule.color,
-          ),
+          idleStyle: maidterm.HyperlinkStyle(backgroundColor: rule.color),
           highlightedStyle: maidterm.HyperlinkStyle(
             backgroundColor: rule.color,
             underline: maidterm.UnderlineStyle.single,
@@ -495,6 +511,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     if (_selectToCopyEnabled) {
       _controller.removeListener(_onSelectionMaybeChanged);
     }
+    await _sudoSub?.cancel();
     _clipboard.dispose();
     _matches.clear();
     _controller.dispose();

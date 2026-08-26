@@ -19,6 +19,7 @@ import 'server_models.dart';
 import 'ssh_proxy_connect.dart';
 import 'socks5_protocol.dart';
 import 'systemd_models.dart';
+import 'maidterm_session_adapter.dart';
 import 'tailscale_ssh_socket.dart';
 import 'tailscale_service.dart';
 import 'terminal_session_adapter.dart';
@@ -300,6 +301,11 @@ class SshConnectionManager {
           ? credential.password
           : null,
     );
+    // Surface the sudo autofill reason to the terminal UI so it can hint
+    // "press Enter to fill the saved password" at the cursor.
+    if (terminal is MaidTermSessionAdapter) {
+      terminal.bindSudoAutofill(binding.autofillReady);
+    }
     _terminals[terminalId] = _TerminalConnection(
       serverId: server.id,
       jumpHostServerId: server.jumpHostServerId,

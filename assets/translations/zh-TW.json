@@ -1842,6 +1842,7 @@
   "terminalColorRed": "紅色",
   "terminalColorWhite": "白色",
   "terminalColorYellow": "黃色",
+  "terminalSudoAutofillHint": "按 Enter 填入已儲存的密碼",
   "terminalFindInTerminal": "在終端中查詢",
   "terminalKeyboardHide": "收起鍵盤",
   "terminalKeyboardShow": "彈出鍵盤",

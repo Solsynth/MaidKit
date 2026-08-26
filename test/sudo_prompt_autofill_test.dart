@@ -12,7 +12,26 @@ void main() {
       final autofill = SudoPromptAutofill('hunter2');
       autofill.inspect(_bytes('[sudo] password for alice: '));
       expect(autofill.prompting, isTrue);
+      expect(autofill.reason, SudoPromptReason.prompt);
       expect(autofill.intercept(_bytes('\r')), _bytes('hunter2\r'));
+      expect(autofill.prompting, isFalse);
+    });
+
+    test('arms after a sudo command line with no output yet', () {
+      final autofill = SudoPromptAutofill('hunter2');
+      autofill.inspect(_bytes('\r\nuser@host:~\$ sudo apt update\r\n'));
+      expect(autofill.prompting, isTrue);
+      expect(autofill.reason, SudoPromptReason.sudoCommand);
+      expect(autofill.intercept(_bytes('\r')), _bytes('hunter2\r'));
+    });
+
+    test('does not arm on plain commands or non-sudo output', () {
+      final autofill = SudoPromptAutofill('hunter2');
+      autofill.inspect(_bytes('\r\nuser@host:~\$ apt update\r\n'));
+      expect(autofill.prompting, isFalse);
+      autofill.inspect(_bytes('sudoers file check: ok\r\n'));
+      expect(autofill.prompting, isFalse);
+      autofill.inspect(_bytes('\r\nuser@host:~\$ sudo\r\n'));
       expect(autofill.prompting, isFalse);
     });
 

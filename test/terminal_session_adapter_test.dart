@@ -706,7 +706,9 @@ void main() {
     await pumpEventQueue();
 
     // Chunked kitty OSC 99: d=0 opens the title, the body chunk completes it.
-    adapter.write(Uint8List.fromList(utf8.encode('\x1b]99;i=7:d=0;Build\x1b\\')));
+    adapter.write(
+      Uint8List.fromList(utf8.encode('\x1b]99;i=7:d=0;Build\x1b\\')),
+    );
     adapter.write(
       Uint8List.fromList(utf8.encode('\x1b]99;i=7:p=body;passed\x1b\\')),
     );
@@ -719,42 +721,38 @@ void main() {
     expect(shown.last.toString(), contains('passed'));
   });
 
-  testWidgets(
-    'keyword highlighting keeps MaidTerm built-in links detectable',
-    (tester) async {
-      final adapter = MaidTermSessionAdapter();
-      addTearDown(adapter.dispose);
+  testWidgets('keyword highlighting keeps MaidTerm built-in links detectable', (
+    tester,
+  ) async {
+    final adapter = MaidTermSessionAdapter();
+    addTearDown(adapter.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: SizedBox(
-            width: 800,
-            height: 600,
-            child: adapter.buildView(showCursor: false),
-          ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 800,
+          height: 600,
+          child: adapter.buildView(showCursor: false),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      final settings =
-          tester
-              .widget<maidterm.TerminalView>(
-                find.byType(maidterm.TerminalView),
-              )
-              .linkSettings;
-      expect(
-        settings.types,
-        containsAll([maidterm.LinkType.osc8, maidterm.LinkType.text]),
-      );
-      // Built-ins must be clickable; keyword rules stay visual only.
-      expect(settings.hasActivation, isTrue);
-      // Keyword matches render as per-category background tints.
-      expect(settings.detectFilePaths, isFalse);
-      for (final rule in settings.rules) {
-        expect(rule.idleStyle?.backgroundColor, isNotNull);
-      }
-    },
-  );
+    final settings = tester
+        .widget<maidterm.TerminalView>(find.byType(maidterm.TerminalView))
+        .linkSettings;
+    expect(
+      settings.types,
+      containsAll([maidterm.LinkType.osc8, maidterm.LinkType.text]),
+    );
+    // Built-ins must be clickable; keyword rules stay visual only.
+    expect(settings.hasActivation, isTrue);
+    // Keyword matches render as per-category background tints.
+    expect(settings.detectFilePaths, isFalse);
+    for (final rule in settings.rules) {
+      expect(rule.idleStyle?.backgroundColor, isNotNull);
+    }
+  });
 }
 
 /// Mocks the window-manager focus probe and the local-notification channel,
@@ -821,6 +819,9 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
       const TerminalTaskActivity(running: false);
   @override
   String? get currentDirectory => null;
+
+  @override
+  SudoPromptReason? get sudoAutofillReady => null;
 
   @override
   Widget buildView({

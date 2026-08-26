@@ -1889,6 +1889,7 @@
   "terminalColorRed": "Red",
   "terminalColorWhite": "White",
   "terminalColorYellow": "Yellow",
+  "terminalSudoAutofillHint": "Press Enter to fill saved password",
   "terminalFindInTerminal": "Find in terminal",
   "terminalKeyboardHide": "Hide keyboard",
   "terminalKeyboardShow": "Show keyboard",

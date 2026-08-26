@@ -1888,6 +1888,7 @@
   "terminalColorRed": "红色",
   "terminalColorWhite": "白色",
   "terminalColorYellow": "黄色",
+  "terminalSudoAutofillHint": "按回车填入已保存的密码",
   "terminalFindInTerminal": "在终端中查找",
   "terminalKeyboardHide": "收起键盘",
   "terminalKeyboardShow": "弹出键盘",
