@@ -17,11 +17,23 @@ void main() {
       expect(autofill.prompting, isFalse);
     });
 
-    test('arms after a sudo command line with no output yet', () {
+    test('does not arm on a sudo command line until the prompt appears', () {
+      // Issue #73: pasting a sudo command then pressing Enter must not inject
+      // the saved SSH password into the next command. The command line alone
+      // merely echoes the word "sudo"; sudo may be passwordless, so autofill
+      // arms only once a real password prompt is on screen.
       final autofill = SudoPromptAutofill('hunter2');
       autofill.inspect(_bytes('\r\nuser@host:~\$ sudo apt update\r\n'));
+      expect(autofill.prompting, isFalse);
+      expect(autofill.reason, isNull);
+      expect(autofill.intercept(_bytes('\r')), _bytes('\r'));
+      // The following command runs without the secret leaking in.
+      autofill.inspect(_bytes('\r\nuser@host:~\$ useradd alice\r\n'));
+      expect(autofill.intercept(_bytes('\r')), _bytes('\r'));
+      // A real prompt still autofills.
+      autofill.inspect(_bytes('[sudo] password for alice: '));
       expect(autofill.prompting, isTrue);
-      expect(autofill.reason, SudoPromptReason.sudoCommand);
+      expect(autofill.reason, SudoPromptReason.prompt);
       expect(autofill.intercept(_bytes('\r')), _bytes('hunter2\r'));
     });
 
@@ -32,6 +44,12 @@ void main() {
       autofill.inspect(_bytes('sudoers file check: ok\r\n'));
       expect(autofill.prompting, isFalse);
       autofill.inspect(_bytes('\r\nuser@host:~\$ sudo\r\n'));
+      expect(autofill.prompting, isFalse);
+      // A pasted line containing "sudo" anywhere must not arm the autofill;
+      // the next Enter runs a normal command, not sudo's password prompt.
+      autofill.inspect(
+        _bytes('\r\nuser@host:~\$ sudo apt update && mkdir /x\r\n'),
+      );
       expect(autofill.prompting, isFalse);
     });
 

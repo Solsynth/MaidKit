@@ -34,13 +34,16 @@ class SshConnectionManager {
   SshConnectionManager(
     this._terminalAdapterFactory, {
     bool Function()? brandingEnvironmentEnabled,
+    bool Function()? sudoAutofillEnabled,
     ServerMetricsCollector? metricsCollector,
     this.onConnected,
   }) : _brandingEnvironmentEnabled = brandingEnvironmentEnabled ?? (() => true),
+       _sudoAutofillEnabled = sudoAutofillEnabled ?? (() => true),
        _metricsCollector = metricsCollector ?? AutoServerMetricsCollector();
 
   final TerminalSessionAdapterFactory Function() _terminalAdapterFactory;
   final bool Function() _brandingEnvironmentEnabled;
+  final bool Function() _sudoAutofillEnabled;
   final ServerMetricsCollector _metricsCollector;
 
   /// Fired after a server's SSH session becomes connected. Used to start
@@ -296,8 +299,11 @@ class SshConnectionManager {
         event.pixelHeight,
       ),
       // Password-type credentials double as the sudo autofill secret for the
-      // interactive shell; key-based connections have no secret to send.
-      autoFillSecret: credential.type == CredentialType.password
+      // interactive shell; key-based connections have no secret to send. The
+      // toggle in Settings lets users opt out so the stored credential is
+      // never written to the shell.
+      autoFillSecret:
+          _sudoAutofillEnabled() && credential.type == CredentialType.password
           ? credential.password
           : null,
     );

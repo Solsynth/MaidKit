@@ -72,7 +72,7 @@ class _TerminalSudoAutofillHintState extends State<TerminalSudoAutofillHint> {
               // Center the chip on the cursor row so it reads as sitting on
               // the same line as the prompt.
               top: rect.top + rect.height / 2 - 12,
-              child: _HintChip(reason: reason),
+              child: const _HintChip(),
             ),
         ],
       ),
@@ -81,9 +81,7 @@ class _TerminalSudoAutofillHintState extends State<TerminalSudoAutofillHint> {
 }
 
 class _HintChip extends StatelessWidget {
-  const _HintChip({required this.reason});
-
-  final SudoPromptReason reason;
+  const _HintChip();
 
   @override
   Widget build(BuildContext context) {
@@ -109,13 +107,7 @@ class _HintChip extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  reason == SudoPromptReason.prompt
-                      ? Symbols.key
-                      : Symbols.terminal,
-                  size: 14,
-                  color: scheme.onInverseSurface,
-                ),
+                Icon(Symbols.key, size: 14, color: scheme.onInverseSurface),
                 const SizedBox(width: 6),
                 Text(
                   'terminalSudoAutofillHint'.tr(),

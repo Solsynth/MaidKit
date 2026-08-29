@@ -78,7 +78,7 @@ void main() {
     );
   });
 
-  test('persists the terminal branding environment preference', () async {
+  test('persists the terminal sudo autofill preference', () async {
     final settings = InMemoryTerminalAdapterSettings();
     final container = ProviderContainer(
       overrides: [
@@ -87,14 +87,14 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    expect(container.read(terminalBrandingEnvironmentEnabledProvider), isTrue);
+    expect(container.read(sudoAutofillEnabledProvider), isTrue);
 
     await container
-        .read(terminalBrandingEnvironmentEnabledProvider.notifier)
+        .read(sudoAutofillEnabledProvider.notifier)
         .setEnabled(false);
 
-    expect(container.read(terminalBrandingEnvironmentEnabledProvider), isFalse);
-    expect(settings.brandingEnvironmentEnabled, isFalse);
+    expect(container.read(sudoAutofillEnabledProvider), isFalse);
+    expect(settings.sudoAutofillEnabled, isFalse);
   });
 
   test('persists the terminal font family', () async {

@@ -536,20 +536,23 @@ abstract interface class TerminalSessionAdapterFactory {
   TerminalSessionAdapter create();
 }
 
-/// Why the terminal currently wants the stored password, or null when the
-/// user should type it manually.
-enum SudoPromptReason { prompt, sudoCommand }
+enum SudoPromptReason { prompt }
 
 /// Answers a remote `sudo` password prompt with the connection's stored
 /// password.
 ///
 /// The watcher inspects outgoing remote output for the localized sudo
-/// password prompt (or a bare `sudo …` command whose output has not yet
-/// appeared). While that state is the last thing on screen, a bare Enter key
-/// press is replaced with the stored secret followed by Enter. Any other
-/// keystroke disarms interception so manual entry still works, and the flag
-/// re-evaluates on every output chunk, so failed attempts ("Sorry, try
-/// again") naturally re-arm once the prompt is redrawn.
+/// password prompt. Only while that prompt is the last thing on screen does a
+/// bare Enter key press get replaced with the stored secret followed by
+/// Enter. Any other keystroke disarms interception so manual entry still
+/// works, and the flag re-evaluates on every output chunk, so failed attempts
+/// ("Sorry, try again") naturally re-arm once the prompt is redrawn.
+///
+/// The autofill deliberately arms only on a genuine password prompt. A bare
+/// `sudo …` command is never enough on its own: sudo can be configured
+/// passwordless, and a pasted command line merely *echoing* the word "sudo"
+/// must not cause the SSH secret to be injected into the next Enter — which
+/// would leak the password into unrelated shell commands.
 class SudoPromptAutofill {
   SudoPromptAutofill(this.secret);
 
@@ -563,11 +566,6 @@ class SudoPromptAutofill {
     caseSensitive: false,
   );
 
-  /// Matches a bare `sudo …` command typed at a fresh shell prompt. The
-  /// `user@host:~$ ` prompt prefix is optional; a space-delimited command
-  /// keeps `sudoers`-style text from arming on its own.
-  static final RegExp _sudoCommand = RegExp(r'(?:^|[:$>]\s)(?:sudo|doas)\s+\S');
-
   /// Control sequences must not contribute characters to the matcher.
   static final RegExp _escapeSequences = RegExp(
     r'\x1B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])',
@@ -580,17 +578,12 @@ class SudoPromptAutofill {
 
   /// Why the terminal currently wants the stored password, or null.
   ///
-  /// Falls back to [SudoPromptReason.prompt] when a prompt is visible;
-  /// [SudoPromptReason.sudoCommand] covers the window between typing a sudo
-  /// command and the prompt being rendered. Updated only on output, so the
-  /// reason stays stable while the user is entering text.
+  /// Set only when an actual sudo password prompt is visible, so the SSH
+  /// secret is never forwarded into a command that is not asking for it.
   SudoPromptReason? reason;
 
   /// Printable tail of the current output line used for prompt matching.
   var _lineTail = '';
-
-  /// Last non-empty text lines (newline-separated), newest last, capped.
-  final _history = <String>[];
 
   bool get _enabled => secret != null && secret!.isNotEmpty;
 
@@ -603,7 +596,6 @@ class SudoPromptAutofill {
     for (var i = 0; i < text.length; i++) {
       final char = text[i];
       if (char == '\r' || char == '\n') {
-        _commitLine(_lineTail);
         _lineTail = '';
       } else {
         _lineTail += char;
@@ -616,28 +608,9 @@ class SudoPromptAutofill {
     if (_prompt.hasMatch(_lineTail)) {
       prompting = true;
       reason = SudoPromptReason.prompt;
-    } else if (_commandJustTyped()) {
-      prompting = true;
-      reason = SudoPromptReason.sudoCommand;
     } else {
       prompting = false;
       reason = null;
-    }
-  }
-
-  /// The most recent complete line is a sudo command with no output yet.
-  bool _commandJustTyped() {
-    if (_history.isEmpty) return false;
-    return _sudoCommand.hasMatch(_history.last.trim());
-  }
-
-  void _commitLine(String line) {
-    final trimmed = line.trim();
-    if (trimmed.isEmpty) return;
-    _history.add(trimmed);
-    const maxHistory = 6;
-    if (_history.length > maxHistory) {
-      _history.removeRange(0, _history.length - maxHistory);
     }
   }
 

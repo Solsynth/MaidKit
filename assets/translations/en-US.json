@@ -1704,6 +1704,8 @@
   "settingsTerminalShiftInsertPasteHint": "Paste the clipboard (or the current selection when select-to-copy is on) with Shift+Insert.",
   "settingsTerminalKeywordHighlight": "Highlight keywords in output",
   "settingsTerminalKeywordHighlightHint": "Color errors, warnings, IPs, and links in terminal output (MobaXterm style). Does not override server ANSI colors.",
+  "settingsTerminalSudoAutofill": "Auto-fill sudo password",
+  "settingsTerminalSudoAutofillHint": "Press Enter at a sudo password prompt to fill the saved SSH password. Disable to always type it manually.",
   "settingsTheme": "Theme",
   "settingsThemeAccent": "Accent color",
   "settingsThemeAccentHint": "This color tints both the light and dark appearance.",

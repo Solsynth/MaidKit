@@ -133,6 +133,14 @@ abstract interface class TerminalAdapterSettings {
   /// MobaXterm-style, without overriding server ANSI colors.
   bool get keywordHighlightEnabled;
 
+  /// Auto-fill the saved SSH password into an active `sudo` password prompt
+  /// when Enter is pressed at the prompt.
+  ///
+  /// Default on. Disable to require manual password entry for root
+  /// operations and to guarantee the stored credential is never written to
+  /// the shell.
+  bool get sudoAutofillEnabled;
+
   Future<void> saveCursorAnimationEnabled(bool enabled);
   Future<void> saveBrandingEnvironmentEnabled(bool enabled);
   Future<void> saveTerminalFontFamily(String family);
@@ -141,6 +149,7 @@ abstract interface class TerminalAdapterSettings {
   Future<void> saveSelectToCopyEnabled(bool enabled);
   Future<void> saveShiftInsertPasteEnabled(bool enabled);
   Future<void> saveKeywordHighlightEnabled(bool enabled);
+  Future<void> saveSudoAutofillEnabled(bool enabled);
 }
 
 class TerminalAdapterPreferences implements TerminalAdapterSettings {
@@ -154,6 +163,7 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
     this.selectToCopyEnabled,
     this.shiftInsertPasteEnabled,
     this.keywordHighlightEnabled,
+    this.sudoAutofillEnabled,
   );
 
   static const _cursorAnimationEnabledKey = 'cursor_animation_enabled';
@@ -167,6 +177,7 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
       'terminal_shift_insert_paste_enabled';
   static const _keywordHighlightEnabledKey =
       'terminal_keyword_highlight_enabled';
+  static const _sudoAutofillEnabledKey = 'terminal_sudo_autofill_enabled';
 
   final SharedPreferencesAsync _preferences;
   @override
@@ -185,6 +196,8 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   final bool shiftInsertPasteEnabled;
   @override
   final bool keywordHighlightEnabled;
+  @override
+  final bool sudoAutofillEnabled;
 
   static Future<TerminalAdapterPreferences> load({
     SharedPreferencesAsync? preferences,
@@ -205,6 +218,7 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
       await store.getBool(_selectToCopyEnabledKey) ?? false,
       await store.getBool(_shiftInsertPasteEnabledKey) ?? true,
       await store.getBool(_keywordHighlightEnabledKey) ?? true,
+      await store.getBool(_sudoAutofillEnabledKey) ?? true,
     );
   }
 
@@ -239,6 +253,10 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   @override
   Future<void> saveKeywordHighlightEnabled(bool enabled) =>
       _preferences.setBool(_keywordHighlightEnabledKey, enabled);
+
+  @override
+  Future<void> saveSudoAutofillEnabled(bool enabled) =>
+      _preferences.setBool(_sudoAutofillEnabledKey, enabled);
 
   static String _encodeTheme(TerminalColorScheme theme) => jsonEncode({
     'id': theme.id,
@@ -282,6 +300,7 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
     this.selectToCopyEnabled = false,
     this.shiftInsertPasteEnabled = true,
     this.keywordHighlightEnabled = true,
+    this.sudoAutofillEnabled = true,
   });
 
   @override
@@ -300,6 +319,8 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   bool shiftInsertPasteEnabled;
   @override
   bool keywordHighlightEnabled;
+  @override
+  bool sudoAutofillEnabled;
 
   @override
   Future<void> saveCursorAnimationEnabled(bool enabled) async {
@@ -339,5 +360,10 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   @override
   Future<void> saveKeywordHighlightEnabled(bool enabled) async {
     keywordHighlightEnabled = enabled;
+  }
+
+  @override
+  Future<void> saveSudoAutofillEnabled(bool enabled) async {
+    sudoAutofillEnabled = enabled;
   }
 }

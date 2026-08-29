@@ -1701,6 +1701,8 @@
   "settingsTerminalShiftInsertPasteHint": "使用 Shift+Insert 粘贴剪贴板内容（开启选中即复制时优先粘贴选中内容）。",
   "settingsTerminalKeywordHighlight": "终端输出关键字高亮",
   "settingsTerminalKeywordHighlightHint": "为输出中的错误、警告、IP、链接等关键字上色（类 MobaXterm）。不覆盖服务器返回的 ANSI 颜色。",
+  "settingsTerminalSudoAutofill": "自动填入 sudo 密码",
+  "settingsTerminalSudoAutofillHint": "在 sudo 密码提示处按回车自动填入已保存的 SSH 密码。关闭后始终手动输入。",
   "settingsTheme": "主题",
   "settingsThemeAccent": "强调色",
   "settingsThemeAccentHint": "此颜色同时应用于浅色与深色外观。",

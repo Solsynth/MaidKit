@@ -1150,6 +1150,24 @@ class KeywordHighlightEnabledNotifier extends Notifier<bool> {
   }
 }
 
+final sudoAutofillEnabledProvider =
+    NotifierProvider<SudoAutofillEnabledNotifier, bool>(
+      SudoAutofillEnabledNotifier.new,
+    );
+
+class SudoAutofillEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() =>
+      ref.read(terminalAdapterPreferencesProvider).sudoAutofillEnabled;
+
+  Future<void> setEnabled(bool enabled) async {
+    await ref
+        .read(terminalAdapterPreferencesProvider)
+        .saveSudoAutofillEnabled(enabled);
+    state = enabled;
+  }
+}
+
 final terminalFontFamilyProvider =
     NotifierProvider<TerminalFontFamilyNotifier, String>(
       TerminalFontFamilyNotifier.new,
@@ -1326,6 +1344,7 @@ final connectionManagerProvider = Provider<SshConnectionManager>((ref) {
     () => ref.read(terminalSessionAdapterFactoryProvider),
     brandingEnvironmentEnabled: () =>
         ref.read(terminalBrandingEnvironmentEnabledProvider),
+    sudoAutofillEnabled: () => ref.read(sudoAutofillEnabledProvider),
     onConnected: (server) => unawaited(_startAutoPortForwards(ref, server)),
   );
   ref.onDispose(manager.dispose);

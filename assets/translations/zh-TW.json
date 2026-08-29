@@ -1655,6 +1655,8 @@
   "settingsTerminalShiftInsertPasteHint": "使用 Shift+Insert 貼上剪貼簿內容（開啟選中取即複製時優先貼上選取內容）。",
   "settingsTerminalKeywordHighlight": "終端輸出關鍵字高亮",
   "settingsTerminalKeywordHighlightHint": "為輸出中的錯誤、警告、IP、連結等關鍵字上色（類 MobaXterm）。不覆蓋伺服器回傳的 ANSI 顏色。",
+  "settingsTerminalSudoAutofill": "自動填入 sudo 密碼",
+  "settingsTerminalSudoAutofillHint": "在 sudo 密碼提示處按 Enter 自動填入已儲存的 SSH 密碼。關閉後始終手動輸入。",
   "settingsTheme": "主題",
   "settingsThemeAccent": "強調色",
   "settingsThemeAccentHint": "此顏色同時應用於淺色與深色外觀。",

@@ -108,6 +108,7 @@ class SettingsPage extends HookConsumerWidget {
     final selectToCopyEnabled = ref.watch(selectToCopyEnabledProvider);
     final shiftInsertPasteEnabled = ref.watch(shiftInsertPasteEnabledProvider);
     final keywordHighlightEnabled = ref.watch(keywordHighlightEnabledProvider);
+    final sudoAutofillEnabled = ref.watch(sudoAutofillEnabledProvider);
     final terminalLightTheme = ref.watch(terminalLightThemeProvider);
     final terminalDarkTheme = ref.watch(terminalDarkThemeProvider);
     final connectOnStartup = ref.watch(connectOnStartupProvider);
@@ -460,6 +461,20 @@ class SettingsPage extends HookConsumerWidget {
                             value: keywordHighlightEnabled,
                             onChanged: (enabled) => ref
                                 .read(keywordHighlightEnabledProvider.notifier)
+                                .setEnabled(enabled),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            contentPadding: _sectionTilePadding,
+                            title: const Text(
+                              'settingsTerminalSudoAutofill',
+                            ).tr(),
+                            subtitle: const Text(
+                              'settingsTerminalSudoAutofillHint',
+                            ).tr(),
+                            value: sudoAutofillEnabled,
+                            onChanged: (enabled) => ref
+                                .read(sudoAutofillEnabledProvider.notifier)
                                 .setEnabled(enabled),
                           ),
                         ],
