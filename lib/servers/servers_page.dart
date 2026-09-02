@@ -2045,6 +2045,8 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
 
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'serverPortRequired'.tr() : null;
+  String? _requiredSecret(String? value) =>
+      value == null || value.isEmpty ? 'serverPortRequired'.tr() : null;
   String? _validPort(String? value) {
     final port = int.tryParse(value ?? '');
     return port != null && port > 0 && port < 65536
@@ -2313,7 +2315,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                       decoration: InputDecoration(
                         labelText: 'serverPasswordLabel'.tr(),
                       ),
-                      validator: _required,
+                      validator: _requiredSecret,
                     )
                   else ...[
                     TextFormField(
