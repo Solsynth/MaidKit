@@ -1,3 +1,5 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
@@ -9,6 +11,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'servers/window_state_preferences.dart';
 import 'shared/presentation/app_scaffold.dart';
 import 'servers/server_providers.dart';
 import 'servers/app_theme_preferences.dart';
@@ -79,19 +82,51 @@ Future<void> main(List<String> args) async {
   if (DesktopWindowFrame.isPlatformDesktop) {
     await windowManager.ensureInitialized();
     await windowManager.setOpacity(await loadMaidKitWindowOpacity());
-    const windowOptions = WindowOptions(
-      size: Size(1180, 760),
-      // Keep the desktop window resizable below the responsive breakpoint so
-      // narrow-layout behavior can be exercised without a mobile device.
-      minimumSize: Size(390, 520),
-      center: true,
+    // Keep the desktop window resizable below the responsive breakpoint so
+    // narrow-layout behavior can be exercised without a mobile device.
+    const minimumSize = Size(390, 520);
+    final savedWindowState = await loadMaidKitWindowState();
+    final windowOptions = WindowOptions(
+      // Restore the user-adjusted window bounds. A maximized window is
+      // reported as maximized rather than by its (unstable) frame size, so it
+      // is re-maximized after the window is created at the saved frame size.
+      size: savedWindowState?.bounds.size,
+      minimumSize: minimumSize,
+      center: savedWindowState == null,
       titleBarStyle: TitleBarStyle.hidden,
       windowButtonVisibility: true,
     );
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      // A crash or force-kill after a resize can leave the saved bounds
+      // pointing at a display that is no longer attached. Re-center the
+      // window when no connected display contains any part of it.
+      if (savedWindowState != null) {
+        final bounds = savedWindowState.bounds;
+        final onDisplay = PlatformDispatcher.instance.displays.any((display) {
+          final displayRect = Rect.fromLTWH(
+            0,
+            0,
+            display.size.width / display.devicePixelRatio,
+            display.size.height / display.devicePixelRatio,
+          );
+          return displayRect.overlaps(bounds);
+        });
+        if (!onDisplay) {
+          await windowManager.setAlignment(Alignment.center);
+          await windowManager.setSize(minimumSize);
+        }
+      }
+      await windowManager.setMinimumSize(minimumSize);
+      if (savedWindowState?.maximized ?? false) {
+        await windowManager.maximize();
+      }
       await windowManager.show();
       await windowManager.focus();
     });
+    // Keep the persisted geometry fresh for the rest of the session, and make
+    // a final best-effort write when the title-bar close button is used.
+    await MaidKitWindowStateListener().start();
+    MaidKitWindowStateListener.onAppClose(saveMaidKitWindowStateFromWindow);
   }
 
   runApp(
