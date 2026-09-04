@@ -20,21 +20,48 @@ class VaultFileStorage {
   final Uuid _uuid = const Uuid();
   final Set<String> _managedPaths = {};
 
+  /// Canonical absolute form of [path] for vault identity and dedupe.
+  ///
+  /// Dart string concatenation, path_provider, and directory listings can
+  /// spell the same Windows file with mixed separators (`C:/a/x.maidkit` vs
+  /// `C:\a\x.maidkit`); folding '/' to the native '\' makes exact string
+  /// comparison trustworthy. Other platforms have a single separator, so
+  /// `File.absolute` is already canonical.
+  String normalizePath(String path) {
+    final absolute = File(path).absolute.path;
+    return Platform.isWindows ? absolute.replaceAll('/', r'\') : absolute;
+  }
+
+  /// Whether two paths denote the same vault file.
+  ///
+  /// Windows filesystems compare case-insensitively, so equality folds case
+  /// there; other platforms compare exactly.
+  bool samePath(String a, String b) {
+    final normalizedA = normalizePath(a);
+    final normalizedB = normalizePath(b);
+    if (!Platform.isWindows) return normalizedA == normalizedB;
+    return normalizedA.toLowerCase() == normalizedB.toLowerCase();
+  }
+
   /// Returns the stable identity used for keychain and cloud-sync entries.
   ///
   /// Internal vaults are identified by their generated filename rather than
   /// the absolute iOS sandbox path. External vaults retain their path because
   /// two external files may legitimately have the same filename.
-  String vaultId(String path) =>
-      _managedPaths.contains(File(path).absolute.path) ? fileName(path) : path;
+  String vaultId(String path) {
+    final normalized = normalizePath(path);
+    return _managedPaths.any((managed) => samePath(managed, normalized))
+        ? fileName(path)
+        : path;
+  }
 
   /// Converts a runtime path into the value safe to persist in preferences.
   ///
   /// Internal vaults need only their filename: iOS can change the application
   /// container prefix when installing an update.
   Future<String> persistentPath(String path) async {
-    final absolute = File(path).absolute.path;
-    return await isExternalPath(absolute) ? absolute : fileName(absolute);
+    final normalized = normalizePath(path);
+    return await isExternalPath(normalized) ? normalized : fileName(normalized);
   }
 
   /// Resolves a persisted vault reference against the current app container.
@@ -47,7 +74,7 @@ class VaultFileStorage {
       final directory = await _vaultDirectory();
       final managed = File('${directory.path}/$value');
       if (await managed.exists()) {
-        final path = managed.absolute.path;
+        final path = normalizePath(managed.absolute.path);
         await isExternalPath(path);
         return path;
       }
@@ -55,7 +82,7 @@ class VaultFileStorage {
 
     final candidate = File(value);
     if (await candidate.exists()) {
-      final path = candidate.absolute.path;
+      final path = normalizePath(candidate.absolute.path);
       await isExternalPath(path);
       return path;
     }
@@ -64,7 +91,7 @@ class VaultFileStorage {
       final directory = await _vaultDirectory();
       final managed = File('${directory.path}/${fileName(value)}');
       if (await managed.exists()) {
-        final path = managed.absolute.path;
+        final path = normalizePath(managed.absolute.path);
         await isExternalPath(path);
         return path;
       }
@@ -81,7 +108,7 @@ class VaultFileStorage {
     final paths = <String>[];
     await for (final entity in directory.list()) {
       if (entity is File && _isVaultFile(entity.path)) {
-        final path = entity.absolute.path;
+        final path = normalizePath(entity.path);
         await isExternalPath(path);
         paths.add(path);
       }
@@ -105,7 +132,7 @@ class VaultFileStorage {
         ? await _vaultDirectory()
         : await Directory(directoryPath).create(recursive: true);
     final stem = _safeStem(fileName(name ?? 'MaidKit vault'));
-    return '${directory.path}/$stem-${_uuid.v4()}$_extension';
+    return normalizePath('${directory.path}/$stem-${_uuid.v4()}$_extension');
   }
 
   /// Resolves a vault selected outside MaidKit without copying it.
@@ -118,7 +145,7 @@ class VaultFileStorage {
     if (!await source.exists()) {
       throw FileSystemException('Vault file was not found.', sourcePath);
     }
-    final path = source.absolute.path;
+    final path = normalizePath(source.absolute.path);
     if (!externalVaultsSupported && await isExternalPath(path)) {
       throw FileSystemException(
         'External managed vaults are not supported on this platform.',
@@ -143,12 +170,13 @@ class VaultFileStorage {
     if (!await source.exists()) {
       throw FileSystemException('Vault file was not found.', sourcePath);
     }
+    final sourcePathNormalized = normalizePath(source.absolute.path);
     final target = await createVaultPath(
-      name: name ?? fileName(sourcePath),
+      name: name ?? fileName(sourcePathNormalized),
       directoryPath: directoryPath,
     );
-    if (source.absolute.path == File(target).absolute.path) {
-      return source.absolute.path;
+    if (samePath(sourcePathNormalized, target)) {
+      return sourcePathNormalized;
     }
     final targetFile = File(target);
     await source.copy(targetFile.path);
@@ -196,7 +224,7 @@ class VaultFileStorage {
   Future<bool> isExternalPath(String path) async {
     final support = await getApplicationSupportDirectory();
     final external = !isInDirectory(path, '${support.path}/$_directoryName');
-    if (!external) _managedPaths.add(File(path).absolute.path);
+    if (!external) _managedPaths.add(normalizePath(path));
     return external;
   }
 

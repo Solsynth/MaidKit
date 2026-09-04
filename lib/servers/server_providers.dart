@@ -374,7 +374,9 @@ Future<List<String>> _persistentVaultPaths(
   final result = <String>[];
   for (final path in paths) {
     final persisted = await storage.persistentPath(path);
-    if (!result.contains(persisted)) result.add(persisted);
+    if (!result.any((entry) => storage.samePath(entry, persisted))) {
+      result.add(persisted);
+    }
   }
   return result;
 }
@@ -617,9 +619,11 @@ class VaultFilesNotifier extends Notifier<List<String>> {
     final stored = preferences.getStringList(_vaultFilesPreference) ?? const [];
     final managedPaths = <String>[];
     final storage = ref.read(vaultFileStorageProvider);
+    bool alreadyKnown(String path) =>
+        managedPaths.any((entry) => storage.samePath(entry, path));
     for (final reference in stored) {
       final path = await storage.resolvePersistedPath(reference);
-      if (path != null && !managedPaths.contains(path)) {
+      if (path != null && !alreadyKnown(path)) {
         await _relocateVaultIdentity(
           oldReference: reference,
           currentPath: path,
@@ -629,17 +633,15 @@ class VaultFilesNotifier extends Notifier<List<String>> {
       }
     }
     for (final path in await storage.managedVaultPaths()) {
-      if (!managedPaths.contains(path)) managedPaths.add(path);
+      if (!alreadyKnown(path)) managedPaths.add(path);
     }
-    state = [
-      ...managedPaths,
-      ...state.where((path) => !managedPaths.contains(path)),
-    ];
+    state = [...managedPaths, ...state.where((path) => !alreadyKnown(path))];
     await _persist();
   }
 
   Future<void> remember(String path) async {
-    state = [path, ...state.where((value) => value != path)];
+    final storage = ref.read(vaultFileStorageProvider);
+    state = [path, ...state.where((value) => !storage.samePath(value, path))];
     await _persist();
   }
 

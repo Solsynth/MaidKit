@@ -225,6 +225,30 @@ void main() {
       );
     });
   });
+
+  group('VaultFileStorage.samePath', () {
+    test('treats a path as equal to itself', () {
+      final path = '${Directory.systemTemp.path}/a.maidkit';
+      expect(storage.samePath(path, path), isTrue);
+    });
+
+    test('treats different files as unequal', () {
+      expect(
+        storage.samePath(
+          '${Directory.systemTemp.path}/a.maidkit',
+          '${Directory.systemTemp.path}/b.maidkit',
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('VaultFileStorage.normalizePath', () {
+    test('returns an absolute form of a relative path', () {
+      final absolute = storage.normalizePath('a.maidkit');
+      expect(absolute, File('a.maidkit').absolute.path);
+    });
+  });
 }
 
 class _FakePathProvider extends PathProviderPlatform {
