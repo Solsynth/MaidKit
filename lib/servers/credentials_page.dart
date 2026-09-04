@@ -206,6 +206,8 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
 
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'commonRequired'.tr() : null;
+  String? _requiredSecret(String? value) =>
+      value == null || value.isEmpty ? 'commonRequired'.tr() : null;
 
   Future<void> _pickKey() async {
     final result = await FilePicker.pickFiles(withData: true);
@@ -274,7 +276,7 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
                 decoration: InputDecoration(
                   labelText: 'serverPasswordLabel'.tr(),
                 ),
-                validator: _required,
+                validator: _requiredSecret,
               )
             else ...[
               TextFormField(

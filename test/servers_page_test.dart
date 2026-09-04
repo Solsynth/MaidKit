@@ -41,6 +41,17 @@ void main() {
     expect(find.text('serverConnectionSerial'.tr()), findsNothing);
   });
 
+  testWidgets('accepts whitespace-only SSH passwords', (tester) async {
+    await pumpEditor(tester);
+
+    final password = find.byType(TextFormField).last;
+    await tester.enterText(password, '     ');
+    await tester.tap(find.text('commonSave'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ServerEditorDialog), findsNothing);
+  });
+
   testWidgets('advanced server sections start collapsed', (tester) async {
     await pumpEditor(tester);
 
