@@ -19,6 +19,8 @@ import 'servers/metrics_refresh_preferences.dart';
 import 'servers/terminal_adapter_preferences.dart';
 import 'servers/startup_connection_preferences.dart';
 import 'servers/transfer_conflict_preferences.dart';
+import 'servers/workspace_restore_preferences.dart';
+import 'servers/terminal_tabs_provider.dart';
 import 'servers/privacy_preferences.dart';
 import 'firebase_options.dart';
 import 'servers/maidcafe_preferences.dart';
@@ -62,6 +64,7 @@ Future<void> main(List<String> args) async {
     PrivacyPreferences.load(),
     MaidCafePreferences.load(),
     TransferConflictPreferences.load(),
+    WorkspaceRestorePreferences.load(),
   ]);
   final terminalAdapterPreferences =
       preferences[0] as TerminalAdapterPreferences;
@@ -73,8 +76,33 @@ Future<void> main(List<String> args) async {
   final maidCafePreferences = preferences[5] as MaidCafePreferences;
   final transferConflictPreferences =
       preferences[6] as TransferConflictPreferences;
+  final workspaceRestorePreferences =
+      preferences[7] as WorkspaceRestorePreferences;
 
   await migrateLegacyVault(defaultName: 'Primary Vault');
+
+  final container = ProviderContainer(
+    overrides: [
+      terminalAdapterPreferencesProvider.overrideWithValue(
+        terminalAdapterPreferences,
+      ),
+      startupConnectionSettingsProvider.overrideWithValue(
+        startupConnectionPreferences,
+      ),
+      metricsRefreshSettingsProvider.overrideWithValue(
+        metricsRefreshPreferences,
+      ),
+      appThemeSettingsProvider.overrideWithValue(appThemePreferences),
+      privacySettingsProvider.overrideWithValue(privacyPreferences),
+      maidCafeSettingsProvider.overrideWithValue(maidCafePreferences),
+      transferConflictSettingsProvider.overrideWithValue(
+        transferConflictPreferences,
+      ),
+      workspaceRestoreSettingsProvider.overrideWithValue(
+        workspaceRestorePreferences,
+      ),
+    ],
+  );
 
   if (DesktopWindowFrame.isPlatformDesktop) {
     await windowManager.ensureInitialized();
@@ -124,27 +152,14 @@ Future<void> main(List<String> args) async {
     // a final best-effort write when the title-bar close button is used.
     await MaidKitWindowStateListener().start();
     MaidKitWindowStateListener.onAppClose(saveMaidKitWindowStateFromWindow);
+    MaidKitWindowStateListener.onAppClose(
+      () => container.read(terminalTabsProvider.notifier).saveSnapshotNow(),
+    );
   }
 
   runApp(
-    ProviderScope(
-      overrides: [
-        terminalAdapterPreferencesProvider.overrideWithValue(
-          terminalAdapterPreferences,
-        ),
-        startupConnectionSettingsProvider.overrideWithValue(
-          startupConnectionPreferences,
-        ),
-        metricsRefreshSettingsProvider.overrideWithValue(
-          metricsRefreshPreferences,
-        ),
-        appThemeSettingsProvider.overrideWithValue(appThemePreferences),
-        privacySettingsProvider.overrideWithValue(privacyPreferences),
-        maidCafeSettingsProvider.overrideWithValue(maidCafePreferences),
-        transferConflictSettingsProvider.overrideWithValue(
-          transferConflictPreferences,
-        ),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: EasyLocalization(
         supportedLocales: const [
           Locale('en', 'US'),

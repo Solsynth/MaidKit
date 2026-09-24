@@ -300,6 +300,20 @@ class AppSettings extends Table {
   Set<Column<Object>> get primaryKey => {key};
 }
 
+/// A persisted workspace snapshot for the "restore last session" feature.
+///
+/// A single row keyed by [id] (`last`) holds the JSON-encoded workspace
+/// layout, panes, tabs, per-terminal working directories, and terminal
+/// history. Content is non-secret UI state; credentials never enter it.
+class WorkspaceSnapshots extends Table {
+  TextColumn get id => text()();
+  TextColumn get payload => text()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+}
+
 /// Links a deployment project to a GitHub workflow whose latest run is shown
 /// on the project detail page.
 @DriftDatabase(
@@ -323,6 +337,7 @@ class AppSettings extends Table {
     PortForwardConfigs,
     RuntimeWatchConfigs,
     AppSettings,
+    WorkspaceSnapshots,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -339,7 +354,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 33;
+  int get schemaVersion => 34;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -520,12 +535,14 @@ class AppDatabase extends _$AppDatabase {
           for (final row in legacyRows) {
             final id = row.read<int>('id');
             final created =
-                DateTime.tryParse(row.read<String>('created_at'))
-                    ?.toIso8601String() ??
+                DateTime.tryParse(
+                  row.read<String>('created_at'),
+                )?.toIso8601String() ??
                 row.read<String>('created_at');
             final updated =
-                DateTime.tryParse(row.read<String>('updated_at'))
-                    ?.toIso8601String() ??
+                DateTime.tryParse(
+                  row.read<String>('updated_at'),
+                )?.toIso8601String() ??
                 row.read<String>('updated_at');
             final decoded = jsonDecode(row.read<String>('messages'));
             final lines = <String>[
@@ -702,6 +719,9 @@ class AppDatabase extends _$AppDatabase {
         if (!existing.contains('file_management_favorites')) {
           await m.addColumn(servers, servers.fileManagementFavorites);
         }
+      }
+      if (from < 34) {
+        await m.createTable(workspaceSnapshots);
       }
     },
   );

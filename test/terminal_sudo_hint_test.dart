@@ -117,6 +117,15 @@ class _HintAdapter implements TerminalSessionAdapter {
   String? get currentDirectory => null;
 
   @override
+  int get bufferRows => 0;
+
+  @override
+  String? dumpHistory({int maxLines = 4000}) => null;
+
+  @override
+  void replayHistory(String text) {}
+
+  @override
   void write(Uint8List bytes) {}
 
   @override

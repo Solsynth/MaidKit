@@ -74,6 +74,15 @@ class _RecordingTerminalAdapter implements TerminalSessionAdapter {
   String? get currentDirectory => null;
 
   @override
+  int get bufferRows => 0;
+
+  @override
+  String? dumpHistory({int maxLines = 4000}) => null;
+
+  @override
+  void replayHistory(String text) {}
+
+  @override
   SudoPromptReason? get sudoAutofillReady => null;
 
   @override

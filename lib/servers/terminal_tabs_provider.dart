@@ -4,13 +4,14 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
-import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'session_layout.dart';
 import 'ssh_connection_manager.dart';
 import 'terminal_session_adapter.dart';
+import 'workspace_snapshot.dart';
 
 export 'session_layout.dart';
 
@@ -223,6 +224,18 @@ class TerminalTabsState {
   bool get isEmpty => panes.isEmpty;
   bool get isNotEmpty => panes.isNotEmpty;
 
+  /// The untouched single-dashboard workspace every session starts with.
+  /// Used to decide whether a previous snapshot may be shown for restore
+  /// without clobbering a live workspace.
+  bool get isPristineDefault =>
+      panes.length == 1 &&
+      panes.values.first.id == 'main' &&
+      panes.values.first.tabIds.length == 1 &&
+      panes.values.first.tabIds.first == 'dashboard' &&
+      tabs.length == 1 &&
+      tabs.first is DashboardTab &&
+      layout is SessionLayoutLeaf;
+
   List<SessionTab> tabsInPane(String paneId) {
     final pane = panes[paneId];
     if (pane == null) return const [];
@@ -258,6 +271,13 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
 
   @override
   TerminalTabsState build() {
+    _initialized = true;
+    ref.onDispose(() {
+      _snapshotDebounce?.cancel();
+      _snapshotDebounce = null;
+      _historyTimer?.cancel();
+      _historyTimer = null;
+    });
     const dashboard = DashboardTab();
     const pane = SessionPane(
       id: 'main',
@@ -272,6 +292,187 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Workspace snapshot persistence ("restore last session").
+  // ---------------------------------------------------------------------------
+
+  var _initialized = false;
+  var _restoring = false;
+  Timer? _snapshotDebounce;
+  Timer? _historyTimer;
+  final _lastBufferRows = <String, int>{};
+  final _cachedHistory = <String, String>{};
+
+  /// Every workspace mutation schedules a debounced snapshot save.
+  ///
+  /// The pristine default is exempt so it never overwrites a real snapshot on
+  /// disk, and restores are exempt because they persist once at the end.
+  @override
+  set state(TerminalTabsState value) {
+    super.state = value;
+    _onWorkspaceChanged();
+  }
+
+  void _onWorkspaceChanged() {
+    if (!_initialized || _restoring) return;
+    if (state.isPristineDefault) return;
+    _scheduleSnapshotSave();
+    _ensureHistoryTimer();
+  }
+
+  void _scheduleSnapshotSave() {
+    _snapshotDebounce?.cancel();
+    _snapshotDebounce = Timer(const Duration(milliseconds: 400), () {
+      unawaited(saveSnapshotNow());
+    });
+  }
+
+  /// Captures and persists the current workspace. Also called from the
+  /// window-close hook and after a restore, so it is safe to invoke
+  /// repeatedly.
+  Future<void> saveSnapshotNow() async {
+    if (_restoring || state.isPristineDefault) return;
+    try {
+      final snapshot = WorkspaceSnapshot.capture(
+        state,
+        historyFor: _historyFor,
+      );
+      await ref.read(workspaceSnapshotStoreProvider).save(snapshot);
+    } catch (_) {
+      // Persisting is best-effort; a failed write must not break the
+      // workspace. The next save attempt retries.
+    }
+  }
+
+  void _ensureHistoryTimer() {
+    _historyTimer ??= Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_restoring || state.isPristineDefault) return;
+      if (!state.tabs.any((tab) => tab is TerminalTab)) return;
+      unawaited(saveSnapshotNow());
+    });
+  }
+
+  /// Plain-text history for [tab], re-captured only when the buffer row count
+  /// changed since the last capture (a cheap dirty check for scrolling
+  /// output).
+  String _historyFor(TerminalTab tab) {
+    final rows = tab.terminal.bufferRows;
+    if (_lastBufferRows[tab.id] != rows) {
+      _lastBufferRows[tab.id] = rows;
+      _cachedHistory[tab.id] = tab.terminal.dumpHistory() ?? '';
+    }
+    return _cachedHistory[tab.id] ?? '';
+  }
+
+  /// Restores the workspace saved by the previous session.
+  Future<void> restoreLastWorkspace() async {
+    final snapshot = await ref.read(workspaceSnapshotStoreProvider).load();
+    if (snapshot == null) return;
+    await restoreWorkspace(snapshot);
+  }
+
+  /// Rebuilds [snapshot] into the live workspace: panes and every
+  /// non-terminal tab first, then connections and terminal tabs as they
+  /// become available.
+  Future<void> restoreWorkspace(WorkspaceSnapshot snapshot) async {
+    if (_restoring || snapshot.isEmpty) return;
+    _restoring = true;
+    try {
+      final repository = ref.read(serverRepositoryProvider);
+      final servers = await repository.all();
+      final byId = {for (final server in servers) server.id: server};
+      final resolved = resolveWorkspaceSnapshot(snapshot, byId);
+
+      // Phase 1: structure plus all non-terminal tabs, immediately.
+      state = TerminalTabsState(
+        tabs: resolved.initialTabs,
+        panes: resolved.panes,
+        layout: resolved.layout,
+        focusedPaneId: resolved.focusedPaneId,
+      );
+
+      // Phase 2: terminals, opened in parallel per pane and ordered once they
+      // all land (or fail).
+      if (resolved.pendingTerminals.isEmpty) {
+        _applyFinalSelections(resolved);
+        return;
+      }
+      final byPane = <String, List<PendingTerminalRestore>>{};
+      for (final pending in resolved.pendingTerminals) {
+        byPane.putIfAbsent(pending.paneId, () => []).add(pending);
+      }
+      for (final entry in byPane.entries) {
+        await Future.wait([
+          for (final pending in entry.value) _restoreTerminal(pending, byId),
+        ]);
+        final desired = resolved.desiredPaneTabIds[entry.key];
+        if (desired != null) _reorderPaneTo(entry.key, desired);
+      }
+      _applyFinalSelections(resolved);
+    } finally {
+      _restoring = false;
+      // Persist the restored workspace (or whatever succeeded), so the next
+      // launch can restore it again.
+      unawaited(saveSnapshotNow());
+    }
+  }
+
+  void _applyFinalSelections(ResolvedWorkspace resolved) {
+    for (final selected in resolved.desiredPaneSelections.values) {
+      if (selected != null) select(selected);
+    }
+    final focus = resolved.focusedPaneId;
+    if (focus != null && state.panes.containsKey(focus)) {
+      focusPane(focus);
+    }
+  }
+
+  Future<void> _restoreTerminal(
+    PendingTerminalRestore pending,
+    Map<int, Server> serversById,
+  ) async {
+    final server = serversById[pending.serverId];
+    if (server == null) return;
+    try {
+      if (pending.isSerial) {
+        await openSerial(
+          server,
+          paneId: pending.paneId,
+          initialOutput: pending.history,
+        );
+        return;
+      }
+      final repository = ref.read(serverRepositoryProvider);
+      final credential = await repository.credentialFor(server);
+      final proxy = await repository.proxyFor(server);
+      await open(
+        server,
+        credential,
+        (_) async => false,
+        knownHostKeyFingerprint: server.hostKeyFingerprint,
+        initialDirectory: pending.cwd,
+        proxy: proxy,
+        paneId: pending.paneId,
+        initialOutput: pending.history,
+      );
+    } catch (_) {
+      // A failed connection skips that terminal tab; the pane keeps its
+      // remaining tabs and connection errors surface in the server grid.
+    }
+  }
+
+  /// Reorders [paneId]'s tabs to [desired]. Missing tabs (e.g. terminals that
+  /// failed to reconnect) are skipped.
+  void _reorderPaneTo(String paneId, List<String> desired) {
+    var current = state.panes[paneId]?.tabIds ?? const <String>[];
+    if (_listEquals(current, desired)) return;
+    for (var i = 0; i < desired.length; i++) {
+      if (i >= current.length || current[i] == desired[i]) continue;
+      moveTab(desired[i], paneId, toIndex: i);
+      current = state.panes[paneId]?.tabIds ?? const <String>[];
+    }
+  }
+
   Future<void> open(
     Server server,
     ServerCredential credential,
@@ -281,6 +482,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     List<String>? initialScripts,
     String? paneId,
     ServerProxy? proxy,
+    String? initialOutput,
     AuthChallengeApproval? approveAuth,
   }) async {
     if (paneId != null) focusPane(paneId);
@@ -292,6 +494,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       initialDirectory: initialDirectory,
       extraInitialScripts: initialScripts,
       proxy: proxy,
+      initialOutput: initialOutput,
       approveAuth: approveAuth,
     );
     final tab = TerminalTab(
@@ -306,11 +509,15 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
 
   /// Opens a terminal over [server]'s local serial port through the bridge
   /// helper.
-  Future<void> openSerial(Server server, {String? paneId}) async {
+  Future<void> openSerial(
+    Server server, {
+    String? paneId,
+    String? initialOutput,
+  }) async {
     if (paneId != null) focusPane(paneId);
     final handle = await ref
         .read(serialConnectionManagerProvider)
-        .openTerminal(server);
+        .openTerminal(server, initialOutput: initialOutput);
     final tab = TerminalTab(
       id: handle.id,
       serverId: server.id,
@@ -625,6 +832,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialDirectory,
     List<String>? extraInitialScripts,
     ServerProxy? proxy,
+    String? initialOutput,
     AuthChallengeApproval? approveAuth,
   }) async {
     final repository = ref.read(snippetRepositoryProvider);
@@ -645,6 +853,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
           proxy: proxy,
           environment: decodeEnvironmentMap(server.environment),
           initialScripts: initialScripts,
+          initialOutput: initialOutput,
           approveAuth: approveAuth,
         );
   }
@@ -693,6 +902,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     final tabIndex = state.tabs.indexWhere((tab) => tab.id == tabId);
     if (tabIndex < 0) return;
     _releaseSessionTabViewKey(tabId);
+    _lastBufferRows.remove(tabId);
+    _cachedHistory.remove(tabId);
 
     final paneId = state.paneIdForTab(tabId);
     final tabs = [...state.tabs]..removeAt(tabIndex);

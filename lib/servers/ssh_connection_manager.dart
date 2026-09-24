@@ -267,6 +267,7 @@ class SshConnectionManager {
     ServerProxy? proxy,
     Map<String, String>? environment,
     List<String>? initialScripts,
+    String? initialOutput,
     AuthChallengeApproval? approveAuth,
   }) async {
     final client = await _createClient(
@@ -329,6 +330,13 @@ class SshConnectionManager {
       shell: shell,
       binding: binding,
     );
+    // Restored sessions replay their prior scrollback into the renderer
+    // before the shell's first output is delivered, so the history lands
+    // above the fresh prompt deterministically. The content is drawn into
+    // the terminal buffer only and never reaches the shell.
+    if (initialOutput != null && initialOutput.isNotEmpty) {
+      terminal.replayHistory(initialOutput);
+    }
     // A remote shell ending is normal (`exit`, a logout, or a network drop).
     // Do not use `whenComplete` here: its returned future re-emits an SSH
     // channel error and, because this is fire-and-forget cleanup, would become

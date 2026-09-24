@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
@@ -307,6 +309,7 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
   var _isReconnecting = false;
   var _isArranging = false;
   var _isSavingOrder = false;
+  var _isRestoringWorkspace = false;
   final _selectedTags = <String>{};
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
@@ -403,9 +406,30 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
     }
   }
 
+  Future<void> _restoreWorkspace() async {
+    setState(() => _isRestoringWorkspace = true);
+    try {
+      await ref.read(terminalTabsProvider.notifier).restoreLastWorkspace();
+    } catch (_) {
+      // Restore failures leave the dashboard as-is; the snapshot survives for
+      // another attempt.
+    } finally {
+      if (mounted) setState(() => _isRestoringWorkspace = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isCompactView = ref.watch(dashboardCompactViewProvider);
+    final savedSnapshot = ref.watch(workspaceSnapshotProvider).value;
+    final showRestoreCard = ref.watch(
+      terminalTabsProvider.select(
+        (tabs) =>
+            tabs.isPristineDefault &&
+            savedSnapshot != null &&
+            !savedSnapshot.isEmpty,
+      ),
+    );
     final sessionsByServerId = {
       for (final session in widget.sessions) session.serverId: session,
     };
@@ -450,6 +474,28 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
         },
         child: Column(
           children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 240),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) => SizeTransition(
+                sizeFactor: animation,
+                alignment: Alignment.topCenter,
+                child: FadeTransition(opacity: animation, child: child),
+              ),
+              child: showRestoreCard
+                  ? Padding(
+                      key: const ValueKey('servers-restore-workspace'),
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                      child: _RestoreWorkspaceCard(
+                        isRestoring: _isRestoringWorkspace,
+                        onPressed: () => unawaited(_restoreWorkspace()),
+                      ),
+                    )
+                  : const SizedBox.shrink(
+                      key: ValueKey('servers-restore-none'),
+                    ),
+            ),
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 240),
               switchInCurve: Curves.easeOutCubic,
@@ -890,6 +936,63 @@ class _ReconnectAllCard extends StatelessWidget {
                     )
                   : const Icon(Symbols.sync, size: 18),
               label: Text('serversReconnectAll'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RestoreWorkspaceCard extends StatelessWidget {
+  const _RestoreWorkspaceCard({
+    required this.isRestoring,
+    required this.onPressed,
+  });
+
+  final bool isRestoring;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+        child: Row(
+          children: [
+            Icon(
+              Symbols.restore,
+              size: 20,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'dashboardRestoreWorkspaceHint'.tr(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.titleSmall,
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.tonalIcon(
+              onPressed: isRestoring ? null : onPressed,
+              icon: isRestoring
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  : const Icon(Symbols.history, size: 18),
+              label: Text('dashboardRestoreWorkspace'.tr()),
             ),
           ],
         ),

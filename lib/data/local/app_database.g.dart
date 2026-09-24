@@ -10081,6 +10081,271 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   }
 }
 
+class $WorkspaceSnapshotsTable extends WorkspaceSnapshots
+    with TableInfo<$WorkspaceSnapshotsTable, WorkspaceSnapshot> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WorkspaceSnapshotsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [id, payload, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'workspace_snapshots';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<WorkspaceSnapshot> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  WorkspaceSnapshot map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return WorkspaceSnapshot(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $WorkspaceSnapshotsTable createAlias(String alias) {
+    return $WorkspaceSnapshotsTable(attachedDatabase, alias);
+  }
+}
+
+class WorkspaceSnapshot extends DataClass
+    implements Insertable<WorkspaceSnapshot> {
+  final String id;
+  final String payload;
+  final DateTime updatedAt;
+  const WorkspaceSnapshot({
+    required this.id,
+    required this.payload,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['payload'] = Variable<String>(payload);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  WorkspaceSnapshotsCompanion toCompanion(bool nullToAbsent) {
+    return WorkspaceSnapshotsCompanion(
+      id: Value(id),
+      payload: Value(payload),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory WorkspaceSnapshot.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return WorkspaceSnapshot(
+      id: serializer.fromJson<String>(json['id']),
+      payload: serializer.fromJson<String>(json['payload']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'payload': serializer.toJson<String>(payload),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  WorkspaceSnapshot copyWith({
+    String? id,
+    String? payload,
+    DateTime? updatedAt,
+  }) => WorkspaceSnapshot(
+    id: id ?? this.id,
+    payload: payload ?? this.payload,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  WorkspaceSnapshot copyWithCompanion(WorkspaceSnapshotsCompanion data) {
+    return WorkspaceSnapshot(
+      id: data.id.present ? data.id.value : this.id,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WorkspaceSnapshot(')
+          ..write('id: $id, ')
+          ..write('payload: $payload, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, payload, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is WorkspaceSnapshot &&
+          other.id == this.id &&
+          other.payload == this.payload &&
+          other.updatedAt == this.updatedAt);
+}
+
+class WorkspaceSnapshotsCompanion extends UpdateCompanion<WorkspaceSnapshot> {
+  final Value<String> id;
+  final Value<String> payload;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const WorkspaceSnapshotsCompanion({
+    this.id = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  WorkspaceSnapshotsCompanion.insert({
+    required String id,
+    required String payload,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       payload = Value(payload),
+       updatedAt = Value(updatedAt);
+  static Insertable<WorkspaceSnapshot> custom({
+    Expression<String>? id,
+    Expression<String>? payload,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (payload != null) 'payload': payload,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  WorkspaceSnapshotsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? payload,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return WorkspaceSnapshotsCompanion(
+      id: id ?? this.id,
+      payload: payload ?? this.payload,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WorkspaceSnapshotsCompanion(')
+          ..write('id: $id, ')
+          ..write('payload: $payload, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -10113,6 +10378,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $RuntimeWatchConfigsTable runtimeWatchConfigs =
       $RuntimeWatchConfigsTable(this);
   late final $AppSettingsTable appSettings = $AppSettingsTable(this);
+  late final $WorkspaceSnapshotsTable workspaceSnapshots =
+      $WorkspaceSnapshotsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -10137,6 +10404,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     portForwardConfigs,
     runtimeWatchConfigs,
     appSettings,
+    workspaceSnapshots,
   ];
 }
 
@@ -10996,7 +11264,16 @@ class $$ServersTableTableManager
                 fileManagementFavorites: fileManagementFavorites,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$ServersTable, Server>(table),
+                  BaseReferences<_$AppDatabase, $ServersTable, Server>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -11237,7 +11514,16 @@ class $$SavedCredentialsTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$SavedCredentialsTable, SavedCredential>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $SavedCredentialsTable,
+                    SavedCredential
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -11584,7 +11870,16 @@ class $$VaultMetadataTableTableManager
                 createdAt: createdAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$VaultMetadataTable, VaultMetadataData>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $VaultMetadataTable,
+                    VaultMetadataData
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -11828,7 +12123,18 @@ class $$ComposeProjectLinksTableTableManager
                 linkedAt: linkedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$ComposeProjectLinksTable, ComposeProjectLink>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $ComposeProjectLinksTable,
+                    ComposeProjectLink
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -12146,7 +12452,18 @@ class $$ContainerCacheEntriesTableTableManager
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$ContainerCacheEntriesTable, ContainerCacheEntry>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $ContainerCacheEntriesTable,
+                    ContainerCacheEntry
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -12355,7 +12672,18 @@ class $$DeploymentProjectsTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$DeploymentProjectsTable, DeploymentProject>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $DeploymentProjectsTable,
+                    DeploymentProject
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -12624,7 +12952,18 @@ class $$DeploymentResourcesTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$DeploymentResourcesTable, DeploymentResource>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $DeploymentResourcesTable,
+                    DeploymentResource
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -12824,7 +13163,16 @@ class $$ScriptSnippetsTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$ScriptSnippetsTable, ScriptSnippet>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $ScriptSnippetsTable,
+                    ScriptSnippet
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -13022,7 +13370,16 @@ class $$AgentSettingsTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$AgentSettingsTable, AgentSetting>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $AgentSettingsTable,
+                    AgentSetting
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -13260,7 +13617,16 @@ class $$AgentProvidersTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$AgentProvidersTable, AgentProvider>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $AgentProvidersTable,
+                    AgentProvider
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -13449,7 +13815,18 @@ class $$AgentProviderModelsTableTableManager
                 createdAt: createdAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$AgentProviderModelsTable, AgentProviderModel>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $AgentProviderModelsTable,
+                    AgentProviderModel
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -13706,7 +14083,16 @@ class $$McpServersTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$McpServersTable, McpServer>(table),
+                  BaseReferences<_$AppDatabase, $McpServersTable, McpServer>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -13937,7 +14323,16 @@ class $$AgentSkillsTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$AgentSkillsTable, AgentSkill>(table),
+                  BaseReferences<_$AppDatabase, $AgentSkillsTable, AgentSkill>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -14221,7 +14616,7 @@ class $$GitHubConnectionsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$GitHubConnectionsTable, GitHubConnection>(table),
                   $$GitHubConnectionsTableReferences(db, table, e),
                 ),
               )
@@ -14533,7 +14928,7 @@ class $$GitHubRepoPinsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$GitHubRepoPinsTable, GitHubRepoPin>(table),
                   $$GitHubRepoPinsTableReferences(db, table, e),
                 ),
               )
@@ -14774,7 +15169,16 @@ class $$GitHubTokensTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$GitHubTokensTable, GitHubToken>(table),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $GitHubTokensTable,
+                    GitHubToken
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -15095,7 +15499,18 @@ class $$PortForwardConfigsTableTableManager
                 updatedAt: updatedAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$PortForwardConfigsTable, PortForwardConfig>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $PortForwardConfigsTable,
+                    PortForwardConfig
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -15292,7 +15707,18 @@ class $$RuntimeWatchConfigsTableTableManager
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$RuntimeWatchConfigsTable, RuntimeWatchConfig>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $RuntimeWatchConfigsTable,
+                    RuntimeWatchConfig
+                  >(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -15435,7 +15861,16 @@ class $$AppSettingsTableTableManager
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$AppSettingsTable, AppSetting>(table),
+                  BaseReferences<_$AppDatabase, $AppSettingsTable, AppSetting>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -15457,6 +15892,192 @@ typedef $$AppSettingsTableProcessedTableManager =
         BaseReferences<_$AppDatabase, $AppSettingsTable, AppSetting>,
       ),
       AppSetting,
+      PrefetchHooks Function()
+    >;
+typedef $$WorkspaceSnapshotsTableCreateCompanionBuilder =
+    WorkspaceSnapshotsCompanion Function({
+      required String id,
+      required String payload,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$WorkspaceSnapshotsTableUpdateCompanionBuilder =
+    WorkspaceSnapshotsCompanion Function({
+      Value<String> id,
+      Value<String> payload,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$WorkspaceSnapshotsTableFilterComposer
+    extends Composer<_$AppDatabase, $WorkspaceSnapshotsTable> {
+  $$WorkspaceSnapshotsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$WorkspaceSnapshotsTableOrderingComposer
+    extends Composer<_$AppDatabase, $WorkspaceSnapshotsTable> {
+  $$WorkspaceSnapshotsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$WorkspaceSnapshotsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WorkspaceSnapshotsTable> {
+  $$WorkspaceSnapshotsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$WorkspaceSnapshotsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WorkspaceSnapshotsTable,
+          WorkspaceSnapshot,
+          $$WorkspaceSnapshotsTableFilterComposer,
+          $$WorkspaceSnapshotsTableOrderingComposer,
+          $$WorkspaceSnapshotsTableAnnotationComposer,
+          $$WorkspaceSnapshotsTableCreateCompanionBuilder,
+          $$WorkspaceSnapshotsTableUpdateCompanionBuilder,
+          (
+            WorkspaceSnapshot,
+            BaseReferences<
+              _$AppDatabase,
+              $WorkspaceSnapshotsTable,
+              WorkspaceSnapshot
+            >,
+          ),
+          WorkspaceSnapshot,
+          PrefetchHooks Function()
+        > {
+  $$WorkspaceSnapshotsTableTableManager(
+    _$AppDatabase db,
+    $WorkspaceSnapshotsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WorkspaceSnapshotsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WorkspaceSnapshotsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$WorkspaceSnapshotsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> payload = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => WorkspaceSnapshotsCompanion(
+                id: id,
+                payload: payload,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String payload,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => WorkspaceSnapshotsCompanion.insert(
+                id: id,
+                payload: payload,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$WorkspaceSnapshotsTable, WorkspaceSnapshot>(
+                    table,
+                  ),
+                  BaseReferences<
+                    _$AppDatabase,
+                    $WorkspaceSnapshotsTable,
+                    WorkspaceSnapshot
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$WorkspaceSnapshotsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WorkspaceSnapshotsTable,
+      WorkspaceSnapshot,
+      $$WorkspaceSnapshotsTableFilterComposer,
+      $$WorkspaceSnapshotsTableOrderingComposer,
+      $$WorkspaceSnapshotsTableAnnotationComposer,
+      $$WorkspaceSnapshotsTableCreateCompanionBuilder,
+      $$WorkspaceSnapshotsTableUpdateCompanionBuilder,
+      (
+        WorkspaceSnapshot,
+        BaseReferences<
+          _$AppDatabase,
+          $WorkspaceSnapshotsTable,
+          WorkspaceSnapshot
+        >,
+      ),
+      WorkspaceSnapshot,
       PrefetchHooks Function()
     >;
 
@@ -15501,4 +16122,6 @@ class $AppDatabaseManager {
       $$RuntimeWatchConfigsTableTableManager(_db, _db.runtimeWatchConfigs);
   $$AppSettingsTableTableManager get appSettings =>
       $$AppSettingsTableTableManager(_db, _db.appSettings);
+  $$WorkspaceSnapshotsTableTableManager get workspaceSnapshots =>
+      $$WorkspaceSnapshotsTableTableManager(_db, _db.workspaceSnapshots);
 }

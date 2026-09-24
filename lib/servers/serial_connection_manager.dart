@@ -32,7 +32,10 @@ class SerialConnectionManager {
   ///
   /// Throws [ArgumentError] when [server] is not a serial connection or has no
   /// serial configuration.
-  Future<TerminalSessionHandle> openTerminal(Server server) async {
+  Future<TerminalSessionHandle> openTerminal(
+    Server server, {
+    String? initialOutput,
+  }) async {
     if (server.connectionType != 'serial') {
       throw ArgumentError('Server ${server.id} is not a serial connection.');
     }
@@ -42,6 +45,9 @@ class SerialConnectionManager {
     }
     final session = await _serialClient.open(config);
     final terminal = _terminalAdapterFactory().create();
+    if (initialOutput != null && initialOutput.isNotEmpty) {
+      terminal.replayHistory(initialOutput);
+    }
     final terminalId = 'serial-${_nextTerminalId++}';
     final binding = TerminalSessionBinding(
       adapter: terminal,

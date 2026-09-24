@@ -129,6 +129,40 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   String? get currentDirectory =>
       TerminalWorkingDirectoryTracker.decode(_controller.pwd);
 
+  @override
+  int get bufferRows => _disposed ? 0 : _controller.totalRows;
+
+  @override
+  String? dumpHistory({int maxLines = 4000}) {
+    if (_disposed) return null;
+    try {
+      // The plain formatter covers scrollback plus the visible grid, so a
+      // restored session shows its prior output as scrollback history.
+      final formatter = _controller.createFormatter(
+        format: maidterm.FormatterFormat.plain,
+        unwrap: false,
+        trim: true,
+      );
+      final text = formatter.format();
+      formatter.dispose();
+      if (maxLines <= 0 || text.isEmpty) return text;
+      final lines = text.split('\n');
+      if (lines.length <= maxLines) return text;
+      return lines.sublist(lines.length - maxLines).join('\n');
+    } catch (_) {
+      // Renderer not available (tests, disposed native handle): no capture.
+      return null;
+    }
+  }
+
+  @override
+  void replayHistory(String text) {
+    if (_disposed || text.isEmpty) return;
+    // Feed the renderer directly, bypassing the activity tracker and
+    // clipboard bridge: restored content is not live program output.
+    _controller.write(utf8.encode(text));
+  }
+
   /// Latest sudo autofill reason, driven by the session binding when one is
   /// attached (SSH sessions). Local and serial sessions have no secret and
   /// never arm.

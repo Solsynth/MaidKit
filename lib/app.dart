@@ -19,6 +19,7 @@ import 'shared/services/update_preferences.dart';
 import 'servers/startup_connection_bootstrap.dart';
 import 'servers/tailscale_auto_connect.dart';
 import 'servers/vault_gate.dart';
+import 'servers/workspace_restore_bootstrap.dart';
 import 'theme.dart';
 
 final maidKitOverlayKey = GlobalKey<OverlayState>();
@@ -134,8 +135,10 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
                         settings: settings,
                         builder: (context) => VaultGate(
                           child: StartupConnectionBootstrap(
-                            child: TailscaleAutoConnect(
-                              child: child ?? const SizedBox.shrink(),
+                            child: WorkspaceRestoreBootstrap(
+                              child: TailscaleAutoConnect(
+                                child: child ?? const SizedBox.shrink(),
+                              ),
                             ),
                           ),
                         ),

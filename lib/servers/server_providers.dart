@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:system_fonts/system_fonts.dart';
 import 'package:async/async.dart';
 
-import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
 import 'package:maid_kit/agent/mcp_client.dart';
 import 'package:maid_kit/agent/mcp_repository.dart';
 import 'package:maid_kit/agent/skill_repository.dart';
@@ -49,6 +49,9 @@ import 'startup_connection_preferences.dart';
 import 'transfer_conflict_preferences.dart';
 import 'vault_service.dart';
 import 'vault_file_storage.dart';
+import 'workspace_restore_preferences.dart';
+import 'workspace_snapshot.dart';
+import 'workspace_snapshot_store.dart';
 
 /// The current vault's label (or file name), sanitized for use in exported
 /// file names. Falls back to "vault" when no vault is active or the label is
@@ -1032,6 +1035,39 @@ class ConnectOnStartupNotifier extends Notifier<bool> {
     await ref
         .read(startupConnectionSettingsProvider)
         .saveConnectOnStartup(value);
+    state = value;
+  }
+}
+
+/// Reads and writes the persisted "last session" workspace snapshot.
+final workspaceSnapshotStoreProvider = Provider<WorkspaceSnapshotStore>((ref) {
+  return WorkspaceSnapshotStore(ref.watch(databaseProvider));
+});
+
+/// Live view of the persisted snapshot, so the dashboard can show the
+/// "restore last workspace" affordance and hide it once restored.
+final workspaceSnapshotProvider = StreamProvider<WorkspaceSnapshot?>((ref) {
+  return ref.watch(workspaceSnapshotStoreProvider).watch();
+});
+
+final workspaceRestoreSettingsProvider = Provider<WorkspaceRestoreSettings>(
+  (ref) => InMemoryWorkspaceRestoreSettings(),
+);
+
+final workspaceRestoreOnStartupProvider =
+    NotifierProvider<WorkspaceRestoreOnStartupNotifier, bool>(
+      WorkspaceRestoreOnStartupNotifier.new,
+    );
+
+class WorkspaceRestoreOnStartupNotifier extends Notifier<bool> {
+  @override
+  bool build() =>
+      ref.read(workspaceRestoreSettingsProvider).restoreWorkspaceOnStartup;
+
+  Future<void> setEnabled(bool value) async {
+    await ref
+        .read(workspaceRestoreSettingsProvider)
+        .saveRestoreWorkspaceOnStartup(value);
     state = value;
   }
 }

@@ -113,6 +113,9 @@ class SettingsPage extends HookConsumerWidget {
     final terminalLightTheme = ref.watch(terminalLightThemeProvider);
     final terminalDarkTheme = ref.watch(terminalDarkThemeProvider);
     final connectOnStartup = ref.watch(connectOnStartupProvider);
+    final restoreWorkspaceOnStartup = ref.watch(
+      workspaceRestoreOnStartupProvider,
+    );
     final hideServerAddresses = ref.watch(hideServerAddressesProvider);
     final transferConflictMode = ref.watch(transferConflictModeProvider);
     final refreshInterval = ref.watch(serverMetricsRefreshIntervalProvider);
@@ -501,6 +504,21 @@ class SettingsPage extends HookConsumerWidget {
                             value: connectOnStartup,
                             onChanged: (value) => ref
                                 .read(connectOnStartupProvider.notifier)
+                                .setEnabled(value),
+                          ),
+                          SwitchListTile(
+                            contentPadding: _sectionTilePadding,
+                            title: const Text(
+                              'settingsRestoreWorkspaceOnStartup',
+                            ).tr(),
+                            subtitle: const Text(
+                              'settingsRestoreWorkspaceOnStartupHint',
+                            ).tr(),
+                            value: restoreWorkspaceOnStartup,
+                            onChanged: (value) => ref
+                                .read(
+                                  workspaceRestoreOnStartupProvider.notifier,
+                                )
                                 .setEnabled(value),
                           ),
                           SwitchListTile(

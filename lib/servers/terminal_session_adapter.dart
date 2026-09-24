@@ -127,6 +127,24 @@ abstract interface class TerminalSessionAdapter {
   /// Current shell directory reported through OSC 7, when available.
   String? get currentDirectory;
 
+  /// Number of buffer rows (scrollback plus the visible grid).
+  ///
+  /// Changes as content scrolls in or out, so callers can skip redundant
+  /// history captures when the value has not changed.
+  int get bufferRows;
+
+  /// Plain-text capture of the terminal's current buffer — scrollback plus
+  /// the visible screen. Returns at most [maxLines] trailing lines, or null
+  /// when the renderer cannot produce a capture.
+  String? dumpHistory({int maxLines = 4000});
+
+  /// Feeds [text] previously captured by [dumpHistory] into the renderer
+  /// buffer without treating it as live program output.
+  ///
+  /// Used to restore a session's scrollback after reconnecting: the content
+  /// is drawn into the terminal but never reaches the connected program.
+  void replayHistory(String text);
+
   /// Latest reason the remote wants the saved password autofilled, or null.
   ///
   /// A sudo password prompt is on screen, or a `sudo …` command is awaiting

@@ -9,6 +9,7 @@
 // coverage:ignore-file
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
+
 import 'package:auto_route/auto_route.dart' as _i15;
 import 'package:maid_kit/agent/agent_page.dart' as _i2;
 import 'package:maid_kit/containers/compose_detail_page.dart' as _i4;
