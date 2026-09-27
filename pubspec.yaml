@@ -80,6 +80,7 @@ dependencies:
       path: packages/maidterm
       ref: 5e305421ac8f0d2e0b9d81c775756aa8f8a85300
   http: ^1.6.0
+  screen_retriever: ^0.2.0
   shared_preferences: ^2.5.5
   tailscale: ^0.9.0
   super_context_menu: ^0.9.1

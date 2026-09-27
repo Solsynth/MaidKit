@@ -10,7 +10,7 @@ MaidKit is a desktop-first Flutter application for managing SSH servers.
 - **Drift** for the local SQLite database. The current schema begins with saved server definitions.
 - **dartssh2** for SSH client connections and remote command execution.
 - **island_ui_foundation** from the Solian Git repository for the desktop window frame and reusable responsive UI utilities.
-- **window_manager** for native desktop window setup.
+- **window_manager** for native desktop window setup, with **screen_retriever** for the display layout saved window bounds are restored against.
 
 ## Source layout
 

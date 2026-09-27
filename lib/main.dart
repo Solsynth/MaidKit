@@ -1,5 +1,3 @@
-import 'dart:ui' show PlatformDispatcher;
-
 import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
@@ -12,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'servers/window_state_preferences.dart';
+import 'servers/window_placement.dart';
 import 'shared/presentation/app_scaffold.dart';
 import 'servers/server_providers.dart';
 import 'servers/app_theme_preferences.dart';
@@ -111,6 +110,17 @@ Future<void> main(List<String> args) async {
     // narrow-layout behavior can be exercised without a mobile device.
     const minimumSize = Size(390, 520);
     final savedWindowState = await loadMaidKitWindowState();
+    // A crash or force-kill after a resize can leave the saved bounds pointing
+    // at a display that is no longer attached (or at one arranged away from
+    // the origin). Move the window back onto an attached display, keeping the
+    // saved size, when that happened.
+    final recoveryFrame = savedWindowState == null
+        ? null
+        : recoveryFrameFor(
+            saved: savedWindowState.bounds,
+            displays: await loadDisplayWorkAreas(),
+            minimumSize: minimumSize,
+          );
     final windowOptions = WindowOptions(
       // Restore the user-adjusted window bounds. A maximized window is
       // reported as maximized rather than by its (unstable) frame size, so it
@@ -122,26 +132,9 @@ Future<void> main(List<String> args) async {
       windowButtonVisibility: true,
     );
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
-      // A crash or force-kill after a resize can leave the saved bounds
-      // pointing at a display that is no longer attached. Re-center the
-      // window when no connected display contains any part of it.
-      if (savedWindowState != null) {
-        final bounds = savedWindowState.bounds;
-        final onDisplay = PlatformDispatcher.instance.displays.any((display) {
-          final displayRect = Rect.fromLTWH(
-            0,
-            0,
-            display.size.width / display.devicePixelRatio,
-            display.size.height / display.devicePixelRatio,
-          );
-          return displayRect.overlaps(bounds);
-        });
-        if (!onDisplay) {
-          await windowManager.setAlignment(Alignment.center);
-          await windowManager.setSize(minimumSize);
-        }
+      if (recoveryFrame != null) {
+        await windowManager.setBounds(recoveryFrame);
       }
-      await windowManager.setMinimumSize(minimumSize);
       if (savedWindowState?.maximized ?? false) {
         await windowManager.maximize();
       }
