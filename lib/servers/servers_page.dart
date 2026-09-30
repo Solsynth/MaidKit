@@ -135,6 +135,8 @@ class ServerDashboardTab extends ConsumerWidget {
                 ServerConnectionType.ssh,
             serialConfig: decodeSerialConfig(server.serialConfig),
             maidCafeTerminalUrl: server.maidCafeTerminalUrl,
+            maidCafeDaemonId: server.maidCafeDaemonId,
+            maidCafeTerminalViaCloud: server.maidCafeTerminalViaCloud,
           ),
           maidCafeTerminalSecretStored:
               server.encryptedMaidCafeTerminalSecret != null,
@@ -1912,6 +1914,8 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   // MaidCafe daemon terminal settings.
   final _maidCafeTerminalUrl = TextEditingController();
   final _maidCafeTerminalSecret = TextEditingController();
+  final _maidCafeDaemonId = TextEditingController();
+  bool _maidCafeTerminalViaCloud = false;
   bool _clearMaidCafeTerminalSecret = false;
 
   // Per-server proxy configuration.
@@ -1959,6 +1963,8 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     // The endpoint is metadata and reopens in the form; the terminal
     // credential is never decrypted into it.
     _maidCafeTerminalUrl.text = initial.maidCafeTerminalUrl ?? '';
+    _maidCafeDaemonId.text = initial.maidCafeDaemonId ?? '';
+    _maidCafeTerminalViaCloud = initial.maidCafeTerminalViaCloud;
     final serialConfig = initial.serialConfig;
     if (serialConfig != null) {
       _serialDevice.text = serialConfig.device;
@@ -2014,6 +2020,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       _serialDevice,
       _maidCafeTerminalUrl,
       _maidCafeTerminalSecret,
+      _maidCafeDaemonId,
     ]) {
       controller.dispose();
     }
@@ -2239,6 +2246,19 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       );
       return;
     }
+    // Routing through the cloud needs a daemon identity to address; the id can
+    // also be entered by hand when the app did not create the daemon.
+    if (_connectionType == ServerConnectionType.maidcafe &&
+        _maidCafeTerminalViaCloud &&
+        _maidCafeDaemonId.text.trim().isEmpty) {
+      showStyledSnackBar(
+        message: 'serverMaidCafeDaemonIdRequired'.tr(),
+        title: 'serverMaidCafeDaemonIdRequired'.tr(),
+        icon: Symbols.cloud,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
     final credential = !_credentialChoice.isNew
         ? null
         : _type == CredentialType.password
@@ -2307,6 +2327,12 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         maidCafeTerminalSecret: _connectionType == ServerConnectionType.maidcafe
             ? _maidCafeTerminalSecret.text
             : null,
+        maidCafeDaemonId: _connectionType == ServerConnectionType.maidcafe
+            ? _maidCafeDaemonId.text.trim()
+            : null,
+        maidCafeTerminalViaCloud:
+            _connectionType == ServerConnectionType.maidcafe &&
+            _maidCafeTerminalViaCloud,
         clearMaidCafeTerminalSecret:
             _clearMaidCafeTerminalSecret ||
             _connectionType != ServerConnectionType.maidcafe,
@@ -2754,6 +2780,23 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                     ),
                   ),
                 ],
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _maidCafeDaemonId,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: 'serverMaidCafeDaemonIdLabel'.tr(),
+                    helperText: 'serverMaidCafeDaemonIdHint'.tr(),
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _maidCafeTerminalViaCloud,
+                  title: Text('serverMaidCafeViaCloudLabel'.tr()),
+                  subtitle: Text('serverMaidCafeViaCloudHint'.tr()),
+                  onChanged: (value) =>
+                      setState(() => _maidCafeTerminalViaCloud = value),
+                ),
                 const SizedBox(height: 12),
                 Text(
                   'serverMaidCafeTerminalNote'.tr(),

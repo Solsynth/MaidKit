@@ -565,6 +565,8 @@ class DatabaseBackupService {
                 maidCafeTerminalSecretNonce: Value(
                   encryptedMaidCafeTerminalSecret?.nonce,
                 ),
+                maidCafeDaemonId: Value(server.maidCafeDaemonId),
+                maidCafeTerminalViaCloud: Value(server.maidCafeTerminalViaCloud),
                 jumpHostServerId: Value(server.jumpHostServerId),
                 environment: Value(server.environment),
                 initialSnippets: Value(server.initialSnippets),

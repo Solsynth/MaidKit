@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/maidcafe_terminal_connection_manager.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
@@ -44,6 +45,100 @@ void main() {
     );
     // 7 bytes encode with padding, which a subprotocol token cannot carry.
     expect(maidCafeTerminalToken('s3cret!'), 'maidcafe.terminal.czNjcmV0IQ');
+  });
+
+  test('cloud-relayed target mints a ticket and offers its token', () async {
+    final offered = <String?>[];
+    final paths = <String>[];
+    final daemon = await _FakeDaemon.start((socket, request) {
+      offered.add(request.headers.value('sec-websocket-protocol'));
+      paths.add(request.uri.path);
+      socket.add(
+        jsonEncode({
+          'type': 'hello',
+          'version': 'v1',
+          'session': 'session-1',
+          'shell': '/bin/sh',
+          'user': 'deploy',
+          'cols': 80,
+          'rows': 24,
+        }),
+      );
+    });
+    addTearDown(daemon.stop);
+
+    final adapter = _RecordingAdapter();
+    final manager = MaidCafeTerminalConnectionManager(
+      () => _AdapterFactory(adapter),
+    );
+    addTearDown(manager.dispose);
+
+    final minted = <(int, int)>[];
+    final target = MaidCafeTerminalTarget(
+      baseUrl: daemon.baseUrl,
+      secret: '',
+      relayDaemonId: 'daemon-1',
+      ticketProvider: (columns, rows) async {
+        minted.add((columns, rows));
+        return MaidCafeTerminalTicket(
+          sessionId: 'session-1',
+          ticket: 'ticket-abc',
+          expiresAt: DateTime.utc(2026, 10, 1, 0, 1),
+          daemonId: 'daemon-1',
+        );
+      },
+    );
+
+    final handle = await manager.openTerminal(
+      _daemonServer(daemon.baseUrl),
+      target,
+    );
+    addTearDown(() => manager.closeTerminal(handle.id));
+
+    // The ticket was minted with the manager's initial geometry, before the
+    // socket was dialed.
+    expect(minted, [
+      (maidCafeTerminalInitialColumns, maidCafeTerminalInitialRows),
+    ]);
+    // The relay endpoint addresses the cloud daemon path.
+    expect(paths.single, '/api/daemons/daemon-1/terminal');
+    // The ticket rides the same encoding as a direct credential.
+    expect(offered.single, 'maidcafe.terminal.c2Vzc2lvbi0xLnRpY2tldC1hYmM');
+  });
+
+  test('a refused ticket fails before any socket is opened', () async {
+    var sockets = 0;
+    final manager = MaidCafeTerminalConnectionManager(
+      () => _AdapterFactory(_RecordingAdapter()),
+      socketFactory: (endpoint, protocols) {
+        sockets++;
+        throw StateError('the socket must not be opened');
+      },
+    );
+    addTearDown(manager.dispose);
+
+    final target = MaidCafeTerminalTarget(
+      baseUrl: 'https://mk.solsynth.dev',
+      secret: '',
+      relayDaemonId: 'daemon-1',
+      ticketProvider: (columns, rows) async => throw const MaidCafeException(
+        'Sign in with Solarpass before managing MaidCafe.',
+        kind: MaidCafeErrorKind.signInRequired,
+      ),
+    );
+
+    await expectLater(
+      manager.openTerminal(_daemonServer(target.baseUrl), target),
+      throwsA(
+        isA<MaidCafeTerminalException>().having(
+          (error) => error.message,
+          'message',
+          contains('Sign in with Solarpass'),
+        ),
+      ),
+    );
+    expect(sockets, 0);
+    expect(manager.current, isEmpty);
   });
 
   test('drives a live daemon terminal session', () async {
@@ -234,6 +329,7 @@ Server _daemonServer(String endpoint) => Server(
   collectSystemInfo: false,
   connectionType: ServerConnectionType.maidcafe.name,
   maidCafeTerminalUrl: endpoint,
+  maidCafeTerminalViaCloud: false,
 );
 
 /// A WebSocket endpoint that speaks the daemon's side of the terminal

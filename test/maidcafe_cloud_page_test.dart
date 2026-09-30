@@ -644,6 +644,7 @@ void main() {
       collectStats: true,
       collectSystemInfo: true,
       connectionType: 'ssh',
+      maidCafeTerminalViaCloud: false,
     );
     await tester.pumpWidget(
       EasyLocalization(

@@ -657,6 +657,7 @@ final serverRepositoryProvider = Provider<ServerRepository>((ref) {
   return ServerRepository(
     ref.watch(databaseProvider),
     ref.watch(vaultServiceProvider),
+    maidCafeService: ref.watch(maidCafeServiceProvider),
   );
 });
 

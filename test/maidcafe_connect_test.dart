@@ -18,6 +18,7 @@ Server _server() => Server(
   collectStats: true,
   collectSystemInfo: true,
   connectionType: 'ssh',
+  maidCafeTerminalViaCloud: false,
 );
 
 class _FakeService extends MaidCafeService {
@@ -87,6 +88,7 @@ void main() {
       final service = _FakeService();
       String? capturedScript;
       String? savedUrl;
+      String? savedDaemonId;
       var installs = 0;
       var invalidations = 0;
       final connector = MaidCafeServerConnectorImpl(
@@ -96,8 +98,9 @@ void main() {
         runScript: ({required server, required script, sudoPassword}) async {
           capturedScript = script;
         },
-        saveDaemonUrl: (server, url) async {
+        saveDaemonUrl: (server, url, daemonId) async {
           savedUrl = url;
+          savedDaemonId = daemonId;
         },
         installDaemon:
             ({
@@ -138,6 +141,7 @@ void main() {
       expect(patched, contains('cloudUrl = "https://mk.solsynth.dev"'));
       expect(patched, contains('cloudSecret = "cloud-secret"'));
       expect(savedUrl, 'http://127.0.0.1:8747');
+      expect(savedDaemonId, 'daemon-new');
       expect(installs, 0);
       expect(invalidations, 1);
     },
@@ -158,7 +162,7 @@ void main() {
       runScript: ({required server, required script, sudoPassword}) async {
         scriptRuns++;
       },
-      saveDaemonUrl: (server, url) async {},
+      saveDaemonUrl: (server, url, daemonId) async {},
       installDaemon:
           ({
             required ref,

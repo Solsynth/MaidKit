@@ -18,6 +18,7 @@ Server _server({int id = 1, String type = 'ssh'}) => Server(
   collectStats: true,
   collectSystemInfo: true,
   connectionType: type,
+  maidCafeTerminalViaCloud: false,
 );
 
 class _FakeAdapter implements TerminalSessionAdapter {

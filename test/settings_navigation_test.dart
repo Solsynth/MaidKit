@@ -316,6 +316,7 @@ void main() {
       collectSystemInfo: true,
       connectionType: 'ssh',
       maidCafeDaemonUrl: 'http://127.0.0.1:8747',
+      maidCafeTerminalViaCloud: false,
     );
     await tester.pumpWidget(
       EasyLocalization(

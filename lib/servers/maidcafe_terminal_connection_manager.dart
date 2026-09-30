@@ -5,36 +5,25 @@ import 'dart:typed_data';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'maidcafe_service.dart';
 import 'server_models.dart';
 import 'ssh_connection_manager.dart';
 import 'terminal_session_adapter.dart';
 
+// The credential encoder lives with the target it authorizes; re-exported here
+// so the manager's importers keep seeing it.
+export 'server_models.dart'
+    show maidCafeTerminalSubprotocolPrefix, maidCafeTerminalToken;
+
 /// Wire protocol version this transport speaks. The daemon announces it in the
 /// hello frame, so an older daemon is detected instead of misread.
 const String maidCafeTerminalProtocolVersion = 'v1';
-
-/// Subprotocol token prefix that carries the terminal credential. A browser
-/// cannot set an `Authorization` header on a WebSocket handshake, so the
-/// daemon accepts `maidcafe.terminal.<base64url-unpadded secret>` as an offered
-/// subprotocol. Native builds use the same token so both paths share one code
-/// path and one credential format.
-const String maidCafeTerminalSubprotocolPrefix = 'maidcafe.terminal.';
 
 /// Initial PTY geometry requested at open. The daemon applies its own defaults
 /// only when no size is sent; the terminal renderer pushes the real size as
 /// soon as it is laid out. These values mirror the SSH path's `SSHPtyConfig`.
 const int maidCafeTerminalInitialColumns = 120;
 const int maidCafeTerminalInitialRows = 36;
-
-/// Builds the subprotocol token that authorizes [secret].
-///
-/// The daemon decodes with unpadded base64url, so padding is stripped; a
-/// padded token would not be a valid subprotocol value either (RFC 6455
-/// tokens are restricted).
-String maidCafeTerminalToken(String secret) {
-  final encoded = base64Url.encode(utf8.encode(secret)).replaceAll('=', '');
-  return '$maidCafeTerminalSubprotocolPrefix$encoded';
-}
 
 /// Opens the socket for [endpoint], offering [protocols]. Injectable so tests
 /// can drive frame handling without a live daemon.
@@ -106,15 +95,20 @@ class MaidCafeTerminalConnectionManager {
       terminal.replayHistory(initialOutput);
     }
     final terminalId = 'maidcafe-${_nextTerminalId++}';
-    final endpoint = target.endpoint.replace(
-      queryParameters: {
-        'cols': '$maidCafeTerminalInitialColumns',
-        'rows': '$maidCafeTerminalInitialRows',
-      },
-    );
-    final channel = _socketFactory(endpoint, [
-      maidCafeTerminalToken(target.secret),
-    ]);
+    // A cloud-relayed target mints its one-time ticket before the socket is
+    // dialed, so a refused ticket fails the open without opening anything. The
+    // ticket POST carries the PTY geometry; the cloud ignores query parameters
+    // on the browser socket.
+    final credential = await _credentialFor(target);
+    final endpoint = target.isRelayed
+        ? target.endpoint
+        : target.endpoint.replace(
+            queryParameters: {
+              'cols': '$maidCafeTerminalInitialColumns',
+              'rows': '$maidCafeTerminalInitialRows',
+            },
+          );
+    final channel = _socketFactory(endpoint, [credential]);
     final connection = _MaidCafeTerminalConnection(
       serverId: server.id,
       channel: channel,
@@ -127,9 +121,15 @@ class MaidCafeTerminalConnectionManager {
       // single-subscription close never completes, so it is fire and forget.
       unawaited(connection.output.close());
       throw MaidCafeTerminalException(
-        'Cannot open the MaidCafe daemon terminal at ${target.baseUrl}: $error. '
-        'Check the daemon endpoint, the terminal credential, and that this '
-        'origin is listed in daemon.terminal.allowedOrigins.',
+        target.isRelayed
+            ? 'Cannot open the cloud-relayed MaidCafe terminal at '
+                  '${target.baseUrl}: $error. Check that you are signed in '
+                  'with Solarpass and that this workspace still owns the '
+                  'daemon.'
+            : 'Cannot open the MaidCafe daemon terminal at ${target.baseUrl}: '
+                  '$error. Check the daemon endpoint, the terminal credential, '
+                  'and that this origin is listed in '
+                  'daemon.terminal.allowedOrigins.',
       );
     }
     final binding = TerminalSessionBinding(
@@ -168,6 +168,32 @@ class MaidCafeTerminalConnectionManager {
       adapter: terminal,
       done: connection.done.future,
     );
+  }
+
+  /// Resolves the subprotocol credential for [target]: a freshly minted cloud
+  /// ticket for a relayed target, or the daemon secret for a direct one.
+  ///
+  /// A ticket failure surfaces as [MaidCafeTerminalException] before any socket
+  /// is opened, so callers can treat it like a refused handshake.
+  Future<String> _credentialFor(MaidCafeTerminalTarget target) async {
+    final provider = target.ticketProvider;
+    if (provider == null) return maidCafeTerminalToken(target.secret);
+    final MaidCafeTerminalTicket ticket;
+    try {
+      ticket = await provider(
+        maidCafeTerminalInitialColumns,
+        maidCafeTerminalInitialRows,
+      );
+    } on MaidCafeException catch (error) {
+      throw MaidCafeTerminalException(
+        'Cannot open the cloud-relayed MaidCafe terminal: ${error.message}',
+      );
+    } catch (error) {
+      throw MaidCafeTerminalException(
+        'Cannot open the cloud-relayed MaidCafe terminal: $error',
+      );
+    }
+    return target.sessionToken(ticket.sessionId, ticket.ticket);
   }
 
   /// Closes the terminal with [terminalId]. Idempotent: unknown ids are

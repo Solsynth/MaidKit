@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'maidcafe_service.dart';
+
 enum CredentialType { password, privateKey, none }
 
 class SavedCredentialDraft {
@@ -80,6 +82,8 @@ class ServerDraft {
     this.maidCafeTerminalUrl,
     this.maidCafeTerminalSecret,
     this.clearMaidCafeTerminalSecret = false,
+    this.maidCafeDaemonId,
+    this.maidCafeTerminalViaCloud = false,
   });
 
   final String name;
@@ -143,6 +147,16 @@ class ServerDraft {
 
   /// Whether an edit should delete the stored terminal credential.
   final bool clearMaidCafeTerminalSecret;
+
+  /// The cloud daemon uuid this server is registered as. Set when the app
+  /// creates the daemon (or entered by hand); required to route terminals
+  /// through the cloud relay.
+  final String? maidCafeDaemonId;
+
+  /// Whether terminals go through the MaidCafe cloud relay instead of dialing
+  /// the daemon directly. The relay reaches a daemon behind NAT, which is the
+  /// only option for a browser build that cannot route to the daemon.
+  final bool maidCafeTerminalViaCloud;
 }
 
 /// JSON-encodes [environment] for storage, or null when it is empty.
@@ -207,21 +221,67 @@ ServerConnectionType serverConnectionTypeFromName(String? raw) =>
 /// Windows and Linux need their own transport before this flag can cover them.
 const bool serialPortsSupported = true;
 
+/// Subprotocol token prefix that carries a terminal credential. A browser
+/// cannot set an `Authorization` header on a WebSocket handshake, so the
+/// daemon (direct) and the MaidCafe cloud (relayed) accept
+/// `maidcafe.terminal.<base64url-unpadded credential>` as an offered
+/// subprotocol. Native builds use the same token so both paths share one code
+/// path and one credential format.
+const String maidCafeTerminalSubprotocolPrefix = 'maidcafe.terminal.';
+
+/// Builds the subprotocol token that carries [credential].
+///
+/// The peer decodes with unpadded base64url, so padding is stripped; a padded
+/// token would not be a valid subprotocol value either (RFC 6455 tokens are
+/// restricted).
+String maidCafeTerminalToken(String credential) {
+  final encoded = base64Url.encode(utf8.encode(credential)).replaceAll('=', '');
+  return '$maidCafeTerminalSubprotocolPrefix$encoded';
+}
+
+/// Mints a one-time cloud ticket for a relayed session with the requested PTY
+/// geometry. Sampled by [MaidCafeTerminalTarget.ticketProvider].
+typedef MaidCafeTerminalTicketProvider =
+    Future<MaidCafeTerminalTicket> Function(int columns, int rows);
+
 /// A resolved MaidCafe daemon terminal endpoint and its credential.
 ///
-/// [baseUrl] is the daemon root the app dials (e.g.
-/// `https://host.tailnet.ts.net`); the transport appends
-/// `/api/v1/terminal`. [secret] is the dedicated terminal secret when one is
-/// stored and the daemon metrics secret otherwise, matching the daemon's own
-/// `daemon.terminal.secret` fallback.
+/// [baseUrl] is the root the app dials: the daemon itself (e.g.
+/// `https://host.tailnet.ts.net`, authorized by [secret]) or the MaidCafe cloud
+/// for a relayed session (e.g. `https://mk.solsynth.dev`, with
+/// [relayDaemonId] and [ticketProvider] set). The transport appends
+/// `/api/v1/terminal`, or `/api/daemons/{id}/terminal` for a relayed session.
+/// [secret] is the dedicated terminal secret when one is stored and the daemon
+/// metrics secret otherwise, matching the daemon's own `daemon.terminal.secret`
+/// fallback.
 class MaidCafeTerminalTarget {
-  const MaidCafeTerminalTarget({required this.baseUrl, required this.secret});
+  const MaidCafeTerminalTarget({
+    required this.baseUrl,
+    required this.secret,
+    this.relayDaemonId,
+    this.ticketProvider,
+  });
 
   final String baseUrl;
   final String secret;
 
-  /// The `ws`/`wss` endpoint for the daemon terminal, keeping the configured
-  /// scheme's security: `https` becomes `wss` so a TLS-fronted daemon is never
+  /// Cloud daemon uuid for a cloud-relayed session. When set, [endpoint]
+  /// addresses the relay (`{baseUrl}/api/daemons/{id}/terminal`) and the
+  /// session is authorized by [ticketProvider] instead of [secret]; when null
+  /// the target is the daemon's own directly reachable endpoint.
+  final String? relayDaemonId;
+
+  /// Mints the one-time ticket a relayed handshake carries, with the geometry
+  /// the daemon should start the shell at. Set together with [relayDaemonId];
+  /// the daemon never sees the ticket, it authenticates its outbound dial with
+  /// its own cloud secret.
+  final MaidCafeTerminalTicketProvider? ticketProvider;
+
+  /// Whether this target goes through the MaidCafe cloud relay.
+  bool get isRelayed => relayDaemonId != null;
+
+  /// The `ws`/`wss` endpoint for the terminal session, keeping the configured
+  /// scheme's security: `https` becomes `wss` so a TLS-fronted host is never
   /// downgraded to a cleartext socket.
   ///
   /// A base path is preserved, so a daemon behind a path-prefixed reverse
@@ -235,15 +295,25 @@ class MaidCafeTerminalTarget {
       _ => throw ArgumentError('Unsupported daemon endpoint: $baseUrl'),
     };
     final prefix = base.path.replaceFirst(RegExp(r'/+$'), '');
+    final daemonId = relayDaemonId;
     // Built explicitly: Uri.replace(query: '') would leave a trailing '?'.
     return Uri(
       scheme: scheme,
       userInfo: base.userInfo,
       host: base.host,
       port: base.hasPort ? base.port : null,
-      path: '$prefix/api/v1/terminal',
+      path: daemonId == null
+          ? '$prefix/api/v1/terminal'
+          : '$prefix/api/daemons/$daemonId/terminal',
     );
   }
+
+  /// Builds the subprotocol credential for a cloud-relayed session, reusing
+  /// [maidCafeTerminalToken] so a direct and a relayed handshake carry the
+  /// same encoding. The cloud splits the decoded payload on the first `.` into
+  /// the session id and the ticket ([sessionId] is a uuid, so it holds none).
+  String sessionToken(String sessionId, String ticket) =>
+      maidCafeTerminalToken('$sessionId.$ticket');
 }
 
 enum SerialParity { none, even, odd }

@@ -127,6 +127,77 @@ void main() {
     },
   );
 
+  test('terminal ticket is minted and parsed', () async {
+    late RequestOptions request;
+    final dio = Dio()
+      ..httpClientAdapter = _Adapter((options) async {
+        request = options;
+        return _json({
+          'session_id': 'session-1',
+          'ticket': 'ticket-abc',
+          'expires_at': '2026-10-01T00:00:30Z',
+          'daemon_id': 'daemon-1',
+        }, 201);
+      });
+    final service = MaidCafeService(
+      baseUrl: 'https://mk.solsynth.dev',
+      cloudSync: CloudSyncService(vaultId: 'test'),
+      accessToken: () async => 'solar-token',
+      dio: dio,
+      secureStorage: _MemoryStorage(),
+    );
+
+    final ticket = await service.createTerminalSession(
+      'daemon-1',
+      shell: ' /bin/bash ',
+      user: 'deploy',
+      columns: 120,
+      rows: 36,
+    );
+
+    expect(request.method, 'POST');
+    expect(
+      request.uri.toString(),
+      'https://mk.solsynth.dev/api/daemons/daemon-1/terminal',
+    );
+    expect(request.headers['Authorization'], 'Bearer solar-token');
+    expect(request.data, {
+      'shell': '/bin/bash',
+      'user': 'deploy',
+      'cols': 120,
+      'rows': 36,
+    });
+    expect(ticket.sessionId, 'session-1');
+    expect(ticket.ticket, 'ticket-abc');
+    expect(ticket.expiresAt, DateTime.utc(2026, 10, 1, 0, 0, 30));
+    expect(ticket.daemonId, 'daemon-1');
+  });
+
+  test('terminal ticket omits unset shell, user and geometry', () async {
+    late RequestOptions request;
+    final dio = Dio()
+      ..httpClientAdapter = _Adapter((options) async {
+        request = options;
+        return _json({
+          'session_id': 'session-1',
+          'ticket': 'ticket-abc',
+          'expires_at': '2026-10-01T00:00:30Z',
+          'daemon_id': 'daemon-1',
+        }, 201);
+      });
+    final service = MaidCafeService(
+      baseUrl: 'https://mk.solsynth.dev',
+      cloudSync: CloudSyncService(vaultId: 'test'),
+      accessToken: () async => 'solar-token',
+      dio: dio,
+      secureStorage: _MemoryStorage(),
+    );
+
+    await service.createTerminalSession('daemon-1', columns: 0, rows: 0);
+
+    expect(request.data, <String, Object?>{});
+  });
+
   test(
     'workspace quota is fetched with the Solarpass bearer and parsed',
     () async {

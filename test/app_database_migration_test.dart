@@ -129,6 +129,16 @@ void main() {
             .get();
         expect(terminalColumns, hasLength(3));
 
+        // The cloud relay daemon id and flag are added in schema 36.
+        final relayColumns = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('servers') "
+              "WHERE name IN ('maid_cafe_daemon_id', "
+              "'maid_cafe_terminal_via_cloud')",
+            )
+            .get();
+        expect(relayColumns, hasLength(2));
+
         final authKeyColumns = await database
             .customSelect(
               "SELECT name FROM pragma_table_info('vault_metadata') "

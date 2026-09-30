@@ -123,6 +123,7 @@ class _FakeRepository extends ServerRepository {
     bool clearWebhookSecret = false,
     String? metricsSecret,
     bool clearMetricsSecret = false,
+    String? daemonId,
   }) async {}
 }
 
@@ -300,6 +301,7 @@ Future<void> pumpRunningPayloadTab(
     collectStats: true,
     collectSystemInfo: true,
     connectionType: 'ssh',
+    maidCafeTerminalViaCloud: false,
   );
   await tester.pumpWidget(
     EasyLocalization(
@@ -501,6 +503,7 @@ void main() {
       collectStats: true,
       collectSystemInfo: true,
       connectionType: 'ssh',
+      maidCafeTerminalViaCloud: false,
     );
     await tester.pumpWidget(
       EasyLocalization(

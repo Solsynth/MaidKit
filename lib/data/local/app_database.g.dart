@@ -430,6 +430,32 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _maidCafeDaemonIdMeta = const VerificationMeta(
+    'maidCafeDaemonId',
+  );
+  @override
+  late final GeneratedColumn<String> maidCafeDaemonId = GeneratedColumn<String>(
+    'maid_cafe_daemon_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _maidCafeTerminalViaCloudMeta =
+      const VerificationMeta('maidCafeTerminalViaCloud');
+  @override
+  late final GeneratedColumn<bool> maidCafeTerminalViaCloud =
+      GeneratedColumn<bool>(
+        'maid_cafe_terminal_via_cloud',
+        aliasedName,
+        false,
+        type: DriftSqlType.bool,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("maid_cafe_terminal_via_cloud" IN (0, 1))',
+        ),
+        defaultValue: const Constant(false),
+      );
   static const VerificationMeta _sortOrderMeta = const VerificationMeta(
     'sortOrder',
   );
@@ -503,6 +529,8 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     maidCafeTerminalUrl,
     encryptedMaidCafeTerminalSecret,
     maidCafeTerminalSecretNonce,
+    maidCafeDaemonId,
+    maidCafeTerminalViaCloud,
     sortOrder,
     fileManagementInitialPath,
     fileManagementFavorites,
@@ -825,6 +853,24 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         ),
       );
     }
+    if (data.containsKey('maid_cafe_daemon_id')) {
+      context.handle(
+        _maidCafeDaemonIdMeta,
+        maidCafeDaemonId.isAcceptableOrUnknown(
+          data['maid_cafe_daemon_id']!,
+          _maidCafeDaemonIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('maid_cafe_terminal_via_cloud')) {
+      context.handle(
+        _maidCafeTerminalViaCloudMeta,
+        maidCafeTerminalViaCloud.isAcceptableOrUnknown(
+          data['maid_cafe_terminal_via_cloud']!,
+          _maidCafeTerminalViaCloudMeta,
+        ),
+      );
+    }
     if (data.containsKey('sort_order')) {
       context.handle(
         _sortOrderMeta,
@@ -1010,6 +1056,14 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
         DriftSqlType.string,
         data['${effectivePrefix}maid_cafe_terminal_secret_nonce'],
       ),
+      maidCafeDaemonId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}maid_cafe_daemon_id'],
+      ),
+      maidCafeTerminalViaCloud: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}maid_cafe_terminal_via_cloud'],
+      )!,
       sortOrder: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}sort_order'],
@@ -1070,6 +1124,8 @@ class Server extends DataClass implements Insertable<Server> {
   final String? maidCafeTerminalUrl;
   final String? encryptedMaidCafeTerminalSecret;
   final String? maidCafeTerminalSecretNonce;
+  final String? maidCafeDaemonId;
+  final bool maidCafeTerminalViaCloud;
   final int? sortOrder;
   final String? fileManagementInitialPath;
   final String? fileManagementFavorites;
@@ -1112,6 +1168,8 @@ class Server extends DataClass implements Insertable<Server> {
     this.maidCafeTerminalUrl,
     this.encryptedMaidCafeTerminalSecret,
     this.maidCafeTerminalSecretNonce,
+    this.maidCafeDaemonId,
+    required this.maidCafeTerminalViaCloud,
     this.sortOrder,
     this.fileManagementInitialPath,
     this.fileManagementFavorites,
@@ -1231,6 +1289,12 @@ class Server extends DataClass implements Insertable<Server> {
         maidCafeTerminalSecretNonce,
       );
     }
+    if (!nullToAbsent || maidCafeDaemonId != null) {
+      map['maid_cafe_daemon_id'] = Variable<String>(maidCafeDaemonId);
+    }
+    map['maid_cafe_terminal_via_cloud'] = Variable<bool>(
+      maidCafeTerminalViaCloud,
+    );
     if (!nullToAbsent || sortOrder != null) {
       map['sort_order'] = Variable<int>(sortOrder);
     }
@@ -1351,6 +1415,10 @@ class Server extends DataClass implements Insertable<Server> {
           maidCafeTerminalSecretNonce == null && nullToAbsent
           ? const Value.absent()
           : Value(maidCafeTerminalSecretNonce),
+      maidCafeDaemonId: maidCafeDaemonId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(maidCafeDaemonId),
+      maidCafeTerminalViaCloud: Value(maidCafeTerminalViaCloud),
       sortOrder: sortOrder == null && nullToAbsent
           ? const Value.absent()
           : Value(sortOrder),
@@ -1432,6 +1500,10 @@ class Server extends DataClass implements Insertable<Server> {
       maidCafeTerminalSecretNonce: serializer.fromJson<String?>(
         json['maidCafeTerminalSecretNonce'],
       ),
+      maidCafeDaemonId: serializer.fromJson<String?>(json['maidCafeDaemonId']),
+      maidCafeTerminalViaCloud: serializer.fromJson<bool>(
+        json['maidCafeTerminalViaCloud'],
+      ),
       sortOrder: serializer.fromJson<int?>(json['sortOrder']),
       fileManagementInitialPath: serializer.fromJson<String?>(
         json['fileManagementInitialPath'],
@@ -1497,6 +1569,10 @@ class Server extends DataClass implements Insertable<Server> {
       'maidCafeTerminalSecretNonce': serializer.toJson<String?>(
         maidCafeTerminalSecretNonce,
       ),
+      'maidCafeDaemonId': serializer.toJson<String?>(maidCafeDaemonId),
+      'maidCafeTerminalViaCloud': serializer.toJson<bool>(
+        maidCafeTerminalViaCloud,
+      ),
       'sortOrder': serializer.toJson<int?>(sortOrder),
       'fileManagementInitialPath': serializer.toJson<String?>(
         fileManagementInitialPath,
@@ -1546,6 +1622,8 @@ class Server extends DataClass implements Insertable<Server> {
     Value<String?> maidCafeTerminalUrl = const Value.absent(),
     Value<String?> encryptedMaidCafeTerminalSecret = const Value.absent(),
     Value<String?> maidCafeTerminalSecretNonce = const Value.absent(),
+    Value<String?> maidCafeDaemonId = const Value.absent(),
+    bool? maidCafeTerminalViaCloud,
     Value<int?> sortOrder = const Value.absent(),
     Value<String?> fileManagementInitialPath = const Value.absent(),
     Value<String?> fileManagementFavorites = const Value.absent(),
@@ -1626,6 +1704,11 @@ class Server extends DataClass implements Insertable<Server> {
     maidCafeTerminalSecretNonce: maidCafeTerminalSecretNonce.present
         ? maidCafeTerminalSecretNonce.value
         : this.maidCafeTerminalSecretNonce,
+    maidCafeDaemonId: maidCafeDaemonId.present
+        ? maidCafeDaemonId.value
+        : this.maidCafeDaemonId,
+    maidCafeTerminalViaCloud:
+        maidCafeTerminalViaCloud ?? this.maidCafeTerminalViaCloud,
     sortOrder: sortOrder.present ? sortOrder.value : this.sortOrder,
     fileManagementInitialPath: fileManagementInitialPath.present
         ? fileManagementInitialPath.value
@@ -1727,6 +1810,12 @@ class Server extends DataClass implements Insertable<Server> {
       maidCafeTerminalSecretNonce: data.maidCafeTerminalSecretNonce.present
           ? data.maidCafeTerminalSecretNonce.value
           : this.maidCafeTerminalSecretNonce,
+      maidCafeDaemonId: data.maidCafeDaemonId.present
+          ? data.maidCafeDaemonId.value
+          : this.maidCafeDaemonId,
+      maidCafeTerminalViaCloud: data.maidCafeTerminalViaCloud.present
+          ? data.maidCafeTerminalViaCloud.value
+          : this.maidCafeTerminalViaCloud,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
       fileManagementInitialPath: data.fileManagementInitialPath.present
           ? data.fileManagementInitialPath.value
@@ -1784,6 +1873,8 @@ class Server extends DataClass implements Insertable<Server> {
             'encryptedMaidCafeTerminalSecret: $encryptedMaidCafeTerminalSecret, ',
           )
           ..write('maidCafeTerminalSecretNonce: $maidCafeTerminalSecretNonce, ')
+          ..write('maidCafeDaemonId: $maidCafeDaemonId, ')
+          ..write('maidCafeTerminalViaCloud: $maidCafeTerminalViaCloud, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('fileManagementInitialPath: $fileManagementInitialPath, ')
           ..write('fileManagementFavorites: $fileManagementFavorites')
@@ -1831,6 +1922,8 @@ class Server extends DataClass implements Insertable<Server> {
     maidCafeTerminalUrl,
     encryptedMaidCafeTerminalSecret,
     maidCafeTerminalSecretNonce,
+    maidCafeDaemonId,
+    maidCafeTerminalViaCloud,
     sortOrder,
     fileManagementInitialPath,
     fileManagementFavorites,
@@ -1881,6 +1974,8 @@ class Server extends DataClass implements Insertable<Server> {
               this.encryptedMaidCafeTerminalSecret &&
           other.maidCafeTerminalSecretNonce ==
               this.maidCafeTerminalSecretNonce &&
+          other.maidCafeDaemonId == this.maidCafeDaemonId &&
+          other.maidCafeTerminalViaCloud == this.maidCafeTerminalViaCloud &&
           other.sortOrder == this.sortOrder &&
           other.fileManagementInitialPath == this.fileManagementInitialPath &&
           other.fileManagementFavorites == this.fileManagementFavorites);
@@ -1925,6 +2020,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
   final Value<String?> maidCafeTerminalUrl;
   final Value<String?> encryptedMaidCafeTerminalSecret;
   final Value<String?> maidCafeTerminalSecretNonce;
+  final Value<String?> maidCafeDaemonId;
+  final Value<bool> maidCafeTerminalViaCloud;
   final Value<int?> sortOrder;
   final Value<String?> fileManagementInitialPath;
   final Value<String?> fileManagementFavorites;
@@ -1967,6 +2064,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.maidCafeTerminalUrl = const Value.absent(),
     this.encryptedMaidCafeTerminalSecret = const Value.absent(),
     this.maidCafeTerminalSecretNonce = const Value.absent(),
+    this.maidCafeDaemonId = const Value.absent(),
+    this.maidCafeTerminalViaCloud = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.fileManagementInitialPath = const Value.absent(),
     this.fileManagementFavorites = const Value.absent(),
@@ -2010,6 +2109,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     this.maidCafeTerminalUrl = const Value.absent(),
     this.encryptedMaidCafeTerminalSecret = const Value.absent(),
     this.maidCafeTerminalSecretNonce = const Value.absent(),
+    this.maidCafeDaemonId = const Value.absent(),
+    this.maidCafeTerminalViaCloud = const Value.absent(),
     this.sortOrder = const Value.absent(),
     this.fileManagementInitialPath = const Value.absent(),
     this.fileManagementFavorites = const Value.absent(),
@@ -2055,6 +2156,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Expression<String>? maidCafeTerminalUrl,
     Expression<String>? encryptedMaidCafeTerminalSecret,
     Expression<String>? maidCafeTerminalSecretNonce,
+    Expression<String>? maidCafeDaemonId,
+    Expression<bool>? maidCafeTerminalViaCloud,
     Expression<int>? sortOrder,
     Expression<String>? fileManagementInitialPath,
     Expression<String>? fileManagementFavorites,
@@ -2109,6 +2212,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
         'encrypted_maid_cafe_terminal_secret': encryptedMaidCafeTerminalSecret,
       if (maidCafeTerminalSecretNonce != null)
         'maid_cafe_terminal_secret_nonce': maidCafeTerminalSecretNonce,
+      if (maidCafeDaemonId != null) 'maid_cafe_daemon_id': maidCafeDaemonId,
+      if (maidCafeTerminalViaCloud != null)
+        'maid_cafe_terminal_via_cloud': maidCafeTerminalViaCloud,
       if (sortOrder != null) 'sort_order': sortOrder,
       if (fileManagementInitialPath != null)
         'file_management_initial_path': fileManagementInitialPath,
@@ -2156,6 +2262,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
     Value<String?>? maidCafeTerminalUrl,
     Value<String?>? encryptedMaidCafeTerminalSecret,
     Value<String?>? maidCafeTerminalSecretNonce,
+    Value<String?>? maidCafeDaemonId,
+    Value<bool>? maidCafeTerminalViaCloud,
     Value<int?>? sortOrder,
     Value<String?>? fileManagementInitialPath,
     Value<String?>? fileManagementFavorites,
@@ -2207,6 +2315,9 @@ class ServersCompanion extends UpdateCompanion<Server> {
           this.encryptedMaidCafeTerminalSecret,
       maidCafeTerminalSecretNonce:
           maidCafeTerminalSecretNonce ?? this.maidCafeTerminalSecretNonce,
+      maidCafeDaemonId: maidCafeDaemonId ?? this.maidCafeDaemonId,
+      maidCafeTerminalViaCloud:
+          maidCafeTerminalViaCloud ?? this.maidCafeTerminalViaCloud,
       sortOrder: sortOrder ?? this.sortOrder,
       fileManagementInitialPath:
           fileManagementInitialPath ?? this.fileManagementInitialPath,
@@ -2348,6 +2459,14 @@ class ServersCompanion extends UpdateCompanion<Server> {
         maidCafeTerminalSecretNonce.value,
       );
     }
+    if (maidCafeDaemonId.present) {
+      map['maid_cafe_daemon_id'] = Variable<String>(maidCafeDaemonId.value);
+    }
+    if (maidCafeTerminalViaCloud.present) {
+      map['maid_cafe_terminal_via_cloud'] = Variable<bool>(
+        maidCafeTerminalViaCloud.value,
+      );
+    }
     if (sortOrder.present) {
       map['sort_order'] = Variable<int>(sortOrder.value);
     }
@@ -2411,6 +2530,8 @@ class ServersCompanion extends UpdateCompanion<Server> {
             'encryptedMaidCafeTerminalSecret: $encryptedMaidCafeTerminalSecret, ',
           )
           ..write('maidCafeTerminalSecretNonce: $maidCafeTerminalSecretNonce, ')
+          ..write('maidCafeDaemonId: $maidCafeDaemonId, ')
+          ..write('maidCafeTerminalViaCloud: $maidCafeTerminalViaCloud, ')
           ..write('sortOrder: $sortOrder, ')
           ..write('fileManagementInitialPath: $fileManagementInitialPath, ')
           ..write('fileManagementFavorites: $fileManagementFavorites')
@@ -10651,6 +10772,8 @@ typedef $$ServersTableCreateCompanionBuilder =
       Value<String?> maidCafeTerminalUrl,
       Value<String?> encryptedMaidCafeTerminalSecret,
       Value<String?> maidCafeTerminalSecretNonce,
+      Value<String?> maidCafeDaemonId,
+      Value<bool> maidCafeTerminalViaCloud,
       Value<int?> sortOrder,
       Value<String?> fileManagementInitialPath,
       Value<String?> fileManagementFavorites,
@@ -10695,6 +10818,8 @@ typedef $$ServersTableUpdateCompanionBuilder =
       Value<String?> maidCafeTerminalUrl,
       Value<String?> encryptedMaidCafeTerminalSecret,
       Value<String?> maidCafeTerminalSecretNonce,
+      Value<String?> maidCafeDaemonId,
+      Value<bool> maidCafeTerminalViaCloud,
       Value<int?> sortOrder,
       Value<String?> fileManagementInitialPath,
       Value<String?> fileManagementFavorites,
@@ -10899,6 +11024,16 @@ class $$ServersTableFilterComposer
 
   ColumnFilters<String> get maidCafeTerminalSecretNonce => $composableBuilder(
     column: $table.maidCafeTerminalSecretNonce,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get maidCafeDaemonId => $composableBuilder(
+    column: $table.maidCafeDaemonId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get maidCafeTerminalViaCloud => $composableBuilder(
+    column: $table.maidCafeTerminalViaCloud,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -11120,6 +11255,16 @@ class $$ServersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get maidCafeDaemonId => $composableBuilder(
+    column: $table.maidCafeDaemonId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get maidCafeTerminalViaCloud => $composableBuilder(
+    column: $table.maidCafeTerminalViaCloud,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get sortOrder => $composableBuilder(
     column: $table.sortOrder,
     builder: (column) => ColumnOrderings(column),
@@ -11312,6 +11457,16 @@ class $$ServersTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get maidCafeDaemonId => $composableBuilder(
+    column: $table.maidCafeDaemonId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get maidCafeTerminalViaCloud => $composableBuilder(
+    column: $table.maidCafeTerminalViaCloud,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get sortOrder =>
       $composableBuilder(column: $table.sortOrder, builder: (column) => column);
 
@@ -11398,6 +11553,8 @@ class $$ServersTableTableManager
                     const Value.absent(),
                 Value<String?> maidCafeTerminalSecretNonce =
                     const Value.absent(),
+                Value<String?> maidCafeDaemonId = const Value.absent(),
+                Value<bool> maidCafeTerminalViaCloud = const Value.absent(),
                 Value<int?> sortOrder = const Value.absent(),
                 Value<String?> fileManagementInitialPath = const Value.absent(),
                 Value<String?> fileManagementFavorites = const Value.absent(),
@@ -11441,6 +11598,8 @@ class $$ServersTableTableManager
                 encryptedMaidCafeTerminalSecret:
                     encryptedMaidCafeTerminalSecret,
                 maidCafeTerminalSecretNonce: maidCafeTerminalSecretNonce,
+                maidCafeDaemonId: maidCafeDaemonId,
+                maidCafeTerminalViaCloud: maidCafeTerminalViaCloud,
                 sortOrder: sortOrder,
                 fileManagementInitialPath: fileManagementInitialPath,
                 fileManagementFavorites: fileManagementFavorites,
@@ -11491,6 +11650,8 @@ class $$ServersTableTableManager
                     const Value.absent(),
                 Value<String?> maidCafeTerminalSecretNonce =
                     const Value.absent(),
+                Value<String?> maidCafeDaemonId = const Value.absent(),
+                Value<bool> maidCafeTerminalViaCloud = const Value.absent(),
                 Value<int?> sortOrder = const Value.absent(),
                 Value<String?> fileManagementInitialPath = const Value.absent(),
                 Value<String?> fileManagementFavorites = const Value.absent(),
@@ -11534,6 +11695,8 @@ class $$ServersTableTableManager
                 encryptedMaidCafeTerminalSecret:
                     encryptedMaidCafeTerminalSecret,
                 maidCafeTerminalSecretNonce: maidCafeTerminalSecretNonce,
+                maidCafeDaemonId: maidCafeDaemonId,
+                maidCafeTerminalViaCloud: maidCafeTerminalViaCloud,
                 sortOrder: sortOrder,
                 fileManagementInitialPath: fileManagementInitialPath,
                 fileManagementFavorites: fileManagementFavorites,

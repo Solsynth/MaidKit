@@ -130,6 +130,35 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
   }
 }
 
+/// A one-time ticket that authorizes one cloud-relayed terminal session.
+///
+/// [MaidCafeService.createTerminalSession] mints it; the cloud keeps only its
+/// hash. The client offers `sessionId.ticket` as a subprotocol token on the
+/// browser socket, and the daemon never sees it — it authenticates its own
+/// outbound dial with its cloud secret. The ticket expires shortly after
+/// [expiresAt] and authorizes exactly one upgrade.
+class MaidCafeTerminalTicket {
+  const MaidCafeTerminalTicket({
+    required this.sessionId,
+    required this.ticket,
+    required this.expiresAt,
+    required this.daemonId,
+  });
+
+  final String sessionId;
+  final String ticket;
+  final DateTime expiresAt;
+  final String daemonId;
+
+  factory MaidCafeTerminalTicket.fromJson(Map<String, dynamic> json) =>
+      MaidCafeTerminalTicket(
+        sessionId: _requiredString(json, 'session_id'),
+        ticket: _requiredString(json, 'ticket'),
+        expiresAt: _requiredDate(json, 'expires_at'),
+        daemonId: _requiredString(json, 'daemon_id'),
+      );
+}
+
 class MaidCafeNotification {
   const MaidCafeNotification({
     required this.id,
@@ -620,6 +649,36 @@ class MaidCafeService {
     );
     await _writeCloudSecret(credential.id, credential.secret);
     return credential;
+  }
+
+  /// Mints a one-time ticket for a cloud-relayed terminal session on
+  /// [daemonId], with the optional [shell], [user] and PTY geometry the daemon
+  /// should start the shell with. Omitted fields fall back to the daemon's own
+  /// `daemon.terminal.*` defaults.
+  ///
+  /// The ticket authorizes one browser WebSocket upgrade against the cloud,
+  /// which relays the session to the daemon; the daemon needs no inbound
+  /// reachability because it picks the session up by long-poll and dials out.
+  Future<MaidCafeTerminalTicket> createTerminalSession(
+    String daemonId, {
+    String? shell,
+    String? user,
+    int? columns,
+    int? rows,
+  }) async {
+    final response = await _cloudRequest(
+      (token) => _dio.post<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/terminal',
+        data: {
+          if (shell != null && shell.trim().isNotEmpty) 'shell': shell.trim(),
+          if (user != null && user.trim().isNotEmpty) 'user': user.trim(),
+          if (columns != null && columns > 0) 'cols': columns,
+          if (rows != null && rows > 0) 'rows': rows,
+        },
+        options: _cloudOptions(token),
+      ),
+    );
+    return MaidCafeTerminalTicket.fromJson(_responseMap(response));
   }
 
   Future<List<MaidCafeDaemon>> listDaemons({

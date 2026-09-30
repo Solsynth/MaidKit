@@ -64,6 +64,13 @@ class Servers extends Table {
   TextColumn get maidCafeTerminalUrl => text().nullable()();
   TextColumn get encryptedMaidCafeTerminalSecret => text().nullable()();
   TextColumn get maidCafeTerminalSecretNonce => text().nullable()();
+  // MaidCafe cloud relay: the cloud daemon uuid this server is registered as,
+  // and whether terminals go through the cloud relay instead of dialing the
+  // daemon directly. The relay is what lets a browser build attach a terminal
+  // to a daemon behind NAT, where the daemon itself is unreachable.
+  TextColumn get maidCafeDaemonId => text().nullable()();
+  BoolColumn get maidCafeTerminalViaCloud =>
+      boolean().withDefault(const Constant(false))();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -362,7 +369,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 35;
+  int get schemaVersion => 36;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -749,6 +756,22 @@ class AppDatabase extends _$AppDatabase {
         }
         if (!existing.contains('maid_cafe_terminal_secret_nonce')) {
           await m.addColumn(servers, servers.maidCafeTerminalSecretNonce);
+        }
+      }
+      if (from < 36) {
+        final relayColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name IN ('maid_cafe_daemon_id', "
+          "'maid_cafe_terminal_via_cloud')",
+        ).get();
+        final existing = relayColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('maid_cafe_daemon_id')) {
+          await m.addColumn(servers, servers.maidCafeDaemonId);
+        }
+        if (!existing.contains('maid_cafe_terminal_via_cloud')) {
+          await m.addColumn(servers, servers.maidCafeTerminalViaCloud);
         }
       }
     },

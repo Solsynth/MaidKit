@@ -10,10 +10,20 @@ import 'maidcafe_service.dart';
 import 'vault_service.dart';
 
 class ServerRepository {
-  ServerRepository(this._database, this._vault);
+  ServerRepository(
+    this._database,
+    this._vault, {
+    this.maidCafeService,
+  });
 
   final AppDatabase _database;
   final VaultService _vault;
+
+  /// Used to mint cloud terminal tickets for a relayed session. Null in
+  /// database-only contexts (imports, backups, tests), where a relay target
+  /// cannot be built and the direct endpoint is used instead.
+  final MaidCafeService? maidCafeService;
+
   final Uuid _uuid = const Uuid();
 
   Stream<List<Server>> watchAll() => _database.watchServers();
@@ -81,6 +91,8 @@ class ServerRepository {
               maidCafeTerminalUrl: Value(_normalizedTerminalUrl(draft)),
               encryptedMaidCafeTerminalSecret: Value(terminalSecret?.bytes),
               maidCafeTerminalSecretNonce: Value(terminalSecret?.nonce),
+              maidCafeDaemonId: Value(_normalizedDaemonId(draft)),
+              maidCafeTerminalViaCloud: Value(draft.maidCafeTerminalViaCloud),
               sortOrder: Value(nextOrder),
             ),
           );
@@ -155,6 +167,8 @@ class ServerRepository {
             : terminalSecret == null
             ? const Value.absent()
             : Value(terminalSecret.nonce),
+        maidCafeDaemonId: Value(_normalizedDaemonId(draft)),
+        maidCafeTerminalViaCloud: Value(draft.maidCafeTerminalViaCloud),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -234,6 +248,7 @@ class ServerRepository {
     bool clearWebhookSecret = false,
     String? metricsSecret,
     bool clearMetricsSecret = false,
+    String? daemonId,
   }) async {
     final normalizedUrl = normalizeMaidCafeLocalDaemonUrl(daemonUrl);
     final encryptedSecret =
@@ -275,6 +290,11 @@ class ServerRepository {
             : encryptedMetricsSecret == null
             ? const Value.absent()
             : Value(encryptedMetricsSecret.nonce),
+        // Only written when the caller knows the cloud identity; a null keeps
+        // whatever a previous registration stored.
+        maidCafeDaemonId: daemonId == null || daemonId.trim().isEmpty
+            ? const Value.absent()
+            : Value(daemonId.trim()),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -327,17 +347,37 @@ class ServerRepository {
     );
   }
 
-  /// Resolves the directly reachable daemon terminal endpoint and credential
-  /// for [server].
+  /// Resolves the terminal endpoint and credential for [server].
   ///
-  /// Returns null when no endpoint or no credential is available, so callers
-  /// can tell "not configured" from a transport failure. The credential is the
-  /// dedicated terminal secret when one is stored, and the stored daemon
-  /// metrics secret otherwise — the same fallback the daemon itself applies to
-  /// `daemon.terminal.secret`.
+  /// Returns null when no usable route or credential is available, so callers
+  /// can tell "not configured" from a transport failure. With the cloud relay
+  /// enabled and a daemon id stored, the target points at the MaidCafe cloud
+  /// and mints a ticket per session; otherwise it is the daemon's own endpoint.
+  /// The direct credential is the dedicated terminal secret when one is stored,
+  /// and the stored daemon metrics secret otherwise — the same fallback the
+  /// daemon itself applies to `daemon.terminal.secret`.
   Future<MaidCafeTerminalTarget?> maidCafeTerminalTargetFor(
     Server server,
   ) async {
+    final daemonId = server.maidCafeDaemonId?.trim();
+    final service = maidCafeService;
+    if (server.maidCafeTerminalViaCloud &&
+        daemonId != null &&
+        daemonId.isNotEmpty &&
+        service != null) {
+      return MaidCafeTerminalTarget(
+        baseUrl: service.baseUrl,
+        // The relay credential is the minted ticket, so the daemon secret is
+        // unused on this path; the cloud authenticates the browser user.
+        secret: '',
+        relayDaemonId: daemonId,
+        ticketProvider: (columns, rows) => service.createTerminalSession(
+          daemonId,
+          columns: columns,
+          rows: rows,
+        ),
+      );
+    }
     final url = server.maidCafeTerminalUrl?.trim();
     if (url == null || url.isEmpty) return null;
     final secret =
@@ -363,6 +403,13 @@ class ServerRepository {
     final raw = draft.maidCafeTerminalUrl?.trim();
     if (raw == null || raw.isEmpty) return null;
     return normalizeMaidCafeLocalDaemonUrl(raw);
+  }
+
+  /// The cloud daemon uuid for [draft], or null when the draft has none.
+  String? _normalizedDaemonId(ServerDraft draft) {
+    final raw = draft.maidCafeDaemonId?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
   }
 
   Stream<List<SavedCredential>> watchCredentials() => (_database.select(

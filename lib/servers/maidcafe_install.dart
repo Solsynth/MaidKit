@@ -534,6 +534,10 @@ Future<void> _installMaidCafeDaemon({
         server,
         daemonUrl: 'http://$listenHost:$port',
         metricsSecret: apiSecret,
+        // A cloud-registered daemon gets its uuid stored so the server editor
+        // can prefill it and a relayed terminal can address the session; a
+        // local-only install has no cloud identity.
+        daemonId: cloudUrl.isEmpty ? null : daemonId,
       );
 }
 

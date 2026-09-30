@@ -144,9 +144,9 @@ typedef MaidCafeConnectScriptRunner =
       String? sudoPassword,
     });
 
-/// Persists the daemon's local HTTP endpoint for [server].
+/// Persists the daemon's local HTTP endpoint and cloud id for [server].
 typedef MaidCafeSaveDaemonUrl =
-    Future<void> Function(Server server, String daemonUrl);
+    Future<void> Function(Server server, String daemonUrl, String daemonId);
 
 /// Installs the published MaidCafe bundle on [server] bound to [daemon].
 typedef MaidCafeInstallDaemon =
@@ -229,7 +229,7 @@ class MaidCafeServerConnectorImpl implements MaidCafeServerConnector {
           actions: access.actions,
         ),
       );
-      await saveDaemonUrl(server, 'http://$listenHost:$port');
+      await saveDaemonUrl(server, 'http://$listenHost:$port', credential.id);
     } else {
       await installDaemon(
         ref: ref,
@@ -277,9 +277,13 @@ final maidCafeServerConnectorProvider = Provider<MaidCafeServerConnector>((
           sshUserIsRoot: server.username == 'root',
           sudoPassword: sudoPassword,
         ),
-    saveDaemonUrl: (server, daemonUrl) => ref
+    saveDaemonUrl: (server, daemonUrl, daemonId) => ref
         .read(serverRepositoryProvider)
-        .updateMaidCafeConfig(server, daemonUrl: daemonUrl),
+        .updateMaidCafeConfig(
+          server,
+          daemonUrl: daemonUrl,
+          daemonId: daemonId,
+        ),
     installDaemon:
         ({
           required ref,
