@@ -5758,6 +5758,56 @@ class $ScriptSnippetsTable extends ScriptSnippets
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _tagsMeta = const VerificationMeta('tags');
+  @override
+  late final GeneratedColumn<String> tags = GeneratedColumn<String>(
+    'tags',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _excludedFromAutocompleteMeta =
+      const VerificationMeta('excludedFromAutocomplete');
+  @override
+  late final GeneratedColumn<bool> excludedFromAutocomplete =
+      GeneratedColumn<bool>(
+        'excluded_from_autocomplete',
+        aliasedName,
+        false,
+        type: DriftSqlType.bool,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("excluded_from_autocomplete" IN (0, 1))',
+        ),
+        defaultValue: const Constant(false),
+      );
+  static const VerificationMeta _dangerousMeta = const VerificationMeta(
+    'dangerous',
+  );
+  @override
+  late final GeneratedColumn<bool> dangerous = GeneratedColumn<bool>(
+    'dangerous',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("dangerous" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _lastServerIdsMeta = const VerificationMeta(
+    'lastServerIds',
+  );
+  @override
+  late final GeneratedColumn<String> lastServerIds = GeneratedColumn<String>(
+    'last_server_ids',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -5785,6 +5835,10 @@ class $ScriptSnippetsTable extends ScriptSnippets
     id,
     name,
     script,
+    tags,
+    excludedFromAutocomplete,
+    dangerous,
+    lastServerIds,
     createdAt,
     updatedAt,
   ];
@@ -5818,6 +5872,36 @@ class $ScriptSnippetsTable extends ScriptSnippets
       );
     } else if (isInserting) {
       context.missing(_scriptMeta);
+    }
+    if (data.containsKey('tags')) {
+      context.handle(
+        _tagsMeta,
+        tags.isAcceptableOrUnknown(data['tags']!, _tagsMeta),
+      );
+    }
+    if (data.containsKey('excluded_from_autocomplete')) {
+      context.handle(
+        _excludedFromAutocompleteMeta,
+        excludedFromAutocomplete.isAcceptableOrUnknown(
+          data['excluded_from_autocomplete']!,
+          _excludedFromAutocompleteMeta,
+        ),
+      );
+    }
+    if (data.containsKey('dangerous')) {
+      context.handle(
+        _dangerousMeta,
+        dangerous.isAcceptableOrUnknown(data['dangerous']!, _dangerousMeta),
+      );
+    }
+    if (data.containsKey('last_server_ids')) {
+      context.handle(
+        _lastServerIdsMeta,
+        lastServerIds.isAcceptableOrUnknown(
+          data['last_server_ids']!,
+          _lastServerIdsMeta,
+        ),
+      );
     }
     if (data.containsKey('created_at')) {
       context.handle(
@@ -5856,6 +5940,22 @@ class $ScriptSnippetsTable extends ScriptSnippets
         DriftSqlType.string,
         data['${effectivePrefix}script'],
       )!,
+      tags: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tags'],
+      ),
+      excludedFromAutocomplete: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}excluded_from_autocomplete'],
+      )!,
+      dangerous: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}dangerous'],
+      )!,
+      lastServerIds: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_server_ids'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -5877,12 +5977,32 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
   final int id;
   final String name;
   final String script;
+
+  /// Free-form labels, JSON-encoded string list.
+  final String? tags;
+
+  /// Keeps the snippet out of the in-terminal snippet quick pick. The snippet
+  /// stays available in the snippets library, on server forms, and to the
+  /// agent; only the terminal's completion list skips it.
+  final bool excludedFromAutocomplete;
+
+  /// Requires a second confirmation before the snippet runs, for scripts that
+  /// are hard to undo (destructive commands, service restarts).
+  final bool dangerous;
+
+  /// Servers checked the last time the snippet was run, JSON-encoded integer
+  /// list, so the run dialog pre-selects the previous choice.
+  final String? lastServerIds;
   final DateTime createdAt;
   final DateTime updatedAt;
   const ScriptSnippet({
     required this.id,
     required this.name,
     required this.script,
+    this.tags,
+    required this.excludedFromAutocomplete,
+    required this.dangerous,
+    this.lastServerIds,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -5892,6 +6012,16 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
     map['id'] = Variable<int>(id);
     map['name'] = Variable<String>(name);
     map['script'] = Variable<String>(script);
+    if (!nullToAbsent || tags != null) {
+      map['tags'] = Variable<String>(tags);
+    }
+    map['excluded_from_autocomplete'] = Variable<bool>(
+      excludedFromAutocomplete,
+    );
+    map['dangerous'] = Variable<bool>(dangerous);
+    if (!nullToAbsent || lastServerIds != null) {
+      map['last_server_ids'] = Variable<String>(lastServerIds);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -5902,6 +6032,12 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
       id: Value(id),
       name: Value(name),
       script: Value(script),
+      tags: tags == null && nullToAbsent ? const Value.absent() : Value(tags),
+      excludedFromAutocomplete: Value(excludedFromAutocomplete),
+      dangerous: Value(dangerous),
+      lastServerIds: lastServerIds == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastServerIds),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -5916,6 +6052,12 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
       id: serializer.fromJson<int>(json['id']),
       name: serializer.fromJson<String>(json['name']),
       script: serializer.fromJson<String>(json['script']),
+      tags: serializer.fromJson<String?>(json['tags']),
+      excludedFromAutocomplete: serializer.fromJson<bool>(
+        json['excludedFromAutocomplete'],
+      ),
+      dangerous: serializer.fromJson<bool>(json['dangerous']),
+      lastServerIds: serializer.fromJson<String?>(json['lastServerIds']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -5927,6 +6069,12 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
       'id': serializer.toJson<int>(id),
       'name': serializer.toJson<String>(name),
       'script': serializer.toJson<String>(script),
+      'tags': serializer.toJson<String?>(tags),
+      'excludedFromAutocomplete': serializer.toJson<bool>(
+        excludedFromAutocomplete,
+      ),
+      'dangerous': serializer.toJson<bool>(dangerous),
+      'lastServerIds': serializer.toJson<String?>(lastServerIds),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -5936,12 +6084,23 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
     int? id,
     String? name,
     String? script,
+    Value<String?> tags = const Value.absent(),
+    bool? excludedFromAutocomplete,
+    bool? dangerous,
+    Value<String?> lastServerIds = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => ScriptSnippet(
     id: id ?? this.id,
     name: name ?? this.name,
     script: script ?? this.script,
+    tags: tags.present ? tags.value : this.tags,
+    excludedFromAutocomplete:
+        excludedFromAutocomplete ?? this.excludedFromAutocomplete,
+    dangerous: dangerous ?? this.dangerous,
+    lastServerIds: lastServerIds.present
+        ? lastServerIds.value
+        : this.lastServerIds,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -5950,6 +6109,14 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
       id: data.id.present ? data.id.value : this.id,
       name: data.name.present ? data.name.value : this.name,
       script: data.script.present ? data.script.value : this.script,
+      tags: data.tags.present ? data.tags.value : this.tags,
+      excludedFromAutocomplete: data.excludedFromAutocomplete.present
+          ? data.excludedFromAutocomplete.value
+          : this.excludedFromAutocomplete,
+      dangerous: data.dangerous.present ? data.dangerous.value : this.dangerous,
+      lastServerIds: data.lastServerIds.present
+          ? data.lastServerIds.value
+          : this.lastServerIds,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -5961,6 +6128,10 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('script: $script, ')
+          ..write('tags: $tags, ')
+          ..write('excludedFromAutocomplete: $excludedFromAutocomplete, ')
+          ..write('dangerous: $dangerous, ')
+          ..write('lastServerIds: $lastServerIds, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -5968,7 +6139,17 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
   }
 
   @override
-  int get hashCode => Object.hash(id, name, script, createdAt, updatedAt);
+  int get hashCode => Object.hash(
+    id,
+    name,
+    script,
+    tags,
+    excludedFromAutocomplete,
+    dangerous,
+    lastServerIds,
+    createdAt,
+    updatedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5976,6 +6157,10 @@ class ScriptSnippet extends DataClass implements Insertable<ScriptSnippet> {
           other.id == this.id &&
           other.name == this.name &&
           other.script == this.script &&
+          other.tags == this.tags &&
+          other.excludedFromAutocomplete == this.excludedFromAutocomplete &&
+          other.dangerous == this.dangerous &&
+          other.lastServerIds == this.lastServerIds &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -5984,12 +6169,20 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
   final Value<int> id;
   final Value<String> name;
   final Value<String> script;
+  final Value<String?> tags;
+  final Value<bool> excludedFromAutocomplete;
+  final Value<bool> dangerous;
+  final Value<String?> lastServerIds;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const ScriptSnippetsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
     this.script = const Value.absent(),
+    this.tags = const Value.absent(),
+    this.excludedFromAutocomplete = const Value.absent(),
+    this.dangerous = const Value.absent(),
+    this.lastServerIds = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -5997,6 +6190,10 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
     this.id = const Value.absent(),
     required String name,
     required String script,
+    this.tags = const Value.absent(),
+    this.excludedFromAutocomplete = const Value.absent(),
+    this.dangerous = const Value.absent(),
+    this.lastServerIds = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
   }) : name = Value(name),
@@ -6007,6 +6204,10 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
     Expression<int>? id,
     Expression<String>? name,
     Expression<String>? script,
+    Expression<String>? tags,
+    Expression<bool>? excludedFromAutocomplete,
+    Expression<bool>? dangerous,
+    Expression<String>? lastServerIds,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -6014,6 +6215,11 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
       if (id != null) 'id': id,
       if (name != null) 'name': name,
       if (script != null) 'script': script,
+      if (tags != null) 'tags': tags,
+      if (excludedFromAutocomplete != null)
+        'excluded_from_autocomplete': excludedFromAutocomplete,
+      if (dangerous != null) 'dangerous': dangerous,
+      if (lastServerIds != null) 'last_server_ids': lastServerIds,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -6023,6 +6229,10 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
     Value<int>? id,
     Value<String>? name,
     Value<String>? script,
+    Value<String?>? tags,
+    Value<bool>? excludedFromAutocomplete,
+    Value<bool>? dangerous,
+    Value<String?>? lastServerIds,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -6030,6 +6240,11 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
       id: id ?? this.id,
       name: name ?? this.name,
       script: script ?? this.script,
+      tags: tags ?? this.tags,
+      excludedFromAutocomplete:
+          excludedFromAutocomplete ?? this.excludedFromAutocomplete,
+      dangerous: dangerous ?? this.dangerous,
+      lastServerIds: lastServerIds ?? this.lastServerIds,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -6047,6 +6262,20 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
     if (script.present) {
       map['script'] = Variable<String>(script.value);
     }
+    if (tags.present) {
+      map['tags'] = Variable<String>(tags.value);
+    }
+    if (excludedFromAutocomplete.present) {
+      map['excluded_from_autocomplete'] = Variable<bool>(
+        excludedFromAutocomplete.value,
+      );
+    }
+    if (dangerous.present) {
+      map['dangerous'] = Variable<bool>(dangerous.value);
+    }
+    if (lastServerIds.present) {
+      map['last_server_ids'] = Variable<String>(lastServerIds.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -6062,6 +6291,10 @@ class ScriptSnippetsCompanion extends UpdateCompanion<ScriptSnippet> {
           ..write('id: $id, ')
           ..write('name: $name, ')
           ..write('script: $script, ')
+          ..write('tags: $tags, ')
+          ..write('excludedFromAutocomplete: $excludedFromAutocomplete, ')
+          ..write('dangerous: $dangerous, ')
+          ..write('lastServerIds: $lastServerIds, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -13434,6 +13667,10 @@ typedef $$ScriptSnippetsTableCreateCompanionBuilder =
       Value<int> id,
       required String name,
       required String script,
+      Value<String?> tags,
+      Value<bool> excludedFromAutocomplete,
+      Value<bool> dangerous,
+      Value<String?> lastServerIds,
       required DateTime createdAt,
       required DateTime updatedAt,
     });
@@ -13442,6 +13679,10 @@ typedef $$ScriptSnippetsTableUpdateCompanionBuilder =
       Value<int> id,
       Value<String> name,
       Value<String> script,
+      Value<String?> tags,
+      Value<bool> excludedFromAutocomplete,
+      Value<bool> dangerous,
+      Value<String?> lastServerIds,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -13467,6 +13708,26 @@ class $$ScriptSnippetsTableFilterComposer
 
   ColumnFilters<String> get script => $composableBuilder(
     column: $table.script,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tags => $composableBuilder(
+    column: $table.tags,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get excludedFromAutocomplete => $composableBuilder(
+    column: $table.excludedFromAutocomplete,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get dangerous => $composableBuilder(
+    column: $table.dangerous,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lastServerIds => $composableBuilder(
+    column: $table.lastServerIds,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13505,6 +13766,26 @@ class $$ScriptSnippetsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get tags => $composableBuilder(
+    column: $table.tags,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get excludedFromAutocomplete => $composableBuilder(
+    column: $table.excludedFromAutocomplete,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get dangerous => $composableBuilder(
+    column: $table.dangerous,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastServerIds => $composableBuilder(
+    column: $table.lastServerIds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -13533,6 +13814,22 @@ class $$ScriptSnippetsTableAnnotationComposer
 
   GeneratedColumn<String> get script =>
       $composableBuilder(column: $table.script, builder: (column) => column);
+
+  GeneratedColumn<String> get tags =>
+      $composableBuilder(column: $table.tags, builder: (column) => column);
+
+  GeneratedColumn<bool> get excludedFromAutocomplete => $composableBuilder(
+    column: $table.excludedFromAutocomplete,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get dangerous =>
+      $composableBuilder(column: $table.dangerous, builder: (column) => column);
+
+  GeneratedColumn<String> get lastServerIds => $composableBuilder(
+    column: $table.lastServerIds,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -13577,12 +13874,20 @@ class $$ScriptSnippetsTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<String> name = const Value.absent(),
                 Value<String> script = const Value.absent(),
+                Value<String?> tags = const Value.absent(),
+                Value<bool> excludedFromAutocomplete = const Value.absent(),
+                Value<bool> dangerous = const Value.absent(),
+                Value<String?> lastServerIds = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => ScriptSnippetsCompanion(
                 id: id,
                 name: name,
                 script: script,
+                tags: tags,
+                excludedFromAutocomplete: excludedFromAutocomplete,
+                dangerous: dangerous,
+                lastServerIds: lastServerIds,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -13591,12 +13896,20 @@ class $$ScriptSnippetsTableTableManager
                 Value<int> id = const Value.absent(),
                 required String name,
                 required String script,
+                Value<String?> tags = const Value.absent(),
+                Value<bool> excludedFromAutocomplete = const Value.absent(),
+                Value<bool> dangerous = const Value.absent(),
+                Value<String?> lastServerIds = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
               }) => ScriptSnippetsCompanion.insert(
                 id: id,
                 name: name,
                 script: script,
+                tags: tags,
+                excludedFromAutocomplete: excludedFromAutocomplete,
+                dangerous: dangerous,
+                lastServerIds: lastServerIds,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),

@@ -139,6 +139,17 @@ void main() {
             .get();
         expect(relayColumns, hasLength(2));
 
+        // Snippet tags, terminal-autocomplete and danger flags, and the
+        // remembered run servers are added in schema 37.
+        final snippetColumns = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('script_snippets') "
+              "WHERE name IN ('tags', 'excluded_from_autocomplete', "
+              "'dangerous', 'last_server_ids')",
+            )
+            .get();
+        expect(snippetColumns, hasLength(4));
+
         final authKeyColumns = await database
             .customSelect(
               "SELECT name FROM pragma_table_info('vault_metadata') "
@@ -184,6 +195,37 @@ void main() {
             )
             .get();
         expect(preferenceColumns, hasLength(2));
+        await database.close();
+      },
+    );
+    test(
+      'schema 36 that already has the snippet columns reopens cleanly',
+      () async {
+        final directory = Directory.systemTemp.createTempSync(
+          'snippet_migration_test',
+        );
+        final path = '${directory.path}/stale.sqlite';
+
+        // Reproduce the state left behind by pre-release builds: the snippet
+        // metadata columns exist while user_version still reports 36.
+        final seeded = AppDatabase(filePath: path);
+        await seeded.customStatement('PRAGMA user_version = 36');
+        await seeded.close();
+
+        final database = AppDatabase(filePath: path);
+        final version = await database
+            .customSelect('PRAGMA user_version')
+            .getSingle();
+        expect(version.read<int>('user_version'), database.schemaVersion);
+
+        final columns = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('script_snippets') "
+              "WHERE name IN ('tags', 'excluded_from_autocomplete', "
+              "'dangerous', 'last_server_ids')",
+            )
+            .get();
+        expect(columns, hasLength(4));
         await database.close();
       },
     );

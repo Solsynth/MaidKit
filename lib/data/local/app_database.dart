@@ -170,6 +170,23 @@ class ScriptSnippets extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text()();
   TextColumn get script => text()();
+
+  /// Free-form labels, JSON-encoded string list.
+  TextColumn get tags => text().nullable()();
+
+  /// Keeps the snippet out of the in-terminal snippet quick pick. The snippet
+  /// stays available in the snippets library, on server forms, and to the
+  /// agent; only the terminal's completion list skips it.
+  BoolColumn get excludedFromAutocomplete =>
+      boolean().withDefault(const Constant(false))();
+
+  /// Requires a second confirmation before the snippet runs, for scripts that
+  /// are hard to undo (destructive commands, service restarts).
+  BoolColumn get dangerous => boolean().withDefault(const Constant(false))();
+
+  /// Servers checked the last time the snippet was run, JSON-encoded integer
+  /// list, so the run dialog pre-selects the previous choice.
+  TextColumn get lastServerIds => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 }
@@ -369,7 +386,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 36;
+  int get schemaVersion => 37;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -772,6 +789,34 @@ class AppDatabase extends _$AppDatabase {
         }
         if (!existing.contains('maid_cafe_terminal_via_cloud')) {
           await m.addColumn(servers, servers.maidCafeTerminalViaCloud);
+        }
+      }
+      if (from < 37) {
+        // A database created at or before version 7 creates the snippet table
+        // in this same migration pass with the current definition, so the new
+        // columns must be checked before they are added.
+        final snippetColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('script_snippets') "
+          "WHERE name IN ('tags', 'excluded_from_autocomplete', 'dangerous', "
+          "'last_server_ids')",
+        ).get();
+        final existing = snippetColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('tags')) {
+          await m.addColumn(scriptSnippets, scriptSnippets.tags);
+        }
+        if (!existing.contains('excluded_from_autocomplete')) {
+          await m.addColumn(
+            scriptSnippets,
+            scriptSnippets.excludedFromAutocomplete,
+          );
+        }
+        if (!existing.contains('dangerous')) {
+          await m.addColumn(scriptSnippets, scriptSnippets.dangerous);
+        }
+        if (!existing.contains('last_server_ids')) {
+          await m.addColumn(scriptSnippets, scriptSnippets.lastServerIds);
         }
       }
     },

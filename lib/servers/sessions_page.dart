@@ -11,6 +11,7 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_connection_actions.dart';
 import 'server_detail_page.dart';
@@ -976,7 +977,9 @@ Future<void> _showTerminalSnippetPopover(
   required String terminalId,
   Rect? anchorRect,
 }) async {
-  final snippets = await ref.read(snippetRepositoryProvider).all();
+  // The in-terminal quick pick omits snippets the user excluded from
+  // terminal autocomplete; the library and agent still see them.
+  final snippets = await ref.read(snippetRepositoryProvider).autocomplete();
   if (!context.mounted) return;
 
   if (snippets.isEmpty) {
@@ -1020,15 +1023,21 @@ Future<void> _showTerminalSnippetPopover(
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
+            trailing: snippet.dangerous
+                ? Icon(
+                    Symbols.warning,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.error,
+                  )
+                : null,
           ),
         ),
     ],
   );
-  if (selected != null && context.mounted) {
-    ref
-        .read(terminalTabsProvider.notifier)
-        .executeSnippet(terminalId, selected);
-  }
+  if (selected == null || !context.mounted) return;
+  if (!await confirmDangerousSnippet(context, selected)) return;
+  if (!context.mounted) return;
+  ref.read(terminalTabsProvider.notifier).executeSnippet(terminalId, selected);
 }
 
 RelativeRect _terminalSnippetMenuPosition(

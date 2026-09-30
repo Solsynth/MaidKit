@@ -566,7 +566,9 @@ class DatabaseBackupService {
                   encryptedMaidCafeTerminalSecret?.nonce,
                 ),
                 maidCafeDaemonId: Value(server.maidCafeDaemonId),
-                maidCafeTerminalViaCloud: Value(server.maidCafeTerminalViaCloud),
+                maidCafeTerminalViaCloud: Value(
+                  server.maidCafeTerminalViaCloud,
+                ),
                 jumpHostServerId: Value(server.jumpHostServerId),
                 environment: Value(server.environment),
                 initialSnippets: Value(server.initialSnippets),
@@ -602,9 +604,18 @@ class DatabaseBackupService {
             .insert(DeploymentResource.fromJson(record).toCompanion(false));
       }
       for (final record in snippets) {
+        // Archives written before the snippet metadata columns omit the two
+        // flags; every snippet was then visible in the terminal and not
+        // dangerous.
+        final snippet = ScriptSnippet.fromJson({
+          ...record,
+          'excludedFromAutocomplete':
+              record['excludedFromAutocomplete'] ?? false,
+          'dangerous': record['dangerous'] ?? false,
+        });
         await _database
             .into(_database.scriptSnippets)
-            .insert(ScriptSnippet.fromJson(record).toCompanion(false));
+            .insert(snippet.toCompanion(false));
       }
       for (final record in githubConnections) {
         await _database

@@ -40,6 +40,8 @@ void main() {
         id: 1,
         name: 'Deploy',
         script: '  echo start\n./deploy.sh\n\n',
+        excludedFromAutocomplete: false,
+        dangerous: false,
         createdAt: now,
         updatedAt: now,
       ),

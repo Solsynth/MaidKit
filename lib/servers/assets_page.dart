@@ -12,6 +12,7 @@ import 'package:maid_kit/github/github_section.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
+import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 
 import 'credentials_page.dart';
@@ -175,12 +176,20 @@ class _AssetsPageState extends ConsumerState<AssetsPage>
       useSafeArea: true,
       builder: (context) => _SnippetEditor(
         title: 'snippetsNew'.tr(),
-        onSave: (name, script) async {
-          await ref
-              .read(snippetRepositoryProvider)
-              .save(id: null, name: name, script: script);
-          if (context.mounted) Navigator.pop(context, true);
-        },
+        onSave:
+            (name, script, tags, excludedFromAutocomplete, dangerous) async {
+              await ref
+                  .read(snippetRepositoryProvider)
+                  .save(
+                    id: null,
+                    name: name,
+                    script: script,
+                    tags: tags,
+                    excludedFromAutocomplete: excludedFromAutocomplete,
+                    dangerous: dangerous,
+                  );
+              if (context.mounted) Navigator.pop(context, true);
+            },
       ),
     );
     if (saved == true && context.mounted) {
@@ -397,12 +406,24 @@ class SnippetsSection extends ConsumerWidget {
         title: item == null ? 'snippetsNew'.tr() : 'snippetsEdit'.tr(),
         initialName: item?.name,
         initialScript: item?.script,
-        onSave: (name, script) async {
-          await ref
-              .read(snippetRepositoryProvider)
-              .save(id: item?.id, name: name, script: script);
-          if (context.mounted) Navigator.pop(context, true);
-        },
+        initialTags: item == null ? const [] : decodeStringList(item.tags),
+        initialExcludedFromAutocomplete:
+            item?.excludedFromAutocomplete ?? false,
+        initialDangerous: item?.dangerous ?? false,
+        onSave:
+            (name, script, tags, excludedFromAutocomplete, dangerous) async {
+              await ref
+                  .read(snippetRepositoryProvider)
+                  .save(
+                    id: item?.id,
+                    name: name,
+                    script: script,
+                    tags: tags,
+                    excludedFromAutocomplete: excludedFromAutocomplete,
+                    dangerous: dangerous,
+                  );
+              if (context.mounted) Navigator.pop(context, true);
+            },
       ),
     );
     if (saved == true && context.mounted) {
@@ -421,13 +442,26 @@ class SnippetsSection extends ConsumerWidget {
         .where((session) => session.status == SessionStatus.connected)
         .map((session) => session.serverId)
         .toSet();
+    final remembered = decodeSnippetIdList(snippet.lastServerIds).toSet();
     final selected = await showModalBottomSheet<List<Server>>(
       context: context,
       useSafeArea: true,
-      builder: (context) =>
-          _ServerPicker(servers: servers, connectedIds: connectedIds),
+      builder: (context) => _ServerPicker(
+        servers: servers,
+        connectedIds: connectedIds,
+        initialSelection: remembered.isEmpty ? connectedIds : remembered,
+      ),
     );
     if (selected == null || selected.isEmpty) return;
+    if (!context.mounted) return;
+    if (!await confirmDangerousSnippet(context, snippet)) return;
+    if (!context.mounted) return;
+
+    // Remember the choice so the next run dialog starts from it.
+    await ref.read(snippetRepositoryProvider).rememberServers(snippet.id, [
+      for (final server in selected) server.id,
+    ]);
+    if (!context.mounted) return;
 
     try {
       await Future.wait([
@@ -484,12 +518,38 @@ class SnippetsSection extends ConsumerWidget {
                             color: Theme.of(context).colorScheme.outlineVariant,
                           ),
                         ),
-                        title: Text(item.name),
-                        subtitle: Text(
-                          item.script.replaceAll('\n', ' '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        title: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (item.dangerous)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(
+                                  Symbols.warning,
+                                  size: 18,
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                            if (item.excludedFromAutocomplete)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(
+                                  Symbols.visibility_off,
+                                  size: 18,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
                         ),
+                        subtitle: _SnippetSubtitle(snippet: item),
                         leading: const Icon(Symbols.code),
                         trailing: Wrap(
                           spacing: 4,
@@ -517,6 +577,45 @@ class SnippetsSection extends ConsumerWidget {
                   ],
                 ),
         ),
+      ],
+    );
+  }
+}
+
+class _SnippetSubtitle extends StatelessWidget {
+  const _SnippetSubtitle({required this.snippet});
+
+  final ScriptSnippet snippet;
+
+  @override
+  Widget build(BuildContext context) {
+    final tags = decodeStringList(snippet.tags);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          snippet.script.replaceAll('\n', ' '),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (tags.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final tag in tags)
+                  Chip(
+                    label: Text(tag),
+                    labelStyle: Theme.of(context).textTheme.labelSmall,
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: EdgeInsets.zero,
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -559,13 +658,26 @@ class _SnippetEditor extends ConsumerStatefulWidget {
     required this.title,
     this.initialName,
     this.initialScript,
+    this.initialTags = const [],
+    this.initialExcludedFromAutocomplete = false,
+    this.initialDangerous = false,
     required this.onSave,
   });
 
   final String title;
   final String? initialName;
   final String? initialScript;
-  final Future<void> Function(String name, String script) onSave;
+  final List<String> initialTags;
+  final bool initialExcludedFromAutocomplete;
+  final bool initialDangerous;
+  final Future<void> Function(
+    String name,
+    String script,
+    List<String> tags,
+    bool excludedFromAutocomplete,
+    bool dangerous,
+  )
+  onSave;
 
   @override
   ConsumerState<_SnippetEditor> createState() => _SnippetEditorState();
@@ -577,12 +689,32 @@ class _SnippetEditorState extends ConsumerState<_SnippetEditor> {
   late final _scriptController = TextEditingController(
     text: widget.initialScript,
   );
+  late final _tags = List<String>.of(widget.initialTags);
+  final _tagInput = TextEditingController();
+  late bool _excludedFromAutocomplete = widget.initialExcludedFromAutocomplete;
+  late bool _dangerous = widget.initialDangerous;
 
   @override
   void dispose() {
     _nameController.dispose();
     _scriptController.dispose();
+    _tagInput.dispose();
     super.dispose();
+  }
+
+  void _addTag() {
+    final candidates = _tagInput.text
+        .split(RegExp(r'[,;]'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (candidates.isEmpty) return;
+    setState(() {
+      for (final tag in candidates) {
+        if (!_tags.contains(tag)) _tags.add(tag);
+      }
+      _tagInput.clear();
+    });
   }
 
   @override
@@ -621,6 +753,78 @@ class _SnippetEditorState extends ConsumerState<_SnippetEditor> {
                   ? 'commonRequired'.tr()
                   : null,
             ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'snippetsTagsLabel'.tr(),
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'snippetsTagsHint'.tr(),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (_tags.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final tag in _tags)
+                      InputChip(
+                        label: Text(tag),
+                        onDeleted: () => setState(() => _tags.remove(tag)),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _tagInput,
+                    decoration: InputDecoration(
+                      labelText: 'snippetsTagAdd'.tr(),
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _addTag(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  onPressed: _addTag,
+                  icon: const Icon(Symbols.add, size: 18),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('snippetsExcludeFromAutocomplete'.tr()),
+              subtitle: Text('snippetsExcludeFromAutocompleteHint'.tr()),
+              value: _excludedFromAutocomplete,
+              onChanged: (value) =>
+                  setState(() => _excludedFromAutocomplete = value),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('snippetsDangerous'.tr()),
+              subtitle: Text('snippetsDangerousHint'.tr()),
+              secondary: _dangerous
+                  ? Icon(
+                      Symbols.warning,
+                      color: Theme.of(context).colorScheme.error,
+                    )
+                  : null,
+              value: _dangerous,
+              onChanged: (value) => setState(() => _dangerous = value),
+            ),
             const SizedBox(height: 24),
             Align(
               alignment: Alignment.centerRight,
@@ -628,7 +832,13 @@ class _SnippetEditorState extends ConsumerState<_SnippetEditor> {
                 onPressed: () {
                   if (!_formKey.currentState!.validate()) return;
                   unawaited(
-                    widget.onSave(_nameController.text, _scriptController.text),
+                    widget.onSave(
+                      _nameController.text,
+                      _scriptController.text,
+                      List.of(_tags),
+                      _excludedFromAutocomplete,
+                      _dangerous,
+                    ),
                   );
                 },
                 child: Text('commonSave'.tr()),
@@ -642,17 +852,29 @@ class _SnippetEditorState extends ConsumerState<_SnippetEditor> {
 }
 
 class _ServerPicker extends ConsumerStatefulWidget {
-  const _ServerPicker({required this.servers, required this.connectedIds});
+  const _ServerPicker({
+    required this.servers,
+    required this.connectedIds,
+    this.initialSelection,
+  });
 
   final List<Server> servers;
   final Set<int> connectedIds;
+
+  /// Server ids to pre-check, typically the ones this snippet ran on last
+  /// time. Ids without a live connection are dropped because they cannot be
+  /// reached.
+  final Set<int>? initialSelection;
 
   @override
   ConsumerState<_ServerPicker> createState() => _ServerPickerState();
 }
 
 class _ServerPickerState extends ConsumerState<_ServerPicker> {
-  late final Set<int> _selected = widget.connectedIds.toSet();
+  late final Set<int> _selected =
+      (widget.initialSelection ?? widget.connectedIds)
+          .intersection(widget.connectedIds)
+          .toSet();
 
   @override
   Widget build(BuildContext context) {
