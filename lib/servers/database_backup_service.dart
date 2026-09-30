@@ -285,7 +285,9 @@ class DatabaseBackupService {
         ..remove('encryptedMaidCafeWebhookSecret')
         ..remove('maidCafeWebhookSecretNonce')
         ..remove('encryptedMaidCafeMetricsSecret')
-        ..remove('maidCafeMetricsSecretNonce');
+        ..remove('maidCafeMetricsSecretNonce')
+        ..remove('encryptedMaidCafeTerminalSecret')
+        ..remove('maidCafeTerminalSecretNonce');
       if (server.encryptedCredential != null &&
           server.credentialNonce != null) {
         record['credential'] = await _vault.decrypt(
@@ -324,6 +326,16 @@ class DatabaseBackupService {
             nonce: server.maidCafeMetricsSecretNonce!,
           ),
           context: 'maidcafe-metrics-secret',
+        );
+      }
+      if (server.encryptedMaidCafeTerminalSecret != null &&
+          server.maidCafeTerminalSecretNonce != null) {
+        record['maidCafeTerminalSecret'] = await _vault.decrypt(
+          EncryptedValue(
+            bytes: server.encryptedMaidCafeTerminalSecret!,
+            nonce: server.maidCafeTerminalSecretNonce!,
+          ),
+          context: 'maidcafe-terminal-secret',
         );
       }
       serverRecords.add(record);
@@ -498,6 +510,13 @@ class DatabaseBackupService {
                 context: 'maidcafe-metrics-secret',
               )
             : null;
+        final terminalSecret = record['maidCafeTerminalSecret'];
+        final encryptedMaidCafeTerminalSecret = terminalSecret is String
+            ? await _vault.encrypt(
+                terminalSecret,
+                context: 'maidcafe-terminal-secret',
+              )
+            : null;
         await _database
             .into(_database.servers)
             .insert(
@@ -538,6 +557,13 @@ class DatabaseBackupService {
                 ),
                 maidCafeMetricsSecretNonce: Value(
                   encryptedMaidCafeMetricsSecret?.nonce,
+                ),
+                maidCafeTerminalUrl: Value(server.maidCafeTerminalUrl),
+                encryptedMaidCafeTerminalSecret: Value(
+                  encryptedMaidCafeTerminalSecret?.bytes,
+                ),
+                maidCafeTerminalSecretNonce: Value(
+                  encryptedMaidCafeTerminalSecret?.nonce,
                 ),
                 jumpHostServerId: Value(server.jumpHostServerId),
                 environment: Value(server.environment),

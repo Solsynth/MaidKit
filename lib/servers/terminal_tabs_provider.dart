@@ -434,7 +434,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     final server = serversById[pending.serverId];
     if (server == null) return;
     try {
-      if (pending.isSerial) {
+      if (pending.connectionType == ServerConnectionType.serial) {
         await openSerial(
           server,
           paneId: pending.paneId,
@@ -443,6 +443,17 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         return;
       }
       final repository = ref.read(serverRepositoryProvider);
+      if (pending.connectionType == ServerConnectionType.maidcafe) {
+        final target = await repository.maidCafeTerminalTargetFor(server);
+        if (target == null) return;
+        await openMaidCafe(
+          server,
+          target,
+          paneId: pending.paneId,
+          initialOutput: pending.history,
+        );
+        return;
+      }
       final credential = await repository.credentialFor(server);
       final proxy = await repository.proxyFor(server);
       await open(
@@ -518,6 +529,30 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     final handle = await ref
         .read(serialConnectionManagerProvider)
         .openTerminal(server, initialOutput: initialOutput);
+    final tab = TerminalTab(
+      id: handle.id,
+      serverId: server.id,
+      serverName: server.name,
+      terminal: handle.adapter,
+    );
+    _insertTab(tab, targetPaneId: paneId);
+    _watchTerminalDone(handle);
+  }
+
+  /// Opens a terminal over [server]'s MaidCafe daemon WebSocket endpoint.
+  ///
+  /// [target] carries the resolved endpoint and credential so the caller can
+  /// report "not configured" before a socket is opened.
+  Future<void> openMaidCafe(
+    Server server,
+    MaidCafeTerminalTarget target, {
+    String? paneId,
+    String? initialOutput,
+  }) async {
+    if (paneId != null) focusPane(paneId);
+    final handle = await ref
+        .read(maidCafeTerminalConnectionManagerProvider)
+        .openTerminal(server, target, initialOutput: initialOutput);
     final tab = TerminalTab(
       id: handle.id,
       serverId: server.id,
@@ -766,8 +801,11 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     }
     if (tab is TerminalTab) {
       await ref.read(connectionManagerProvider).closeTerminal(tabId);
-      // Idempotent for SSH terminal ids, closes serial sessions.
+      // Idempotent for SSH terminal ids, closes serial and daemon sessions.
       await ref.read(serialConnectionManagerProvider).closeTerminal(tabId);
+      await ref
+          .read(maidCafeTerminalConnectionManagerProvider)
+          .closeTerminal(tabId);
     }
     fileEditorCloseGuards.remove(tabId);
     _removeTab(tabId);

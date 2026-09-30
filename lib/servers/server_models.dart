@@ -77,6 +77,9 @@ class ServerDraft {
     this.fileManagementFavorites = const [],
     this.connectionType = ServerConnectionType.ssh,
     this.serialConfig,
+    this.maidCafeTerminalUrl,
+    this.maidCafeTerminalSecret,
+    this.clearMaidCafeTerminalSecret = false,
   });
 
   final String name;
@@ -117,11 +120,29 @@ class ServerDraft {
   final List<String> tags;
 
   /// Transport used to reach this server: `ssh` for a remote host, `serial`
-  /// for a local serial port.
+  /// for a local serial port, `maidcafe` for the MaidCafe daemon's WebSocket
+  /// terminal endpoint.
   final ServerConnectionType connectionType;
 
   /// Serial-port settings, only used when [connectionType] is serial.
   final SerialConfig? serialConfig;
+
+  /// MaidCafe daemon endpoint this app dials for [ServerConnectionType.maidcafe]
+  /// terminals — an http(s) base URL the app itself can reach, such as
+  /// `https://host.tailnet.ts.net` (or `http://127.0.0.1:8747` when the page or
+  /// app runs on the same machine). Unlike the SSH-forwarded metrics endpoint,
+  /// it must be reachable without an SSH session, because that is the whole
+  /// point of the transport.
+  final String? maidCafeTerminalUrl;
+
+  /// Optional dedicated daemon terminal credential (`daemon.terminal.secret`).
+  /// Null/empty keeps the stored value on edit; [clearMaidCafeTerminalSecret]
+  /// removes it. The daemon falls back to its metrics secret when this is
+  /// unset, so an empty value is a valid configuration, not a missing one.
+  final String? maidCafeTerminalSecret;
+
+  /// Whether an edit should delete the stored terminal credential.
+  final bool clearMaidCafeTerminalSecret;
 }
 
 /// JSON-encodes [environment] for storage, or null when it is empty.
@@ -166,13 +187,64 @@ List<String> decodeStringList(String? value) {
   ];
 }
 
-enum ServerConnectionType { ssh, serial }
+/// How the app reaches a server's terminal.
+///
+/// `ssh` and `serial` carry the shell over their own transport. `maidcafe`
+/// dials the MaidCafe daemon's WebSocket terminal endpoint directly, which is
+/// the only option in a browser build: the web platform has no raw sockets for
+/// SSH or a serial device.
+enum ServerConnectionType { ssh, serial, maidcafe }
+
+/// Tolerant lookup for a stored `connectionType` value. Unknown or legacy
+/// names fall back to SSH, which is what rows written before the column
+/// existed mean.
+ServerConnectionType serverConnectionTypeFromName(String? raw) =>
+    ServerConnectionType.values.asNameMap()[raw] ?? ServerConnectionType.ssh;
 
 /// Whether serial-port servers are offered in the UI and can be connected.
 ///
 /// On macOS, the unsandboxed Runner opens /dev/cu.* device nodes directly.
 /// Windows and Linux need their own transport before this flag can cover them.
 const bool serialPortsSupported = true;
+
+/// A resolved MaidCafe daemon terminal endpoint and its credential.
+///
+/// [baseUrl] is the daemon root the app dials (e.g.
+/// `https://host.tailnet.ts.net`); the transport appends
+/// `/api/v1/terminal`. [secret] is the dedicated terminal secret when one is
+/// stored and the daemon metrics secret otherwise, matching the daemon's own
+/// `daemon.terminal.secret` fallback.
+class MaidCafeTerminalTarget {
+  const MaidCafeTerminalTarget({required this.baseUrl, required this.secret});
+
+  final String baseUrl;
+  final String secret;
+
+  /// The `ws`/`wss` endpoint for the daemon terminal, keeping the configured
+  /// scheme's security: `https` becomes `wss` so a TLS-fronted daemon is never
+  /// downgraded to a cleartext socket.
+  ///
+  /// A base path is preserved, so a daemon behind a path-prefixed reverse
+  /// proxy (`https://host/maidcafe`) is addressed at
+  /// `wss://host/maidcafe/api/v1/terminal`.
+  Uri get endpoint {
+    final base = Uri.parse(baseUrl);
+    final scheme = switch (base.scheme) {
+      'https' => 'wss',
+      'http' => 'ws',
+      _ => throw ArgumentError('Unsupported daemon endpoint: $baseUrl'),
+    };
+    final prefix = base.path.replaceFirst(RegExp(r'/+$'), '');
+    // Built explicitly: Uri.replace(query: '') would leave a trailing '?'.
+    return Uri(
+      scheme: scheme,
+      userInfo: base.userInfo,
+      host: base.host,
+      port: base.hasPort ? base.port : null,
+      path: '$prefix/api/v1/terminal',
+    );
+  }
+}
 
 enum SerialParity { none, even, odd }
 

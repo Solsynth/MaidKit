@@ -87,6 +87,7 @@ dependencies:
   system_fonts: ^1.0.1
   uuid: ^4.6.0
   url_launcher: ^6.3.2
+  web_socket_channel: ^3.0.3
   yaml: ^3.1.4
 
   cupertino_icons: ^1.0.9

@@ -24,7 +24,7 @@ void main() {
 
   group('AppDatabase migrations', () {
     test(
-      'schema 22 database that already has sort_order migrates to 34',
+      'schema 22 database that already has sort_order migrates to the current schema',
       () async {
         final directory = Directory.systemTemp.createTempSync('migration_test');
         final path = '${directory.path}/stale.sqlite';
@@ -45,13 +45,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
-        // Opening the database again runs the 22 -> 33 migrations, which
+        // Opening the database again runs every migration after 22, which
         // must not fail with a duplicate column error.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 34);
+        expect(version.read<int>('user_version'), database.schemaVersion);
 
         // The order backfill still ran, so the legacy row keeps its
         // creation-id position.
@@ -117,6 +117,18 @@ void main() {
             .get();
         expect(snapshotTable, isNotEmpty);
 
+        // The MaidCafe daemon terminal endpoint and credential are added in
+        // schema 35.
+        final terminalColumns = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('servers') "
+              "WHERE name IN ('maid_cafe_terminal_url', "
+              "'encrypted_maid_cafe_terminal_secret', "
+              "'maid_cafe_terminal_secret_nonce')",
+            )
+            .get();
+        expect(terminalColumns, hasLength(3));
+
         final authKeyColumns = await database
             .customSelect(
               "SELECT name FROM pragma_table_info('vault_metadata') "
@@ -145,7 +157,7 @@ void main() {
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 34);
+        expect(version.read<int>('user_version'), database.schemaVersion);
 
         final column = await database
             .customSelect(
@@ -233,13 +245,13 @@ void main() {
         await seeded.customStatement('PRAGMA user_version = 16');
         await seeded.close();
 
-        // Opening the database again runs the 16 -> 34 migrations, which
+        // Opening the database again runs every migration after 16, which
         // must export the legacy rows as JSONL before dropping the table.
         final database = AppDatabase(filePath: path);
         final version = await database
             .customSelect('PRAGMA user_version')
             .getSingle();
-        expect(version.read<int>('user_version'), 34);
+        expect(version.read<int>('user_version'), database.schemaVersion);
 
         final table = await database
             .customSelect(

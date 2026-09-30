@@ -17,6 +17,7 @@ import 'package:maid_kit/github/github_workflow_strip.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/collapsible_section.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'maidcafe_service.dart';
 import 'server_connection_actions.dart';
 import 'dashboard_runtimes_section.dart';
 import 'server_models.dart';
@@ -70,11 +71,13 @@ class ServerDashboardTab extends ConsumerWidget {
     WidgetRef ref,
     Server server,
   ) async {
-    if (server.connectionType == ServerConnectionType.serial.name) {
-      await openSerialTerminalSession(context, ref, server);
-    } else {
+    // SSH servers connect without opening a terminal so the card can collect
+    // statistics; every other transport exists to serve a terminal.
+    if (server.connectionType == ServerConnectionType.ssh.name) {
       await connectForStatistics(context, ref, server);
+      return;
     }
+    await openTerminalFor(context, ref, server);
   }
 
   Future<void> _reconnectAll(
@@ -131,7 +134,10 @@ class ServerDashboardTab extends ConsumerWidget {
                     .asNameMap()[server.connectionType] ??
                 ServerConnectionType.ssh,
             serialConfig: decodeSerialConfig(server.serialConfig),
+            maidCafeTerminalUrl: server.maidCafeTerminalUrl,
           ),
+          maidCafeTerminalSecretStored:
+              server.encryptedMaidCafeTerminalSecret != null,
         ),
       );
       if (draft != null) {
@@ -189,7 +195,9 @@ class ServerDashboardTab extends ConsumerWidget {
     WidgetRef ref,
     Server server,
   ) async {
-    if (server.connectionType == ServerConnectionType.serial.name) return;
+    // File management talks to the host over SSH; serial and daemon servers
+    // have no SSH client to reach it with.
+    if (server.connectionType != ServerConnectionType.ssh.name) return;
     final manager = ref.read(connectionManagerProvider);
     if (manager.clientFor(server.id) == null &&
         !await connectForStatistics(context, ref, server)) {
@@ -1028,7 +1036,10 @@ class _ServerCard extends ConsumerWidget {
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
     final hideAddresses = ref.watch(hideServerAddressesProvider);
-    final isSerial = server.connectionType == ServerConnectionType.serial.name;
+    final connectionType = serverConnectionTypeFromName(server.connectionType);
+    // SSH is the only transport this card can collect statistics over, so a
+    // serial or daemon server shows its transport instead of a stats grid.
+    final isTerminalOnly = connectionType != ServerConnectionType.ssh;
     final connected = session?.status == SessionStatus.connected;
     final connecting = session?.status == SessionStatus.connecting;
     final failed = session?.status == SessionStatus.failed;
@@ -1073,7 +1084,7 @@ class _ServerCard extends ConsumerWidget {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (!isSerial &&
+                              if (connectionType == ServerConnectionType.ssh &&
                                   isTailnetAddress(server.host)) ...[
                                 Tooltip(
                                   message: 'tailscaleViaTailnet'.tr(),
@@ -1107,7 +1118,7 @@ class _ServerCard extends ConsumerWidget {
                     IconButton(
                       tooltip: 'serversRefreshStatistics'.tr(),
                       visualDensity: VisualDensity.compact,
-                      onPressed: isSerial
+                      onPressed: isTerminalOnly
                           ? null
                           : (connected ? onRefresh : null),
                       icon: const Icon(Symbols.refresh),
@@ -1119,10 +1130,14 @@ class _ServerCard extends ConsumerWidget {
               Expanded(
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12),
-                  child: isSerial
+                  child: isTerminalOnly
                       ? _StatsMessage(
-                          icon: Symbols.usb,
-                          message: 'serversSerialConsole'.tr(),
+                          icon: connectionType == ServerConnectionType.serial
+                              ? Symbols.usb
+                              : Symbols.cloud,
+                          message: connectionType == ServerConnectionType.serial
+                              ? 'serversSerialConsole'.tr()
+                              : 'serversMaidCafeConsole'.tr(),
                         )
                       : connected
                       ? _ServerStats(
@@ -1175,7 +1190,9 @@ class _ServerCard extends ConsumerWidget {
                 child: _ServerQuickActions(
                   compact: compact,
                   onOpenTerminal: connecting ? null : onOpenTerminal,
-                  onOpenFiles: connecting || isSerial ? null : onOpenFiles,
+                  onOpenFiles: connecting || isTerminalOnly
+                      ? null
+                      : onOpenFiles,
                 ),
               ),
             ],
@@ -1847,6 +1864,7 @@ class ServerEditorDialog extends ConsumerStatefulWidget {
     this.serverId,
     this.initial,
     this.snippets = const [],
+    this.maidCafeTerminalSecretStored = false,
   });
 
   final ServerDraft? initial;
@@ -1856,6 +1874,12 @@ class ServerEditorDialog extends ConsumerStatefulWidget {
 
   /// Saved snippets offered as initial-snippet choices for this server.
   final List<ScriptSnippet> snippets;
+
+  /// Whether the edited server already has a stored daemon terminal
+  /// credential. Secrets are never read back into the form, so this only
+  /// controls the "forget the stored credential" affordance.
+  final bool maidCafeTerminalSecretStored;
+
   @override
   ConsumerState<ServerEditorDialog> createState() => _AddServerDialogState();
 }
@@ -1884,6 +1908,11 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   SerialParity _serialParity = SerialParity.none;
   int _serialStopBits = 1;
   SerialFlowControl _serialFlowControl = SerialFlowControl.none;
+
+  // MaidCafe daemon terminal settings.
+  final _maidCafeTerminalUrl = TextEditingController();
+  final _maidCafeTerminalSecret = TextEditingController();
+  bool _clearMaidCafeTerminalSecret = false;
 
   // Per-server proxy configuration.
   ServerProxyType _proxyType = ServerProxyType.none;
@@ -1927,6 +1956,9 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     _collectStats = initial.collectStats;
     _collectSystemInfo = initial.collectSystemInfo;
     _connectionType = initial.connectionType;
+    // The endpoint is metadata and reopens in the form; the terminal
+    // credential is never decrypted into it.
+    _maidCafeTerminalUrl.text = initial.maidCafeTerminalUrl ?? '';
     final serialConfig = initial.serialConfig;
     if (serialConfig != null) {
       _serialDevice.text = serialConfig.device;
@@ -1980,6 +2012,8 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       _tagInput,
       _fileManagementInitialPath,
       _serialDevice,
+      _maidCafeTerminalUrl,
+      _maidCafeTerminalSecret,
     ]) {
       controller.dispose();
     }
@@ -2151,8 +2185,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   }
 
   bool _hasJumpHostCycle() {
+    // A jump host is an SSH hop. The other transports save no jump host, so a
+    // value left over from an earlier transport must not block the form.
+    if (_connectionType != ServerConnectionType.ssh) return false;
     if (_jumpHostServerId == null) return false;
-    if (_connectionType != ServerConnectionType.ssh) return true;
     var current = _jumpHostServerId;
     final visited = <int>{};
     while (current != null) {
@@ -2163,6 +2199,21 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
           ?.jumpHostServerId;
     }
     return false;
+  }
+
+  /// Validates the MaidCafe daemon endpoint: an absolute HTTP(S) URL the app
+  /// itself can reach. Non-loopback plain HTTP is rejected because the daemon
+  /// has no TLS of its own — such an endpoint has to be behind the operator's
+  /// TLS front, which also gives the WebSocket a `wss://` URL.
+  String? _validateMaidCafeTerminalUrl(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return 'serverMaidCafeTerminalUrlRequired'.tr();
+    try {
+      normalizeMaidCafeLocalDaemonUrl(raw);
+    } on MaidCafeException catch (error) {
+      return error.message;
+    }
+    return null;
   }
 
   void _save() {
@@ -2202,7 +2253,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         name: _name.text,
         host: _host.text,
         port: int.parse(_port.text),
-        jumpHostServerId: _jumpHostServerId,
+        // A jump host only applies to the SSH transport.
+        jumpHostServerId: _connectionType == ServerConnectionType.ssh
+            ? _jumpHostServerId
+            : null,
         username: _user.text,
         credential: credential,
         credentialId: _credentialChoice.isNew ? null : _credentialChoice.id,
@@ -2244,6 +2298,18 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                 flowControl: _serialFlowControl,
               )
             : null,
+        // Same rule as the serial settings: switching transport drops that
+        // transport's configuration instead of leaving a dead endpoint (and a
+        // dead credential) behind.
+        maidCafeTerminalUrl: _connectionType == ServerConnectionType.maidcafe
+            ? _maidCafeTerminalUrl.text.trim()
+            : null,
+        maidCafeTerminalSecret: _connectionType == ServerConnectionType.maidcafe
+            ? _maidCafeTerminalSecret.text
+            : null,
+        clearMaidCafeTerminalSecret:
+            _clearMaidCafeTerminalSecret ||
+            _connectionType != ServerConnectionType.maidcafe,
       ),
     );
   }
@@ -2259,9 +2325,11 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     return SizedBox(
       width: 560,
       child: SheetScaffold(
-        titleText: _connectionType == ServerConnectionType.serial
-            ? 'serversAddSerialSheetTitle'.tr()
-            : 'serversAddSheetTitle'.tr(),
+        titleText: switch (_connectionType) {
+          ServerConnectionType.serial => 'serversAddSerialSheetTitle'.tr(),
+          ServerConnectionType.maidcafe => 'serversAddMaidCafeSheetTitle'.tr(),
+          ServerConnectionType.ssh => 'serversAddSheetTitle'.tr(),
+        },
         heightFactor: 0.78,
         child: Form(
           key: _form,
@@ -2284,10 +2352,21 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                       value: ServerConnectionType.serial,
                       label: Text('serverConnectionSerial'.tr()),
                     ),
+                  ButtonSegment(
+                    value: ServerConnectionType.maidcafe,
+                    label: Text('serverConnectionMaidCafe'.tr()),
+                  ),
                 ],
                 selected: {_connectionType},
                 onSelectionChanged: (value) {
-                  setState(() => _connectionType = value.first);
+                  setState(() {
+                    _connectionType = value.first;
+                    // A jump host is an SSH hop; keeping one on a terminal-only
+                    // transport would leave the form rejecting itself.
+                    if (value.first != ServerConnectionType.ssh) {
+                      _jumpHostServerId = null;
+                    }
+                  });
                   if (value.first == ServerConnectionType.serial) {
                     _scanSerialDevices();
                   }
@@ -2634,6 +2713,53 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                         ),
                       ),
                   ],
+                ),
+              ] else if (_connectionType == ServerConnectionType.maidcafe) ...[
+                TextFormField(
+                  controller: _maidCafeTerminalUrl,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: 'serverMaidCafeTerminalUrlLabel'.tr(),
+                    helperText: 'serverMaidCafeTerminalUrlHint'.tr(),
+                  ),
+                  validator: _validateMaidCafeTerminalUrl,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _maidCafeTerminalSecret,
+                  obscureText: true,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    labelText: 'serverMaidCafeTerminalSecretLabel'.tr(),
+                    helperText: 'serverMaidCafeTerminalSecretHint'.tr(),
+                  ),
+                ),
+                if (widget.maidCafeTerminalSecretStored &&
+                    !_clearMaidCafeTerminalSecret) ...[
+                  const SizedBox(height: 4),
+                  TextButton.icon(
+                    onPressed: () =>
+                        setState(() => _clearMaidCafeTerminalSecret = true),
+                    icon: const Icon(Symbols.delete, size: 18),
+                    label: Text('serverMaidCafeTerminalSecretForget'.tr()),
+                  ),
+                ],
+                if (_clearMaidCafeTerminalSecret) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'serverMaidCafeTerminalSecretWillClear'.tr(),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Text(
+                  'serverMaidCafeTerminalNote'.tr(),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ] else ...[
                 DropdownMenu<String>(

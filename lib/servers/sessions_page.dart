@@ -92,7 +92,7 @@ Future<void> _openFiles(
   String? paneId,
   String? initialPath,
 }) async {
-  if (server.connectionType == ServerConnectionType.serial.name) return;
+  if (server.connectionType != ServerConnectionType.ssh.name) return;
   final manager = ref.read(connectionManagerProvider);
   if (manager.clientFor(server.id) == null &&
       !await connectForStatistics(context, ref, server)) {

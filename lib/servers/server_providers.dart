@@ -31,6 +31,7 @@ import 'cloud_sync_service.dart';
 import 'maidcafe_preferences.dart';
 import 'maidcafe_push.dart';
 import 'maidcafe_service.dart';
+import 'maidcafe_terminal_connection_manager.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_session_registry.dart';
 import 'metrics_refresh_preferences.dart';
@@ -1392,10 +1393,23 @@ final serialConnectionManagerProvider = Provider<SerialConnectionManager>((
   return manager;
 });
 
+/// Terminals served by a MaidCafe daemon over WebSocket. Unlike SSH and serial
+/// terminals this transport needs no raw socket, so it is the one that can run
+/// in a browser build.
+final maidCafeTerminalConnectionManagerProvider =
+    Provider<MaidCafeTerminalConnectionManager>((ref) {
+      final manager = MaidCafeTerminalConnectionManager(
+        () => ref.read(terminalSessionAdapterFactoryProvider),
+      );
+      ref.onDispose(manager.dispose);
+      return manager;
+    });
+
 final sessionsProvider = StreamProvider<List<SshSessionInfo>>((ref) {
   final manager = ref.watch(connectionManagerProvider);
   final serial = ref.watch(serialConnectionManagerProvider);
-  return _watchSessions(manager, serial);
+  final maidCafe = ref.watch(maidCafeTerminalConnectionManagerProvider);
+  return _watchSessions(manager, serial, maidCafe);
 });
 
 final portForwardsProvider = StreamProvider<List<ActivePortForward>>((ref) {
@@ -1462,9 +1476,14 @@ Future<void> _startAutoPortForwards(Ref ref, Server server) async {
 Stream<List<SshSessionInfo>> _watchSessions(
   SshConnectionManager manager,
   SerialConnectionManager serial,
+  MaidCafeTerminalConnectionManager maidCafe,
 ) async* {
-  yield [...manager.current, ...serial.current];
-  yield* StreamGroup.merge([manager.sessions, serial.sessions]);
+  yield [...manager.current, ...serial.current, ...maidCafe.current];
+  yield* StreamGroup.merge([
+    manager.sessions,
+    serial.sessions,
+    maidCafe.sessions,
+  ]);
 }
 
 final serversProvider = StreamProvider<List<Server>>((ref) {

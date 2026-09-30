@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
+import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 
 /// The kind of workspace tab captured in a [WorkspaceTabSnapshot].
@@ -322,14 +323,16 @@ class PendingTerminalRestore {
     required this.serverId,
     this.cwd,
     this.history,
-    this.isSerial = false,
+    this.connectionType = ServerConnectionType.ssh,
   });
 
   final String paneId;
   final int serverId;
   final String? cwd;
   final String? history;
-  final bool isSerial;
+
+  /// Transport the terminal was on, so a restored tab reopens the same way.
+  final ServerConnectionType connectionType;
 }
 
 /// A [WorkspaceSnapshot] resolved against the current server catalog: which
@@ -413,12 +416,14 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
               serverId: spec.serverId,
               cwd: spec.cwd,
               history: spec.history,
-              isSerial: server!.connectionType == 'serial',
+              connectionType: serverConnectionTypeFromName(
+                server!.connectionType,
+              ),
             ),
           );
-          // The tab id is reserved in [desiredPaneTabIds] and re-inserted by
-          // the caller once the terminal connects; it must not appear in the
-          // pane before a live tab exists for it.
+        // The tab id is reserved in [desiredPaneTabIds] and re-inserted by
+        // the caller once the terminal connects; it must not appear in the
+        // pane before a live tab exists for it.
         case WorkspaceTabKind.fileManagement:
           initialTabs.add(
             FileManagementTab(

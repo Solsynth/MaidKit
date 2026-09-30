@@ -56,6 +56,14 @@ class Servers extends Table {
   TextColumn get maidCafeWebhookSecretNonce => text().nullable()();
   TextColumn get encryptedMaidCafeMetricsSecret => text().nullable()();
   TextColumn get maidCafeMetricsSecretNonce => text().nullable()();
+  // MaidCafe daemon WebSocket terminal: the endpoint this app dials directly
+  // (browser builds included) and its optional terminal credential. The
+  // endpoint is non-secret metadata; the secret is encrypted with the vault
+  // key. An empty secret falls back to [encryptedMaidCafeMetricsSecret],
+  // matching the daemon's own `daemon.terminal.secret` default.
+  TextColumn get maidCafeTerminalUrl => text().nullable()();
+  TextColumn get encryptedMaidCafeTerminalSecret => text().nullable()();
+  TextColumn get maidCafeTerminalSecretNonce => text().nullable()();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -354,7 +362,7 @@ class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 34;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -722,6 +730,26 @@ class AppDatabase extends _$AppDatabase {
       }
       if (from < 34) {
         await m.createTable(workspaceSnapshots);
+      }
+      if (from < 35) {
+        final terminalColumns = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name IN ('maid_cafe_terminal_url', "
+          "'encrypted_maid_cafe_terminal_secret', "
+          "'maid_cafe_terminal_secret_nonce')",
+        ).get();
+        final existing = terminalColumns
+            .map((row) => row.read<String>('name'))
+            .toSet();
+        if (!existing.contains('maid_cafe_terminal_url')) {
+          await m.addColumn(servers, servers.maidCafeTerminalUrl);
+        }
+        if (!existing.contains('encrypted_maid_cafe_terminal_secret')) {
+          await m.addColumn(servers, servers.encryptedMaidCafeTerminalSecret);
+        }
+        if (!existing.contains('maid_cafe_terminal_secret_nonce')) {
+          await m.addColumn(servers, servers.maidCafeTerminalSecretNonce);
+        }
       }
     },
   );

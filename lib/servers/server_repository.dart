@@ -38,6 +38,7 @@ class ServerRepository {
             draft.proxy!.password!,
             context: 'server-proxy-password',
           );
+    final terminalSecret = await _maidCafeTerminalSecret(draft);
     final id = await _database.transaction(() async {
       final maxOrder =
           await (_database.selectOnly(_database.servers)
@@ -77,6 +78,9 @@ class ServerRepository {
               ),
               connectionType: Value(draft.connectionType.name),
               serialConfig: Value(encodeSerialConfig(draft.serialConfig)),
+              maidCafeTerminalUrl: Value(_normalizedTerminalUrl(draft)),
+              encryptedMaidCafeTerminalSecret: Value(terminalSecret?.bytes),
+              maidCafeTerminalSecretNonce: Value(terminalSecret?.nonce),
               sortOrder: Value(nextOrder),
             ),
           );
@@ -102,6 +106,7 @@ class ServerRepository {
             proxy.password!,
             context: 'server-proxy-password',
           );
+    final terminalSecret = await _maidCafeTerminalSecret(draft);
     await (_database.update(
       _database.servers,
     )..where((table) => table.id.equals(server.id))).write(
@@ -137,6 +142,19 @@ class ServerRepository {
         ),
         connectionType: Value(draft.connectionType.name),
         serialConfig: Value(encodeSerialConfig(draft.serialConfig)),
+        maidCafeTerminalUrl: Value(_normalizedTerminalUrl(draft)),
+        // An explicit clear removes the stored credential; a blank field
+        // keeps it, matching the proxy password semantics above.
+        encryptedMaidCafeTerminalSecret: draft.clearMaidCafeTerminalSecret
+            ? const Value(null)
+            : terminalSecret == null
+            ? const Value.absent()
+            : Value(terminalSecret.bytes),
+        maidCafeTerminalSecretNonce: draft.clearMaidCafeTerminalSecret
+            ? const Value(null)
+            : terminalSecret == null
+            ? const Value.absent()
+            : Value(terminalSecret.nonce),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -295,6 +313,56 @@ class ServerRepository {
       EncryptedValue(bytes: bytes, nonce: nonce),
       context: 'maidcafe-metrics-secret',
     );
+  }
+
+  /// The stored dedicated daemon terminal credential, or null when the server
+  /// has none and the daemon falls back to its metrics secret.
+  Future<String?> maidCafeTerminalSecretFor(Server server) async {
+    final bytes = server.encryptedMaidCafeTerminalSecret;
+    final nonce = server.maidCafeTerminalSecretNonce;
+    if (bytes == null || nonce == null) return null;
+    return _vault.decrypt(
+      EncryptedValue(bytes: bytes, nonce: nonce),
+      context: 'maidcafe-terminal-secret',
+    );
+  }
+
+  /// Resolves the directly reachable daemon terminal endpoint and credential
+  /// for [server].
+  ///
+  /// Returns null when no endpoint or no credential is available, so callers
+  /// can tell "not configured" from a transport failure. The credential is the
+  /// dedicated terminal secret when one is stored, and the stored daemon
+  /// metrics secret otherwise — the same fallback the daemon itself applies to
+  /// `daemon.terminal.secret`.
+  Future<MaidCafeTerminalTarget?> maidCafeTerminalTargetFor(
+    Server server,
+  ) async {
+    final url = server.maidCafeTerminalUrl?.trim();
+    if (url == null || url.isEmpty) return null;
+    final secret =
+        await maidCafeTerminalSecretFor(server) ??
+        await maidCafeMetricsSecretFor(server);
+    if (secret == null || secret.isEmpty) return null;
+    return MaidCafeTerminalTarget(baseUrl: url, secret: secret);
+  }
+
+  /// Encrypts a draft's new daemon terminal credential, or null when there is
+  /// nothing to store.
+  Future<EncryptedValue?> _maidCafeTerminalSecret(ServerDraft draft) async {
+    final secret = draft.maidCafeTerminalSecret?.trim();
+    if (draft.clearMaidCafeTerminalSecret || secret == null || secret.isEmpty) {
+      return null;
+    }
+    return _vault.encrypt(secret, context: 'maidcafe-terminal-secret');
+  }
+
+  /// The stored terminal endpoint for [draft], normalized so a saved value is
+  /// always usable, or null when the draft has none.
+  String? _normalizedTerminalUrl(ServerDraft draft) {
+    final raw = draft.maidCafeTerminalUrl?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return normalizeMaidCafeLocalDaemonUrl(raw);
   }
 
   Stream<List<SavedCredential>> watchCredentials() => (_database.select(

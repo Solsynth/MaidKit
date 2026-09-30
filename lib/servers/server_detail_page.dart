@@ -460,8 +460,8 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   }
 
   Future<void> _connect() async {
-    if (widget.server.connectionType == ServerConnectionType.serial.name) {
-      await openSerialTerminalSession(context, ref, widget.server);
+    if (widget.server.connectionType != ServerConnectionType.ssh.name) {
+      await openTerminalFor(context, ref, widget.server);
       return;
     }
     final connected = await connectForStatistics(context, ref, widget.server);

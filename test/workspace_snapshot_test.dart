@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
+import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/servers/workspace_snapshot.dart';
@@ -314,7 +315,7 @@ void main() {
       expect(pending.serverId, 1);
       expect(pending.cwd, '/home/builder/proj');
       expect(pending.history, 'user@host:~\$ cd /home/builder/proj\n');
-      expect(pending.isSerial, isFalse);
+      expect(pending.connectionType, ServerConnectionType.ssh);
 
       expect(resolved.desiredPaneTabIds['main'], [
         'dashboard',
@@ -359,8 +360,14 @@ void main() {
       });
 
       expect(resolved.pendingTerminals, hasLength(2));
-      expect(resolved.pendingTerminals[0].isSerial, isTrue);
-      expect(resolved.pendingTerminals[1].isSerial, isFalse);
+      expect(
+        resolved.pendingTerminals[0].connectionType,
+        ServerConnectionType.serial,
+      );
+      expect(
+        resolved.pendingTerminals[1].connectionType,
+        ServerConnectionType.ssh,
+      );
       // All three tabs are terminals; the deleted server's tab is dropped and
       // the survivors stay deferred, so the pane has no live tabs yet.
       expect(resolved.panes['main']!.tabIds, isEmpty);

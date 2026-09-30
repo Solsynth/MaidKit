@@ -250,7 +250,8 @@ Future<bool> openTerminalSession(
 }
 
 /// Opens the terminal appropriate for [server]'s transport: serial, local
-/// shell, or SSH. Returns whether the terminal tab was opened.
+/// shell, MaidCafe daemon WebSocket, or SSH. Returns whether the terminal tab
+/// was opened.
 Future<bool> openTerminalFor(
   BuildContext context,
   WidgetRef ref,
@@ -260,7 +261,60 @@ Future<bool> openTerminalFor(
   if (server.connectionType == ServerConnectionType.serial.name) {
     return openSerialTerminalSession(context, ref, server, paneId: paneId);
   }
+  if (server.connectionType == ServerConnectionType.maidcafe.name) {
+    return openMaidCafeTerminalSession(context, ref, server, paneId: paneId);
+  }
   return openTerminalSession(context, ref, server, paneId: paneId);
+}
+
+/// Opens a terminal on [server]'s MaidCafe daemon WebSocket endpoint. Returns
+/// whether the terminal tab was opened.
+///
+/// Unlike SSH and serial terminals this needs no raw socket, so it is the only
+/// transport a browser build can use.
+Future<bool> openMaidCafeTerminalSession(
+  BuildContext context,
+  WidgetRef ref,
+  Server server, {
+  String? paneId,
+}) async {
+  final target = await ref
+      .read(serverRepositoryProvider)
+      .maidCafeTerminalTargetFor(server);
+  if (target == null) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: 'serverMaidCafeTerminalNotConfigured'.tr(),
+        title: 'serverCannotOpenTerminal'.tr(),
+        icon: Symbols.terminal,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+    return false;
+  }
+  if (!context.mounted) return false;
+  final loading = showMaidKitLoadingModal(
+    context,
+    message: 'serverOpeningMaidCafeTerminal'.tr(args: [server.name]),
+  );
+  try {
+    await ref
+        .read(terminalTabsProvider.notifier)
+        .openMaidCafe(server, target, paneId: paneId);
+    return true;
+  } catch (error) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: error.toString(),
+        title: 'serverCannotOpenTerminal'.tr(),
+        icon: Symbols.terminal,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+    return false;
+  } finally {
+    loading.dismiss();
+  }
 }
 
 /// Opens a terminal over [server]'s local serial port. Returns whether the
