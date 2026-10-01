@@ -833,6 +833,9 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
   SudoPromptReason? get sudoAutofillReady => null;
 
   @override
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {}
+
+  @override
   Widget buildView({
     bool autofocus = false,
     bool readOnly = false,

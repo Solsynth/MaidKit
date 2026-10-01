@@ -5,8 +5,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
+import 'package:maid_kit/platform/tailscale.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:tailscale/tailscale.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'tailscale_service.dart';

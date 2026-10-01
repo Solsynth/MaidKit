@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:tailscale/tailscale.dart';
+import 'package:maid_kit/platform/tailscale.dart';
 
 import 'tailscale_service.dart';
 

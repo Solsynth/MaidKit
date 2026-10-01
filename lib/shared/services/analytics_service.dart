@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/foundation.dart';
 
@@ -79,11 +77,15 @@ class MaidKitAnalytics {
 
   String _platformName() {
     if (kIsWeb) return 'web';
-    if (Platform.isAndroid) return 'android';
-    if (Platform.isIOS) return 'ios';
-    if (Platform.isMacOS) return 'macos';
-    if (Platform.isLinux) return 'linux';
-    if (Platform.isWindows) return 'windows';
-    return 'unknown';
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => 'android',
+      TargetPlatform.iOS => 'ios',
+      TargetPlatform.macOS => 'macos',
+      TargetPlatform.linux => 'linux',
+      TargetPlatform.windows => 'windows',
+      // `dart:io`'s `Platform` reports no Fuchsia product; keep the original
+      // unknown fallback for the analyzer's exhaustive switch.
+      TargetPlatform.fuchsia => 'unknown',
+    };
   }
 }

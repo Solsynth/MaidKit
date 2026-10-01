@@ -14,7 +14,7 @@ void main() {
     return ProviderScope(
       overrides: [
         terminalSessionAdapterFactoryProvider.overrideWithValue(
-          const MaidTermSessionAdapterFactory(
+          const TerminalRendererFactory(
             cursorAnimationEnabled: false,
             colorScheme: TerminalColorSchemes.defaultScheme,
           ),

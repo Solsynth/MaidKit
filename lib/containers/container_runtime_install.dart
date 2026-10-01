@@ -1,4 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -12,12 +13,16 @@ import 'container_models.dart';
 
 Future<ContainerRuntime?> chooseContainerRuntimeToInstall(
   BuildContext context,
-) => showModalBottomSheet<ContainerRuntime>(
-  context: context,
-  useRootNavigator: true,
-  useSafeArea: true,
-  builder: (_) => const _ContainerRuntimeInstallSheet(),
-);
+) {
+  // A browser cannot install anything on the host; no runtime to choose.
+  if (kIsWeb) return Future<ContainerRuntime?>.value();
+  return showModalBottomSheet<ContainerRuntime>(
+    context: context,
+    useRootNavigator: true,
+    useSafeArea: true,
+    builder: (_) => const _ContainerRuntimeInstallSheet(),
+  );
+}
 
 Future<void> installContainerRuntime({
   required WidgetRef ref,
@@ -25,6 +30,12 @@ Future<void> installContainerRuntime({
   required ContainerRuntime runtime,
   required String? sudoPassword,
 }) async {
+  // The install runs in an SSH-backed task terminal.
+  if (kIsWeb) {
+    throw UnsupportedError(
+      'Installing a container runtime is not available in this browser.',
+    );
+  }
   final manager = ref.read(connectionManagerProvider);
   final status = await manager.getPackageManagerStatus(server.id);
   final packageManager = status.preferred;

@@ -211,8 +211,10 @@ class SettingsPage extends HookConsumerWidget {
                                 ],
                                 const SizedBox(height: 16),
                                 const _LanguageSwitcher(),
-                                const SizedBox(height: 16),
-                                const _UiFontDropdown(),
+                                if (!kIsWeb) ...[
+                                  const SizedBox(height: 16),
+                                  const _UiFontDropdown(),
+                                ],
                                 const SizedBox(height: 16),
                                 Text(
                                   'settingsUiScale',
@@ -374,8 +376,10 @@ class SettingsPage extends HookConsumerWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const _TerminalFontDropdown(),
-                                const SizedBox(height: 16),
+                                if (!kIsWeb) ...[
+                                  const _TerminalFontDropdown(),
+                                  const SizedBox(height: 16),
+                                ],
                                 _TerminalThemeTile(
                                   mode: Brightness.light,
                                   theme: terminalLightTheme,
@@ -674,7 +678,7 @@ class SettingsPage extends HookConsumerWidget {
                     ),
                     const SizedBox(height: 24),
                   ],
-                  if (selectedCategory.id == 'agent') ...[
+                  if (selectedCategory.id == 'agent' && !kIsWeb) ...[
                     _SettingsSection(
                       titleKey: 'settingsLocalMcpServer',
                       padding: EdgeInsets.zero,
@@ -701,26 +705,33 @@ class SettingsPage extends HookConsumerWidget {
                         ),
                         data: (enabled) => Column(
                           children: [
-                            SwitchListTile(
-                              contentPadding: _sectionTilePadding,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: _sectionTileBorderRadius(
-                                  _SettingsTilePosition.first,
+                            // Biometric unlock needs the local_auth plugin,
+                            // which has no web implementation.
+                            if (!kIsWeb)
+                              SwitchListTile(
+                                contentPadding: _sectionTilePadding,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: _sectionTileBorderRadius(
+                                    _SettingsTilePosition.first,
+                                  ),
                                 ),
+                                title: const Text(
+                                  'settingsBiometricUnlock',
+                                ).tr(),
+                                subtitle: const Text(
+                                  'settingsBiometricUnlockHint',
+                                ).tr(),
+                                value: enabled,
+                                onChanged: (value) =>
+                                    _setBiometricUnlock(context, ref, value),
                               ),
-                              title: const Text('settingsBiometricUnlock').tr(),
-                              subtitle: const Text(
-                                'settingsBiometricUnlockHint',
-                              ).tr(),
-                              value: enabled,
-                              onChanged: (value) =>
-                                  _setBiometricUnlock(context, ref, value),
-                            ),
                             ListTile(
                               contentPadding: _sectionTilePadding,
                               shape: RoundedRectangleBorder(
                                 borderRadius: _sectionTileBorderRadius(
-                                  _SettingsTilePosition.last,
+                                  kIsWeb
+                                      ? _SettingsTilePosition.only
+                                      : _SettingsTilePosition.last,
                                 ),
                               ),
                               leading: const Icon(Symbols.password),
@@ -814,12 +825,14 @@ class SettingsPage extends HookConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    _SettingsSection(
-                      titleKey: 'settingsPushNotifications',
-                      padding: EdgeInsets.zero,
-                      child: const _MaidCafePushSettingsSection(),
-                    ),
-                    const SizedBox(height: 24),
+                    if (!kIsWeb) ...[
+                      _SettingsSection(
+                        titleKey: 'settingsPushNotifications',
+                        padding: EdgeInsets.zero,
+                        child: const _MaidCafePushSettingsSection(),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
                     _SettingsSection(
                       titleKey: 'maidCafeNotifications',
                       padding: EdgeInsets.zero,
@@ -1081,10 +1094,16 @@ class SettingsPage extends HookConsumerWidget {
                                           .read(vaultFileStorageProvider)
                                           .fileName(path),
                                 ),
-                                onDelete: activeVaultFile == path
+                                // The browser's single vault is always the
+                                // active one, and `deleteVault` is not
+                                // supported on the web at all.
+                                onDelete: kIsWeb || activeVaultFile == path
                                     ? null
                                     : () => _deleteVault(context, ref, path),
-                                onImport: activeVaultFile == path
+                                // The browser picker hands over bytes, not a
+                                // readable path, so restoring a `.mkb` cannot
+                                // work there.
+                                onImport: !kIsWeb && activeVaultFile == path
                                     ? () => _importDatabase(context, ref)
                                     : null,
                                 onSync: activeVaultFile == path
@@ -1720,22 +1739,25 @@ class SettingsPage extends HookConsumerWidget {
       dialogTitle: 'settingsConnectionsImportTitle'.tr(),
       type: FileType.any,
       allowMultiple: true,
+      // A browser's picker hands over bytes, not a readable path.
+      withData: kIsWeb,
     );
-    final paths =
-        selection?.files
-            .map((file) => file.path)
-            .whereType<String>()
-            .where((path) => path.isNotEmpty)
-            .toList() ??
-        const [];
-    if (paths.isEmpty || !context.mounted) return;
+    final files = <ImportedConnectionFile>[
+      for (final file in selection?.files ?? const <PlatformFile>[])
+        ?importedConnectionFileFromPicker(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+        ),
+    ];
+    if (files.isEmpty || !context.mounted) return;
 
     final service = ConnectionImportService(
       ref.read(databaseProvider),
       ref.read(vaultServiceProvider),
     );
     final preview = await service.previewFiles(
-      paths,
+      files,
       requestPassphrase: () => _connectionsImportPasswordSheet(context),
     );
     if (!context.mounted || preview.aborted) return;
@@ -4566,6 +4588,8 @@ class _UiFontDropdown extends HookConsumerWidget {
 
     final loaded = useState<Set<String>>(const {});
     useEffect(() {
+      // system_fonts has no web implementation.
+      if (kIsWeb) return null;
       var cancelled = false;
       final missing = filtered
           .map((option) => option.family)
@@ -4692,6 +4716,8 @@ class _TerminalFontDropdown extends HookConsumerWidget {
     final loaded = useState<Set<String>>(const {});
     useEffect(
       () {
+        // system_fonts has no web implementation.
+        if (kIsWeb) return null;
         var cancelled = false;
         final missing = filtered
             .map((option) => option.family)
@@ -4871,7 +4897,7 @@ class _AppIconTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isMacOs = !kIsWeb && Platform.isMacOS;
+    final isMacOs = !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Symbols.app_shortcut),

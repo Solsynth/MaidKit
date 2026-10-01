@@ -1,4 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -46,6 +47,18 @@ Future<bool> connectForStatistics(
   WidgetRef ref,
   Server server,
 ) async {
+  // Every SSH-dependent action funnels through here (server rail actions, the
+  // command palette, container/project detail pages, the file manager): a
+  // browser cannot open a raw socket, so report it once, in one place.
+  if (kIsWeb) {
+    showStyledSnackBar(
+      message: 'serverTerminalUnavailableInBrowser'.tr(),
+      title: 'serverCannotConnect'.tr(),
+      icon: Symbols.link_off,
+      accentColor: Theme.of(context).colorScheme.error,
+    );
+    return false;
+  }
   try {
     final repository = ref.read(serverRepositoryProvider);
     final servers = await repository.all();
@@ -183,6 +196,18 @@ Future<bool> openTerminalSession(
   List<String>? initialScripts,
   String? paneId,
 }) async {
+  // SSH needs a raw socket, which a browser cannot open. Only the MaidCafe
+  // daemon transport works there, and this is the single funnel every
+  // SSH/local-shell entry point goes through.
+  if (kIsWeb) {
+    showStyledSnackBar(
+      message: 'serverTerminalUnavailableInBrowser'.tr(),
+      title: 'serverCannotOpenTerminal'.tr(),
+      icon: Symbols.terminal,
+      accentColor: Theme.of(context).colorScheme.error,
+    );
+    return false;
+  }
   HostKeyPrompt? approvedHostKey;
   final loading = showMaidKitLoadingModal(
     context,

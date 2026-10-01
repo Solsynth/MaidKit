@@ -1,5 +1,6 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -390,22 +391,25 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
         dialogTitle: 'settingsConnectionsImportTitle'.tr(),
         type: FileType.any,
         allowMultiple: true,
+        // A browser's picker hands over bytes, not a readable path.
+        withData: kIsWeb,
       );
-      final paths =
-          selection?.files
-              .map((file) => file.path)
-              .whereType<String>()
-              .where((path) => path.isNotEmpty)
-              .toList() ??
-          const [];
-      if (paths.isEmpty || !mounted) return;
+      final files = <ImportedConnectionFile>[
+        for (final file in selection?.files ?? const <PlatformFile>[])
+          ?importedConnectionFileFromPicker(
+            name: file.name,
+            path: file.path,
+            bytes: file.bytes,
+          ),
+      ];
+      if (files.isEmpty || !mounted) return;
 
       final service = ConnectionImportService(
         ref.read(databaseProvider),
         ref.read(vaultServiceProvider),
       );
       final preview = await service.previewFiles(
-        paths,
+        files,
         requestPassphrase: () => _importPassphraseSheet(context),
       );
       if (!mounted || preview.aborted) return;

@@ -24,8 +24,20 @@ const maidCafePushProviderFcm = 1;
 /// only notification surface.
 bool firebaseSupported() {
   if (kIsWeb) return false;
-  return Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.macOS;
 }
+
+/// True when the running platform is Android. Web is never Android, and
+/// `dart:io`'s `Platform` is unavailable there, so the check is built on
+/// `defaultTargetPlatform` after the web guard.
+bool _isAndroidPlatform() =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+/// Human-readable platform name for debug logs that must also run on the web
+/// (where `dart:io`'s `Platform.operatingSystem` would throw).
+String _platformDescription() => kIsWeb ? 'web' : defaultTargetPlatform.name;
 
 /// True when [cloudUrl] points at a Solsynth-hosted MaidCafe cloud
 /// (`*.solsynth.dev` or `*.solian.app`, apex included). Only these publish
@@ -54,6 +66,9 @@ Future<void> showSystemNotification({
   required String channelName,
   String channelDescription = '',
 }) async {
+  // The browser has no notification plugin; calling it throws. The in-app
+  // Metoer feed remains the only notification surface on the web.
+  if (kIsWeb) return;
   final plugin = _localNotifications;
   const settings = InitializationSettings(
     android: AndroidInitializationSettings('@mipmap/ic_launcher'),
@@ -92,6 +107,7 @@ Future<void> showSystemNotification({
 /// history refreshes on the next page load.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (kIsWeb) return;
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   final data = message.data;
   final title = data['title']?.toString() ?? 'MaidCafe';
@@ -203,7 +219,7 @@ class MaidCafePushService {
     if (!firebaseSupported()) {
       debugPrint(
         '[MaidCafePush] Skipping registration: Firebase is unsupported on '
-        '${Platform.operatingSystem}.',
+        '${_platformDescription()}.',
       );
       onStatusChanged?.call(MaidCafePushRegistrationStatus.unsupported);
       return Future.value();
@@ -223,7 +239,7 @@ class MaidCafePushService {
     }
     if (_pending != null) return _pending!;
     debugPrint(
-      '[MaidCafePush] Starting ${Platform.operatingSystem} registration.',
+      '[MaidCafePush] Starting ${_platformDescription()} registration.',
     );
     onStatusChanged?.call(MaidCafePushRegistrationStatus.registering);
     final attempt = _subscribe();
@@ -270,7 +286,7 @@ class MaidCafePushService {
       '[MaidCafePush] Notification permission: '
       '${permission.authorizationStatus}.',
     );
-    if (!Platform.isAndroid) {
+    if (!_isAndroidPlatform()) {
       // Explicitly re-enable auto-init here. The plugin's native setter calls
       // registerForRemoteNotifications(), which is needed when the launch-time
       // native registration ran before Firebase.initializeApp() completed.
@@ -279,7 +295,7 @@ class MaidCafePushService {
     }
     final deviceName = await _deviceName();
 
-    if (Platform.isAndroid) {
+    if (_isAndroidPlatform()) {
       _attachListeners();
       final token = await FirebaseMessaging.instance.getToken();
       debugPrint(
@@ -338,7 +354,7 @@ class MaidCafePushService {
       onStatusChanged?.call(MaidCafePushRegistrationStatus.registering);
       try {
         var registered = false;
-        if (Platform.isAndroid) {
+        if (_isAndroidPlatform()) {
           await client.registerPushSubscription(
             deviceId: await _deviceIdForRegistration(),
             deviceToken: token,
@@ -410,7 +426,10 @@ class MaidCafePushService {
   }
 
   Future<String> _deviceName() async {
-    if (Platform.isAndroid) {
+    // No filesystem/hostname API in the browser; registration never runs
+    // there, but keep the method total so a stray call cannot throw.
+    if (kIsWeb) return 'MaidKit web';
+    if (_isAndroidPlatform()) {
       try {
         final info = await DeviceInfoPlugin().androidInfo;
         final model = info.model;

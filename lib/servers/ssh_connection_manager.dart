@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:dart_ping/dart_ping.dart';
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
 import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/platform/network_ping.dart';
 import 'activity_models.dart';
 import 'crontab_models.dart';
 import 'database_models.dart';
@@ -19,7 +19,6 @@ import 'server_models.dart';
 import 'ssh_proxy_connect.dart';
 import 'socks5_protocol.dart';
 import 'systemd_models.dart';
-import 'maidterm_session_adapter.dart';
 import 'tailscale_ssh_socket.dart';
 import 'tailscale_service.dart';
 import 'terminal_session_adapter.dart';
@@ -320,9 +319,7 @@ class SshConnectionManager {
     );
     // Surface the sudo autofill reason to the terminal UI so it can hint
     // "press Enter to fill the saved password" at the cursor.
-    if (terminal is MaidTermSessionAdapter) {
-      terminal.bindSudoAutofill(binding.autofillReady);
-    }
+    terminal.bindSudoAutofill(binding.autofillReady);
     _terminals[terminalId] = _TerminalConnection(
       serverId: server.id,
       jumpHostServerId: server.jumpHostServerId,
@@ -520,6 +517,9 @@ class SshConnectionManager {
           server.proxyType == ServerProxyType.none.name);
 
   Future<Duration?> _probeNetworkLatency(String host) async {
+    // A browser cannot spawn an OS ping, and the web stand-in for
+    // `package:dart_ping` throws instead of probing.
+    if (kIsWeb) return null;
     try {
       final event = await Ping(
         host,
@@ -4741,7 +4741,7 @@ uname -r
     late final SSHSocket rawSocket;
     if (server.jumpHostServerId != null) {
       rawSocket = await _socketThroughJumpHost(server);
-    } else if (isTailnetAddress(server.host) && tailscaleSupported) {
+    } else if (tailscaleSupported && isTailnetAddress(server.host)) {
       try {
         rawSocket = await TailscaleSshSocket.connect(server.host, server.port);
       } on TailscaleConnectException {

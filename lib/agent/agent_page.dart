@@ -6,6 +6,7 @@ import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kMiddleMouseButton;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -917,8 +918,11 @@ class _AgentChatTabState extends ConsumerState<_AgentChatView> {
   _gatherCapabilities() async {
     final mcpTools = <AgentMcpToolTarget>[];
     final mcpErrors = <String>[];
-    final servers =
-        ref.read(mcpServersProvider).asData?.value ?? const <McpServer>[];
+    // The browser cannot spawn MCP server processes; skip them entirely so a
+    // configured server does not surface a launch failure on every turn.
+    final servers = kIsWeb
+        ? const <McpServer>[]
+        : ref.read(mcpServersProvider).asData?.value ?? const <McpServer>[];
     for (final server in servers.where((server) => server.enabled)) {
       try {
         final client = await ref
@@ -2716,7 +2720,7 @@ class _AgentCapabilitiesSheetState
     extends ConsumerState<_AgentCapabilitiesSheet>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController =
-      TabController(length: 2, vsync: this)..addListener(() {
+      TabController(length: kIsWeb ? 1 : 2, vsync: this)..addListener(() {
         if (_tabController.index != _tabIndex) {
           setState(() => _tabIndex = _tabController.index);
         }
@@ -2832,7 +2836,9 @@ class _AgentCapabilitiesSheetState
       titleText: 'agentCapabilities'.tr(),
       heightFactor: 0.85,
       actions: [
-        if (_tabIndex == 0) ...[
+        // MCP server management needs child-process spawning, unavailable in a
+        // browser, so the MCP tab is hidden there.
+        if (!kIsWeb && _tabIndex == 0) ...[
           IconButton(
             tooltip: 'agentImportMcpConfig'.tr(),
             onPressed: () => _importMcpConfig(),
@@ -2861,12 +2867,12 @@ class _AgentCapabilitiesSheetState
           TabBar(
             controller: _tabController,
             tabs: [
-              Tab(text: 'agentMcpServers'.tr()),
+              if (!kIsWeb) Tab(text: 'agentMcpServers'.tr()),
               Tab(text: 'agentSkills'.tr()),
             ],
           ),
           Expanded(
-            child: _tabIndex == 0
+            child: !kIsWeb && _tabIndex == 0
                 ? _buildMcpServerList(scheme, mcpServers)
                 : _buildSkillList(scheme, skills),
           ),

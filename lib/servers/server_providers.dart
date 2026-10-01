@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -26,7 +27,7 @@ import 'package:maid_kit/agent/billing_service.dart';
 import 'package:maid_kit/agent/personality_service.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'app_theme_preferences.dart';
-import 'maidterm_session_adapter.dart';
+import 'terminal_renderer_backend.dart';
 import 'cloud_sync_service.dart';
 import 'maidcafe_preferences.dart';
 import 'maidcafe_push.dart';
@@ -389,6 +390,9 @@ Future<List<String>> _persistentVaultPaths(
 /// restricted platforms keep the migrated vault in private application-support
 /// storage.
 Future<void> migrateLegacyVault({required String defaultName}) async {
+  // A browser has no legacy on-disk database and no filesystem to move it
+  // into; its single vault already lives in IndexedDB.
+  if (kIsWeb) return;
   final preferences = await SharedPreferences.getInstance();
   final documents = await getApplicationDocumentsDirectory();
   final legacy = File(
@@ -537,6 +541,8 @@ final activeVaultFileProvider =
 class ActiveVaultFileNotifier extends Notifier<String?> {
   @override
   String? build() {
+    // A browser has exactly one vault, so it is always the active one.
+    if (kIsWeb) return webVaultPath;
     _restore();
     return null;
   }
@@ -605,6 +611,9 @@ final vaultExternalPathProvider = FutureProvider.family<bool, String>((
 class VaultFilesNotifier extends Notifier<List<String>> {
   @override
   List<String> build() {
+    // A browser cannot switch vault files; its list is the single logical
+    // vault. Skipping `_restore` also avoids all filesystem lookups.
+    if (kIsWeb) return const [webVaultPath];
     _restore();
     return const [];
   }
@@ -902,6 +911,9 @@ class AppUiFontFamilyNotifier extends Notifier<String> {
   }
 
   Future<void> _loadFont(String family) async {
+    // system_fonts has no web implementation; the browser uses the family
+    // directly or falls back.
+    if (kIsWeb) return;
     try {
       await SystemFonts().loadFont(family);
     } on Object {
@@ -1207,6 +1219,9 @@ class TerminalFontFamilyNotifier extends Notifier<String> {
   }
 
   Future<void> _loadFont(String family) async {
+    // system_fonts has no web implementation; the browser uses the family
+    // directly or falls back.
+    if (kIsWeb) return;
     try {
       await SystemFonts().loadFont(family);
     } on Object {
@@ -1217,7 +1232,11 @@ class TerminalFontFamilyNotifier extends Notifier<String> {
 
 final availableTerminalFontsProvider = FutureProvider<List<TerminalFontOption>>(
   (ref) async {
-    final options = TerminalFonts.dedupe(SystemFonts().getFontList());
+    // system_fonts has no web implementation, so the browser gets the default
+    // family (plus the persisted choice) instead of a system font list.
+    final options = kIsWeb
+        ? <TerminalFontOption>[]
+        : TerminalFonts.dedupe(SystemFonts().getFontList());
     final defaultOption = TerminalFontOption(
       label: TerminalFonts.defaultFamily,
       family: TerminalFonts.defaultFamily,
@@ -1342,7 +1361,7 @@ final terminalSessionAdapterFactoryProvider =
       final keywordHighlightEnabled = ref.watch(
         keywordHighlightEnabledProvider,
       );
-      return MaidTermSessionAdapterFactory(
+      return TerminalRendererFactory(
         cursorAnimationEnabled: cursorAnimationEnabled,
         colorScheme: colorScheme,
         transparentBackground: transparentBackground,

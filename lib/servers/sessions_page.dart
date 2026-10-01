@@ -93,6 +93,8 @@ Future<void> _openFiles(
   String? paneId,
   String? initialPath,
 }) async {
+  // The file manager needs SFTP and the local disk.
+  if (kIsWeb) return;
   if (server.connectionType != ServerConnectionType.ssh.name) return;
   final manager = ref.read(connectionManagerProvider);
   if (manager.clientFor(server.id) == null &&
@@ -1627,6 +1629,11 @@ class _TerminalServerGrid extends ConsumerWidget {
         final openCount = tabs.tabs
             .where((tab) => tab.serverId == server.id)
             .length;
+        // A browser can only reach a daemon terminal over WebSocket, and it
+        // has no local disk or SFTP for the file manager.
+        final canOpenTerminal =
+            !kIsWeb ||
+            server.connectionType == ServerConnectionType.maidcafe.name;
         return Card(
           margin: EdgeInsets.zero,
           child: Padding(
@@ -1652,8 +1659,10 @@ class _TerminalServerGrid extends ConsumerWidget {
                 const Spacer(),
                 _ServerCardActions(
                   openCount: openCount,
-                  onOpenTerminal: () => onOpenTerminal(server),
-                  onOpenFiles: () => onOpenFiles(server),
+                  onOpenTerminal: canOpenTerminal
+                      ? () => onOpenTerminal(server)
+                      : null,
+                  onOpenFiles: kIsWeb ? null : () => onOpenFiles(server),
                 ),
               ],
             ),
@@ -1673,8 +1682,11 @@ class _ServerCardActions extends StatelessWidget {
   });
 
   final int openCount;
-  final VoidCallback onOpenTerminal;
-  final VoidCallback onOpenFiles;
+
+  /// Null when the action cannot work on this platform (a browser has neither
+  /// SSH on this server nor a filesystem); the button is then omitted.
+  final VoidCallback? onOpenTerminal;
+  final VoidCallback? onOpenFiles;
 
   @override
   Widget build(BuildContext context) {
@@ -1693,18 +1705,20 @@ class _ServerCardActions extends StatelessWidget {
                   style: Theme.of(context).textTheme.labelMedium,
                 ),
               ),
-              IconButton.filledTonal(
-                tooltip: 'sessionsNewTerminal'.tr(),
-                visualDensity: VisualDensity.compact,
-                onPressed: onOpenTerminal,
-                icon: const Icon(Symbols.add, size: 20),
-              ),
-              IconButton(
-                tooltip: 'sessionsOpenFileManagement'.tr(),
-                visualDensity: VisualDensity.compact,
-                onPressed: onOpenFiles,
-                icon: const Icon(Symbols.folder, size: 20),
-              ),
+              if (onOpenTerminal != null)
+                IconButton.filledTonal(
+                  tooltip: 'sessionsNewTerminal'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onOpenTerminal,
+                  icon: const Icon(Symbols.add, size: 20),
+                ),
+              if (onOpenFiles != null)
+                IconButton(
+                  tooltip: 'sessionsOpenFileManagement'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onOpenFiles,
+                  icon: const Icon(Symbols.folder, size: 20),
+                ),
             ],
           );
         }
@@ -1715,17 +1729,20 @@ class _ServerCardActions extends StatelessWidget {
               style: Theme.of(context).textTheme.labelMedium,
             ),
             const Spacer(),
-            FilledButton.tonalIcon(
-              onPressed: onOpenTerminal,
-              icon: const Icon(Symbols.add),
-              label: Text('sessionsNewTerminal'.tr()),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: 'sessionsOpenFileManagement'.tr(),
-              onPressed: onOpenFiles,
-              icon: const Icon(Symbols.folder),
-            ),
+            if (onOpenTerminal != null)
+              FilledButton.tonalIcon(
+                onPressed: onOpenTerminal,
+                icon: const Icon(Symbols.add),
+                label: Text('sessionsNewTerminal'.tr()),
+              ),
+            if (onOpenFiles != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'sessionsOpenFileManagement'.tr(),
+                onPressed: onOpenFiles,
+                icon: const Icon(Symbols.folder),
+              ),
+            ],
           ],
         );
       },

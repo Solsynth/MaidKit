@@ -171,6 +171,11 @@ class McpClient {
     McpServer server, {
     String? workingDirectory,
   }) async {
+    // A browser cannot spawn child processes, so stdio MCP servers are
+    // unavailable there.
+    if (kIsWeb) {
+      throw const McpException('MCP servers cannot be launched in a browser.');
+    }
     final arguments = decodeMcpArguments(server.arguments);
     final environment = decodeMcpEnvironment(server.environment);
     final Process process;
@@ -413,7 +418,8 @@ class McpClient {
 /// killed when the server is deleted, disabled, edited, or on app exit.
 class McpClientManager {
   McpClientManager({String? workingDirectory})
-    : _workingDirectory = workingDirectory ?? Directory.current.path;
+    : _workingDirectory =
+          workingDirectory ?? (kIsWeb ? '' : Directory.current.path);
 
   final String _workingDirectory;
   final _clients = <int, McpClient>{};

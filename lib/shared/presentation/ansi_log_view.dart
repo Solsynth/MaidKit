@@ -116,7 +116,7 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
     unawaited(previous?.dispose() ?? Future<void>.value());
   }
 
-  /// Wait two frames so MaidTerm can size the grid before a bulk dump.
+  /// Wait two frames so the renderer can size the grid before a bulk dump.
   void _scheduleLogDump(TerminalSessionAdapter adapter) {
     final generation = ++_writeGeneration;
     _writeScheduled = true;

@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 import 'package:material_ui/material_ui.dart'
     as material_ui
     show GlobalMaterialLocalizations;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -46,7 +47,9 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     // The router navigator only builds once the vault gate is unlocked, so
     // retry until a context is available (up to ~60s).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(checkForUpdatesWhenReady());
+      // The updater installs a downloaded desktop build; a browser tab is
+      // always served by the host, so only native builds check for updates.
+      if (!kIsWeb) unawaited(checkForUpdatesWhenReady());
       MaidKitAnalytics.instance.logAppOpen();
     });
   }
@@ -87,8 +90,10 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     ref.watch(serverMetricsRefreshSchedulerProvider);
     final appUiFontFamily = ref.watch(appUiFontFamilyProvider);
     // Starts the local MCP server when the user enabled it, so other agents
-    // can connect right after the app launches.
-    ref.watch(localMcpServerProvider);
+    // can connect right after the app launches. It serves HTTP on the loopback
+    // interface and spawns MCP servers as child processes, neither of which a
+    // browser can do.
+    if (!kIsWeb) ref.watch(localMcpServerProvider);
     // Keeps the MaidCafe FCM push subscription alive (and subscribing on
     // sign-in) for the whole app session.
     ref.watch(maidCafePushProvider);

@@ -402,8 +402,8 @@ void main() {
       );
 
       final preview = await importService.previewFiles([
-        finalshell.path,
-        sshConfig.path,
+        ImportedConnectionFile.fromPath(finalshell.path),
+        ImportedConnectionFile.fromPath(sshConfig.path),
       ]);
       expect(preview.aborted, isFalse);
       expect(preview.isEmpty, isFalse);
@@ -423,7 +423,7 @@ void main() {
       var prompts = 0;
 
       final preview = await importService.previewFiles(
-        [file.path],
+        [ImportedConnectionFile.fromPath(file.path)],
         requestPassphrase: () async {
           prompts += 1;
           return 'export-pass';
@@ -441,7 +441,7 @@ void main() {
       final file = writeFile('protected.json', protected);
 
       final preview = await importService.previewFiles([
-        file.path,
+        ImportedConnectionFile.fromPath(file.path),
       ], requestPassphrase: () async => null);
       expect(preview.aborted, isTrue);
       expect(preview.candidates, isEmpty);
@@ -455,7 +455,7 @@ void main() {
       final file = writeFile('protected.json', protected);
 
       final preview = await importService.previewFiles([
-        file.path,
+        ImportedConnectionFile.fromPath(file.path),
       ], requestPassphrase: () async => 'wrong');
       expect(preview.aborted, isFalse);
       expect(preview.candidates, isEmpty);
@@ -470,7 +470,10 @@ void main() {
       );
       final bad = writeFile('garbage.txt', 'not a connection file');
 
-      final preview = await importService.previewFiles([bad.path, good.path]);
+      final preview = await importService.previewFiles([
+        ImportedConnectionFile.fromPath(bad.path),
+        ImportedConnectionFile.fromPath(good.path),
+      ]);
       expect(preview.candidates, hasLength(1));
       expect(preview.candidates.single.connection.host, '10.0.0.9');
       expect(preview.firstError, isA<FormatException>());

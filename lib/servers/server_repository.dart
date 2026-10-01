@@ -10,11 +10,7 @@ import 'maidcafe_service.dart';
 import 'vault_service.dart';
 
 class ServerRepository {
-  ServerRepository(
-    this._database,
-    this._vault, {
-    this.maidCafeService,
-  });
+  ServerRepository(this._database, this._vault, {this.maidCafeService});
 
   final AppDatabase _database;
   final VaultService _vault;

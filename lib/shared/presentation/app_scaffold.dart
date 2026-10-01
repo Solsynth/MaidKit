@@ -106,6 +106,8 @@ Future<void> setMaidKitWindowOpacity(WidgetRef ref, double opacity) async {
 }
 
 Future<void> saveMaidKitBackgroundImage(WidgetRef ref, File source) async {
+  // The browser has no application-support directory or File API.
+  if (kIsWeb) return;
   final directory = await getApplicationSupportDirectory();
   await source.copy('${directory.path}/$kMaidKitBackgroundImagePath');
   await setMaidKitBackgroundImageEnabled(ref, true);
@@ -113,6 +115,8 @@ Future<void> saveMaidKitBackgroundImage(WidgetRef ref, File source) async {
 }
 
 Future<void> clearMaidKitBackgroundImage(WidgetRef ref) async {
+  // The browser has no application-support directory or File API.
+  if (kIsWeb) return;
   final directory = await getApplicationSupportDirectory();
   final file = File('${directory.path}/$kMaidKitBackgroundImagePath');
   if (await file.exists()) await file.delete();

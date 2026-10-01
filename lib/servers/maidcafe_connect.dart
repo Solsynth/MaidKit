@@ -279,11 +279,7 @@ final maidCafeServerConnectorProvider = Provider<MaidCafeServerConnector>((
         ),
     saveDaemonUrl: (server, daemonUrl, daemonId) => ref
         .read(serverRepositoryProvider)
-        .updateMaidCafeConfig(
-          server,
-          daemonUrl: daemonUrl,
-          daemonId: daemonId,
-        ),
+        .updateMaidCafeConfig(server, daemonUrl: daemonUrl, daemonId: daemonId),
     installDaemon:
         ({
           required ref,

@@ -1,11 +1,20 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+/// The single logical vault a browser session can use.
+///
+/// A browser has no filesystem and cannot switch vault files, so the entire
+/// vault list is this one fixed entry. It is pure string identity: no method
+/// resolves it against the filesystem, and its data always lives in the single
+/// IndexedDB database named `maid_kit`.
+const String webVaultPath = 'MaidKit vault';
+
 /// Whether user-selected external vault locations can be retained.
 bool get externalVaultsSupported =>
-    !Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS;
+    !kIsWeb && !Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS;
 
 /// Owns vault database files after they have been selected or created by the
 /// user.
@@ -27,7 +36,11 @@ class VaultFileStorage {
   /// `C:\a\x.maidkit`); folding '/' to the native '\' makes exact string
   /// comparison trustworthy. Other platforms have a single separator, so
   /// `File.absolute` is already canonical.
+  ///
+  /// In a browser there is no `File`, so [path] is returned unchanged; the web
+  /// vault is pure string identity and is never resolved against a filesystem.
   String normalizePath(String path) {
+    if (kIsWeb) return path;
     final absolute = File(path).absolute.path;
     return Platform.isWindows ? absolute.replaceAll('/', r'\') : absolute;
   }
@@ -39,7 +52,7 @@ class VaultFileStorage {
   bool samePath(String a, String b) {
     final normalizedA = normalizePath(a);
     final normalizedB = normalizePath(b);
-    if (!Platform.isWindows) return normalizedA == normalizedB;
+    if (kIsWeb || !Platform.isWindows) return normalizedA == normalizedB;
     return normalizedA.toLowerCase() == normalizedB.toLowerCase();
   }
 
@@ -47,8 +60,11 @@ class VaultFileStorage {
   ///
   /// Internal vaults are identified by their generated filename rather than
   /// the absolute iOS sandbox path. External vaults retain their path because
-  /// two external files may legitimately have the same filename.
+  /// two external files may legitimately have the same filename. A browser
+  /// always has the single [webVaultPath], so persisted references, keychain
+  /// entries and cloud-sync identities all agree on it.
   String vaultId(String path) {
+    if (kIsWeb) return webVaultPath;
     final normalized = normalizePath(path);
     return _managedPaths.any((managed) => samePath(managed, normalized))
         ? fileName(path)
@@ -58,8 +74,10 @@ class VaultFileStorage {
   /// Converts a runtime path into the value safe to persist in preferences.
   ///
   /// Internal vaults need only their filename: iOS can change the application
-  /// container prefix when installing an update.
+  /// container prefix when installing an update. A browser has exactly one
+  /// vault, so [webVaultPath] is always the persisted reference.
   Future<String> persistentPath(String path) async {
+    if (kIsWeb) return webVaultPath;
     final normalized = normalizePath(path);
     return await isExternalPath(normalized) ? normalized : fileName(normalized);
   }
@@ -67,8 +85,10 @@ class VaultFileStorage {
   /// Resolves a persisted vault reference against the current app container.
   ///
   /// Older versions persisted absolute paths. If such a path is stale after an
-  /// iOS update, its filename still identifies the managed vault file.
+  /// iOS update, its filename still identifies the managed vault file. A
+  /// browser always has the one vault, so any non-empty reference is it.
   Future<String?> resolvePersistedPath(String value) async {
+    if (kIsWeb) return value.isEmpty ? null : webVaultPath;
     final hasSeparator = value.contains('/') || value.contains('\\');
     if (!hasSeparator && _isVaultFile(value)) {
       final directory = await _vaultDirectory();
@@ -102,8 +122,10 @@ class VaultFileStorage {
   /// Lists internal vault files even when their preference entry was lost.
   ///
   /// This recovers files left behind by the pre-fix startup path, which
-  /// discarded stale absolute-path preferences after an iOS update.
+  /// discarded stale absolute-path preferences after an iOS update. A browser
+  /// has no vault files; it reports the single logical vault instead.
   Future<List<String>> managedVaultPaths() async {
+    if (kIsWeb) return const [webVaultPath];
     final directory = await _vaultDirectory();
     final paths = <String>[];
     await for (final entity in directory.list()) {
@@ -121,7 +143,9 @@ class VaultFileStorage {
   ///
   /// A null [directoryPath] uses MaidKit's private application-support
   /// storage. External managed vault flows pass the user's selected folder.
+  /// A browser cannot create files, so it reports the single logical vault.
   Future<String> createVaultPath({String? name, String? directoryPath}) async {
+    if (kIsWeb) return webVaultPath;
     if (directoryPath != null && !externalVaultsSupported) {
       throw FileSystemException(
         'External managed vaults are not supported on this platform.',
@@ -140,7 +164,15 @@ class VaultFileStorage {
   /// A selected vault remains in its original folder, which makes it
   /// available to file synchronization tools such as Syncthing or iCloud
   /// Drive. The caller is responsible for only opening trusted vault files.
+  ///
+  /// A browser has no file picker for vault files and cannot open external
+  /// databases, so this is unavailable there.
   Future<String> importVault(String sourcePath) async {
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Importing a vault file is not available in a browser.',
+      );
+    }
     final source = File(sourcePath);
     if (!await source.exists()) {
       throw FileSystemException('Vault file was not found.', sourcePath);
@@ -160,12 +192,17 @@ class VaultFileStorage {
   ///
   /// Copying the SQLite sidecars before deleting the source keeps this
   /// operation valid across volumes. Callers should close the active database
-  /// before invoking this method.
+  /// before invoking this method. A browser has no files to move.
   Future<String> moveVault(
     String sourcePath, {
     String? directoryPath,
     String? name,
   }) async {
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Moving a vault file is not available in a browser.',
+      );
+    }
     final source = File(sourcePath);
     if (!await source.exists()) {
       throw FileSystemException('Vault file was not found.', sourcePath);
@@ -194,7 +231,14 @@ class VaultFileStorage {
     return targetFile.absolute.path;
   }
 
+  /// Deletes a managed vault file. A browser's single vault lives in
+  /// IndexedDB, which this layer cannot erase, so it is unavailable there.
   Future<void> deleteVault(String path) async {
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Deleting a vault file is not available in a browser.',
+      );
+    }
     final file = File(path);
     if (!_isVaultFile(path) || !await file.exists()) {
       throw FileSystemException(
@@ -222,6 +266,9 @@ class VaultFileStorage {
   }
 
   Future<bool> isExternalPath(String path) async {
+    // The browser vault is neither inside nor outside a filesystem, and
+    // callers treat an internal (false) vault as always supported.
+    if (kIsWeb) return false;
     final support = await getApplicationSupportDirectory();
     final external = !isInDirectory(path, '${support.path}/$_directoryName');
     if (!external) _managedPaths.add(normalizePath(path));

@@ -3,6 +3,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -78,7 +79,11 @@ Future<void> main(List<String> args) async {
   final workspaceRestorePreferences =
       preferences[7] as WorkspaceRestorePreferences;
 
-  await migrateLegacyVault(defaultName: 'Primary Vault');
+  // The legacy vault is an SQLite file in the documents directory, which a
+  // browser does not have; there is nothing on disk to migrate there.
+  if (!kIsWeb) {
+    await migrateLegacyVault(defaultName: 'Primary Vault');
+  }
 
   final container = ProviderContainer(
     overrides: [

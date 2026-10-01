@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 
 /// Usable area (the frame minus menu bar and dock / taskbar) of every attached
@@ -12,6 +13,9 @@ import 'package:screen_retriever/screen_retriever.dart';
 /// platform cannot answer; callers then keep the saved geometry rather than
 /// replacing it with a guess.
 Future<List<Rect>> loadDisplayWorkAreas() async {
+  // The browser has no screen_retriever implementation; the plugin call
+  // throws there. There is also no native window to place on the web.
+  if (kIsWeb) return const [];
   final List<Display> displays;
   try {
     displays = await ScreenRetriever.instance.getAllDisplays();

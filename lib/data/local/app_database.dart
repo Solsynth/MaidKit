@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 part 'app_database.g.dart';
@@ -375,15 +376,27 @@ class WorkspaceSnapshots extends Table {
 class AppDatabase extends _$AppDatabase {
   /// Opens the legacy app database when [filePath] is omitted, or a user
   /// selected vault database when it is provided.
+  ///
+  /// A browser has no filesystem: there is exactly one database per browser,
+  /// stored in IndexedDB under [webDatabaseName]. [filePath] is ignored on the
+  /// web, so every browser session opens that single database.
   AppDatabase({String? filePath})
     : super(
         driftDatabase(
-          name: filePath ?? 'maid_kit',
+          name: kIsWeb ? webDatabaseName : (filePath ?? webDatabaseName),
           native: filePath == null
               ? null
               : DriftNativeOptions(databasePath: () async => filePath),
+          web: DriftWebOptions(
+            sqlite3Wasm: Uri.parse('sqlite3.wasm'),
+            driftWorker: Uri.parse('drift_worker.js'),
+          ),
         ),
       );
+
+  /// The drift database name used when no vault file is selected and the only
+  /// database a browser can open. It is also the IndexedDB key on the web.
+  static const String webDatabaseName = 'maid_kit';
 
   @override
   int get schemaVersion => 37;
@@ -558,7 +571,10 @@ class AppDatabase extends _$AppDatabase {
           'SELECT id, title, provider_id, model_id, messages, '
           'created_at, updated_at FROM agent_conversations',
         ).get();
-        if (legacyRows.isNotEmpty) {
+        // On the web there is no application-support directory to write the
+        // legacy JSONL files into, so the export is skipped and the legacy
+        // rows are simply dropped.
+        if (legacyRows.isNotEmpty && !kIsWeb) {
           final support = await getApplicationSupportDirectory();
           final directory = Directory(
             '${support.path}${Platform.pathSeparator}agent_conversations',

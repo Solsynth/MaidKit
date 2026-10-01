@@ -92,6 +92,9 @@ class _HintAdapter implements TerminalSessionAdapter {
   SudoPromptReason? get sudoAutofillReady => reason;
 
   @override
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {}
+
+  @override
   Rect? get cursorGlobalRect => const Rect.fromLTWH(120, 200, 10, 20);
 
   @override

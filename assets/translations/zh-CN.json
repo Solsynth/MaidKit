@@ -1372,6 +1372,7 @@
   "serverCannotConnect": "无法连接",
   "serverCannotOpenSerialTerminal": "无法打开串口终端",
   "serverCannotOpenTerminal": "无法打开终端",
+  "serverTerminalUnavailableInBrowser": "浏览器版只能打开 MaidCafe 守护进程终端，SSH、串口和本地终端请使用桌面版。",
   "serverCollectStats": "收集性能统计",
   "serverCollectStatsHint": "负载平均值、内存使用情况和运行时间。",
   "serverConnectAndRetry": "连接并重试",

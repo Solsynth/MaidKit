@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:maid_kit/platform/platform_support.dart';
 import 'package:pointycastle/block/des_base.dart';
 
 import 'server_models.dart';
@@ -696,7 +697,9 @@ String? _resolvePath(
 }) {
   var expanded = path.trim();
   if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(expanded)) return null;
-  final home = Platform.environment['HOME'];
+  // A browser has no environment or home directory; key paths that depend on
+  // them simply cannot be resolved there.
+  final home = homeDirectory;
   expanded = expanded
       .replaceAll('%d', home ?? '')
       .replaceAll('%h', host ?? '')
@@ -780,11 +783,17 @@ String? _decryptAndValidate(List<int> keyBytes, Uint8List ciphertext) {
 
 /// Faithful port of the FinalShell `ranDomKey` derivation, itself a
 /// translation of the Java code (java.util.Random semantics).
+///
+/// The seed is parsed rather than written as a literal: dart2js cannot
+/// represent integer literals above 2^53, and this source has to compile for
+/// both the VM and the web.
+final _finalshellSeed = BigInt.parse('3680984568597093857');
+
 Uint8List _finalshellKeyFromHead(Uint8List head) {
   final divisorRandom = _JavaRandom(BigInt.from(_signedByte(head[5])));
   var divisor = divisorRandom.nextInt(127);
   if (divisor == 0) divisor = 1;
-  final ks = BigInt.from(3680984568597093857) ~/ BigInt.from(divisor);
+  final ks = _finalshellSeed ~/ BigInt.from(divisor);
   final random = _JavaRandom(ks);
   final t = _signedByte(head[0]);
   for (var i = 0; i < t; i++) {
@@ -814,8 +823,8 @@ Uint8List _finalshellKeyFromHead(Uint8List head) {
 class _JavaRandom {
   static const _multiplier = 0x5DEECE66D;
   static const _addend = 0xB;
-  static final _mask48 = BigInt.from(0xFFFFFFFFFFFF);
-  static final _mask64 = BigInt.from(0xFFFFFFFFFFFFFFFF);
+  static final _mask48 = BigInt.parse('FFFFFFFFFFFF', radix: 16);
+  static final _mask64 = BigInt.parse('FFFFFFFFFFFFFFFF', radix: 16);
   static final _uint64 = BigInt.from(1) << 64;
   static final _uint32 = BigInt.from(1) << 32;
 
@@ -852,7 +861,7 @@ class _JavaRandom {
   BigInt nextLong() {
     var value = (BigInt.from(_next(32)) << 32) + BigInt.from(_next(32));
     value = value & _mask64;
-    if (value >= BigInt.from(0x8000000000000000)) {
+    if (value >= BigInt.parse('8000000000000000', radix: 16)) {
       value -= _uint64;
     }
     return value;
@@ -864,9 +873,12 @@ class _JavaRandom {
   }
 }
 
+/// Low 64 bits of a BigInt value, as `value & 0xFFFFFFFFFFFFFFFF`.
+final _uint64Mask = BigInt.parse('FFFFFFFFFFFFFFFF', radix: 16);
+
 Uint8List _int64BigEndian(BigInt value) {
   final result = Uint8List(8);
-  var remaining = value & BigInt.from(0xFFFFFFFFFFFFFFFF);
+  var remaining = value & _uint64Mask;
   for (var i = 7; i >= 0; i--) {
     result[i] = (remaining & BigInt.from(0xFF)).toInt();
     remaining = remaining >> 8;

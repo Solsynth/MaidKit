@@ -426,6 +426,9 @@ class _RecordingAdapter implements TerminalSessionAdapter {
   SudoPromptReason? get sudoAutofillReady => null;
 
   @override
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {}
+
+  @override
   void write(Uint8List bytes) => _written.addAll(bytes);
 
   @override

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -71,6 +72,9 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
   @override
   void initState() {
     super.initState();
+    // Every panel here reads container state over SSH; a browser has no such
+    // transport, so [build] shows a notice instead.
+    if (kIsWeb) return;
     _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -99,6 +103,11 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     final follow = _logFollow;
     _logFollow = null;
     unawaited(follow?.cancel() ?? Future<void>.value());
+    // The web branch never initialized the SSH-backed collaborators.
+    if (kIsWeb) {
+      super.dispose();
+      return;
+    }
     // Riverpod forbids mutating providers during dispose / tree finalization.
     final serverId = widget.server.id;
     final focused = _focusedServerNotifier;
@@ -611,6 +620,13 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Container inspection, actions, and logs all run over SSH.
+    if (kIsWeb) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.containerName)),
+        body: Center(child: Text('commonUnavailable'.tr())),
+      );
+    }
     final sessions = ref.watch(sessionsProvider).asData?.value ?? const [];
     final session = sessions
         .where((item) => item.serverId == widget.server.id)

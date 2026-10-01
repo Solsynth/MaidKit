@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
@@ -63,6 +64,40 @@ class ConnectionFilesPreview {
   final bool aborted;
 
   bool get isEmpty => candidates.isEmpty;
+}
+
+/// One picked connection file.
+///
+/// Native platforms hand over a readable [path]; a browser cannot, so its file
+/// picker returns the file's [bytes] and name instead. Both are parsed by the
+/// same code, which is why the service takes this instead of a bare path.
+class ImportedConnectionFile {
+  const ImportedConnectionFile({this.path, this.bytes, required this.name});
+
+  const ImportedConnectionFile.fromPath(this.path) : bytes = null, name = '';
+
+  const ImportedConnectionFile.fromBytes(this.name, this.bytes) : path = null;
+
+  final String? path;
+  final Uint8List? bytes;
+  final String name;
+}
+
+/// Prepares one file returned by a platform file picker for import.
+///
+/// Native pickers return a readable path alone; the browser's picker returns
+/// the file's bytes and no readable path. Callers pass whichever the picker
+/// gave them and the right representation is chosen here.
+ImportedConnectionFile? importedConnectionFileFromPicker({
+  required String name,
+  String? path,
+  Uint8List? bytes,
+}) {
+  if (bytes != null) return ImportedConnectionFile.fromBytes(name, bytes);
+  if (path != null && path.isNotEmpty) {
+    return ImportedConnectionFile.fromPath(path);
+  }
+  return null;
 }
 
 /// Imports connections from MaidKit's own JSON/CSV exports (see
@@ -186,22 +221,29 @@ class ConnectionImportService {
   /// recorded in [ConnectionFilesPreview.firstError]; files that parse still
   /// contribute candidates.
   Future<ConnectionFilesPreview> previewFiles(
-    List<String> paths, {
+    List<ImportedConnectionFile> files, {
     Future<String?> Function()? requestPassphrase,
   }) async {
     final candidates = <ImportCandidate>[];
     String? passphrase;
     Object? firstError;
 
-    for (final path in paths) {
+    for (final file in files) {
       final String content;
+      final path = file.path;
       try {
-        content = await File(path).readAsString();
+        final bytes = file.bytes;
+        content = bytes != null
+            ? utf8.decode(bytes)
+            : await File(path!).readAsString();
       } catch (error) {
         firstError ??= error;
         continue;
       }
-      final baseDirectory = File(path).parent.path;
+      // Relative key paths in third-party files resolve against the folder the
+      // file came from. A browser picked file has no folder, so it resolves
+      // nothing — the same as a native file whose neighbours are absent.
+      final baseDirectory = path == null ? null : File(path).parent.path;
       try {
         candidates.addAll(
           await previewAny(

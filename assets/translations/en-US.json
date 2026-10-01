@@ -1373,6 +1373,7 @@
   "serverCannotConnect": "Could not connect",
   "serverCannotOpenSerialTerminal": "Cannot open serial terminal",
   "serverCannotOpenTerminal": "Could not open terminal",
+  "serverTerminalUnavailableInBrowser": "The browser build can only open MaidCafe daemon terminals. SSH, serial and local shells need the desktop app.",
   "serverCollectStats": "Collect performance statistics",
   "serverCollectStatsHint": "Load average, memory use, and uptime.",
   "serverConnectAndRetry": "Connect and retry",

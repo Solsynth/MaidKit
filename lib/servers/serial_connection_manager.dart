@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:maid_kit/data/local/app_database.dart';
 
 import 'serial_port_client.dart';
@@ -36,6 +38,12 @@ class SerialConnectionManager {
     Server server, {
     String? initialOutput,
   }) async {
+    // Serial devices are opened by the native runner over a method channel.
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Serial terminals are not available in this browser.',
+      );
+    }
     if (server.connectionType != 'serial') {
       throw ArgumentError('Server ${server.id} is not a serial connection.');
     }

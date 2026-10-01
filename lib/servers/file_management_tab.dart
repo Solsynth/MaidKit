@@ -11,6 +11,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -19,6 +20,8 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/platform/platform_support.dart'
+    show platformPathSeparator;
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/presentation/task_progress.dart';
 import 'package:maid_kit/theme.dart';
@@ -279,14 +282,18 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   @override
   void initState() {
     super.initState();
-    final server = _serverRecord();
-    final configuredPath =
-        widget.tab.initialPath ?? server?.fileManagementInitialPath;
-    _localDirectory = configuredPath != null
-        ? Directory(configuredPath)
-        : Directory.current;
-    _remotePath = configuredPath ?? '.';
-    _favoritePaths = decodeStringList(server?.fileManagementFavorites);
+    // A browser has no local disk and no SFTP transport; [build] shows a
+    // notice instead of the two-pane browser.
+    if (!kIsWeb) {
+      final server = _serverRecord();
+      final configuredPath =
+          widget.tab.initialPath ?? server?.fileManagementInitialPath;
+      _localDirectory = configuredPath != null
+          ? Directory(configuredPath)
+          : Directory.current;
+      _remotePath = configuredPath ?? '.';
+      _favoritePaths = decodeStringList(server?.fileManagementFavorites);
+    }
     _leftRemotePathController = TextEditingController(text: _leftRemotePath);
     _leftRemotePathFocusNode = FocusNode();
     _remotePathController = TextEditingController(text: _remotePath);
@@ -298,6 +305,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     _rightSearchFocusNode = FocusNode(
       debugLabel: 'file-management-right-search',
     );
+    if (kIsWeb) return;
     _refreshLocal();
     _refreshRemote();
   }
@@ -1237,7 +1245,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     try {
       if (entry.side == _FileSide.local && entry.serverId == null) {
         final destination =
-            '${File(entry.path).parent.path}${Platform.pathSeparator}$name';
+            '${File(entry.path).parent.path}$platformPathSeparator$name';
         if (entry.isDirectory) {
           await Directory(entry.path).rename(destination);
         } else {
@@ -1293,7 +1301,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     try {
       if (side == _FileSide.local && !_leftIsRemote) {
         await Directory(
-          '${_localDirectory.path}${Platform.pathSeparator}$name',
+          '${_localDirectory.path}$platformPathSeparator$name',
         ).create();
         await _refreshLocal();
       } else {
@@ -2357,7 +2365,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       'maidkit-download-',
     );
     final temporaryFile = File(
-      '${temporaryDirectory.path}${Platform.pathSeparator}$filename',
+      '${temporaryDirectory.path}$platformPathSeparator$filename',
     );
     await _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [filename]),
@@ -2418,7 +2426,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       'maidkit-download-',
     );
     final stagedDirectory = Directory(
-      '${temporaryDirectory.path}${Platform.pathSeparator}$name',
+      '${temporaryDirectory.path}$platformPathSeparator$name',
     );
     final archiveFile = File('${temporaryDirectory.path}/$name.zip');
     await _runTransfer(
@@ -2670,7 +2678,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     String directory,
     String name,
   ) async {
-    final candidate = '$directory${Platform.pathSeparator}$name';
+    final candidate = '$directory$platformPathSeparator$name';
     if (!await FileSystemEntity.type(
       candidate,
     ).then((type) => type != FileSystemEntityType.notFound)) {
@@ -2750,7 +2758,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<String> _uniqueLocalPath(String directory, String name) async {
-    var candidate = '$directory${Platform.pathSeparator}$name';
+    var candidate = '$directory$platformPathSeparator$name';
     if (!await FileSystemEntity.type(
       candidate,
     ).then((type) => type != FileSystemEntityType.notFound)) {
@@ -2762,7 +2770,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final extension = hasExtension ? name.substring(dot) : '';
     var index = 1;
     while (true) {
-      candidate = '$directory${Platform.pathSeparator}$stem ($index)$extension';
+      candidate = '$directory$platformPathSeparator$stem ($index)$extension';
       final exists = await FileSystemEntity.type(
         candidate,
       ).then((type) => type != FileSystemEntityType.notFound);
@@ -3820,6 +3828,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Center(child: Text('commonUnavailable'.tr()));
+    }
     final scheme = Theme.of(context).colorScheme;
     final pathTextStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
       fontFamily: MaidKitFonts.mono,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -62,6 +63,8 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
   @override
   void initState() {
     super.initState();
+    // Image state and actions come from SSH; a browser has neither.
+    if (kIsWeb) return;
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     _sessionRegistry.retain(widget.server);
     if (widget.connected) {
@@ -73,13 +76,15 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    _sessionRegistry.release(widget.server);
+    // The web branch never initialized the SSH-backed registry.
+    if (!kIsWeb) _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ImageManagementTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (kIsWeb) return;
     final serverChanged = oldWidget.server.id != widget.server.id;
     if (serverChanged) {
       _sessionRegistry.release(oldWidget.server);
@@ -338,6 +343,9 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Center(child: Text('commonUnavailable'.tr()));
+    }
     if (!widget.connected) {
       return _ImageEmptyPanel(
         icon: Symbols.link_off,

@@ -8,9 +8,9 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
-import 'package:super_context_menu/super_context_menu.dart';
-import 'package:tailscale/tailscale.dart';
 import 'package:flutter/services.dart';
+import 'package:maid_kit/platform/tailscale.dart';
+import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/github/github_workflow_strip.dart';
@@ -1087,6 +1087,7 @@ class _ServerCard extends ConsumerWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (connectionType == ServerConnectionType.ssh &&
+                                  tailscaleSupported &&
                                   isTailnetAddress(server.host)) ...[
                                 Tooltip(
                                   message: 'tailscaleViaTailnet'.tr(),

@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 
@@ -183,6 +184,11 @@ class VaultService {
   }
 
   Future<bool> unlockWithBiometrics() async {
+    if (kIsWeb) {
+      throw const BiometricUnlockException(
+        'Biometric unlock is not available in this browser. Unlock with your vault password instead.',
+      );
+    }
     final key = await _secureStorage.read(key: _biometricKey);
     if (key == null) {
       throw const BiometricUnlockException(
@@ -218,6 +224,11 @@ class VaultService {
   /// Prompts for biometrics once, then stores the data key for future unlocks.
   /// Does not enable on failure (nothing is written).
   Future<void> enableBiometricUnlock() async {
+    if (kIsWeb) {
+      throw const BiometricUnlockException(
+        'Biometric unlock is not available in this browser.',
+      );
+    }
     final key = _requireKey();
     final authentication = LocalAuthentication();
     if (!await authentication.isDeviceSupported() ||

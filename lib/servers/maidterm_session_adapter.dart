@@ -14,12 +14,13 @@ import 'terminal_color_scheme.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_keyword_highlight.dart';
 
-/// Terminal adapter backed by MaidTerm's libghostty-vt renderer.
+/// Terminal renderer for native platforms, backed by MaidTerm's
+/// libghostty-vt renderer.
 ///
 /// MaidTerm owns terminal rendering and interaction while this adapter bridges
 /// its controller to MaidKit's SSH transport and terminal-find host.
-class MaidTermSessionAdapterFactory implements TerminalSessionAdapterFactory {
-  const MaidTermSessionAdapterFactory({
+class TerminalRendererFactory implements TerminalSessionAdapterFactory {
+  const TerminalRendererFactory({
     required this.cursorAnimationEnabled,
     required this.colorScheme,
     this.transparentBackground = false,
@@ -173,8 +174,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
 
   /// Attaches the binding's autofill reason stream to this adapter.
   ///
-  /// Called by the SSH connection manager when a terminal session is wired,
-  /// so the terminal UI can show an autofill hint at the cursor.
+  /// Called by the connection managers when a terminal session is wired, so
+  /// the terminal UI can show an autofill hint at the cursor.
+  @override
   void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {
     _sudoSub?.cancel();
     _sudoSub = reasons.listen((reason) => _sudoAutofillReady = reason);

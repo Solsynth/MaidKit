@@ -1,16 +1,22 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:maid_kit/platform/tailscale.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:tailscale/tailscale.dart';
 
 import 'server_providers.dart';
 import 'vault_service.dart';
 
 /// Whether the embedded Tailscale runtime is available on this platform.
 /// `package:tailscale` is POSIX-only today, so Windows and web are excluded.
-bool get tailscaleSupported => Platform.isMacOS || Platform.isLinux;
+///
+/// [defaultTargetPlatform] and [kIsWeb] are used instead of `dart:io`'s
+/// `Platform.isMacOS`/`isLinux`, which throw on web.
+bool get tailscaleSupported =>
+    tailscaleRuntimeSupported &&
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux);
 
 bool _tailscaleInitialized = false;
 

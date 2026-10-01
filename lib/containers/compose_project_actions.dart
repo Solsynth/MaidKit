@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:maid_kit/servers/server_providers.dart';
@@ -20,6 +21,12 @@ Future<void> runComposeProjectActionWithTerminal({
   required ComposeProjectAction action,
   String? sudoPassword,
 }) {
+  // The action runs in an SSH-backed task terminal.
+  if (kIsWeb) {
+    return Future<void>.error(
+      UnsupportedError('Compose actions are not available in this browser.'),
+    );
+  }
   final command =
       '${runtime.name} compose -p $projectName ${action.composeArgs}'
       '  ($directory)';

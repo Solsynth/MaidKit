@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -147,12 +148,25 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['toml'],
+        // A browser has no filesystem path to read back, so ask the picker for
+        // the bytes; native keeps reading the file from disk.
+        withData: kIsWeb,
       );
-      final path = result?.files.singleOrNull?.path;
-      if (path == null) return;
+      final file = result?.files.singleOrNull;
+      if (file == null) return;
+      final String source;
+      if (kIsWeb) {
+        final bytes = file.bytes;
+        if (bytes == null) return;
+        source = utf8.decode(bytes);
+      } else {
+        final path = file.path;
+        if (path == null) return;
+        source = await File(path).readAsString();
+      }
       final count = await ref
           .read(projectRepositoryProvider)
-          .importToml(await File(path).readAsString());
+          .importToml(source);
       if (mounted) {
         showStyledSnackBar(
           message: count == 1

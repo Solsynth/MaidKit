@@ -5,6 +5,7 @@ import 'dart:isolate';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_code_editor/flutter_code_editor.dart';
@@ -87,7 +88,9 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
       analyzer: StructuredDocumentAnalyzer(kind: _kind),
     );
     fileEditorCloseGuards[widget.tab.id] = _requestClose;
-    unawaited(_load());
+    // Reading a file needs dart:io or SFTP, neither of which exists in a
+    // browser; [build] shows a notice instead of an editor.
+    if (!kIsWeb) unawaited(_load());
   }
 
   @override
@@ -305,6 +308,9 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Center(child: Text('commonUnavailable'.tr()));
+    }
     final scheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
     final kind = _kind;

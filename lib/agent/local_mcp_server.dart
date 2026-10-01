@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -242,6 +243,8 @@ class LocalMcpServer {
   int get boundPort => _server?.port ?? port;
 
   Future<void> start() async {
+    // The browser cannot bind a loopback HTTP server.
+    if (kIsWeb) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
     _server = server;
     server.listen(
@@ -946,13 +949,15 @@ class LocalMcpToolExecutor implements LocalMcpToolInvoker {
   /// approval dialog is not missed. The in-app dialog is the only surface
   /// when the window is focused or on non-desktop platforms.
   Future<void> _notifyIfWindowBackgrounded(AgentProposal proposal) async {
+    // No window manager or osascript in a browser.
+    if (kIsWeb) return;
     final bool focused;
     try {
       focused = await windowManager.isFocused();
     } catch (_) {
       return; // No window manager (tests, non-desktop): dialog-only.
     }
-    if (focused || !Platform.isMacOS) return;
+    if (focused || defaultTargetPlatform != TargetPlatform.macOS) return;
     final detail = proposal.detail.replaceAll('\n', ' ');
     try {
       await Process.run('osascript', [
@@ -1258,6 +1263,15 @@ class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
   @override
   Future<LocalMcpServerState> build() async {
     final settings = await LocalMcpServerPreferences.load();
+    // The browser cannot bind a loopback HTTP server; keep the server stopped
+    // and the settings section unreachable instead of failing to bind.
+    if (kIsWeb) {
+      return LocalMcpServerState(
+        enabled: false,
+        port: settings.port,
+        status: LocalMcpServerStatus.stopped,
+      );
+    }
     await _server?.stop();
     _server = LocalMcpServer(
       executor: LocalMcpToolExecutor(ref),
@@ -1274,6 +1288,8 @@ class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
   }
 
   Future<void> setEnabled(bool enabled) async {
+    // The browser cannot bind the local MCP server.
+    if (kIsWeb) return;
     final current = state.value;
     await LocalMcpServerPreferences.load().then(
       (settings) => settings.saveEnabled(enabled),
@@ -1303,6 +1319,8 @@ class LocalMcpServerNotifier extends AsyncNotifier<LocalMcpServerState> {
   }
 
   Future<void> setPort(int port) async {
+    // The browser cannot bind the local MCP server.
+    if (kIsWeb) return;
     await LocalMcpServerPreferences.load().then(
       (settings) => settings.savePort(port),
     );

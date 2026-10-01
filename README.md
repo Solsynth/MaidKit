@@ -21,7 +21,7 @@
 
 MaidKit is a collection of tools used by LittleSheep when acting as a "maid" for servers (i.e., performing server maintenance). The goal is to provide a more convenient way to maintain servers that is non-intrusive — day-to-day management is 100% SSH-based, installing nothing on the server. The optional MaidCafe Cloud layer adds a small outbound-only daemon for fleet management, alarms, and push notifications — no inbound ports required.
 
-Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired by the [Island](https://github.com/Solsynth/HyperNet.Surface) project's desktop-native approach, it brings the same calm, functional philosophy to server administration.
+Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired by the [Island](https://github.com/Solsynth/HyperNet.Surface) project's desktop-native approach, it brings the same calm, functional philosophy to server administration. A browser build is available as well: it renders terminals with xterm3 and reaches servers through MaidCafe daemons over WebSocket — see [docs/WEB_SUPPORT.md](docs/WEB_SUPPORT.md) for what runs there and what does not.
 
 ---
 
@@ -129,7 +129,7 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 
 - Theme (system/light/dark), accent color, and workspace background image
 - Language (English / 简体中文)
-- Terminal renderer selection (Ghostty libghostty-vt or xterm), font, and color scheme
+- Terminal font, color scheme, cursor animation, and keyword highlighting
 - Connect on startup
 - Hide server addresses when screen sharing or recording
 - Metrics refresh intervals
@@ -248,7 +248,7 @@ See [docs/architecture.md](./docs/architecture.md) for the full architecture gui
 | **Database** | Drift (SQLite) |
 | **SSH** | dartssh2 |
 | **Encryption** | cryptography (AES-GCM, PBKDF2) |
-| **Terminal** | libghostty-vt / xterm |
+| **Terminal** | MaidTerm (libghostty-vt) on native platforms, xterm3 on the web |
 | **Tailscale** | tailscale (embedded node, macOS/Linux) |
 | **Ping** | dart_ping |
 | **Firebase** | Cloud Messaging push (APNs/FCM), Analytics |

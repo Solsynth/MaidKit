@@ -1,4 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -7,12 +8,21 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'server_connection_actions.dart';
+import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
 
 Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
   final tabs = ref.read(terminalTabsProvider);
-  final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
+  // Only the MaidCafe daemon transport opens a terminal in a browser; listing
+  // SSH and serial servers there would offer actions that cannot run.
+  final servers = (ref.read(serversProvider).asData?.value ?? const <Server>[])
+      .where(
+        (server) =>
+            !kIsWeb ||
+            server.connectionType == ServerConnectionType.maidcafe.name,
+      )
+      .toList();
   final activeTab = tabs.selectedTab;
   final activeServer = activeTab == null
       ? null
@@ -27,7 +37,7 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
         await openTerminalFor(context, ref, server);
         close(null);
       },
-      onOpenFiles: activeServer == null
+      onOpenFiles: kIsWeb || activeServer == null
           ? null
           : () async {
               final manager = ref.read(connectionManagerProvider);

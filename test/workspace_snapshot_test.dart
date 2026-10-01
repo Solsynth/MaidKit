@@ -62,6 +62,9 @@ class _FakeAdapter implements TerminalSessionAdapter {
   SudoPromptReason? get sudoAutofillReady => null;
 
   @override
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {}
+
+  @override
   void write(Uint8List bytes) {}
 
   @override

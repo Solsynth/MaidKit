@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -23,7 +24,9 @@ class _StartupConnectionBootstrapState
 
   @override
   Widget build(BuildContext context) {
-    final enabled = ref.watch(connectOnStartupProvider);
+    // A browser has no SSH transport (only the MaidCafe WebSocket terminal),
+    // so connecting saved servers on startup cannot run there.
+    final enabled = !kIsWeb && ref.watch(connectOnStartupProvider);
     if (enabled && !_started) {
       _started = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {

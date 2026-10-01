@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -1244,6 +1245,8 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
   }
 
   Future<void> _openOnServer() async {
+    // Every branch reaches the host over SSH or SFTP.
+    if (kIsWeb) return;
     final host = server;
     if (host == null) return;
     if (kind == DeploymentResourceKind.serverFolder) {
@@ -1296,7 +1299,7 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
       ?widget.serverName,
       if (configSummary.isNotEmpty) configSummary,
     ];
-    final actions = _quickActions;
+    final actions = kIsWeb ? const <_QuickActionSpec>[] : _quickActions;
     // Show the most useful actions as chips; remainder stay in overflow menu.
     final primary = actions.take(4).toList();
     final overflow = actions.skip(4).toList();
@@ -1433,7 +1436,9 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
                       name: _githubName,
                       workflow: _githubWorkflow,
                     ),
-                  if (kind == DeploymentResourceKind.compose && server != null)
+                  if (kind == DeploymentResourceKind.compose &&
+                      server != null &&
+                      !kIsWeb)
                     _ComposeLivePanel(
                       server: server!,
                       resource: resource,
@@ -1502,7 +1507,7 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
                         ),
                       ],
                     ),
-                  if (server != null)
+                  if (server != null && !kIsWeb)
                     Align(
                       alignment: Alignment.centerLeft,
                       child: OutlinedButton.icon(
@@ -2142,6 +2147,9 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
   };
 
   Future<void> _loadSuggestions() async {
+    // Suggestions come from the host's running containers, units, and firewall
+    // rules, all collected over SSH.
+    if (kIsWeb) return;
     final serverId = _serverId;
     if (serverId == null || _locationLabel.isEmpty) return;
     final server = widget.servers
@@ -2322,6 +2330,8 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
   }
 
   Future<void> _pickFolder() async {
+    // The picker lists remote folders over SFTP.
+    if (kIsWeb) return;
     final server = widget.servers
         .where((item) => item.id == _serverId)
         .firstOrNull;
@@ -2578,7 +2588,7 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
                   onChanged: (value) => setState(() => _scope = value!),
                 ),
               ],
-              if (_kind == DeploymentResourceKind.serverFolder) ...[
+              if (_kind == DeploymentResourceKind.serverFolder && !kIsWeb) ...[
                 const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,

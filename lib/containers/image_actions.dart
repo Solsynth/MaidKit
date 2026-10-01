@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:maid_kit/servers/server_providers.dart';
@@ -16,6 +17,12 @@ Future<void> runImagePruneWithTerminal({
   bool allUnused = false,
   String? sudoPassword,
 }) {
+  // Both image actions run in an SSH-backed task terminal.
+  if (kIsWeb) {
+    return Future<void>.error(
+      UnsupportedError('Image actions are not available in this browser.'),
+    );
+  }
   final flags = [if (allUnused) '-a', if (force) '-f'].join(' ');
   final command =
       '${runtime.name} image prune${flags.isEmpty ? '' : ' $flags'}';
@@ -52,6 +59,11 @@ Future<void> runImageRemoveWithTerminal({
   required String imageLabel,
   String? sudoPassword,
 }) {
+  if (kIsWeb) {
+    return Future<void>.error(
+      UnsupportedError('Image actions are not available in this browser.'),
+    );
+  }
   final command = '${runtime.name} rmi $imageId';
   final scopeLabel = scope == ContainerScope.root ? 'root' : 'user';
   return runWithDeployTerminal(

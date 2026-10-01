@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -57,6 +58,8 @@ Rect? _decodeBounds(String? raw) {
 /// Snapshot the window geometry right now. Used as a best-effort save when
 /// the app is about to terminate through a native close path.
 Future<void> saveMaidKitWindowStateFromWindow() async {
+  // No window_manager implementation in the browser.
+  if (kIsWeb) return;
   try {
     await saveMaidKitWindowState(
       MaidKitWindowState(
@@ -92,11 +95,14 @@ class MaidKitWindowStateListener with WindowListener {
   /// path (title-bar button or OS close). The hook is fire-and-forget and the
   /// listener lives for the whole app process, so no removal is needed.
   static void onAppClose(Future<void> Function() handler) {
+    // window_manager has no web implementation.
+    if (kIsWeb) return;
     windowManager.addListener(_MaidKitWindowStateCloseListener(handler));
   }
 
   /// Starts listening and records the current geometry as a baseline.
   Future<void> start() async {
+    if (kIsWeb) return;
     windowManager.addListener(this);
     _maximized = await windowManager.isMaximized();
     await _saveCurrentState();

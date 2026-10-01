@@ -2,62 +2,107 @@
 
 ## Purpose
 
-MaidKit uses `dartssh2` for SSH transport and a selectable terminal-emulator
-adapter for rendering. Ghostty (`libghostty-vt`) is the default adapter; xterm
-remains available as a fallback in Settings. The selected adapter is saved in
-`shared_preferences` and applies to newly opened terminals.
+MaidKit attaches one terminal emulator to each session and renders it behind a
+single renderer-neutral contract. Transport code (`SshConnectionManager`,
+`SerialConnectionManager`, `MaidCafeTerminalConnectionManager`) only forwards
+bytes and reacts to input and resize events, so it never imports a concrete
+emulator package. The contract itself is
+`lib/servers/terminal_session_adapter.dart`.
 
-## Target boundary
+## Backends
 
-Introduce a small terminal adapter contract in `lib/servers/`:
+| Platform | File | Engine |
+| --- | --- | --- |
+| Android, iOS, macOS, Windows, Linux | `lib/servers/maidterm_session_adapter.dart` | MaidTerm over libghostty (native library) |
+| Web | `lib/servers/xterm3_session_adapter.dart` | `xterm3` (pure Dart emulator) |
 
-- `TerminalSessionAdapter` owns one terminal emulator instance for one SSH
-  shell.
-- It accepts incoming bytes from `SSHSession.stdout` and `stderr`.
-- It exposes outgoing terminal bytes for `SSHSession.write`.
-- It reports column/row and pixel resize events for
-  `SSHSession.resizeTerminal`.
-- It owns terminal-specific cleanup and exposes a renderer widget or render
-  state to the Sessions UI.
+libghostty is reached over `dart:ffi` and built by a native-assets hook, so it
+cannot exist in a `dart2js` build; xterm3's emulator core has no platform
+dependency at all. Both backends implement `TerminalSessionAdapter` and are
+interchangeable from the caller's point of view.
 
-`SshConnectionManager` remains transport-only: it opens the authenticated
-`SSHSession`, wires its streams to an adapter, and closes all shells when the
-parent SSH client disconnects. `SessionsPage` receives an adapter-backed view
-and must not import a concrete emulator package.
+## Selecting a backend
 
-## Current adapters
+`lib/servers/terminal_renderer_backend.dart` is the only place that knows which
+renderer a build gets:
 
-### Ghostty (default)
+```dart
+export 'maidterm_session_adapter.dart'
+    if (dart.library.js_interop) 'xterm3_session_adapter.dart';
+```
 
-`GhosttyTerminalSessionAdapter` uses libghostty for VT parsing, screen state,
-10,000-line scrollback, PTY callbacks, and resize handling. Its Flutter grid
-renderer uses a desktop monospace stack, reserves content padding, and renders
-the terminal cursor plus per-cell ANSI and truecolor foreground/background
-styles. It supports wheel scrollback, pointer text selection, Cmd/Ctrl+C copy,
-Cmd/Ctrl+V paste, and native IME composition/commit.
+`dart.library.js_interop` is available exactly on the web targets, so the
+choice is made at compile time: a web build never links MaidTerm, and a native
+build never links xterm3. Both files declare `TerminalRendererFactory` with the
+same constructor, which is why the export can switch between them.
 
-It is not feature-parity complete: terminal mouse reporting, bracketed paste,
-and full keyboard-protocol support remain to be implemented and evaluated.
+`terminalSessionAdapterFactoryProvider` in `lib/servers/server_providers.dart`
+is the single construction point for production code; tests override the
+provider instead of the renderer.
 
-### xterm (fallback)
+## Contract
 
-`XtermTerminalSessionAdapter` preserves the established Flutter xterm
-renderer, `xterm-256color` PTY type, UTF-8 decoding, and 10,000-line
-scrollback. Select it in Settings → Terminal renderer before opening a new
-terminal.
+`TerminalSessionAdapter` covers everything a session needs from a renderer:
 
-## Adding an adapter
+- `outgoingBytes` / `write` — the byte streams shared with the transport.
+- `resizeEvents` — column/row plus physical-pixel viewport size for PTY
+  resizing.
+- `taskRunning` / `taskActivity` — shell activity for tab indicators, driven by
+  `TerminalActivityTracker` (OSC 133/633, OSC 9;4, then a conservative
+  prompt-detection fallback).
+- `currentDirectory` — the OSC 7 working directory.
+- `find` / `findJump` / `findClear` — terminal find, hosted by
+  `TerminalFindHost`.
+- `bufferRows` / `dumpHistory` / `replayHistory` — scrollback capture and
+  restore for session persistence.
+- `sudoAutofillReady` / `bindSudoAutofill` — the reason the terminal currently
+  wants the saved password, surfaced as a hint at the cursor.
+- `buildView` — the renderer widget, including read-only log surfaces.
 
-Implement `TerminalSessionAdapter`, create a `TerminalSessionAdapterFactory`,
-and register a `TerminalSessionAdapterOption` in
-`terminalSessionAdapterOptionsProvider`. The option appears in Settings
-automatically. Adapter factories can also be overridden in Riverpod tests.
+Renderer-neutral inputs (`terminal_color_scheme.dart`,
+`terminal_keyword_highlight.dart`, `terminal_adapter_preferences.dart`) are
+translated inside each backend, so preferences apply to both.
 
-## Acceptance criteria for the extraction
+## Renderer-specific behaviour
 
-- Connecting, disconnecting, host-key verification, and saved-server behavior
-  are unchanged.
-- A terminal adapter can be replaced through provider overrides in tests.
-- Terminal integration tests cover output forwarding, keyboard input, resize,
-  shell closure, and cleanup on SSH disconnect.
-- The Sessions UI contains no emulator-specific imports.
+- **Cursor animation** is a renderer setting for MaidTerm and DEC mode 12 for
+  xterm3; the web backend applies the preference with the same escape a remote
+  program would use.
+- **Keyword and link tinting** uses MaidTerm's link rules natively. xterm3 has
+  no equivalent, so the web backend computes matches for the rows on screen and
+  paints them with `TerminalController` highlights, coalesced to one pass per
+  250 ms and capped at 400 matches.
+- **Desktop notifications** from OSC 9/777 are shown natively. A browser build
+  has no notification plugin wired up, so the web backend ignores the request.
+- **PTY pixel metrics** are reported to the transport by both backends, but in
+  a browser only the MaidCafe-over-WebSocket transport and the no-op serial
+  transport can consume them; SSH needs raw sockets and cannot run on web.
+
+## Adding or replacing a backend
+
+1. Implement `TerminalSessionAdapter` in a new `lib/servers/<renderer>_session_adapter.dart`
+   together with a `TerminalRendererFactory`.
+2. Point `terminal_renderer_backend.dart` at the new file for the platform it
+   serves.
+3. Keep the renderer package out of every other file, so the platform split
+   stays in one place.
+
+## Verification
+
+```sh
+dart format lib test
+flutter analyze
+flutter test
+```
+
+The web backend also has to compile for `dart2js`. A full `flutter build web`
+still stops on the parts of the app that have not been ported yet (`dart:io`
+imports, desktop-only plugins), so the renderer path is checked on its own:
+
+```sh
+flutter build web --release -t tool/web_renderer_probe.dart
+```
+
+The probe imports `terminal_renderer_backend.dart` and nothing else, which
+proves the conditional export selects the xterm3 backend for web and that the
+shared contract compiles without MaidTerm.

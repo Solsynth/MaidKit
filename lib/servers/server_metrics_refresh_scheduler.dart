@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'package:maid_kit/data/local/app_database.dart';
 import 'server_models.dart';
 import 'ssh_connection_manager.dart';
@@ -22,6 +24,9 @@ class ServerMetricsRefreshScheduler {
     required Iterable<SshSessionInfo> sessions,
     required int? focusedServerId,
   }) {
+    // Refreshing metrics runs SSH commands; a browser has no SSH transport,
+    // and a daemon terminal session must not be probed that way.
+    if (kIsWeb) return;
     _servers = servers;
     _connectedServerIds = sessions
         .where((session) => session.status == SessionStatus.connected)

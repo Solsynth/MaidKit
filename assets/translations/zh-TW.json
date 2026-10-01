@@ -1326,6 +1326,7 @@
   "serverCannotConnect": "無法連線",
   "serverCannotOpenSerialTerminal": "無法開啟序列埠終端",
   "serverCannotOpenTerminal": "無法開啟終端",
+  "serverTerminalUnavailableInBrowser": "瀏覽器版只能開啟 MaidCafe 守護進程終端，SSH、序列埠與本機終端請使用桌面版。",
   "serverCollectStats": "收集效能統計",
   "serverCollectStatsHint": "負載平均值、記憶體使用情況和執行時間。",
   "serverConnectAndRetry": "連線並重試",

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -94,9 +95,13 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   @override
   void initState() {
     super.initState();
+    _activeTabIndex = widget.initialTab.clamp(0, _tabCount - 1);
+    // Everything initialized below feeds the SSH-collected tabs (processes,
+    // runtimes, metrics refresh). A browser only shows the MaidCafe daemon tab,
+    // which manages its own daemon session.
+    if (kIsWeb) return;
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     _sessionRegistry.retain(widget.server);
-    _activeTabIndex = widget.initialTab.clamp(0, _tabCount - 1);
     _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
     // Lazy-load processes only when the Processes tab is open so a 3s metrics
     // tick does not keep spawning remote `ps` while the user is elsewhere.
@@ -131,6 +136,11 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     _refreshTimer?.cancel();
     _closeProcessesSse();
     _closeRuntimesSse();
+    // The web branch never initialized the SSH-backed collaborators.
+    if (kIsWeb) {
+      super.dispose();
+      return;
+    }
     _sessionRegistry.release(widget.server);
     // Riverpod forbids mutating providers during dispose / tree finalization.
     final serverId = widget.server.id;
@@ -819,15 +829,30 @@ class _InspectorTabs extends StatefulWidget {
 class _InspectorTabsState extends State<_InspectorTabs>
     with SingleTickerProviderStateMixin {
   static const _tabCount = 13;
+
+  /// Index of the MaidCafe daemon tab — the one surface whose daemon can be
+  /// reached from a browser (over the cloud relay / WebSocket).
+  static const _maidCafeTabIndex = 12;
+
+  /// Tabs visible on this platform, in tab-bar order. Every other tab collects
+  /// its data over SSH, which a browser does not have.
+  static final List<int> _visibleTabIndices = kIsWeb
+      ? const <int>[_maidCafeTabIndex]
+      : List<int>.generate(_tabCount, (index) => index);
+
   late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    final visible = _visibleTabIndices;
+    final requested = visible.indexOf(
+      widget.initialTab.clamp(0, _tabCount - 1),
+    );
     _tabController = TabController(
-      length: _tabCount,
+      length: visible.length,
       vsync: this,
-      initialIndex: widget.initialTab.clamp(0, _tabCount - 1),
+      initialIndex: requested < 0 ? 0 : requested,
     );
     _tabController.addListener(_handleTabChange);
   }
@@ -842,7 +867,7 @@ class _InspectorTabsState extends State<_InspectorTabs>
 
   void _handleTabChange() {
     if (_tabController.indexIsChanging) return;
-    widget.onTabChanged(_tabController.index);
+    widget.onTabChanged(_visibleTabIndices[_tabController.index]);
   }
 
   @override
@@ -856,160 +881,160 @@ class _InspectorTabsState extends State<_InspectorTabs>
           isScrollable: true,
           tabAlignment: TabAlignment.start,
           dividerColor: scheme.outlineVariant,
-          tabs: [
-            IconLabelTab(
-              icon: const Icon(Symbols.monitoring, size: 18),
-              label: 'detailActivity'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.terminal, size: 18),
-              label: 'detailProcesses'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.code_blocks, size: 18),
-              label: 'detailRuntimes'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.settings_applications, size: 18),
-              label: 'detailServices'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.language, size: 18),
-              label: 'detailWebServers'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.database, size: 18),
-              label: 'detailDatabases'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.deployed_code, size: 18),
-              label: 'detailContainers'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.image, size: 18),
-              label: 'detailImages'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.schedule, size: 18),
-              label: 'detailCrontab'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.inventory_2, size: 18),
-              label: 'detailPackages'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.shield, size: 18),
-              label: 'detailFirewall'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.swap_horiz, size: 18),
-              label: 'detailPortForwarding'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.local_cafe, size: 18),
-              label: 'maidCafeTitle'.tr(),
-            ),
-          ],
+          tabs: [for (final index in _visibleTabIndices) _tabLabel(index)],
         ),
         Expanded(
           child: TabBarView(
             controller: _tabController,
-            children: [
-              ActivityTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-                refreshInterval: widget.refreshInterval,
-              ),
-              widget.connected
-                  ? _ProcessTable(
-                      server: widget.server,
-                      processes: widget.processes,
-                      onRefresh: widget.onRefreshProcesses,
-                    )
-                  : _ConnectionPrompt(
-                      message:
-                          widget.connectionError ??
-                          'detailConnectToCollect'.tr(),
-                      onConnect: widget.onConnect,
-                    ),
-              RuntimeMonitoringTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-                snapshot: widget.runtimes,
-                onRefresh: widget.onRefreshRuntimes,
-                dataSource: widget.runtimesDataSource,
-              ),
-              SystemdTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-              WebServerTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-              DatabaseManagementTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-              ContainerManagementTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-                refreshInterval: widget.refreshInterval,
-                focusComposeProject: widget.initialComposeProject,
-              ),
-              ImageManagementTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-                refreshInterval: widget.refreshInterval,
-              ),
-              CrontabTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-              PackageManagementTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-              FirewallTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-              PortForwardingTab(
-                server: widget.server,
-                connected: widget.connected,
-              ),
-              MaidCafeServerTab(
-                server: widget.server,
-                connected: widget.connected,
-                connectionError: widget.connectionError,
-                onConnect: widget.onConnect,
-              ),
-            ],
+            children: [for (final index in _visibleTabIndices) _tabView(index)],
           ),
         ),
       ],
     );
   }
+
+  IconLabelTab _tabLabel(int index) => switch (index) {
+    0 => IconLabelTab(
+      icon: const Icon(Symbols.monitoring, size: 18),
+      label: 'detailActivity'.tr(),
+    ),
+    1 => IconLabelTab(
+      icon: const Icon(Symbols.terminal, size: 18),
+      label: 'detailProcesses'.tr(),
+    ),
+    2 => IconLabelTab(
+      icon: const Icon(Symbols.code_blocks, size: 18),
+      label: 'detailRuntimes'.tr(),
+    ),
+    3 => IconLabelTab(
+      icon: const Icon(Symbols.settings_applications, size: 18),
+      label: 'detailServices'.tr(),
+    ),
+    4 => IconLabelTab(
+      icon: const Icon(Symbols.language, size: 18),
+      label: 'detailWebServers'.tr(),
+    ),
+    5 => IconLabelTab(
+      icon: const Icon(Symbols.database, size: 18),
+      label: 'detailDatabases'.tr(),
+    ),
+    6 => IconLabelTab(
+      icon: const Icon(Symbols.deployed_code, size: 18),
+      label: 'detailContainers'.tr(),
+    ),
+    7 => IconLabelTab(
+      icon: const Icon(Symbols.image, size: 18),
+      label: 'detailImages'.tr(),
+    ),
+    8 => IconLabelTab(
+      icon: const Icon(Symbols.schedule, size: 18),
+      label: 'detailCrontab'.tr(),
+    ),
+    9 => IconLabelTab(
+      icon: const Icon(Symbols.inventory_2, size: 18),
+      label: 'detailPackages'.tr(),
+    ),
+    10 => IconLabelTab(
+      icon: const Icon(Symbols.shield, size: 18),
+      label: 'detailFirewall'.tr(),
+    ),
+    11 => IconLabelTab(
+      icon: const Icon(Symbols.swap_horiz, size: 18),
+      label: 'detailPortForwarding'.tr(),
+    ),
+    _ => IconLabelTab(
+      icon: const Icon(Symbols.local_cafe, size: 18),
+      label: 'maidCafeTitle'.tr(),
+    ),
+  };
+
+  Widget _tabView(int index) => switch (index) {
+    0 => ActivityTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+      refreshInterval: widget.refreshInterval,
+    ),
+    1 =>
+      widget.connected
+          ? _ProcessTable(
+              server: widget.server,
+              processes: widget.processes,
+              onRefresh: widget.onRefreshProcesses,
+            )
+          : _ConnectionPrompt(
+              message: widget.connectionError ?? 'detailConnectToCollect'.tr(),
+              onConnect: widget.onConnect,
+            ),
+    2 => RuntimeMonitoringTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+      snapshot: widget.runtimes,
+      onRefresh: widget.onRefreshRuntimes,
+      dataSource: widget.runtimesDataSource,
+    ),
+    3 => SystemdTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+    4 => WebServerTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+    5 => DatabaseManagementTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+    6 => ContainerManagementTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+      refreshInterval: widget.refreshInterval,
+      focusComposeProject: widget.initialComposeProject,
+    ),
+    7 => ImageManagementTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+      refreshInterval: widget.refreshInterval,
+    ),
+    8 => CrontabTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+    9 => PackageManagementTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+    10 => FirewallTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+    11 => PortForwardingTab(server: widget.server, connected: widget.connected),
+    _ => MaidCafeServerTab(
+      server: widget.server,
+      connected: widget.connected,
+      connectionError: widget.connectionError,
+      onConnect: widget.onConnect,
+    ),
+  };
 }
 
 class _ServerIdentity extends ConsumerWidget {

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
@@ -27,7 +28,10 @@ class _WorkspaceRestoreBootstrapState
 
   @override
   Widget build(BuildContext context) {
-    final enabled = ref.watch(workspaceRestoreOnStartupProvider);
+    // A browser can only reopen MaidCafe WebSocket terminals, and it has no
+    // file-management or editor tabs to restore, so the saved workspace is a
+    // native-only feature.
+    final enabled = !kIsWeb && ref.watch(workspaceRestoreOnStartupProvider);
     if (enabled && !_started) {
       _started = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {

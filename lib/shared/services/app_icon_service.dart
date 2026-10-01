@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -34,7 +32,10 @@ class AppIconService {
   /// Preview asset for the Cuite alternate icon.
   static const String cuiteIconAsset = 'assets/icons/app-icon-cuite.png';
 
-  bool get _isSupported => !kIsWeb && (Platform.isIOS || Platform.isMacOS);
+  bool get _isSupported =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
 
   /// Whether the current platform supports alternate app icon switching.
   bool get isSupported => _isSupported;

@@ -151,6 +151,13 @@ abstract interface class TerminalSessionAdapter {
   /// its password. UI can surface a hint and Enter fills the secret.
   SudoPromptReason? get sudoAutofillReady;
 
+  /// Attaches the session binding's autofill reason stream to this adapter.
+  ///
+  /// Called by the connection managers once a terminal session is wired, so
+  /// the terminal UI can show a hint at the cursor when the remote asks for
+  /// the saved password.
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons);
+
   /// Displays bytes received from the remote shell.
   void write(Uint8List bytes);
 

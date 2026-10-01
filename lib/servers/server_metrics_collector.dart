@@ -4,6 +4,10 @@ import 'package:dartssh2/dartssh2.dart';
 
 import 'server_models.dart';
 
+/// Largest integer JavaScript represents exactly (2^53 - 1); used to keep an
+/// absurd uptime reading from overflowing `Duration` on any platform.
+const _maxDurationSeconds = 9007199254740991;
+
 abstract interface class ServerMetricsCollector {
   String get id;
   String get label;
@@ -207,7 +211,7 @@ ServerStats? parseMacosMetricsOutput(String output, {DateTime? now}) {
       : Duration(
           seconds: (currentTime.millisecondsSinceEpoch ~/ 1000 - boot).clamp(
             0,
-            0x7fffffffffffffff,
+            _maxDurationSeconds,
           ),
         );
 
@@ -292,7 +296,7 @@ ServerStats? parseWindowsMetricsOutput(String output, {DateTime? now}) {
     gpus: parseNvidiaGpuMetricsOutput(_metricSection(output, 'GPU')),
     uptime: uptimeSeconds == null
         ? null
-        : Duration(seconds: uptimeSeconds.clamp(0, 0x7fffffffffffffff)),
+        : Duration(seconds: uptimeSeconds.clamp(0, _maxDurationSeconds)),
     disks: disks,
   );
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -375,7 +376,10 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// non-terminal tab first, then connections and terminal tabs as they
   /// become available.
   Future<void> restoreWorkspace(WorkspaceSnapshot snapshot) async {
-    if (_restoring || snapshot.isEmpty) return;
+    // A browser has no SSH or serial transport and no file tabs to restore;
+    // only MaidCafe WebSocket terminals could reopen, which is not a saved
+    // workspace feature there.
+    if (kIsWeb || _restoring || snapshot.isEmpty) return;
     _restoring = true;
     try {
       final repository = ref.read(serverRepositoryProvider);
@@ -496,6 +500,12 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialOutput,
     AuthChallengeApproval? approveAuth,
   }) async {
+    // A browser has no raw socket for SSH channels.
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'SSH terminals are not available in this browser.',
+      );
+    }
     if (paneId != null) focusPane(paneId);
     final handle = await _openTerminalHandle(
       server,
@@ -525,6 +535,12 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? paneId,
     String? initialOutput,
   }) async {
+    // Serial ports are a native file-descriptor feature.
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'Serial terminals are not available in this browser.',
+      );
+    }
     if (paneId != null) focusPane(paneId);
     final handle = await ref
         .read(serialConnectionManagerProvider)
@@ -568,6 +584,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialPath,
     String? paneId,
   }) {
+    // The file manager browses the local disk and SFTP; a browser has neither.
+    if (kIsWeb) return;
     if (paneId != null) focusPane(paneId);
     final tab = FileManagementTab(
       id: 'files-${DateTime.now().microsecondsSinceEpoch}',
@@ -587,6 +605,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     required bool isRemote,
     String? paneId,
   }) {
+    // The editor reads and writes through dart:io files or SFTP.
+    if (kIsWeb) return;
     final existing = state.tabs.whereType<FileEditorTab>().where((tab) {
       return tab.serverId == server.id &&
           tab.path == path &&

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -309,6 +310,10 @@ class _VaultGateState extends ConsumerState<VaultGate>
     final activeFile = ref.watch(activeVaultFileProvider);
     final vaultFiles = ref.watch(vaultFilesProvider);
     final vaultLabels = ref.watch(vaultLabelsProvider);
+    final activeVaultLabel = activeFile == null
+        ? ''
+        : vaultLabels[activeFile] ??
+              ref.read(vaultFileStorageProvider).fileName(activeFile);
     final theme = Theme.of(context);
     final packageInfo = ref.watch(packageInfoProvider);
     final showBiometricUnlock = biometricEnabled.asData?.value ?? false;
@@ -427,7 +432,31 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                           textAlign: TextAlign.center,
                                         ),
                                         const SizedBox(height: 24),
-                                        if (vaultFiles.isNotEmpty) ...[
+                                        if (kIsWeb)
+                                          // A browser has exactly one vault
+                                          // and cannot switch files, so there
+                                          // is nothing to pick: show it as a
+                                          // static label.
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Symbols.lock,
+                                                size: 18,
+                                                color: theme
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  activeVaultLabel,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        else if (vaultFiles.isNotEmpty) ...[
                                           DropdownButtonFormField<String>(
                                             key: ValueKey(activeFile),
                                             initialValue: activeFile,

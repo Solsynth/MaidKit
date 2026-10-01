@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 import 'server_models.dart';
@@ -84,6 +85,8 @@ class SerialPortClient {
   }
 
   Future<List<String>> listDevices() async {
+    // The native serial bridge does not exist in a browser.
+    if (kIsWeb) return const [];
     try {
       final result = await _channel.invokeMethod<List<Object?>>('listDevices');
       return result?.whereType<String>().toList(growable: false) ?? const [];
@@ -99,6 +102,11 @@ class SerialPortClient {
   }
 
   Future<SerialPortSession> open(SerialConfig config) async {
+    if (kIsWeb) {
+      throw const SerialPortException(
+        'Serial ports are unavailable on this platform.',
+      );
+    }
     try {
       final id = await _channel.invokeMethod<int>('open', config.toJson());
       if (id == null) {

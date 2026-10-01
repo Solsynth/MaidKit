@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -80,6 +81,8 @@ class _ContainerManagementTabState
   @override
   void initState() {
     super.initState();
+    // Container state and actions come from SSH; a browser has neither.
+    if (kIsWeb) return;
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     _sessionRegistry.retain(widget.server);
     if (widget.connected) {
@@ -92,13 +95,15 @@ class _ContainerManagementTabState
   void dispose() {
     _refreshTimer?.cancel();
     _closeContainersSse();
-    _sessionRegistry.release(widget.server);
+    // The web branch never initialized the SSH-backed registry.
+    if (!kIsWeb) _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ContainerManagementTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (kIsWeb) return;
     final serverChanged = oldWidget.server.id != widget.server.id;
     if (serverChanged) {
       _closeContainersSse();
@@ -469,6 +474,9 @@ class _ContainerManagementTabState
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Center(child: Text('commonUnavailable'.tr()));
+    }
     if (!widget.connected) {
       return _ContainerEmptyPanel(
         icon: Symbols.link_off,

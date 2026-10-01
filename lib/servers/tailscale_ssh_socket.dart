@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
-import 'package:tailscale/tailscale.dart';
+import 'package:maid_kit/platform/tailscale.dart';
 
 import 'ssh_proxy_connect.dart' show proxyHandshakeTimeout;
 import 'tailscale_service.dart';

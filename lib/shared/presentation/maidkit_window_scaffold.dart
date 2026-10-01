@@ -1,5 +1,6 @@
 import 'package:window_manager/window_manager.dart';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' as flutter;
 import 'package:maid_kit/theme.dart';
 import 'package:material_ui/material_ui.dart';
@@ -21,6 +22,9 @@ import 'task_progress.dart';
 /// shut down and stop pumping messages, which reads as a freeze. Hide first,
 /// then quit. On macOS/Linux `destroy()` tears down immediately either way.
 Future<void> closeMaidKitWindow() async {
+  // window_manager has no web implementation; the browser tab owns its own
+  // lifetime, so there is no window to hide or destroy.
+  if (kIsWeb) return;
   await windowManager.hide();
   await windowManager.destroy();
 }
