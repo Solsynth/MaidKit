@@ -815,6 +815,102 @@ void main() {
     expect(applied, 0);
   });
 
+  test('overwrites a damaged cloud copy when the user asks to', () async {
+    // The server still lists a newer revision but its bytes are gone. With an
+    // explicit overwrite resolution (the path the 409 retry and the damaged
+    // remote prompt take), the local copy must be published over the damaged
+    // revision instead of failing the sync.
+    final storage = _MemoryStorage()
+      ..values[_sessionKey] = jsonEncode({
+        'access_token': 'valid-token',
+        'expires_at': DateTime.now()
+            .add(const Duration(days: 1))
+            .toUtc()
+            .toIso8601String(),
+      })
+      ..values[_configurationKey('damaged-vault-overwrite')] = jsonEncode(
+        _syncConfiguration(revision: 0),
+      );
+    int? expectedRevision;
+    final dio = Dio()
+      ..httpClientAdapter = _CannedAdapter((options) async {
+        if (options.uri.path.endsWith('/content')) {
+          return _json({'error': 'Blob content is unavailable.'}, 404);
+        }
+        if (options.method == 'PUT') {
+          final data = options.data;
+          if (data is FormData) {
+            expectedRevision = int.tryParse(
+              data.fields
+                  .firstWhere((field) => field.key == 'ExpectedRevision')
+                  .value,
+            );
+          }
+          return _json({'revision': 4}, 200);
+        }
+        return _json({'current_revision': 3}, 200);
+      });
+    final service = CloudSyncService(
+      vaultId: 'damaged-vault-overwrite',
+      secureStorage: storage,
+      dio: dio,
+    );
+
+    final configuration = await service.sync(
+      archive: 'local-archive',
+      applyArchive: (_) async {},
+      conflictResolution: CloudSyncConflictResolution.overwriteRemote,
+    );
+
+    expect(expectedRevision, 3, reason: 'must replace the live revision');
+    expect(configuration.revision, 4);
+  });
+
+  test('leaves a damaged cloud copy alone without confirmation', () async {
+    // Without an app overlay the overwrite prompt cannot be answered, which
+    // must not be read as consent: the sync fails and the cloud copy stays.
+    final storage = _MemoryStorage()
+      ..values[_sessionKey] = jsonEncode({
+        'access_token': 'valid-token',
+        'expires_at': DateTime.now()
+            .add(const Duration(days: 1))
+            .toUtc()
+            .toIso8601String(),
+      })
+      ..values[_configurationKey('damaged-vault-unconfirmed')] = jsonEncode(
+        _syncConfiguration(revision: 0),
+      );
+    var uploads = 0;
+    final dio = Dio()
+      ..httpClientAdapter = _CannedAdapter((options) async {
+        if (options.uri.path.endsWith('/content')) {
+          return _json({'error': 'Blob content is unavailable.'}, 404);
+        }
+        if (options.method == 'PUT') {
+          uploads++;
+          return _json({'revision': 4}, 200);
+        }
+        return _json({'current_revision': 3}, 200);
+      });
+    final service = CloudSyncService(
+      vaultId: 'damaged-vault-unconfirmed',
+      secureStorage: storage,
+      dio: dio,
+    );
+
+    await expectLater(
+      service.sync(archive: 'local-archive', applyArchive: (_) async {}),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.toString(),
+          'message',
+          contains('unavailable on the server'),
+        ),
+      ),
+    );
+    expect(uploads, 0, reason: 'an unanswered prompt must not overwrite');
+  });
+
   test('surfaces a byte-encoded server error body', () async {
     // The content route answers with raw bytes, so Dio hands the error body to
     // the service as a Uint8List. The JSON it contains must still be read.

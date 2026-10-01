@@ -662,33 +662,37 @@ class CloudSyncService {
           configuration,
           session,
         );
-        final comparison = conflictResolution == null
-            ? await compareAndMergeArchive?.call(
-                localArchive: archive,
-                remoteArchive: remoteArchive,
-              )
-            : null;
-        if (comparison?.status == CloudSyncArchiveMergeStatus.identical) {
-          final updated = _updatedConfiguration(
-            configuration,
-            revision: remoteRevision,
-            contentFingerprint: await contentFingerprint?.call(),
-          );
-          await _saveConfiguration(updated);
-          return updated;
-        }
-        if (comparison?.status == CloudSyncArchiveMergeStatus.merged) {
-          uploadArchive = comparison!.archive!;
-          // The merged result becomes the local database before it is
-          // published. If the upload fails, the unchanged configuration causes
-          // the next sync to retry this merged local state.
-          await applyArchive(uploadArchive);
+        if (remoteArchive == null) {
+          // Metadata advertises a newer revision whose bytes are gone, so the
+          // cloud copy cannot be read. The only way out is to publish this
+          // device's copy over it. That is destructive, so it needs the user's
+          // say-so — except during an onboarding download, where "local" is a
+          // fresh empty vault and overwriting would destroy the cloud copy the
+          // user came to fetch. An explicit overwrite resolution (used by the
+          // 409 retry) skips the prompt.
+          final overwrite =
+              !configuration.pendingDownload &&
+              (conflictResolution ==
+                      CloudSyncConflictResolution.overwriteRemote ||
+                  await _resolveDamagedRemote(remoteRevision));
+          if (!overwrite) {
+            throw const CloudSyncException(
+              'The cloud copy is unavailable on the server. It may have been '
+              'damaged by an interrupted upload; upload it again from a device '
+              'that still has this vault.',
+            );
+          }
+          // Upload against the live revision so the server accepts the write
+          // and the damaged object is replaced.
           revision = remoteRevision;
         } else {
-          final resolution =
-              conflictResolution ?? await _resolveConflict(remoteRevision);
-          if (resolution == CloudSyncConflictResolution.downloadRemote) {
-            await applyArchive(remoteArchive);
+          final comparison = conflictResolution == null
+              ? await compareAndMergeArchive?.call(
+                  localArchive: archive,
+                  remoteArchive: remoteArchive,
+                )
+              : null;
+          if (comparison?.status == CloudSyncArchiveMergeStatus.identical) {
             final updated = _updatedConfiguration(
               configuration,
               revision: remoteRevision,
@@ -697,9 +701,30 @@ class CloudSyncService {
             await _saveConfiguration(updated);
             return updated;
           }
-          // Local-authoritative sync keeps this vault's stable blob ID and
-          // creates the next revision from the latest remote one.
-          revision = remoteRevision;
+          if (comparison?.status == CloudSyncArchiveMergeStatus.merged) {
+            uploadArchive = comparison!.archive!;
+            // The merged result becomes the local database before it is
+            // published. If the upload fails, the unchanged configuration
+            // causes the next sync to retry this merged local state.
+            await applyArchive(uploadArchive);
+            revision = remoteRevision;
+          } else {
+            final resolution =
+                conflictResolution ?? await _resolveConflict(remoteRevision);
+            if (resolution == CloudSyncConflictResolution.downloadRemote) {
+              await applyArchive(remoteArchive);
+              final updated = _updatedConfiguration(
+                configuration,
+                revision: remoteRevision,
+                contentFingerprint: await contentFingerprint?.call(),
+              );
+              await _saveConfiguration(updated);
+              return updated;
+            }
+            // Local-authoritative sync keeps this vault's stable blob ID and
+            // creates the next revision from the latest remote one.
+            revision = remoteRevision;
+          }
         }
       }
       final fingerprint = await contentFingerprint?.call();
@@ -755,7 +780,14 @@ class CloudSyncService {
     }
   }
 
-  Future<String> _downloadRemoteArchive(
+  /// Downloads the cloud archive for a newer revision.
+  ///
+  /// Returns `null` when the server still lists the revision but its bytes are
+  /// gone: Flywheel answers 404 ("Revision not found." / "Blob content is
+  /// unavailable.") when an upload's cleanup deleted the object out from under
+  /// the committed revision. The caller decides whether to overwrite it, rather
+  /// than this method failing the whole sync.
+  Future<String?> _downloadRemoteArchive(
     CloudSyncConfiguration configuration,
     _Session session,
   ) async {
@@ -773,20 +805,17 @@ class CloudSyncService {
       );
       return utf8.decode(content.data ?? const []);
     } on DioException catch (error) {
-      // The metadata reported a newer revision, but its bytes do not exist.
-      // Flywheel answers 404 ("Revision not found." / "Blob content is
-      // unavailable.") when an upload's cleanup deleted the object out from
-      // under the committed revision.
-      if (error.response?.statusCode == 404) {
-        throw const CloudSyncException(
-          'The cloud copy is unavailable on the server. It may have been '
-          'damaged by an interrupted upload; upload it again from a device '
-          'that still has this vault.',
-        );
-      }
+      if (error.response?.statusCode == 404) return null;
       rethrow;
     }
   }
+
+  /// Asks whether to replace a cloud revision the server can no longer serve.
+  ///
+  /// Without an app overlay (headless), this returns `false` so an unattended
+  /// sync never discards a cloud revision on its own.
+  Future<bool> _resolveDamagedRemote(int remoteRevision) =>
+      showMaidKitCloudSyncDamagedRemoteAlert(remoteRevision: remoteRevision);
 
   /// Asks the user whether to adopt the newer cloud revision or keep the
   /// local copy. Without an app overlay (headless), the local copy wins.

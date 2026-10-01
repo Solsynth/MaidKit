@@ -318,6 +318,70 @@ Future<bool> showMaidKitCloudSyncConflictAlert({
   return result ?? false;
 }
 
+/// Prompts the user to replace a cloud copy the server still lists but can no
+/// longer serve.
+///
+/// The blob metadata advertises a newer revision whose bytes are gone (Flywheel
+/// answers 404 on the content route), so downloading is impossible. The only
+/// way forward is to publish this device's copy over the damaged revision, and
+/// that discards whatever the cloud held, so it needs an explicit choice.
+/// Returns `true` to overwrite the cloud copy, `false` to leave it alone. The
+/// barrier is not dismissible because there is no neutral outcome.
+Future<bool> showMaidKitCloudSyncDamagedRemoteAlert({
+  required int remoteRevision,
+}) async {
+  final result = await showMaidKitOverlayDialog<bool>(
+    barrierDismissible: false,
+    builder: (context, close) => ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: kMaidKitDialogMaxWidth),
+      child: AlertDialog(
+        title: null,
+        titlePadding: EdgeInsets.zero,
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Symbols.cloud_off_rounded,
+              size: 48,
+              fill: 1,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'settingsVaultSyncDamagedTitle'.tr(),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'settingsVaultSyncDamagedBody'.tr(
+                args: [remoteRevision.toString()],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => close(false),
+            child: Text('commonCancel'.tr()),
+          ),
+          FilledButton(
+            onPressed: () => close(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            child: Text('settingsVaultSyncOverwrite'.tr()),
+          ),
+        ],
+      ),
+    ),
+  );
+  return result ?? false;
+}
+
 /// Prompts the user to reconnect before retrying an interrupted server action.
 Future<bool> showMaidKitReconnectAlert(String serverName) async {
   final result = await showMaidKitOverlayDialog<bool>(
