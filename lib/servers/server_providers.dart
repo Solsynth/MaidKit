@@ -835,6 +835,13 @@ final vaultExistsProvider = FutureProvider<bool>((ref) {
       .timeout(ref.watch(vaultOpenTimeoutProvider));
 }, retry: (_, _) => null);
 
+/// Whether this build keeps its one vault inside the browser's database.
+///
+/// Injected rather than read from [kIsWeb] so a widget test can run either
+/// mode, and so the gate can offer a way to start over where there is no vault
+/// file to delete.
+final browserVaultProvider = Provider<bool>((ref) => kIsWeb);
+
 final biometricUnlockEnabledProvider = FutureProvider<bool>((ref) {
   return ref.watch(vaultServiceProvider).isBiometricUnlockEnabled();
 });

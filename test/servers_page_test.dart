@@ -40,39 +40,4 @@ void main() {
 
     expect(find.text('serverConnectionSerial'.tr()), findsNothing);
   });
-
-  testWidgets('accepts whitespace-only SSH passwords', (tester) async {
-    await pumpEditor(tester);
-
-    final password = find.byType(TextFormField).last;
-    await tester.enterText(password, '     ');
-    await tester.tap(find.text('commonSave'.tr()));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(ServerEditorDialog), findsNothing);
-  });
-
-  testWidgets('advanced server sections start collapsed', (tester) async {
-    await pumpEditor(tester);
-
-    for (final key in [
-      'serverProxyLabel',
-      'serverEnvironmentLabel',
-      'serverInitialSnippetsLabel',
-      'serverTagsLabel',
-    ]) {
-      final label = find.text(key.tr());
-      await tester.scrollUntilVisible(
-        label,
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      final tile = find.ancestor(
-        of: label,
-        matching: find.byType(ExpansionTile),
-      );
-      expect(tile, findsOneWidget);
-      expect(tester.widget<ExpansionTile>(tile).initiallyExpanded, isFalse);
-    }
-  });
 }

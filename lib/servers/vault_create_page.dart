@@ -10,7 +10,9 @@ import 'cloud_sync_service.dart';
 import 'connection_import_service.dart';
 import 'connection_import_sheet.dart';
 import 'server_providers.dart';
+import 'solarpass_device_code_dialog.dart';
 import 'vault_file_storage.dart';
+import 'vault_service.dart';
 
 /// Full-screen vault onboarding reached from the locked vault gate.
 ///
@@ -49,10 +51,9 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
     super.dispose();
   }
 
-  String _friendlyError(Object error) => error.toString().replaceFirst(
-    RegExp(r'^(Bad state|ArgumentError): '),
-    '',
-  );
+  String _friendlyError(Object error) => error is VaultAlreadyExistsException
+      ? 'vaultBrowserSingleVault'.tr()
+      : error.toString().replaceFirst(RegExp(r'^(Bad state|ArgumentError): '), '');
 
   @override
   Widget build(BuildContext context) {
@@ -521,7 +522,11 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
     });
     try {
       final accountService = ref.read(cloudSyncServiceProvider);
-      final workspaces = await accountService.signInAndListWorkspaces();
+      final workspaces = await withSolarpassDeviceCode(
+        context,
+        (onDeviceCode) =>
+            accountService.signInAndListWorkspaces(onDeviceCode: onDeviceCode),
+      );
       if (!mounted) return;
       final workspace = await _chooseCloudWorkspace(workspaces);
       if (workspace == null || !mounted) return;
@@ -539,6 +544,10 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
       await sync.enable(workspace, existingBlob: blob);
       ref.invalidate(cloudSyncConfigurationForVaultProvider(path));
       await ref.read(activeVaultFileProvider.notifier).select(path);
+      // The vault gate reads the active configuration through its own
+      // provider, and on a browser selecting the path is a no-op (there is one
+      // vault), so nothing else would tell it the download is now pending.
+      ref.invalidate(cloudSyncConfigurationProvider);
       if (mounted) Navigator.of(context).pop(false);
     } catch (error) {
       if (mounted) setState(() => _error = _friendlyError(error));

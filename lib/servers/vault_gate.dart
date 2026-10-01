@@ -3,11 +3,11 @@ import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/services/package_info_provider.dart';
 
 import 'server_providers.dart';
@@ -15,6 +15,7 @@ import 'cloud_sync_service.dart';
 import 'database_backup_service.dart';
 import 'vault_create_page.dart';
 import 'vault_file_storage.dart';
+import 'vault_service.dart';
 
 class VaultGate extends ConsumerStatefulWidget {
   const VaultGate({super.key, required this.child});
@@ -88,10 +89,9 @@ class _VaultGateState extends ConsumerState<VaultGate>
     }
   }
 
-  String _friendlyError(Object error) => error.toString().replaceFirst(
-    RegExp(r'^(Bad state|ArgumentError): '),
-    '',
-  );
+  String _friendlyError(Object error) => error is VaultAlreadyExistsException
+      ? 'vaultBrowserSingleVault'.tr()
+      : error.toString().replaceFirst(RegExp(r'^(Bad state|ArgumentError): '), '');
   void _retryVaultOpen() {
     ref.invalidate(vaultExistsProvider);
   }
@@ -281,6 +281,44 @@ class _VaultGateState extends ConsumerState<VaultGate>
     });
   }
 
+  /// Erases the browser's vault after a confirmation.
+  ///
+  /// There is no vault file to delete in a browser and no way back into one
+  /// whose password is gone, so this is the only exit from the locked screen.
+  /// A linked cloud copy survives, and the gate returns to its create view,
+  /// where the cloud copy can be downloaded again.
+  Future<void> _resetBrowserVault() async {
+    if (_busy) return;
+    final confirmed = await showMaidKitConfirmAlert(
+      'vaultResetBrowserMessage'.tr(),
+      'vaultResetBrowserTitle'.tr(),
+      icon: Symbols.delete_forever_rounded,
+      isDanger: true,
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(vaultServiceProvider).erase();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = _friendlyError(error);
+          _busy = false;
+        });
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = null;
+      _password.clear();
+      _blankPasswordAttempted = false;
+      _vaultGeneration++;
+    });
+    ref.invalidate(vaultExistsProvider);
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<String?>(activeVaultFileProvider, (previous, next) {
@@ -305,6 +343,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
       }
     });
     final exists = ref.watch(vaultExistsProvider);
+    final browserVault = ref.watch(browserVaultProvider);
     final biometricEnabled = ref.watch(biometricUnlockEnabledProvider);
     final cloudConfiguration = ref.watch(cloudSyncConfigurationProvider);
     final activeFile = ref.watch(activeVaultFileProvider);
@@ -337,12 +376,17 @@ class _VaultGateState extends ConsumerState<VaultGate>
                 loading: () => const Scaffold(
                   body: Center(child: CircularProgressIndicator()),
                 ),
-                error: (error, _) => Scaffold(
+                error: (error, stack) => Scaffold(
                   body: Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text('vaultOpenError'.tr(args: [error.toString()])),
+                        const SizedBox(height: 12),
+                        Text(
+                          stack.toString().split('\n').take(8).join('\n'),
+                          style: const TextStyle(fontSize: 10),
+                        ),
                         const SizedBox(height: 12),
                         OutlinedButton(
                           onPressed: _retryVaultOpen,
@@ -432,7 +476,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                           textAlign: TextAlign.center,
                                         ),
                                         const SizedBox(height: 24),
-                                        if (kIsWeb)
+                                        if (browserVault)
                                           // A browser has exactly one vault
                                           // and cannot switch files, so there
                                           // is nothing to pick: show it as a
@@ -577,6 +621,20 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                               'vaultOpenFileAction'.tr(),
                                             ),
                                           ),
+                                        if (hasVault && browserVault) ...[
+                                          const SizedBox(height: 4),
+                                          TextButton.icon(
+                                            onPressed: _busy
+                                                ? null
+                                                : _resetBrowserVault,
+                                            icon: const Icon(
+                                              Symbols.delete_forever_rounded,
+                                            ),
+                                            label: Text(
+                                              'vaultResetBrowserAction'.tr(),
+                                            ),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ),

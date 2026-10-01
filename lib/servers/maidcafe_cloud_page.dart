@@ -22,6 +22,7 @@ import 'maidcafe_connect.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
 import 'server_providers.dart';
+import 'solarpass_device_code_dialog.dart';
 
 /// Desktop workspace page for the MaidCafe cloud: Solarpass account and
 /// workspace selection, daemon registration (the one-time `[daemon]` config
@@ -327,7 +328,12 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
 
   Future<void> _signInCloud(BuildContext context) async {
     try {
-      final user = await ref.read(cloudSyncServiceProvider).signIn();
+      final user = await withSolarpassDeviceCode(
+        context,
+        (onDeviceCode) => ref
+            .read(cloudSyncServiceProvider)
+            .signIn(onDeviceCode: onDeviceCode),
+      );
       ref.invalidate(cloudUserProvider);
       ref.invalidate(cloudWorkspacesProvider);
       MaidKitAnalytics.instance.setUserId(user.handle);

@@ -143,6 +143,30 @@ class CloudUser {
   }
 }
 
+/// What the user has to approve before a device-flow sign-in can finish: the
+/// code, and the page that takes it. [verificationUriComplete] carries the
+/// code in the URL, so opening it saves typing it.
+@immutable
+class SolarpassDeviceAuthorization {
+  const SolarpassDeviceAuthorization({
+    required this.userCode,
+    required this.verificationUri,
+    required this.verificationUriComplete,
+    required this.expiresAt,
+  });
+
+  final String userCode;
+  final Uri verificationUri;
+  final Uri verificationUriComplete;
+  final DateTime expiresAt;
+}
+
+/// Tells the caller what a device-flow sign-in is waiting on. The web build
+/// has no callback to bounce through, so it puts the code on screen; every
+/// other platform opens a browser window and never calls it.
+typedef CloudDeviceCodeCallback =
+    void Function(SolarpassDeviceAuthorization authorization);
+
 class CloudSyncException implements Exception {
   const CloudSyncException(this.message);
   final String message;
@@ -191,7 +215,7 @@ class CloudSyncConflictException extends CloudSyncException {
 }
 
 String _apiErrorMessage(DioException error) {
-  final data = error.response?.data;
+  final data = _decodeErrorBody(error.response?.data);
   if (data is Map) {
     final values = Map<String, dynamic>.from(data);
     final message = values['detail'] ?? values['message'] ?? values['error'];
@@ -200,9 +224,63 @@ String _apiErrorMessage(DioException error) {
     }
   }
   final status = error.response?.statusCode;
-  return status == null
-      ? 'Unable to reach Solarpass. Check your connection and try again.'
-      : 'Solarpass request failed (HTTP $status).';
+  if (status == null) {
+    return 'Unable to reach Solarpass. Check your connection and try again.';
+  }
+  // A body-less 404 means the request never reached a handler: no route
+  // matched, usually because a path segment is not the GUID the route
+  // requires. Naming the request keeps that from surfacing as an opaque
+  // status code.
+  final request = error.requestOptions;
+  return 'Solarpass request failed (HTTP $status · '
+      '${request.method} ${request.uri.path}).';
+}
+
+/// The dashed 8-4-4-4-12 form (`Guid`'s "D" format) the Flywheel routes
+/// usually carry.
+final _dashedGuidPattern = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+  r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+);
+
+/// The undashed 32-hexadecimal form (`Guid`'s "N" format).
+final _compactGuidPattern = RegExp(r'^[0-9a-fA-F]{32}$');
+
+/// Whether [value] is a GUID in any of the forms ASP.NET's `:guid` route
+/// constraint accepts. That constraint delegates to `Guid.TryParse`, so it
+/// takes the dashed ("D"), undashed ("N"), brace-wrapped ("B"), and
+/// parenthesized ("P") layouts. Mirroring it exactly keeps this pre-flight
+/// check from refusing an id the server would happily route, while still
+/// catching a stale slug or a truncated value that would miss the route and
+/// answer a body-less 404.
+bool _isGuid(String value) {
+  if (_dashedGuidPattern.hasMatch(value)) return true;
+  if (_compactGuidPattern.hasMatch(value)) return true;
+  if (value.length >= 2) {
+    final braced = value.startsWith('{') && value.endsWith('}');
+    final parenthesized = value.startsWith('(') && value.endsWith(')');
+    if (braced || parenthesized) {
+      return _dashedGuidPattern.hasMatch(value.substring(1, value.length - 1));
+    }
+  }
+  return false;
+}
+
+/// Recovers the JSON error body Dio leaves as raw bytes.
+///
+/// Requests made with `ResponseType.bytes` (the vault content download) get a
+/// `Uint8List` even when the server answered with a JSON error object, which
+/// would otherwise drop the real reason and surface only the status code. The
+/// original value is returned unchanged when it is not a UTF-8 JSON body.
+Object? _decodeErrorBody(Object? data) {
+  if (data is! List<int>) return data;
+  try {
+    final text = utf8.decode(data).trim();
+    if (text.isEmpty) return null;
+    return jsonDecode(text);
+  } on Object {
+    return null;
+  }
 }
 
 /// Solarpass authorization and Flywheel encrypted-blob transport.
@@ -211,9 +289,11 @@ class CloudSyncService {
     required String vaultId,
     FlutterSecureStorage? secureStorage,
     Dio? dio,
+    bool? isWeb,
   }) : _vaultKey = base64UrlEncode(utf8.encode(vaultId)),
        _storage = secureStorage ?? const FlutterSecureStorage(),
-       _dio = dio ?? Dio();
+       _dio = dio ?? Dio(),
+       _isWeb = isWeb ?? kIsWeb;
 
   static const apiBase = 'https://api.solian.app';
   // Flywheel app namespace for vault blobs. Keep stable: changing it orphans
@@ -233,9 +313,20 @@ class CloudSyncService {
   static const _sessionKey = 'maidkit_solar_network_oauth_session';
   static const _schemeVersion = 1;
 
+  /// The grant the web build signs in with: RFC 8628's device flow, which
+  /// needs no callback at all. A browser cannot hand a custom scheme back to
+  /// the page, and the loopback listener is unreachable from one too, so the
+  /// browser platform uses neither redirect.
+  static const _deviceCodeGrant =
+      'urn:ietf:params:oauth:grant-type:device_code';
+
   final String _vaultKey;
   final FlutterSecureStorage _storage;
   final Dio _dio;
+
+  /// Whether this build signs in with the device flow. Injected rather than
+  /// read from [kIsWeb] so tests can run either flow.
+  final bool _isWeb;
 
   String get _configurationKey => 'maidkit_cloud_sync_$_vaultKey';
 
@@ -282,9 +373,15 @@ class CloudSyncService {
   /// The token remains in secure storage and is refreshed when necessary.
   Future<String?> accessToken() async => (await _validSession())?.accessToken;
 
-  Future<CloudUser> signIn() async {
+  /// Signs in, returning the account.
+  ///
+  /// [onDeviceCode] is how the web build tells the user what to approve: the
+  /// device flow has no callback to bounce through, so the provider hands out
+  /// a code and the app polls until the user has entered it in a browser. The
+  /// other platforms open a browser window and never call it.
+  Future<CloudUser> signIn({CloudDeviceCodeCallback? onDeviceCode}) async {
     try {
-      await _signIn();
+      await _signIn(onDeviceCode: onDeviceCode);
       final user = await currentUser();
       if (user == null) {
         throw const CloudSyncException('Unable to load the signed-in account.');
@@ -304,11 +401,16 @@ class CloudSyncService {
     return session == null ? const [] : _listWorkspaces(session);
   }
 
-  Future<List<CloudWorkspace>> signInAndListWorkspaces() async {
+  /// Signs in when no usable session is stored, then lists the workspaces the
+  /// account can link a vault to. [onDeviceCode] carries the web build's
+  /// device-flow code the same way [signIn] does.
+  Future<List<CloudWorkspace>> signInAndListWorkspaces({
+    CloudDeviceCodeCallback? onDeviceCode,
+  }) async {
     try {
       final session = await _validSession();
       if (session == null) {
-        return await _listWorkspaces(await _signIn());
+        return await _listWorkspaces(await _signIn(onDeviceCode: onDeviceCode));
       }
       try {
         return await _listWorkspaces(session);
@@ -317,7 +419,7 @@ class CloudSyncService {
         // The stored session was rejected (revoked or rotated server-side).
         // Drop it and authorize again so the user can sign in interactively.
         await signOut();
-        return await _listWorkspaces(await _signIn());
+        return await _listWorkspaces(await _signIn(onDeviceCode: onDeviceCode));
       }
     } on DioException catch (error) {
       throw CloudSyncException(_apiErrorMessage(error));
@@ -372,6 +474,24 @@ class CloudSyncService {
     CloudWorkspace workspace, {
     CloudVaultBlob? existingBlob,
   }) async {
+    // Reject a bad identifier before anything is stored or sent. The Flywheel
+    // routes bind the workspace and blob ids as GUIDs, so a workspace or blob
+    // list that hands back a slug would persist a binding whose every request
+    // misses its route and answers a body-less 404 on both upload and
+    // download. Failing here names the real cause instead.
+    if (!_isGuid(workspace.id)) {
+      throw const CloudSyncException(
+        'Solarpass returned an invalid workspace id for this workspace. '
+        'Sign in again and retry; if it persists, the workspace list on the '
+        'server needs attention.',
+      );
+    }
+    if (existingBlob != null && !_isGuid(existingBlob.id)) {
+      throw const CloudSyncException(
+        'The selected cloud vault has an invalid id. Choose another cloud '
+        'vault, or upload this vault from a device that still has it.',
+      );
+    }
     try {
       final session = await _validSession();
       if (session == null) {
@@ -439,7 +559,42 @@ class CloudSyncService {
   /// When [contentFingerprint] is provided, the upload is skipped if it
   /// matches the fingerprint stored at the last successful sync and the local
   /// revision was not superseded.
+  ///
+  /// Calls run one at a time through a per-service queue. The five-minute
+  /// auto-sync and a manual sync can both be in flight against the same vault;
+  /// two overlapping uploads read the same remote revision and race for the
+  /// next one, which is the race that let an uploader's cleanup delete
+  /// committed blob content. The server now keys each attempt separately, but
+  /// running one sync at a time keeps the client from provoking the race at
+  /// all. Each queued sync fails on its own, so one rejected sync never stalls
+  /// the ones behind it.
   Future<CloudSyncConfiguration> sync({
+    required String archive,
+    required Future<void> Function(String archive) applyArchive,
+    Future<String> Function()? contentFingerprint,
+    CloudSyncArchiveComparator? compareAndMergeArchive,
+    CloudSyncConflictResolution? conflictResolution,
+    int conflictRetryCount = 0,
+  }) {
+    final result = _syncQueue.then(
+      (_) => _sync(
+        archive: archive,
+        applyArchive: applyArchive,
+        contentFingerprint: contentFingerprint,
+        compareAndMergeArchive: compareAndMergeArchive,
+        conflictResolution: conflictResolution,
+        conflictRetryCount: conflictRetryCount,
+      ),
+    );
+    // Keep the queue tail non-failing so the next sync is not blocked by this
+    // one's error.
+    _syncQueue = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  Future<void> _syncQueue = Future<void>.value();
+
+  Future<CloudSyncConfiguration> _sync({
     required String archive,
     required Future<void> Function(String archive) applyArchive,
     Future<String> Function()? contentFingerprint,
@@ -453,6 +608,15 @@ class CloudSyncService {
         'Link this vault to a cloud workspace first.',
       );
     }
+    // The Flywheel routes bind the workspace and blob ids as GUIDs. A stored
+    // value that is not one makes every blob request miss its route and come
+    // back as a body-less 404, so name the cause before sending anything.
+    if (!_isGuid(configuration.workspaceId) || !_isGuid(configuration.blobId)) {
+      throw const CloudSyncException(
+        'This vault is linked to an invalid cloud workspace. Unlink the vault '
+        'from its cloud workspace and link it again.',
+      );
+    }
     try {
       final session = await _validSession();
       if (session == null) {
@@ -463,6 +627,7 @@ class CloudSyncService {
       var revision = configuration.revision;
       var uploadArchive = archive;
       var remoteRevision = 0;
+      var blobMissing = false;
       try {
         final metadata = await _authorizedGet(
           '${_flywheelAppPath(configuration.workspaceId)}/blobs/'
@@ -476,7 +641,22 @@ class CloudSyncService {
             0;
       } on DioException catch (error) {
         if (error.response?.statusCode != 404) rethrow;
+        blobMissing = true;
       }
+      // Onboarding is downloading a blob the user just picked from the list.
+      // If it has vanished since, fail loudly instead of "restoring" an empty
+      // vault and recreating the blob under the same id.
+      if (blobMissing && configuration.pendingDownload) {
+        throw const CloudSyncException(
+          'The cloud copy could not be found. It may have been deleted; try '
+          'again, or upload it from a device that still has this vault.',
+        );
+      }
+      // The blob is gone but this device still holds the vault. Treat the
+      // local copy as authoritative and recreate the blob from revision zero
+      // rather than uploading against a revision the server no longer has,
+      // which it would reject as a conflict and loop on.
+      if (blobMissing) revision = 0;
       if (remoteRevision > revision) {
         final remoteArchive = await _downloadRemoteArchive(
           configuration,
@@ -557,7 +737,7 @@ class CloudSyncService {
       return updated;
     } on DioException catch (error) {
       if (error.response?.statusCode == 409 && conflictRetryCount < 1) {
-        return sync(
+        return _sync(
           archive: archive,
           applyArchive: applyArchive,
           contentFingerprint: contentFingerprint,
@@ -579,18 +759,33 @@ class CloudSyncService {
     CloudSyncConfiguration configuration,
     _Session session,
   ) async {
-    final content = await _authorizedRequest(
-      session,
-      (accessToken) => _dio.get<List<int>>(
-        '$apiBase${_flywheelAppPath(configuration.workspaceId)}/blobs/'
-        '${configuration.blobId}/content',
-        options: Options(
-          headers: {'Authorization': 'Bearer $accessToken'},
-          responseType: ResponseType.bytes,
+    try {
+      final content = await _authorizedRequest(
+        session,
+        (accessToken) => _dio.get<List<int>>(
+          '$apiBase${_flywheelAppPath(configuration.workspaceId)}/blobs/'
+          '${configuration.blobId}/content',
+          options: Options(
+            headers: {'Authorization': 'Bearer $accessToken'},
+            responseType: ResponseType.bytes,
+          ),
         ),
-      ),
-    );
-    return utf8.decode(content.data ?? const []);
+      );
+      return utf8.decode(content.data ?? const []);
+    } on DioException catch (error) {
+      // The metadata reported a newer revision, but its bytes do not exist.
+      // Flywheel answers 404 ("Revision not found." / "Blob content is
+      // unavailable.") when an upload's cleanup deleted the object out from
+      // under the committed revision.
+      if (error.response?.statusCode == 404) {
+        throw const CloudSyncException(
+          'The cloud copy is unavailable on the server. It may have been '
+          'damaged by an interrupted upload; upload it again from a device '
+          'that still has this vault.',
+        );
+      }
+      rethrow;
+    }
   }
 
   /// Asks the user whether to adopt the newer cloud revision or keep the
@@ -628,7 +823,23 @@ class CloudSyncService {
         value: jsonEncode(configuration.toJson()),
       );
 
-  Future<_Session> _signIn() async {
+  /// Runs the flow this platform signs in with and stores the session.
+  ///
+  /// The web build has to use the device flow: nothing in a browser can hand
+  /// the provider's callback back into the page, which both the custom scheme
+  /// and the loopback listener assume. Everywhere else the browser flow runs
+  /// unchanged.
+  Future<_Session> _signIn({CloudDeviceCodeCallback? onDeviceCode}) async {
+    final session = _isWeb
+        ? await _authorizeDevice(onDeviceCode)
+        : await _authorizeBrowserFlow();
+    await _saveSession(session);
+    return session;
+  }
+
+  /// The browser sign-in: open the authorization page, take the code back
+  /// through the platform's redirect, exchange it for a session.
+  Future<_Session> _authorizeBrowserFlow() async {
     final configuration = await _discover();
     final verifier = _randomUrlSafe(64);
     final state = _randomUrlSafe(32);
@@ -682,15 +893,134 @@ class CloudSyncService {
         'The authorization server did not return an authorization code.',
       );
     }
-    final session = await _exchange(configuration.tokenEndpoint, {
+    return _exchange(configuration.tokenEndpoint, {
       'grant_type': 'authorization_code',
       'client_id': _clientId,
       'code': code,
       'redirect_uri': redirectUri,
       'code_verifier': verifier,
     });
-    await _saveSession(session);
-    return session;
+  }
+
+  /// Signs in with RFC 8628's device flow: ask for a code, hand it to the
+  /// user, then poll the token endpoint until they have approved it in a
+  /// browser. This is the web's flow; it needs no redirect at all.
+  Future<_Session> _authorizeDevice(
+    CloudDeviceCodeCallback? onDeviceCode,
+  ) async {
+    final configuration = await _discover();
+    final endpoint = configuration.deviceAuthorizationEndpoint;
+    if (!endpoint.hasScheme) {
+      throw const CloudSyncException(
+        'This Solar Network deployment does not offer device sign-in.',
+      );
+    }
+    final response = await _dio.post<Map<String, dynamic>>(
+      endpoint.toString(),
+      data: {'client_id': _clientId, 'scope': '*'},
+      options: Options(contentType: Headers.formUrlEncodedContentType),
+    );
+    final data = response.data;
+    if (data == null) {
+      throw const CloudSyncException('Invalid device authorization response.');
+    }
+    final deviceCode = data['device_code']?.toString() ?? '';
+    final userCode = data['user_code']?.toString() ?? '';
+    final verificationUri = Uri.tryParse(
+      data['verification_uri']?.toString() ?? '',
+    );
+    if (deviceCode.isEmpty ||
+        userCode.isEmpty ||
+        verificationUri == null ||
+        !verificationUri.hasScheme) {
+      throw const CloudSyncException('Invalid device authorization response.');
+    }
+    // The provider may send a URI that carries the code, which saves the user
+    // typing it. Where it does not, the code itself is the whole instruction.
+    final completeUri = Uri.tryParse(
+      data['verification_uri_complete']?.toString() ?? '',
+    );
+    final expiresIn = (data['expires_in'] as num?)?.toInt() ?? 600;
+    onDeviceCode?.call(
+      SolarpassDeviceAuthorization(
+        userCode: userCode,
+        verificationUri: verificationUri,
+        verificationUriComplete: completeUri != null && completeUri.hasScheme
+            ? completeUri
+            : verificationUri,
+        expiresAt: DateTime.now().add(Duration(seconds: expiresIn)),
+      ),
+    );
+    return _awaitDeviceApproval(
+      configuration.tokenEndpoint,
+      deviceCode,
+      interval: (data['interval'] as num?)?.toInt() ?? 5,
+      deadline: DateTime.now().add(Duration(seconds: expiresIn)),
+    );
+  }
+
+  /// Polls [tokenEndpoint] until the user has approved [deviceCode].
+  ///
+  /// RFC 8628's two "not yet" answers are not failures: `authorization_pending`
+  /// means the user has not got there yet, `slow_down` means the provider
+  /// wants the next poll further out. Anything else — approval, refusal, an
+  /// expired code — is the answer, and the loop ends either way.
+  Future<_Session> _awaitDeviceApproval(
+    Uri tokenEndpoint,
+    String deviceCode, {
+    required int interval,
+    required DateTime deadline,
+  }) async {
+    var wait = interval;
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(Duration(seconds: wait));
+      final response = await _dio.post<dynamic>(
+        tokenEndpoint.toString(),
+        data: {
+          'grant_type': _deviceCodeGrant,
+          'device_code': deviceCode,
+          'client_id': _clientId,
+        },
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          // The pending answers arrive with 400; they are part of the flow,
+          // so read them instead of letting Dio throw on them.
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      final status = response.statusCode ?? 0;
+      final body = response.data;
+      if (status >= 200 && status < 300) return _sessionFrom(body);
+      final error = body is Map ? body['error']?.toString() : null;
+      if (error == 'authorization_pending') continue;
+      if (error == 'slow_down') {
+        wait += 5;
+        continue;
+      }
+      if (error == 'expired_token') {
+        throw const CloudSyncException(
+          'The sign-in code expired before it was approved. Try again.',
+        );
+      }
+      if (error == 'access_denied') {
+        throw const CloudSyncException('The sign-in was declined.');
+      }
+      throw CloudSyncException(_deviceFlowFailure(body, status));
+    }
+    throw const CloudSyncException(
+      'The sign-in code expired before it was approved. Try again.',
+    );
+  }
+
+  String _deviceFlowFailure(Object? body, int status) {
+    if (body is Map) {
+      final detail =
+          body['error_description'] ?? body['detail'] ?? body['message'];
+      if (detail != null && detail.toString().isNotEmpty) {
+        return detail.toString();
+      }
+    }
+    return 'Solarpass sign-in failed (HTTP $status).';
   }
 
   Future<_Session?> _validSession() async {
@@ -827,7 +1157,15 @@ class CloudSyncService {
       data: fields,
       options: Options(contentType: Headers.formUrlEncodedContentType),
     );
-    final data = response.data ?? const <String, dynamic>{};
+    return _sessionFrom(response.data, previous: previous);
+  }
+
+  /// The session a token response describes.
+  _Session _sessionFrom(Object? body, {_Session? previous}) {
+    final data = body is Map
+        ? Map<String, dynamic>.from(body)
+        : const <String, dynamic>{};
+    // Some deployments answer with `token` rather than `access_token`.
     final accessToken = (data['access_token'] ?? data['token']) as String?;
     if (accessToken == null || accessToken.isEmpty) {
       throw const CloudSyncException(
@@ -867,13 +1205,23 @@ class CloudSyncService {
 }
 
 class _OidcConfiguration {
-  const _OidcConfiguration(this.authorizationEndpoint, this.tokenEndpoint);
+  const _OidcConfiguration(
+    this.authorizationEndpoint,
+    this.tokenEndpoint,
+    this.deviceAuthorizationEndpoint,
+  );
   final Uri authorizationEndpoint;
   final Uri tokenEndpoint;
+
+  /// Where a device-flow sign-in asks for its code. Empty when the deployment
+  /// does not offer one.
+  final Uri deviceAuthorizationEndpoint;
+
   factory _OidcConfiguration.fromJson(Map<String, dynamic> json) =>
       _OidcConfiguration(
         Uri.parse(json['authorization_endpoint'] as String),
         Uri.parse(json['token_endpoint'] as String),
+        Uri.parse(json['device_authorization_endpoint']?.toString() ?? ''),
       );
 }
 

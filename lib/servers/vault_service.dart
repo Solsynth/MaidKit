@@ -13,6 +13,18 @@ class VaultLockedException implements Exception {
   const VaultLockedException();
 }
 
+/// Raised when a browser is asked to create a second vault.
+///
+/// A browser has one IndexedDB database holding one vault. Creating another
+/// would append a second metadata row, which leaves the vault unopenable
+/// ([_metadata] reads a single row), so creation is refused instead.
+class VaultAlreadyExistsException implements Exception {
+  const VaultAlreadyExistsException();
+
+  @override
+  String toString() => 'This browser already holds a vault.';
+}
+
 class BiometricUnlockException implements Exception {
   const BiometricUnlockException(this.message);
   final String message;
@@ -26,7 +38,9 @@ class VaultService {
     this._database, {
     FlutterSecureStorage? secureStorage,
     String vaultId = 'maid_kit',
+    bool? isWeb,
   }) : _vaultId = vaultId,
+       _isWeb = isWeb ?? kIsWeb,
        _biometricKey =
            '${_biometricKeyPrefix}_${base64UrlEncode(utf8.encode(vaultId))}',
        _secureStorage = secureStorage ?? const FlutterSecureStorage();
@@ -59,6 +73,10 @@ class VaultService {
   final AppDatabase _database;
   final FlutterSecureStorage _secureStorage;
   final String _vaultId;
+
+  /// Whether this build stores its vault in the browser's one database.
+  /// Injected rather than read from [kIsWeb] so a test can run either mode.
+  final bool _isWeb;
   final String _biometricKey;
   final AesGcm _cipher = AesGcm.with256bits();
   SecretKey? _dataKey;
@@ -129,6 +147,11 @@ class VaultService {
       await _secureStorage.containsKey(key: _biometricKey);
 
   Future<void> create(String password) async {
+    // A browser keeps its one vault in its one database; a second creation
+    // would not be a separate vault, it would corrupt this one.
+    if (_isWeb && await hasVault()) {
+      throw const VaultAlreadyExistsException();
+    }
     final salt = _randomBytes(16);
     final wrappingKey = await _deriveKey(password, salt);
     final dataKey = await _cipher.newSecretKey();
@@ -290,6 +313,31 @@ class VaultService {
     await _cacheSyncPassphrase(newPassword);
   }
 
+  /// Removes the vault and everything it stored on this device: every row, the
+  /// metadata row, and the vault-scoped keychain entries.
+  ///
+  /// This exists for the browser, which keeps its vault in a database instead
+  /// of a file it could delete itself. A linked cloud copy is not touched, so
+  /// the vault can be downloaded again from the cloud afterwards.
+  Future<void> erase() async {
+    // Foreign keys are switched off for the wipe so that no child row can block
+    // the delete of the table it points at, whatever order the tables come in.
+    await _database.customStatement('PRAGMA foreign_keys = OFF');
+    try {
+      await _database.transaction(() async {
+        for (final table in _database.allTables.toList().reversed) {
+          await _database.delete(table).go();
+        }
+      });
+    } finally {
+      await _database.customStatement('PRAGMA foreign_keys = ON');
+    }
+    await _secureStorage.delete(key: _biometricKey);
+    await _secureStorage.delete(key: _syncPassphraseKey);
+    _syncPassphrases.remove(_vaultId);
+    _dataKey = null;
+  }
+
   Future<void> discardNewVault() async {
     await _database.delete(_database.vaultMetadata).go();
     await _secureStorage.delete(key: _syncPassphraseKey);
@@ -415,8 +463,28 @@ class VaultService {
     return utf8.decode(clear);
   }
 
-  Future<VaultMetadataData> _metadata() async =>
-      (await _database.select(_database.vaultMetadata).getSingle());
+  /// The vault's metadata row, dropping any extra rows a browser build left
+  /// behind before the vault can be read.
+  ///
+  /// A browser keeps its one vault inside its one database, so a build that
+  /// offered to add a vault again appended a second row instead of making a
+  /// second vault. Everything in the database belongs to the first row's key,
+  /// so the later rows are unreachable leftovers: they are deleted here rather
+  /// than reported as a database the vault cannot be opened in.
+  Future<VaultMetadataData> _metadata() async {
+    final rows =
+        await (_database.select(_database.vaultMetadata)
+              ..orderBy([(table) => OrderingTerm.asc(table.id)]))
+            .get();
+    if (rows.isEmpty) throw StateError('No vault metadata row.');
+    if (rows.length > 1) {
+      final duplicates = rows.skip(1).map((row) => row.id).toList();
+      await (_database.delete(
+        _database.vaultMetadata,
+      )..where((table) => table.id.isIn(duplicates))).go();
+    }
+    return rows.first;
+  }
 
   SecretKey _requireKey() => _dataKey ?? (throw const VaultLockedException());
 

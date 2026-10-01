@@ -38,6 +38,7 @@ import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
 import 'server_providers.dart';
 import 'app_theme_preferences.dart';
+import 'solarpass_device_code_dialog.dart';
 import 'tailscale_settings_section.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
@@ -1067,9 +1068,10 @@ class SettingsPage extends HookConsumerWidget {
                             for (final (index, path) in vaultFiles.indexed)
                               _VaultCloudBindingTile(
                                 vaultId: path,
-                                position: index == 0
-                                    ? _SettingsTilePosition.first
-                                    : _SettingsTilePosition.middle,
+                                position: _vaultTilePosition(
+                                  index,
+                                  vaultFiles.length,
+                                ),
                                 title:
                                     vaultLabels[path] ??
                                     ref
@@ -1111,18 +1113,22 @@ class SettingsPage extends HookConsumerWidget {
                                     : null,
                               ),
                           ],
-                          ListTile(
-                            contentPadding: _sectionTilePadding,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: _sectionTileBorderRadius(
-                                _SettingsTilePosition.last,
+                          // A browser has exactly one vault, and this list is
+                          // only reachable from inside it, so a second one
+                          // cannot be added there.
+                          if (!kIsWeb)
+                            ListTile(
+                              contentPadding: _sectionTilePadding,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: _sectionTileBorderRadius(
+                                  _SettingsTilePosition.last,
+                                ),
                               ),
+                              leading: const Icon(Symbols.add),
+                              title: const Text('settingsVaultCreate').tr(),
+                              trailing: const Icon(Symbols.chevron_right),
+                              onTap: () => _showVaultOnboarding(context, ref),
                             ),
-                            leading: const Icon(Symbols.add),
-                            title: const Text('settingsVaultCreate').tr(),
-                            trailing: const Icon(Symbols.chevron_right),
-                            onTap: () => _showVaultOnboarding(context, ref),
-                          ),
                         ],
                       ),
                     ),
@@ -1337,7 +1343,12 @@ class SettingsPage extends HookConsumerWidget {
 
   Future<void> _signInToCloud(BuildContext context, WidgetRef ref) async {
     try {
-      await ref.read(cloudSyncServiceProvider).signIn();
+      await withSolarpassDeviceCode(
+        context,
+        (onDeviceCode) => ref
+            .read(cloudSyncServiceProvider)
+            .signIn(onDeviceCode: onDeviceCode),
+      );
       ref.invalidate(cloudUserProvider);
       ref.invalidate(cloudWorkspacesProvider);
     } on CloudSyncException catch (error) {
@@ -2024,7 +2035,11 @@ class SettingsPage extends HookConsumerWidget {
   Future<void> _downloadCloudVault(BuildContext context, WidgetRef ref) async {
     try {
       final accountService = ref.read(cloudSyncServiceProvider);
-      final workspaces = await accountService.signInAndListWorkspaces();
+      final workspaces = await withSolarpassDeviceCode(
+        context,
+        (onDeviceCode) =>
+            accountService.signInAndListWorkspaces(onDeviceCode: onDeviceCode),
+      );
       if (!context.mounted) return;
       final workspace = await _chooseCloudWorkspace(context, workspaces);
       if (workspace == null || !context.mounted) return;
@@ -2047,6 +2062,9 @@ class SettingsPage extends HookConsumerWidget {
       await sync.enable(workspace, existingBlob: blob);
       ref.invalidate(cloudSyncConfigurationForVaultProvider(path));
       await ref.read(activeVaultFileProvider.notifier).select(path);
+      // Keep the gate's own view of the active configuration in step with the
+      // link this flow just made.
+      ref.invalidate(cloudSyncConfigurationProvider);
     } on CloudSyncException catch (error) {
       if (context.mounted) _showMessage(error.message);
     } catch (error) {
@@ -2182,6 +2200,16 @@ enum _VaultOnboardingChoice { local, external, cloud }
 enum _VaultTileAction { changeCloudBinding, move, rename, delete }
 
 enum _SettingsTilePosition { only, first, middle, last }
+
+/// Grouped-corner position for a vault row. The "add vault" row below the list
+/// closes the group everywhere but the browser, which has no such row.
+_SettingsTilePosition _vaultTilePosition(int index, int count) {
+  final closesGroup = kIsWeb && index == count - 1;
+  if (index == 0) {
+    return closesGroup ? _SettingsTilePosition.only : _SettingsTilePosition.first;
+  }
+  return closesGroup ? _SettingsTilePosition.last : _SettingsTilePosition.middle;
+}
 
 const _sectionTilePadding = EdgeInsets.symmetric(horizontal: 16);
 
@@ -2687,7 +2715,11 @@ class _VaultCloudBindingTile extends ConsumerWidget {
   Future<void> _bindWorkspace(BuildContext context, WidgetRef ref) async {
     try {
       final service = ref.read(cloudSyncServiceForVaultProvider(vaultId));
-      final workspaces = await service.signInAndListWorkspaces();
+      final workspaces = await withSolarpassDeviceCode(
+        context,
+        (onDeviceCode) =>
+            service.signInAndListWorkspaces(onDeviceCode: onDeviceCode),
+      );
       if (!context.mounted) return;
       final selected = ref
           .read(cloudSyncConfigurationForVaultProvider(vaultId))

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
@@ -14,7 +15,9 @@ class _FailingCloudSyncService extends CloudSyncService {
   _FailingCloudSyncService() : super(vaultId: 'test');
 
   @override
-  Future<List<CloudWorkspace>> signInAndListWorkspaces() async {
+  Future<List<CloudWorkspace>> signInAndListWorkspaces({
+    CloudDeviceCodeCallback? onDeviceCode,
+  }) async {
     throw const CloudSyncException('Sign-in unavailable.');
   }
 }
@@ -23,8 +26,67 @@ class _PendingCloudSyncService extends CloudSyncService {
   _PendingCloudSyncService() : super(vaultId: 'test');
 
   @override
-  Future<List<CloudWorkspace>> signInAndListWorkspaces() =>
-      Completer<List<CloudWorkspace>>().future;
+  Future<List<CloudWorkspace>> signInAndListWorkspaces({
+    CloudDeviceCodeCallback? onDeviceCode,
+  }) => Completer<List<CloudWorkspace>>().future;
+}
+
+/// Records the link the download flow makes without touching secure storage.
+class _LinkingCloudSyncService extends CloudSyncService {
+  _LinkingCloudSyncService() : super(vaultId: 'test');
+
+  CloudSyncConfiguration? linked;
+
+  @override
+  Future<CloudSyncConfiguration?> configuration() async => linked;
+
+  @override
+  Future<List<CloudWorkspace>> signInAndListWorkspaces({
+    CloudDeviceCodeCallback? onDeviceCode,
+  }) async => const [
+    CloudWorkspace(id: 'ws-1', slug: 'workspace', name: 'Workspace'),
+  ];
+
+  @override
+  Future<List<CloudVaultBlob>> listVaultBlobs(CloudWorkspace workspace) async =>
+      const [CloudVaultBlob(id: 'blob-1', revision: 2, updatedAt: null)];
+
+  @override
+  Future<CloudSyncConfiguration> enable(
+    CloudWorkspace workspace, {
+    CloudVaultBlob? existingBlob,
+  }) async {
+    linked = CloudSyncConfiguration(
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      workspaceSlug: workspace.slug,
+      blobId: existingBlob?.id ?? 'blob-local',
+      revision: 0,
+      pendingDownload: existingBlob != null,
+    );
+    return linked!;
+  }
+}
+
+/// Vault storage without filesystem calls: a widget test's fake-async zone
+/// never completes real `dart:io` futures.
+class _TempVaultStorage extends VaultFileStorage {
+  @override
+  Future<String> createVaultPath({String? name, String? directoryPath}) async =>
+      '${Directory.systemTemp.path}/${name ?? 'vault'}.maidkit';
+
+  @override
+  Future<bool> isExternalPath(String path) async => false;
+
+  @override
+  Future<String> persistentPath(String path) async => path;
+}
+
+/// The cloud download keeps a spinner on screen, which stops `pumpAndSettle`
+/// from ever returning; pump a transition worth of frames instead.
+Future<void> _pumpFrames(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }
 
 void main() {
@@ -91,11 +153,77 @@ void main() {
     expect(find.text('settingsCloudSigningIn'.tr()), findsOneWidget);
   });
 
+  testWidgets('a linked cloud vault reaches the gate configuration', (
+    tester,
+  ) async {
+    final service = _LinkingCloudSyncService();
+    await tester.pumpWidget(
+      EasyLocalization(
+        supportedLocales: const [Locale('en', 'US'), Locale('zh', 'CN')],
+        path: 'assets/translations',
+        fallbackLocale: const Locale('en', 'US'),
+        child: ProviderScope(
+          overrides: [
+            cloudSyncServiceProvider.overrideWithValue(service),
+            cloudSyncServiceForVaultProvider.overrideWith((ref, _) => service),
+            vaultFileStorageProvider.overrideWithValue(_TempVaultStorage()),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder: (context, ref, _) {
+                final configuration = ref
+                    .watch(cloudSyncConfigurationProvider)
+                    .asData
+                    ?.value;
+                return Scaffold(
+                  body: Column(
+                    children: [
+                      Text('linked:${configuration?.blobId ?? 'none'}'),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const VaultCreatePage(),
+                          ),
+                        ),
+                        child: const Text('open'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('linked:none'), findsOneWidget);
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('vaultCreateFromCloudAction'.tr()));
+    // The page shows a busy spinner for the whole flow, so pumpAndSettle never
+    // returns: pump the sheet transitions and the future frames by hand.
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Workspace'));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('blob-1'));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('commonContinue'.tr()));
+    await _pumpFrames(tester);
+    await _pumpFrames(tester);
+
+    expect(
+      find.text('linked:blob-1'),
+      findsOneWidget,
+      reason: 'the gate reads this provider and must see the new cloud link',
+    );
+  });
+
   testWidgets('hides external vault creation on restricted platforms', (
     tester,
   ) async {
     if (externalVaultsSupported) return;
-
     await tester.pumpWidget(
       EasyLocalization(
         supportedLocales: const [Locale('en', 'US'), Locale('zh', 'CN')],
