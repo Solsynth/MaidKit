@@ -693,6 +693,7 @@
   "fileManagerPasteFailed": "粘贴失败",
   "fileManagerRemote": "远程",
   "fileManagerRemoteCommandFailed": "远程命令执行失败。",
+  "fileManagerShellUnavailable": "打包/解包需要在主机上执行命令，浏览器会话无法打开。",
   "fileManagerRemotePath": "远程路径",
   "fileManagerRename": "重命名",
   "fileManagerRenameFailed": "无法重命名",

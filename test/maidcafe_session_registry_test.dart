@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
@@ -121,6 +123,54 @@ class _FakeSession implements MaidCafeStreamSession {
   Stream<MaidCafeStreamEvent> openStream({
     Set<MaidCafeStreamEventType> events = maidCafeStreamAllEvents,
     int processesLimit = 0,
+  }) => throw UnimplementedError();
+
+  // File API: the registry never exercises these, so they follow the rest of
+  // the transport members and throw. Kept rather than mixed in because the
+  // stub's point is to implement the whole surface explicitly.
+  @override
+  Future<Map<String, dynamic>> fileRoots() => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fileList(String path) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fileStat(String path, {bool follow = true}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Uint8List> fileReadWindow(
+    String path, {
+    int offset = 0,
+    int? limit,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> fileWriteRaw(String path, List<int> bytes) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fileMkdir(
+    String path, {
+    bool parents = false,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fileDelete(
+    String path, {
+    bool recursive = false,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fileMove(String from, String to) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> fileCopy(
+    String from,
+    String to, {
+    bool overwrite = false,
   }) => throw UnimplementedError();
 
   @override

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -27,6 +28,7 @@ import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/presentation/task_progress.dart';
 import 'package:maid_kit/theme.dart';
 import 'file_editor_tab.dart';
+import 'remote_file_client_resolver.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -186,12 +188,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   var _processingTransferQueue = false;
   var _draggingFiles = false;
   _FileSide? _dropTargetSide;
-  Future<SftpClient>? _sftpClient;
-  SSHClient? _sftpOwner;
-  Future<SftpClient>? _leftSftpClient;
-  SSHClient? _leftSftpOwner;
-  final _otherSftpClients = <int, Future<SftpClient>>{};
-  final _otherSftpOwners = <int, SSHClient>{};
+  Future<RemoteFileClient>? _fileClient;
+  SSHClient? _fileClientOwner;
+  Future<RemoteFileClient>? _leftFileClient;
+  SSHClient? _leftFileClientOwner;
+  final _otherFileClients = <int, Future<RemoteFileClient>>{};
+  final _otherFileClientOwners = <int, SSHClient?>{};
   int? _leftServerId;
   var _leftRemotePath = '.';
   List<SftpName> _leftRemoteEntries = const [];
@@ -306,8 +308,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     _rightSearchFocusNode = FocusNode(
       debugLabel: 'file-management-right-search',
     );
-    if (kIsWeb) return;
-    _refreshLocal();
+    if (!kIsWeb) _refreshLocal();
     _refreshRemote();
   }
 
@@ -318,64 +319,56 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   TransferConflictMode get _conflictMode =>
       ref.read(transferConflictModeProvider);
 
-  Future<void> _closeSftp(Future<SftpClient>? future) async {
+  Future<void> _closeFileClient(Future<RemoteFileClient>? future) async {
     if (future == null) return;
     try {
-      final sftp = await future;
-      await sftp.close();
+      final files = await future;
+      await files.close();
     } catch (_) {}
   }
 
-  void _releaseLeftSftp() {
-    final previous = _leftSftpClient;
-    _leftSftpClient = null;
-    _leftSftpOwner = null;
-    if (previous != null) unawaited(_closeSftp(previous));
+  void _releaseLeftFileClient() {
+    final previous = _leftFileClient;
+    _leftFileClient = null;
+    _leftFileClientOwner = null;
+    if (previous != null) unawaited(_closeFileClient(previous));
   }
 
-  Future<void> _closeSftpSessions() async {
-    final sessions = <Future<SftpClient>>[];
-    final sftp = _sftpClient;
-    final leftSftp = _leftSftpClient;
-    if (sftp != null) sessions.add(sftp);
-    if (leftSftp != null) sessions.add(leftSftp);
-    sessions.addAll(_otherSftpClients.values);
-    _sftpClient = null;
-    _sftpOwner = null;
-    _leftSftpClient = null;
-    _leftSftpOwner = null;
-    _otherSftpClients.clear();
-    _otherSftpOwners.clear();
-    await Future.wait(sessions.map(_closeSftp));
+  Future<void> _closeFileSessions() async {
+    final sessions = <Future<RemoteFileClient>>[];
+    final main = _fileClient;
+    final left = _leftFileClient;
+    if (main != null) sessions.add(main);
+    if (left != null) sessions.add(left);
+    sessions.addAll(_otherFileClients.values);
+    _fileClient = null;
+    _fileClientOwner = null;
+    _leftFileClient = null;
+    _leftFileClientOwner = null;
+    _otherFileClients.clear();
+    _otherFileClientOwners.clear();
+    await Future.wait(sessions.map(_closeFileClient));
   }
 
-  Future<SftpClient> _leftSftp() {
+  Future<RemoteFileClient> _leftFiles() {
     final serverId = _leftServerId;
     if (serverId == null) {
       throw StateError('Choose a server for the left pane.');
     }
-    final manager = ref.read(connectionManagerProvider);
-    final owner = manager.clientFor(serverId);
-    if (owner == null) {
-      final previous = _leftSftpClient;
-      _leftSftpClient = null;
-      _leftSftpOwner = null;
-      if (previous != null) unawaited(_closeSftp(previous));
-      throw const ServerConnectionRequiredException();
-    }
-    final cached = _leftSftpClient;
-    if (cached != null && identical(_leftSftpOwner, owner)) {
+    final owner = ref.read(connectionManagerProvider).clientFor(serverId);
+    final cached = _leftFileClient;
+    if (cached != null && identical(_leftFileClientOwner, owner)) {
       return cached;
     }
-    if (cached != null) unawaited(_closeSftp(cached));
-    final next = owner.sftp();
-    _leftSftpClient = next;
-    _leftSftpOwner = owner;
+    if (cached != null) unawaited(_closeFileClient(cached));
+    final next = _openFileClient(serverId, owner);
+    _leftFileClient = next;
+    _leftFileClientOwner = owner;
     return next;
   }
 
   Future<List<SftpName>> _resolveRemoteEntries(
-    SftpClient sftp,
+    RemoteFileClient files,
     String directory,
     List<SftpName> entries,
     Set<String> symlinkPaths,
@@ -386,7 +379,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         final path = _joinRemotePath(directory, entry.filename);
         symlinkPaths.add(path);
         try {
-          final targetAttrs = await sftp.stat(path);
+          final targetAttrs = await files.stat(path);
           if (!isRemoteDirectoryEntry(entry.attr, followed: targetAttrs) &&
               !isRemoteFileEntry(entry.attr, followed: targetAttrs)) {
             return entry;
@@ -410,15 +403,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       _leftRemoteError = null;
     });
     try {
-      final sftp = await _leftSftp();
-      final absolutePath = await sftp.absolute(_leftRemotePath);
-      final listedEntries = await sftp.listdir(absolutePath);
+      final files = await _leftFiles();
+      final absolutePath = await files.absolute(_leftRemotePath);
+      final listedEntries = await files.listdir(absolutePath);
       listedEntries.removeWhere(
         (entry) => entry.filename == '.' || entry.filename == '..',
       );
       final symlinkPaths = <String>{};
       final entries = await _resolveRemoteEntries(
-        sftp,
+        files,
         absolutePath,
         listedEntries,
         symlinkPaths,
@@ -481,7 +474,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     );
     if (!mounted || selectedServerId == null) return;
     if (selectedServerId == -1) {
-      _releaseLeftSftp();
+      _releaseLeftFileClient();
       setState(() {
         _leftServerId = null;
         _leftRemoteEntries = const [];
@@ -496,7 +489,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final server = servers.firstWhere((item) => item.id == selectedServerId);
     final connected = await connectForStatistics(context, ref, server);
     if (!connected || !mounted) return;
-    _releaseLeftSftp();
+    _releaseLeftFileClient();
     _localBackHistory.clear();
     _localForwardHistory.clear();
     setState(() {
@@ -517,7 +510,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       transfer.controller.cancel();
     }
     _transferQueue.clear();
-    unawaited(_closeSftpSessions());
+    unawaited(_closeFileSessions());
     _leftRemotePathController.dispose();
     _leftRemotePathFocusNode.dispose();
     _remotePathController.dispose();
@@ -571,15 +564,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       _remoteError = null;
     });
     try {
-      final sftp = await _sftp();
-      final absolutePath = await sftp.absolute(_remotePath);
-      final listedEntries = await sftp.listdir(absolutePath);
+      final files = await _files();
+      final absolutePath = await files.absolute(_remotePath);
+      final listedEntries = await files.listdir(absolutePath);
       listedEntries.removeWhere(
         (entry) => entry.filename == '.' || entry.filename == '..',
       );
       final symlinkPaths = <String>{};
       final entries = await _resolveRemoteEntries(
-        sftp,
+        files,
         absolutePath,
         listedEntries,
         symlinkPaths,
@@ -1254,12 +1247,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         }
         await _refreshLocal();
       } else {
-        final sftp = entry.serverId == null ? await _sftp() : await _leftSftp();
+        final files = entry.serverId == null ? await _files() : await _leftFiles();
         final destination = _joinRemotePath(
           _parentRemotePath(entry.path),
           name,
         );
-        await sftp.rename(entry.path, destination);
+        await files.rename(entry.path, destination);
         if (entry.serverId == null) {
           await _refreshRemote();
         } else {
@@ -1307,9 +1300,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         await _refreshLocal();
       } else {
         final isLeftRemote = side == _FileSide.local;
-        final sftp = isLeftRemote ? await _leftSftp() : await _sftp();
+        final files = isLeftRemote ? await _leftFiles() : await _files();
         final directory = isLeftRemote ? _leftRemotePath : _remotePath;
-        await sftp.mkdir(_joinRemotePath(directory, name));
+        await files.mkdir(_joinRemotePath(directory, name));
         if (isLeftRemote) {
           await _refreshLeftRemote();
         } else {
@@ -1559,7 +1552,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Future<void> Function()? onSuccess,
   }) async {
     if (sourceServerId == targetServerId) return;
-    final source = await _sftpForServer(sourceServerId);
+    final source = await _filesFor(sourceServerId);
     final size = entry.isDirectory
         ? null
         : (await source.stat(entry.path)).size;
@@ -1568,7 +1561,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       totalBytes: size,
       notify: notify,
       action: (controller, reportProgress) async {
-        final destination = await _sftpForServer(targetServerId);
+        final destination = await _filesFor(targetServerId);
         final target = await _resolveRemoteDestination(
           destination,
           targetDirectory,
@@ -1614,32 +1607,54 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     );
   }
 
-  Future<SftpClient> _sftpForServer(int serverId) {
-    if (serverId == widget.tab.serverId) return _sftp();
-    if (serverId == _leftServerId) return _leftSftp();
+  Future<RemoteFileClient> _filesFor(int serverId) {
+    if (serverId == widget.tab.serverId) return _files();
+    if (serverId == _leftServerId) return _leftFiles();
 
-    final manager = ref.read(connectionManagerProvider);
-    final owner = manager.clientFor(serverId);
-    if (owner == null) {
-      final previous = _otherSftpClients.remove(serverId);
-      _otherSftpOwners.remove(serverId);
-      if (previous != null) unawaited(_closeSftp(previous));
-      throw const ServerConnectionRequiredException();
-    }
-    final cached = _otherSftpClients[serverId];
-    if (cached != null && identical(_otherSftpOwners[serverId], owner)) {
+    final owner = ref.read(connectionManagerProvider).clientFor(serverId);
+    final cached = _otherFileClients[serverId];
+    // The SSH client doubles as the cache key: when it changes the transport
+    // changed too, and a null key means the daemon is serving this server.
+    if (cached != null && identical(_otherFileClientOwners[serverId], owner)) {
       return cached;
     }
-    if (cached != null) unawaited(_closeSftp(cached));
-    final next = owner.sftp();
-    _otherSftpClients[serverId] = next;
-    _otherSftpOwners[serverId] = owner;
+    if (cached != null) unawaited(_closeFileClient(cached));
+    final next = _openFileClient(serverId, owner);
+    _otherFileClients[serverId] = next;
+    _otherFileClientOwners[serverId] = owner;
     return next;
   }
 
+  /// Opens the transport that can serve [serverId]'s files.
+  ///
+  /// [owner] is the server's live SSH client, or null when there is none — in
+  /// which case a browser falls back to the MaidCafe daemon and a native
+  /// client keeps asking for a connection, which is the behavior the file
+  /// surfaces have always had.
+  Future<RemoteFileClient> _openFileClient(int serverId, SSHClient? owner) async {
+    if (owner == null && !kIsWeb) {
+      throw const ServerConnectionRequiredException();
+    }
+    final server = await _serverById(serverId);
+    if (server == null) throw const ServerConnectionRequiredException();
+    return resolveRemoteFileClient(
+      manager: ref.read(connectionManagerProvider),
+      registry: ref.read(maidCafeSessionRegistryProvider),
+      server: server,
+      daemonAllowed: kIsWeb,
+    );
+  }
+
+  /// Looks a server row up by id, for the pane that browses a server other than
+  /// the tab's own.
+  Future<Server?> _serverById(int serverId) async {
+    final servers = await ref.read(serverRepositoryProvider).all();
+    return servers.where((server) => server.id == serverId).firstOrNull;
+  }
+
   Future<void> _streamRemoteFile(
-    SftpClient source,
-    SftpClient destination,
+    RemoteFileClient source,
+    RemoteFileClient destination,
     String sourcePath,
     String targetPath,
     _TransferController controller,
@@ -1675,8 +1690,8 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<int> _streamRemoteDirectory(
-    SftpClient source,
-    SftpClient destination,
+    RemoteFileClient source,
+    RemoteFileClient destination,
     String sourcePath,
     String targetPath,
     _TransferController controller,
@@ -1720,13 +1735,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     _ClipboardEntry entry, {
     required int serverId,
   }) async {
-    final sftp = await _sftpForServer(serverId);
+    final files = await _filesFor(serverId);
     if (entry.isSymbolicLink) {
-      await sftp.remove(entry.path);
+      await files.remove(entry.path);
     } else if (entry.isDirectory) {
-      await _deleteRemoteDirectory(sftp, entry.path);
+      await _deleteRemoteDirectory(files, entry.path);
     } else {
-      await sftp.remove(entry.path);
+      await files.remove(entry.path);
     }
     await _refreshLeftRemote();
     await _refreshRemote();
@@ -1755,10 +1770,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     required _ArchiveFormat format,
   }) async {
     if (entries.isEmpty) return;
-    final sftp = await _sftpForServer(serverId);
+    final files = await _filesFor(serverId);
     final extension = format == _ArchiveFormat.zip ? '.zip' : '.tar.gz';
     final archivePath = await _uniqueRemotePath(
-      sftp,
+      files,
       directory,
       entries.length == 1
           ? '${entries.first.name}$extension'
@@ -1776,12 +1791,29 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     );
   }
 
+  /// Runs a shell command on the server for the archive/unarchive actions.
+  ///
+  /// These are the file manager's only shell features: they need `zip`, `tar`
+  /// and a working directory on the host, which the daemon's file API does not
+  /// offer (it deliberately serves named operations, not a shell). A browser
+  /// build therefore reports them unavailable instead of silently doing
+  /// nothing, and the menu entries that call this are hidden there.
   Future<void> _runRemoteUtility({
     required int serverId,
     required String title,
     required String command,
   }) async {
     if (_workingPath != null) return;
+    final owner = ref.read(connectionManagerProvider).clientFor(serverId);
+    if (owner == null) {
+      showStyledSnackBar(
+        message: 'fileManagerShellUnavailable'.tr(),
+        title: 'fileManagerUtilityFailed'.tr(args: [title]),
+        icon: Symbols.terminal,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
     setState(() => _workingPath = title);
     try {
       final result = await ref.read(connectionManagerProvider).withClient(
@@ -1830,15 +1862,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       if (_leftIsRemote && entry.serverId != null) {
         final destinationDir = _leftRemotePath;
         if (_parentRemotePath(entry.path) == destinationDir) return;
-        final sftp = await _leftSftp();
+        final files = await _leftFiles();
         final destination = await _resolveRemoteDestination(
-          sftp,
+          files,
           destinationDir,
           entry.name,
         );
         if (destination == null) return;
-        await _removeRemoteEntry(sftp, destination);
-        await sftp.rename(entry.path, destination);
+        await _removeRemoteEntry(files, destination);
+        await files.rename(entry.path, destination);
         await _refreshLeftRemote();
         return;
       }
@@ -1864,33 +1896,33 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
     final destinationDir = _remotePath;
     if (_parentRemotePath(entry.path) == destinationDir) return;
-    final sftp = await _sftp();
+    final files = await _files();
     final destination = await _resolveRemoteDestination(
-      sftp,
+      files,
       destinationDir,
       entry.name,
     );
     if (destination == null) return;
-    await _removeRemoteEntry(sftp, destination);
-    await sftp.rename(entry.path, destination);
+    await _removeRemoteEntry(files, destination);
+    await files.rename(entry.path, destination);
     await _refreshRemote();
   }
 
   Future<void> _copySameSide(_ClipboardEntry entry, _FileSide side) async {
     if (side == _FileSide.local) {
       if (_leftIsRemote && entry.serverId != null) {
-        final sftp = await _leftSftp();
+        final files = await _leftFiles();
         final destination = await _resolveRemoteDestination(
-          sftp,
+          files,
           _leftRemotePath,
           entry.name,
         );
         if (destination == null) return;
         if (entry.isDirectory) {
-          await _removeRemoteEntry(sftp, destination);
-          await _copyRemoteDirectory(sftp, entry.path, destination);
+          await _removeRemoteEntry(files, destination);
+          await _copyRemoteDirectory(files, entry.path, destination);
         } else {
-          await _copyRemoteFile(sftp, entry.path, destination);
+          await _copyRemoteFile(files, entry.path, destination);
         }
         await _refreshLeftRemote();
         return;
@@ -1913,18 +1945,18 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       return;
     }
 
-    final sftp = await _sftp();
+    final files = await _files();
     final destination = await _resolveRemoteDestination(
-      sftp,
+      files,
       _remotePath,
       entry.name,
     );
     if (destination == null) return;
     if (entry.isDirectory) {
-      await _removeRemoteEntry(sftp, destination);
-      await _copyRemoteDirectory(sftp, entry.path, destination);
+      await _removeRemoteEntry(files, destination);
+      await _copyRemoteDirectory(files, entry.path, destination);
     } else {
-      await _copyRemoteFile(sftp, entry.path, destination);
+      await _copyRemoteFile(files, entry.path, destination);
     }
     await _refreshRemote();
   }
@@ -1951,7 +1983,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     bool notify = true,
     Future<void> Function()? onSuccess,
   }) async {
-    if (_isMobileLayout) {
+    // A browser has no local pane to download into, so it always takes the
+    // device path — which on the web saves through the browser itself.
+    if (_isMobileLayout || kIsWeb) {
       if (entry.isDirectory) {
         await _downloadDirectoryToDevice(
           entry.path,
@@ -2032,13 +2066,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       for (final entry in entries) {
         if (entry.side == _FileSide.local) {
           if (entry.serverId != null) {
-            final sftp = await _sftpForServer(entry.serverId!);
+            final files = await _filesFor(entry.serverId!);
             if (entry.isSymbolicLink) {
-              await sftp.remove(entry.path);
+              await files.remove(entry.path);
             } else if (entry.isDirectory) {
-              await _deleteRemoteDirectory(sftp, entry.path);
+              await _deleteRemoteDirectory(files, entry.path);
             } else {
-              await sftp.remove(entry.path);
+              await files.remove(entry.path);
             }
             deletedLeftRemote.add(entry.path);
           } else {
@@ -2050,13 +2084,13 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
             deletedLocal.add(entry.path);
           }
         } else {
-          final sftp = await _sftp();
+          final files = await _files();
           if (entry.isSymbolicLink) {
-            await sftp.remove(entry.path);
+            await files.remove(entry.path);
           } else if (entry.isDirectory) {
-            await _deleteRemoteDirectory(sftp, entry.path);
+            await _deleteRemoteDirectory(files, entry.path);
           } else {
-            await sftp.remove(entry.path);
+            await files.remove(entry.path);
           }
           deletedRemote.add(entry.path);
         }
@@ -2128,14 +2162,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       totalBytes: totalBytes,
       notify: notify,
       action: (controller, reportProgress) async {
-        final sftp = await _sftp();
+        final files = await _files();
         final remotePath = await _resolveRemoteDestination(
-          sftp,
+          files,
           _remotePath,
           _entityName(entry),
         );
         if (remotePath == null) throw const _TransferSkipped();
-        final remoteFile = await sftp.open(
+        final remoteFile = await files.open(
           remotePath,
           mode:
               SftpFileOpenMode.write |
@@ -2154,7 +2188,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           await remoteFile.close();
           if (controller.isCancelled) {
             try {
-              await sftp.remove(remotePath);
+              await files.remove(remotePath);
             } catch (_) {}
           }
         }
@@ -2177,17 +2211,17 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       totalBytes: null,
       notify: notify,
       action: (controller, reportProgress) async {
-        final sftp = await _sftp();
+        final files = await _files();
         final remoteRoot = await _resolveRemoteDestination(
-          sftp,
+          files,
           _remotePath,
           name,
         );
         if (remoteRoot == null) throw const _TransferSkipped();
         try {
-          await _removeRemoteEntry(sftp, remoteRoot);
+          await _removeRemoteEntry(files, remoteRoot);
           await _uploadLocalDirectory(
-            sftp,
+            files,
             directory,
             remoteRoot,
             controller: controller,
@@ -2196,7 +2230,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         } finally {
           if (controller.isCancelled) {
             try {
-              await _deleteRemoteDirectory(sftp, remoteRoot);
+              await _deleteRemoteDirectory(files, remoteRoot);
             } catch (_) {}
           }
         }
@@ -2208,7 +2242,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<int> _uploadLocalDirectory(
-    SftpClient sftp,
+    RemoteFileClient files,
     Directory local,
     String remotePath, {
     _TransferController? controller,
@@ -2220,14 +2254,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final visited = visitedDirectories ?? <String>{};
     final canonicalPath = await local.resolveSymbolicLinks();
     if (!visited.add(canonicalPath)) return transferredBytes;
-    await sftp.mkdir(remotePath);
+    await files.mkdir(remotePath);
     await for (final entity in local.list(followLinks: false)) {
       await controller?.waitIfPaused();
       final name = _entityName(entity);
       final childRemote = _joinRemotePath(remotePath, name);
       if (isLocalDirectory(entity)) {
         transferredBytes = await _uploadLocalDirectory(
-          sftp,
+          files,
           Directory(entity.path),
           childRemote,
           controller: controller,
@@ -2237,7 +2271,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         );
       } else if (isLocalFile(entity)) {
         final file = File(entity.path);
-        final remoteFile = await sftp.open(
+        final remoteFile = await files.open(
           childRemote,
           mode:
               SftpFileOpenMode.write |
@@ -2263,6 +2297,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
   Future<void> _uploadDroppedFiles(List<DropItem> items) async {
     for (final item in items.whereType<DropItemFile>()) {
+      // A browser hands over the file's bytes and no path; a desktop hands over
+      // a path and no bytes.
+      if (kIsWeb) {
+        await _uploadBytes(
+          await item.readAsBytes(),
+          item.name.isEmpty ? 'upload.bin' : item.name,
+        );
+        continue;
+      }
       final bookmark = item.extraAppleBookmark;
       final hasSecurityScopedAccess =
           bookmark != null &&
@@ -2278,6 +2321,63 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
             : null,
       );
     }
+  }
+
+  /// Uploads bytes the caller already holds, which is what a browser drop
+  /// produces: the chunks are written through the transport's write handle, so
+  /// the daemon's whole-file semantics are handled in one place.
+  Future<void> _uploadBytes(
+    Uint8List bytes,
+    String name, {
+    bool notify = true,
+    Future<void> Function()? onSuccess,
+    Future<void> Function()? onFinish,
+  }) async {
+    await _runTransfer(
+      title: 'fileManagerUploading'.tr(args: [name]),
+      totalBytes: bytes.length,
+      notify: notify,
+      action: (controller, reportProgress) async {
+        final files = await _files();
+        final remotePath = await _resolveRemoteDestination(
+          files,
+          _remotePath,
+          name,
+        );
+        if (remotePath == null) throw const _TransferSkipped();
+        final remoteFile = await files.open(
+          remotePath,
+          mode:
+              SftpFileOpenMode.write |
+              SftpFileOpenMode.create |
+              SftpFileOpenMode.truncate,
+        );
+        try {
+          const chunkSize = 256 * 1024;
+          var offset = 0;
+          while (offset < bytes.length) {
+            await controller.waitIfPaused();
+            final end = math.min(offset + chunkSize, bytes.length);
+            await remoteFile.writeBytes(
+              bytes.sublist(offset, end),
+              offset: offset,
+            );
+            offset = end;
+            reportProgress(offset);
+          }
+        } finally {
+          await remoteFile.close();
+          if (controller.isCancelled) {
+            try {
+              await files.remove(remotePath);
+            } catch (_) {}
+          }
+        }
+        await _refreshRemote();
+      },
+      onSuccess: onSuccess,
+      onFinish: onFinish,
+    );
   }
 
   Future<void> _download(
@@ -2305,19 +2405,32 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
+    // This path writes into the local pane's directory, which a browser does
+    // not have. There the download goes to the browser itself instead, through
+    // the same device path a mobile layout uses.
+    if (kIsWeb) {
+      await _downloadToDevice(
+        remotePath,
+        filename,
+        notify: notify,
+        onSuccess: onSuccess,
+      );
+      await onFinish?.call();
+      return;
+    }
     await _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [filename]),
       totalBytes: totalBytes,
       notify: notify,
       action: (controller, reportProgress) async {
-        final sftp = await _sftp();
+        final files = await _files();
         final destinationPath = await _resolveLocalDestination(
           _localDirectory.path,
           filename,
         );
         if (destinationPath == null) throw const _TransferSkipped();
         final destination = File(destinationPath);
-        final remoteFile = await sftp.open(
+        final remoteFile = await files.open(
           remotePath,
           mode: SftpFileOpenMode.read,
         );
@@ -2362,24 +2475,29 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     bool notify = true,
     Future<void> Function()? onSuccess,
   }) async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'maidkit-download-',
-    );
-    final temporaryFile = File(
-      '${temporaryDirectory.path}$platformPathSeparator$filename',
-    );
+    // A browser has no temporary directory to stage into and no path to hand a
+    // save dialog: the bytes go straight to the browser's own download, which
+    // is what file_saver does with `bytes` on the web. Off the web the file is
+    // staged on disk so a large download never has to fit in memory.
+    final staging = kIsWeb
+        ? null
+        : await Directory.systemTemp.createTemp('maidkit-download-');
+    final temporaryFile = staging == null
+        ? null
+        : File('${staging.path}$platformPathSeparator$filename');
     await _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [filename]),
       totalBytes: null,
       notify: notify,
       action: (controller, reportProgress) async {
-        final sftp = await _sftp();
-        final remoteFile = await sftp.open(
+        final files = await _files();
+        final remoteFile = await files.open(
           remotePath,
           mode: SftpFileOpenMode.read,
         );
+        final buffer = kIsWeb ? BytesBuilder(copy: false) : null;
         try {
-          final sink = temporaryFile.openWrite();
+          final sink = temporaryFile?.openWrite();
           try {
             var transferredBytes = 0;
             await for (final chunk in remoteFile.read(
@@ -2387,15 +2505,19 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
               maxPendingRequests: 4,
             )) {
               await controller.waitIfPaused();
-              sink.add(chunk);
+              if (buffer != null) {
+                buffer.add(chunk);
+              } else {
+                sink!.add(chunk);
+              }
               transferredBytes += chunk.length;
               reportProgress(transferredBytes);
-              if (transferredBytes % (1024 * 1024) < chunk.length) {
+              if (sink != null && transferredBytes % (1024 * 1024) < chunk.length) {
                 await sink.flush();
               }
             }
           } finally {
-            await sink.close();
+            await sink?.close();
           }
         } finally {
           await remoteFile.close();
@@ -2403,7 +2525,8 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         controller.throwIfCancelled();
         await FileSaver.instance.saveAs(
           name: filename,
-          filePath: temporaryFile.path,
+          bytes: buffer?.takeBytes(),
+          filePath: temporaryFile?.path,
           includeExtension: false,
           mimeType: MimeType.other,
         );
@@ -2411,7 +2534,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       onSuccess: onSuccess,
       onFinish: () async {
         try {
-          await temporaryDirectory.delete(recursive: true);
+          await staging?.delete(recursive: true);
         } catch (_) {}
       },
     );
@@ -2423,35 +2546,61 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     bool notify = true,
     Future<void> Function()? onSuccess,
   }) async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'maidkit-download-',
-    );
-    final stagedDirectory = Directory(
-      '${temporaryDirectory.path}$platformPathSeparator$name',
-    );
-    final archiveFile = File('${temporaryDirectory.path}/$name.zip');
+    // A browser builds the zip in memory and hands the bytes to its own
+    // download; off the web the tree is staged on disk and zipped there, so a
+    // large directory is never held in memory.
+    final staging = kIsWeb
+        ? null
+        : await Directory.systemTemp.createTemp('maidkit-download-');
+    final stagedDirectory = staging == null
+        ? null
+        : Directory('${staging.path}$platformPathSeparator$name');
+    final archiveFile = staging == null
+        ? null
+        : File('${staging.path}/$name.zip');
     await _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [name]),
       totalBytes: null,
       notify: notify,
       action: (controller, reportProgress) async {
-        final sftp = await _sftp();
-        await _downloadRemoteDirectory(
-          sftp,
+        final files = await _files();
+        if (stagedDirectory != null) {
+          await _downloadRemoteDirectory(
+            files,
+            remotePath,
+            stagedDirectory,
+            controller: controller,
+            reportProgress: reportProgress,
+          );
+          controller.throwIfCancelled();
+          await ZipFileEncoder().zipDirectory(
+            stagedDirectory,
+            filename: archiveFile!.path,
+          );
+          controller.throwIfCancelled();
+          await FileSaver.instance.saveAs(
+            name: '$name.zip',
+            filePath: archiveFile.path,
+            includeExtension: false,
+            mimeType: MimeType.zip,
+          );
+          return;
+        }
+        final archive = Archive();
+        await _archiveRemoteDirectory(
+          files,
           remotePath,
-          stagedDirectory,
+          archive,
+          prefix: '',
           controller: controller,
           reportProgress: reportProgress,
         );
         controller.throwIfCancelled();
-        await ZipFileEncoder().zipDirectory(
-          stagedDirectory,
-          filename: archiveFile.path,
-        );
+        final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
         controller.throwIfCancelled();
         await FileSaver.instance.saveAs(
           name: '$name.zip',
-          filePath: archiveFile.path,
+          bytes: bytes,
           includeExtension: false,
           mimeType: MimeType.zip,
         );
@@ -2459,10 +2608,54 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       onSuccess: onSuccess,
       onFinish: () async {
         try {
-          await temporaryDirectory.delete(recursive: true);
+          await staging?.delete(recursive: true);
         } catch (_) {}
       },
     );
+  }
+
+  /// Fills [archive] with the remote tree under [remotePath], the in-memory
+  /// counterpart of [_downloadRemoteDirectory] that a browser uses because it
+  /// has nowhere to stage files.
+  Future<void> _archiveRemoteDirectory(
+    RemoteFileClient files,
+    String remotePath,
+    Archive archive, {
+    required String prefix,
+    _TransferController? controller,
+    void Function(int)? reportProgress,
+  }) async {
+    await controller?.waitIfPaused();
+    final entries = await files.listdir(remotePath);
+    for (final entry in entries) {
+      if (entry.filename == '.' || entry.filename == '..') continue;
+      await controller?.waitIfPaused();
+      final childRemote = _joinRemotePath(remotePath, entry.filename);
+      final childName = prefix.isEmpty
+          ? entry.filename
+          : '$prefix/${entry.filename}';
+      if (entry.attr.isDirectory) {
+        await _archiveRemoteDirectory(
+          files,
+          childRemote,
+          archive,
+          prefix: childName,
+          controller: controller,
+          reportProgress: reportProgress,
+        );
+      } else if (entry.attr.isFile) {
+        final remoteFile = await files.open(
+          childRemote,
+          mode: SftpFileOpenMode.read,
+        );
+        try {
+          final bytes = await remoteFile.readBytes();
+          archive.addFile(ArchiveFile(childName, bytes.length, bytes));
+        } finally {
+          await remoteFile.close();
+        }
+      }
+    }
   }
 
   Future<void> _downloadDirectory(
@@ -2477,7 +2670,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       totalBytes: null,
       notify: notify,
       action: (controller, reportProgress) async {
-        final sftp = await _sftp();
+        final files = await _files();
         final localRoot = await _resolveLocalDestination(
           _localDirectory.path,
           name,
@@ -2487,7 +2680,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         try {
           await _removeLocalEntry(localRoot);
           await _downloadRemoteDirectory(
-            sftp,
+            files,
             remotePath,
             localDirectory,
             controller: controller,
@@ -2508,7 +2701,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<int> _downloadRemoteDirectory(
-    SftpClient sftp,
+    RemoteFileClient files,
     String remotePath,
     Directory local, {
     _TransferController? controller,
@@ -2517,7 +2710,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }) async {
     await controller?.waitIfPaused();
     await local.create(recursive: true);
-    final entries = await sftp.listdir(remotePath);
+    final entries = await files.listdir(remotePath);
     for (final entry in entries) {
       if (entry.filename == '.' || entry.filename == '..') continue;
       await controller?.waitIfPaused();
@@ -2525,7 +2718,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       final childLocal = local.uri.resolve(entry.filename).toFilePath();
       if (entry.attr.isDirectory) {
         transferredBytes = await _downloadRemoteDirectory(
-          sftp,
+          files,
           childRemote,
           Directory(childLocal),
           controller: controller,
@@ -2533,7 +2726,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           transferredBytes: transferredBytes,
         );
       } else if (entry.attr.isFile) {
-        final remoteFile = await sftp.open(
+        final remoteFile = await files.open(
           childRemote,
           mode: SftpFileOpenMode.read,
         );
@@ -2586,11 +2779,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<void> _copyRemoteFile(
-    SftpClient sftp,
+    RemoteFileClient files,
     String source,
     String destination,
   ) async {
-    final remoteFile = await sftp.open(
+    final remoteFile = await files.open(
       destination,
       mode:
           SftpFileOpenMode.write |
@@ -2598,7 +2791,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           SftpFileOpenMode.truncate,
     );
     try {
-      final sourceFile = await sftp.open(source, mode: SftpFileOpenMode.read);
+      final sourceFile = await files.open(source, mode: SftpFileOpenMode.read);
       try {
         final data = await sourceFile.readBytes();
         await remoteFile.writeBytes(data);
@@ -2611,36 +2804,36 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<void> _copyRemoteDirectory(
-    SftpClient sftp,
+    RemoteFileClient files,
     String source,
     String destination,
   ) async {
-    await sftp.mkdir(destination);
-    final entries = await sftp.listdir(source);
+    await files.mkdir(destination);
+    final entries = await files.listdir(source);
     for (final entry in entries) {
       if (entry.filename == '.' || entry.filename == '..') continue;
       final childSource = _joinRemotePath(source, entry.filename);
       final childDestination = _joinRemotePath(destination, entry.filename);
       if (entry.attr.isDirectory) {
-        await _copyRemoteDirectory(sftp, childSource, childDestination);
+        await _copyRemoteDirectory(files, childSource, childDestination);
       } else if (entry.attr.isFile) {
-        await _copyRemoteFile(sftp, childSource, childDestination);
+        await _copyRemoteFile(files, childSource, childDestination);
       }
     }
   }
 
-  Future<void> _deleteRemoteDirectory(SftpClient sftp, String path) async {
-    final entries = await sftp.listdir(path);
+  Future<void> _deleteRemoteDirectory(RemoteFileClient files, String path) async {
+    final entries = await files.listdir(path);
     for (final entry in entries) {
       if (entry.filename == '.' || entry.filename == '..') continue;
       final child = _joinRemotePath(path, entry.filename);
       if (entry.attr.isDirectory) {
-        await _deleteRemoteDirectory(sftp, child);
+        await _deleteRemoteDirectory(files, child);
       } else {
-        await sftp.remove(child);
+        await files.remove(child);
       }
     }
-    await sftp.rmdir(path);
+    await files.rmdir(path);
   }
 
   /// Asks the user how to resolve a name conflict during a transfer.
@@ -2703,15 +2896,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<String?> _resolveRemoteDestination(
-    SftpClient sftp,
+    RemoteFileClient files,
     String directory,
     String name,
   ) async {
     final candidate = _joinRemotePath(directory, name);
-    if (!await _remoteExists(sftp, candidate)) return candidate;
+    if (!await _remoteExists(files, candidate)) return candidate;
     switch (_conflictMode) {
       case TransferConflictMode.rename:
-        return _uniqueRemotePath(sftp, directory, name);
+        return _uniqueRemotePath(files, directory, name);
       case TransferConflictMode.overwrite:
         return candidate;
       case TransferConflictMode.ask:
@@ -2719,7 +2912,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           case _TransferConflictChoice.overwrite:
             return candidate;
           case _TransferConflictChoice.keepBoth:
-            return _uniqueRemotePath(sftp, directory, name);
+            return _uniqueRemotePath(files, directory, name);
           case _TransferConflictChoice.skip:
             return null;
         }
@@ -2740,17 +2933,17 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
   /// Removes an existing remote entry so a move or directory transfer can
   /// replace it. No-op when nothing exists at [path].
-  Future<void> _removeRemoteEntry(SftpClient sftp, String path) async {
+  Future<void> _removeRemoteEntry(RemoteFileClient files, String path) async {
     try {
-      final linkAttrs = await sftp.stat(path, followLink: false);
+      final linkAttrs = await files.stat(path, followLink: false);
       if (linkAttrs.isSymbolicLink) {
-        await sftp.remove(path);
+        await files.remove(path);
         return;
       }
       if (linkAttrs.isDirectory) {
-        await _deleteRemoteDirectory(sftp, path);
+        await _deleteRemoteDirectory(files, path);
       } else {
-        await sftp.remove(path);
+        await files.remove(path);
       }
     } catch (_) {
       // Nothing to replace (or already gone); the transfer itself reports
@@ -2781,12 +2974,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<String> _uniqueRemotePath(
-    SftpClient sftp,
+    RemoteFileClient files,
     String directory,
     String name,
   ) async {
     var candidate = _joinRemotePath(directory, name);
-    if (!await _remoteExists(sftp, candidate)) return candidate;
+    if (!await _remoteExists(files, candidate)) return candidate;
     final dot = name.lastIndexOf('.');
     final hasExtension = dot > 0 && !name.startsWith('.');
     final stem = hasExtension ? name.substring(0, dot) : name;
@@ -2794,14 +2987,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     var index = 1;
     while (true) {
       candidate = _joinRemotePath(directory, '$stem ($index)$extension');
-      if (!await _remoteExists(sftp, candidate)) return candidate;
+      if (!await _remoteExists(files, candidate)) return candidate;
       index += 1;
     }
   }
 
-  Future<bool> _remoteExists(SftpClient sftp, String path) async {
+  Future<bool> _remoteExists(RemoteFileClient files, String path) async {
     try {
-      await sftp.stat(path);
+      await files.stat(path);
       return true;
     } catch (_) {
       return false;
@@ -2945,22 +3138,16 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     }
   }
 
-  Future<SftpClient> _sftp() {
-    final manager = ref.read(connectionManagerProvider);
-    final owner = manager.clientFor(widget.tab.serverId);
-    if (owner == null) {
-      final previous = _sftpClient;
-      _sftpClient = null;
-      _sftpOwner = null;
-      if (previous != null) unawaited(_closeSftp(previous));
-      throw const ServerConnectionRequiredException();
-    }
-    final cached = _sftpClient;
-    if (cached != null && identical(_sftpOwner, owner)) return cached;
-    if (cached != null) unawaited(_closeSftp(cached));
-    final next = owner.sftp();
-    _sftpClient = next;
-    _sftpOwner = owner;
+  Future<RemoteFileClient> _files() {
+    final owner = ref
+        .read(connectionManagerProvider)
+        .clientFor(widget.tab.serverId);
+    final cached = _fileClient;
+    if (cached != null && identical(_fileClientOwner, owner)) return cached;
+    if (cached != null) unawaited(_closeFileClient(cached));
+    final next = _openFileClient(widget.tab.serverId, owner);
+    _fileClient = next;
+    _fileClientOwner = owner;
     return next;
   }
 
@@ -3416,7 +3603,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   /// True when the local pane is rendered and can receive focus.
-  bool get _canFocusLocalPane => !_isMobileLayout && !_localCollapsed;
+  ///
+  /// False in a browser, where there is no local pane at all: focusing it would
+  /// route the next keyboard action at a pane that does not exist.
+  bool get _canFocusLocalPane =>
+      !kIsWeb && !_isMobileLayout && !_localCollapsed;
 
   double _clampPaneSplitRatio(double ratio, double availableWidth) {
     if (availableWidth <= 0) return 0.5;
@@ -3829,94 +4020,19 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return Center(child: Text('commonUnavailable'.tr()));
-    }
     final scheme = Theme.of(context).colorScheme;
     final pathTextStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
       fontFamily: MaidKitFonts.mono,
       color: scheme.onSurfaceVariant,
     );
-    final localPane = _leftIsRemote
+    // The left pane shows another server when one is selected; otherwise it is
+    // the local disk, which a browser does not have. A null local pane is how
+    // the layout knows to give the remote pane the whole width there — building
+    // the local pane at all would construct a dart:io [Directory], which a
+    // browser cannot use.
+    final Widget? localPane = _leftIsRemote
         ? _buildLeftRemotePane(pathTextStyle)
-        : _FilePane(
-            title: 'fileManagerLocal'.tr(),
-            path: _localDirectory.path,
-            pathTextStyle: pathTextStyle,
-            searchInput: _leftSearchOpen ? _searchInput(_FileSide.local) : null,
-            focused: _focusedSide == _FileSide.local,
-            dropHighlighted: _dropTargetSide == _FileSide.local,
-            canGoUp: _localDirectory.parent.path != _localDirectory.path,
-            onGoUp: _goUpLocal,
-            onPathTap: _chooseLocalDirectory,
-            onRefresh: _refreshLocal,
-            onFocus: () => _focusSide(_FileSide.local),
-            loading: _loadingLocal,
-            error: _localError,
-            clipboardHint: _clipboardHint(_FileSide.local),
-            backgroundMenu: () => _paneBackgroundMenu(_FileSide.local),
-            canAcceptDrop: (data) => data.side == _FileSide.remote,
-            onDragEntered: () =>
-                setState(() => _dropTargetSide = _FileSide.local),
-            onDragExited: () {
-              if (_dropTargetSide == _FileSide.local) {
-                setState(() => _dropTargetSide = null);
-              }
-            },
-            onAcceptDrop: (data) => _handleInternalDrop(data, _FileSide.local),
-            headerActions: [
-              _searchToggle(_FileSide.local),
-              IconButton(
-                tooltip: 'fileManagerCreateFolder'.tr(),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                onPressed: _workingPath == null
-                    ? () => _createFolder(_FileSide.local)
-                    : null,
-                icon: const Icon(Symbols.create_new_folder, size: 18),
-              ),
-              IconButton(
-                tooltip: 'fileManagerUseAnotherServer'.tr(),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                onPressed: _chooseLeftServer,
-                icon: const Icon(Symbols.swap_horiz, size: 18),
-              ),
-            ],
-            onPointerDown: (event) =>
-                _handlePanePointerDown(event, _FileSide.local),
-            child: _LocalFileList(
-              entries: _displayedLocalEntries,
-              expandHidden: _leftSearchController.text.trim().isNotEmpty,
-              scrollController: _localListController,
-              canGoUp: _localDirectory.parent.path != _localDirectory.path,
-              onGoUp: _goUpLocal,
-              emptyMessage: _leftSearchController.text.trim().isEmpty
-                  ? null
-                  : 'fileManagerNoMatches'.tr(),
-              selectedPaths: _selectedLocalPaths,
-              cutPaths: _cutPathsFor(_FileSide.local),
-              onTapEntry: (entry, index) {
-                _selectLocal(
-                  entry,
-                  index: index,
-                  toggle: _isMultiModifierPressed,
-                  range: _isRangeModifierPressed,
-                );
-              },
-              onEdit: (entry) {
-                if (isLocalFile(entry)) {
-                  unawaited(_editLocal(File(entry.path)));
-                }
-              },
-              onOpen: _openLocal,
-              dragDataFor: _dragDataForLocal,
-              onContextPrepare: _ensureLocalContextSelection,
-              menuProvider: _localEntryMenu,
-            ),
-          );
+        : _buildLocalPaneIfAvailable(pathTextStyle);
     final remotePane = _FilePane(
       title: 'fileManagerRemote'.tr(),
       path: _remotePath,
@@ -4017,9 +4133,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final content = LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= _mobileLocalBreakpoint;
-        // Mobile always shows the local pane; collapse is wide-layout only.
+        // Mobile always shows the local pane; collapse is wide-layout only. A
+        // browser has no local pane at all, so it never takes width there.
         final forceLocal = !wide;
-        final showLocalTarget = forceLocal || !_localCollapsed;
+        final showLocalTarget =
+            !kIsWeb && (forceLocal || !_localCollapsed);
         final showRemoteTarget = !_remoteCollapsed;
         final availableWidth = constraints.maxWidth - _paneDividerWidth;
         final paneRatio = _clampPaneSplitRatio(_paneSplitRatio, availableWidth);
@@ -4037,11 +4155,15 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
               builder: (context, remoteFactor, _) {
                 if (!wide) return remotePane;
 
-                final localWidth = showRemoteTarget
+                // A browser has no local pane, so the remote pane takes every
+                // pixel rather than the split the divider would give it.
+                final localWidth = kIsWeb
+                    ? 0.0
+                    : showRemoteTarget
                     ? baseLocalWidth * localFactor
                     : availableWidth - baseRemoteWidth * remoteFactor;
                 final remoteWidth = availableWidth - localWidth;
-                final showLocal = localWidth > 0.001;
+                final showLocal = localPane != null && localWidth > 0.001;
                 final showRemote = remoteWidth > 0.001;
                 return Stack(
                   fit: StackFit.expand,
@@ -4073,25 +4195,28 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                           ),
                       ],
                     ),
-                    Positioned(
-                      left:
-                          localWidth +
-                          (_paneDividerWidth - _paneDividerHitTargetWidth) / 2,
-                      top: 0,
-                      bottom: 0,
-                      width: _paneDividerHitTargetWidth,
-                      child: _FilePaneDivider(
-                        dividerWidth: _paneDividerHitTargetWidth,
-                        localCollapsed: !showLocal,
-                        remoteCollapsed: !showRemote,
-                        onExpandLocal: _expandLocalPane,
-                        onExpandRemote: _expandRemotePane,
-                        onDragStart: _startPaneResize,
-                        onDragUpdate: (details) =>
-                            _resizePanes(details, availableWidth),
-                        onDragEnd: _endPaneResize,
+                    // A browser has one pane, so there is nothing to divide.
+                    if (!kIsWeb)
+                      Positioned(
+                        left:
+                            localWidth +
+                            (_paneDividerWidth - _paneDividerHitTargetWidth) /
+                                2,
+                        top: 0,
+                        bottom: 0,
+                        width: _paneDividerHitTargetWidth,
+                        child: _FilePaneDivider(
+                          dividerWidth: _paneDividerHitTargetWidth,
+                          localCollapsed: !showLocal,
+                          remoteCollapsed: !showRemote,
+                          onExpandLocal: _expandLocalPane,
+                          onExpandRemote: _expandRemotePane,
+                          onDragStart: _startPaneResize,
+                          onDragUpdate: (details) =>
+                              _resizePanes(details, availableWidth),
+                          onDragEnd: _endPaneResize,
+                        ),
                       ),
-                    ),
                   ],
                 );
               },
@@ -4146,6 +4271,94 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         ),
       ),
     );
+  }
+
+  /// The local-disk pane, or null in a browser — where there is no local disk,
+  /// and constructing the pane would build a dart:io [Directory]. The null is
+  /// the layout's signal that the remote pane owns the whole width.
+  Widget? _buildLocalPaneIfAvailable(TextStyle? pathTextStyle) =>
+      kIsWeb ? null : _buildLocalPane(pathTextStyle);
+
+  /// The local-disk pane: the file browser's left side off the web.
+  Widget _buildLocalPane(TextStyle? pathTextStyle) {
+    return _FilePane(
+        title: 'fileManagerLocal'.tr(),
+        path: _localDirectory.path,
+        pathTextStyle: pathTextStyle,
+        searchInput: _leftSearchOpen ? _searchInput(_FileSide.local) : null,
+        focused: _focusedSide == _FileSide.local,
+        dropHighlighted: _dropTargetSide == _FileSide.local,
+        canGoUp: _localDirectory.parent.path != _localDirectory.path,
+        onGoUp: _goUpLocal,
+        onPathTap: _chooseLocalDirectory,
+        onRefresh: _refreshLocal,
+        onFocus: () => _focusSide(_FileSide.local),
+        loading: _loadingLocal,
+        error: _localError,
+        clipboardHint: _clipboardHint(_FileSide.local),
+        backgroundMenu: () => _paneBackgroundMenu(_FileSide.local),
+        canAcceptDrop: (data) => data.side == _FileSide.remote,
+        onDragEntered: () =>
+            setState(() => _dropTargetSide = _FileSide.local),
+        onDragExited: () {
+          if (_dropTargetSide == _FileSide.local) {
+            setState(() => _dropTargetSide = null);
+          }
+        },
+        onAcceptDrop: (data) => _handleInternalDrop(data, _FileSide.local),
+        headerActions: [
+          _searchToggle(_FileSide.local),
+          IconButton(
+            tooltip: 'fileManagerCreateFolder'.tr(),
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            onPressed: _workingPath == null
+                ? () => _createFolder(_FileSide.local)
+                : null,
+            icon: const Icon(Symbols.create_new_folder, size: 18),
+          ),
+          IconButton(
+            tooltip: 'fileManagerUseAnotherServer'.tr(),
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            onPressed: _chooseLeftServer,
+            icon: const Icon(Symbols.swap_horiz, size: 18),
+          ),
+        ],
+        onPointerDown: (event) =>
+            _handlePanePointerDown(event, _FileSide.local),
+        child: _LocalFileList(
+          entries: _displayedLocalEntries,
+          expandHidden: _leftSearchController.text.trim().isNotEmpty,
+          scrollController: _localListController,
+          canGoUp: _localDirectory.parent.path != _localDirectory.path,
+          onGoUp: _goUpLocal,
+          emptyMessage: _leftSearchController.text.trim().isEmpty
+              ? null
+              : 'fileManagerNoMatches'.tr(),
+          selectedPaths: _selectedLocalPaths,
+          cutPaths: _cutPathsFor(_FileSide.local),
+          onTapEntry: (entry, index) {
+            _selectLocal(
+              entry,
+              index: index,
+              toggle: _isMultiModifierPressed,
+              range: _isRangeModifierPressed,
+            );
+          },
+          onEdit: (entry) {
+            if (isLocalFile(entry)) {
+              unawaited(_editLocal(File(entry.path)));
+            }
+          },
+          onOpen: _openLocal,
+          dragDataFor: _dragDataForLocal,
+          onContextPrepare: _ensureLocalContextSelection,
+          menuProvider: _localEntryMenu,
+        ),
+      );
   }
 
   Widget _buildLeftRemotePane(TextStyle? pathTextStyle) {

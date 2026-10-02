@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:http/http.dart' as http;
@@ -1113,6 +1114,115 @@ class MaidCafeStreamSession {
   Future<void> clearAudit() async {
     await _delete('/api/v1/audit');
   }
+
+  // File API. These are what make file management work without SSH: the
+  // daemon serves the same operations over HTTP, confined to the roots its
+  // operator declared in `daemon.files.roots`. A mutation carries the body
+  // signature the daemon requires, so a credential observed in transit cannot
+  // be replayed against a body it was never signed for.
+  //
+  // `MaidCafeRemoteFileClient` wraps this surface into the shape the file
+  // manager, the editor and the file picker expect.
+
+  /// The file roots this daemon serves, with their privilege policy.
+  Future<Map<String, dynamic>> fileRoots() => _get('/api/v1/files/roots');
+
+  /// Lists one directory.
+  Future<Map<String, dynamic>> fileList(String path) =>
+      _get(_filePath('/api/v1/files/list', {'path': path}));
+
+  /// Reads one path's attributes. [follow] resolves a symbolic link to its
+  /// target; without it the link itself is described.
+  Future<Map<String, dynamic>> fileStat(String path, {bool follow = true}) =>
+      _get(
+        _filePath('/api/v1/files/stat', {
+          'path': path,
+          'follow': follow ? 'true' : 'false',
+        }),
+      );
+
+  /// Reads one window of a file as raw bytes.
+  Future<Uint8List> fileReadWindow(
+    String path, {
+    int offset = 0,
+    int? limit,
+  }) async {
+    _throwIfClosed();
+    try {
+      final response = await _dio.get<List<int>>(
+        _filePath('/api/v1/files/content', {
+          'path': path,
+          'offset': '$offset',
+          if (limit != null && limit > 0) 'limit': '$limit',
+        }),
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final data = response.data;
+      return data == null ? Uint8List(0) : Uint8List.fromList(data);
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
+      throw StateError(_dioError(error));
+    }
+  }
+
+  /// Replaces a file's contents with [bytes].
+  ///
+  /// The raw-content route takes the credential from the header only, so no
+  /// body signature is needed: the route has no JSON to bind, and the daemon
+  /// accepts the Bearer credential alone for it.
+  Future<void> fileWriteRaw(String path, List<int> bytes) async {
+    _throwIfClosed();
+    try {
+      await _dio.put<void>(
+        _filePath('/api/v1/files/content', {'path': path}),
+        data: bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+        options: Options(contentType: 'application/octet-stream'),
+      );
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
+      throw StateError(_dioError(error));
+    }
+  }
+
+  /// Creates one directory.
+  Future<Map<String, dynamic>> fileMkdir(String path, {bool parents = false}) =>
+      _postSigned('/api/v1/files/mkdir', body: {
+        'path': path,
+        'parents': parents,
+      });
+
+  /// Deletes one path, or the tree beneath it when [recursive] is set.
+  ///
+  /// A daemon refuses a recursive delete inside a privileged root and answers
+  /// `501`; that refusal travels back as the error message.
+  Future<Map<String, dynamic>> fileDelete(String path, {bool recursive = false}) =>
+      _postSigned('/api/v1/files/delete', body: {
+        'path': path,
+        'recursive': recursive,
+      });
+
+  /// Renames a path within one root.
+  Future<Map<String, dynamic>> fileMove(String from, String to) =>
+      _postSigned('/api/v1/files/move', body: {'from': from, 'to': to});
+
+  /// Copies a file or a whole tree within one root.
+  Future<Map<String, dynamic>> fileCopy(
+    String from,
+    String to, {
+    bool overwrite = false,
+  }) => _postSigned('/api/v1/files/copy', body: {
+    'from': from,
+    'to': to,
+    'overwrite': overwrite,
+  });
+
+  /// Builds a file-API request path with its query.
+  static String _filePath(String path, Map<String, String> query) =>
+      Uri(path: path, queryParameters: query).toString();
 
   /// Opens a realtime SSE subscription over the session's port forward.
   ///

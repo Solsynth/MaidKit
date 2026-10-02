@@ -12,7 +12,8 @@ and what is still open.
 | Terminals | MaidCafe daemon terminals over WebSocket — the only transport that needs no raw socket |
 | Servers, settings, snippets, GitHub, projects, cloud sync | Local database + HTTP(S) |
 | SSH, serial, local shells | Unavailable (no raw sockets) |
-| File management, file editor, port forwarding, metrics, containers, systemd, web servers, packages, firewall | Unavailable (SSH/SFTP or local filesystem) |
+| File management, file editor | MaidCafe daemon `/api/v1/files` over HTTP(S) for a remote server; the local pane is absent (no local filesystem in a browser) |
+| Port forwarding, containers, systemd, web servers, packages, firewall | Unavailable (SSH or local filesystem) |
 | Tailscale, network ping | Unavailable (native runtime) |
 | Local MCP server, agent processes | Unavailable (no child processes) |
 | Desktop window control, system notifications, biometric unlock, system fonts | Unavailable (no plugin) |
@@ -112,6 +113,38 @@ the record through the cloud API — because writing only one of them leaves the
 relay refused with a bare `forbidden`. The connectivity check reports either
 missing opt-in on the relay route instead of letting the cloud answer that.
 
+## File management without SSH
+
+The file manager and the editor used to be unavailable in a browser because
+they spoke SFTP. They now speak `RemoteFileClient`
+(`lib/servers/remote_file_system.dart`), which has two implementations:
+
+- `SftpRemoteFileClient` — SFTP, used whenever the server has a live SSH
+  client, on any platform.
+- `MaidCafeRemoteFileClient` — the MaidCafe daemon's file API over HTTP(S),
+  used in a browser (`resolveRemoteFileClient` in
+  `remote_file_client_resolver.dart` decides).
+
+A browser therefore browses, reads, edits, uploads and deletes files on any
+server that carries a daemon route, confined to the roots the daemon's operator
+declared in `daemon.files.roots`. The daemon also decides whether a write needs
+root: a root marked `privileged` is written through the operator-installed
+`maidkit-priv` helper, so a browser can edit an nginx or Caddy configuration
+without the app holding any privilege of its own.
+
+What the daemon's API does not do, and what the app therefore refuses rather
+than faking:
+
+| Feature | Why |
+| --- | --- |
+| Archiving and unarchiving | Needs `zip`/`tar` and a working directory on the host; the daemon serves named operations, not a shell. Reported unavailable instead of silently doing nothing. |
+| Move/copy inside a privileged root | Renaming there needs root, and the root helper implements write/mkdir/remove only. The daemon answers `501` and the app reports it. |
+| A file larger than the daemon's write cap | The daemon writes whole files, so the client buffers an upload and refuses past the cap. SFTP streams instead. |
+| Permission and ownership changes | Not implemented by the daemon; the file manager only performs those over SSH. |
+
+The local pane is hidden in a browser rather than disabled: there is no local
+filesystem to browse, and downloads go through the browser's own save flow.
+
 ## How the platform split works
 
 Flutter web compiles `dart:io` (its members throw at runtime), so a plain
@@ -134,9 +167,11 @@ happening:
    `lib/servers/terminal_renderer_backend.dart`.
 
 2. **`kIsWeb` gates** in the features themselves: startup connection and
-   workspace restore, the metrics scheduler, serial ports, the file manager and
-   editor, vault file handling, notifications/FCM, system fonts, biometrics,
-   desktop window code, and the local MCP server.
+   workspace restore, the metrics scheduler, serial ports, vault file handling,
+   notifications/FCM, system fonts, biometrics, desktop window code, and the
+   local MCP server. The file manager and editor are no longer blanket-gated:
+   they choose their transport per server (see the file transport section
+   below) and a browser renders the remote pane alone.
 
 Pure replacements were preferred where they exist: `defaultTargetPlatform`
 instead of `Platform.isMacOS`, `platformPathSeparator` instead of

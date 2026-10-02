@@ -9,6 +9,7 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:solsynth_express/solsynth_express.dart';
 
+import 'maidcafe_priv.dart';
 import 'maidcafe_service.dart';
 import 'maidcafe_stream.dart';
 import 'package_models.dart';
@@ -375,6 +376,7 @@ Future<void> installMaidCafeDaemon({
   required String? sudoPassword,
   String? channel,
   List<MaidCafeAlarmDefinition> alarms = const [],
+  List<MaidCafeFileRoot> fileRoots = const [],
   int port = 8747,
   String? apiSecret,
 }) => _installMaidCafeDaemon(
@@ -388,6 +390,7 @@ Future<void> installMaidCafeDaemon({
   title: 'maidCafeInstallDaemonRunning'.tr(),
   channel: channel,
   alarms: alarms,
+  fileRoots: fileRoots,
   port: port,
   apiSecret: apiSecret ?? generateMaidCafeApiSecret(),
 );
@@ -400,6 +403,8 @@ Future<void> installMaidCafeApplication({
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
+  List<MaidCafeFileRoot> fileRoots = const [],
+  String? privHelperBase64,
   int port = 8747,
   String? apiSecret,
   String daemonId = '',
@@ -431,6 +436,8 @@ Future<void> installMaidCafeApplication({
   maxConcurrentRuns: maxConcurrentRuns,
   actions: actions,
   alarms: alarms,
+  fileRoots: fileRoots,
+  privHelperBase64: privHelperBase64,
   title: 'maidCafeInstallApplicationRunning'.tr(),
   channel: channel,
   port: port,
@@ -457,6 +464,11 @@ Future<void> _installMaidCafeDaemon({
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
+  List<MaidCafeFileRoot> fileRoots = const [],
+  /// The compiled `maidkit-priv` helper, when the caller has it from the
+  /// daemon bundle for this platform. Null leaves an installed helper alone and
+  /// only reconciles the profiles and the rule.
+  String? privHelperBase64,
   required int port,
   required String apiSecret,
   bool updateOnly = false,
@@ -520,6 +532,8 @@ Future<void> _installMaidCafeDaemon({
           maxConcurrentRuns: maxConcurrentRuns,
           actions: actions,
           alarms: alarms,
+          fileRoots: fileRoots,
+          privHelperBase64: privHelperBase64,
           updateOnly: updateOnly,
         ),
         sshUserIsRoot: server.username == 'root',
@@ -593,6 +607,14 @@ String buildMaidCafeDaemonInstallScript({
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
+  /// Directories the daemon's file API may serve, and which of them need root.
+  /// The generated script installs the privileged helper, its profiles and its
+  /// sudoers rule before it writes the config that declares them.
+  List<MaidCafeFileRoot> fileRoots = const [],
+  /// The compiled `maidkit-priv` helper, base64-encoded, when the caller has it
+  /// from the daemon bundle. Null leaves an installed helper alone and only
+  /// reconciles the profiles and the rule.
+  String? privHelperBase64,
   // When true the script replaces only the daemon binary, records the new
   // version in the existing config and restarts the service; everything else
   // (action fragments, scripts, sudoers rule and systemd unit) is left
@@ -723,8 +745,17 @@ $restartHealth''';
         scriptTimeout: scriptTimeout,
         maxBodyBytes: maxBodyBytes,
         maxConcurrentRuns: maxConcurrentRuns,
+        fileRoots: fileRoots,
       ),
     ),
+  );
+  // The helper, its profiles and its sudoers rule must exist before the daemon
+  // configuration that declares a privileged root, because the daemon refuses
+  // to start when a privileged root's helper is missing.
+  final privScript = buildMaidCafePrivScript(
+    fileRoots,
+    stdio: stdio,
+    helperBase64: privHelperBase64,
   );
 
   return '''set -eu
@@ -739,6 +770,7 @@ fi
 install -d -o root -g root -m 0755 /etc/maidcafe
 printf '%s\n' 'maidkit' > "\$work_dir/maidkit-managed"
 install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidkit-managed
+$privScript
 printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
 
 $configInstall "\$work_dir/config.toml" $configPath
@@ -1227,6 +1259,7 @@ String _maidCafeConfig({
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
   String actionsDir = '/etc/maidcafe/actions',
+  List<MaidCafeFileRoot> fileRoots = const [],
 }) {
   final versionLine = version.trim().isEmpty
       ? ''
@@ -1249,7 +1282,7 @@ $listenLine$metricsSecretLine cloudUrl = ${_tomlString(cloudUrl)}
  maxBodyBytes = $maxBodyBytes
  maxConcurrentRuns = $maxConcurrentRuns
  actionsDir = ${_tomlString(actionsDir)}
-'''
+${maidCafeFilesConfig(fileRoots)}'''
       .replaceAll('\n ', '\n');
 }
 

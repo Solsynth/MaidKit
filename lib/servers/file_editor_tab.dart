@@ -26,6 +26,9 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
+import 'remote_file_client_resolver.dart';
+import 'remote_file_system.dart';
+import 'server_models.dart';
 import 'server_providers.dart';
 import 'structured_document.dart';
 import 'terminal_tabs_provider.dart';
@@ -64,7 +67,7 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
 
   var _loading = true;
   String _savedText = '';
-  Future<SftpClient>? _sftpClient;
+  Future<RemoteFileClient>? _fileClient;
   AnalysisResult? _lastSyncedAnalysis;
   var _listening = false;
 
@@ -88,9 +91,9 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
       analyzer: StructuredDocumentAnalyzer(kind: _kind),
     );
     fileEditorCloseGuards[widget.tab.id] = _requestClose;
-    // Reading a file needs dart:io or SFTP, neither of which exists in a
-    // browser; [build] shows a notice instead of an editor.
-    if (!kIsWeb) unawaited(_load());
+    // A local file needs dart:io; a remote one needs either SFTP or a MaidCafe
+    // daemon route, and [build] shows the reason when neither is available.
+    if (!kIsWeb || widget.tab.isRemote) unawaited(_load());
   }
 
   @override
@@ -147,8 +150,8 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
 
   Future<String> _readFile() async {
     if (widget.tab.isRemote) {
-      final sftp = await _sftp();
-      final file = await sftp.open(
+      final files = await _files();
+      final file = await files.open(
         widget.tab.path,
         mode: SftpFileOpenMode.read,
       );
@@ -170,8 +173,8 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
   Future<void> _writeFile(String text) async {
     final encoded = utf8.encode(text);
     if (widget.tab.isRemote) {
-      final sftp = await _sftp();
-      final file = await sftp.open(
+      final files = await _files();
+      final file = await files.open(
         widget.tab.path,
         mode:
             SftpFileOpenMode.write |
@@ -188,9 +191,23 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
     await File(widget.tab.path).writeAsBytes(encoded, flush: true);
   }
 
-  Future<SftpClient> _sftp() => _sftpClient ??= ref
-      .read(connectionManagerProvider)
-      .withClient(widget.tab.serverId, (client) => client.sftp());
+  /// The transport this editor reads and writes through: SFTP when the server
+  /// has an SSH session, the MaidCafe daemon's file API in a browser.
+  Future<RemoteFileClient> _files() => _fileClient ??= _openClient();
+
+  Future<RemoteFileClient> _openClient() async {
+    final server = await ref
+        .read(serverRepositoryProvider)
+        .all()
+        .then((servers) => servers.where((s) => s.id == widget.tab.serverId).firstOrNull);
+    if (server == null) throw const ServerConnectionRequiredException();
+    return resolveRemoteFileClient(
+      manager: ref.read(connectionManagerProvider),
+      registry: ref.read(maidCafeSessionRegistryProvider),
+      server: server,
+      daemonAllowed: kIsWeb,
+    );
+  }
 
   /// Cheap dirty/status updates only — never re-parses the document here.
   void _onControllerChanged() {
@@ -308,7 +325,9 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
+    // A browser can edit a remote file through the daemon; a local one it
+    // cannot read at all.
+    if (kIsWeb && !widget.tab.isRemote) {
       return Center(child: Text('commonUnavailable'.tr()));
     }
     final scheme = Theme.of(context).colorScheme;

@@ -693,6 +693,7 @@
   "fileManagerPasteFailed": "Paste failed",
   "fileManagerRemote": "Remote",
   "fileManagerRemoteCommandFailed": "Remote command failed.",
+  "fileManagerShellUnavailable": "Archiving needs a shell on the host, which this browser session cannot open.",
   "fileManagerRemotePath": "Remote path",
   "fileManagerRename": "Rename",
   "fileManagerRenameFailed": "Could not rename",

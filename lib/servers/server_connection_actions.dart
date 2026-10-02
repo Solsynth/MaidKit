@@ -15,6 +15,7 @@ import 'maidcafe_service.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_terminal_connection_manager.dart';
 import 'port_forwarding_models.dart';
+import 'remote_file_client_resolver.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'server_repository.dart';
@@ -34,13 +35,20 @@ Future<List<CloudPickedPath>?> pickRemotePaths(
   bool allowMultiple = false,
 }) async {
   final manager = ref.read(connectionManagerProvider);
-  if (manager.clientFor(server.id) == null) {
+  if (manager.clientFor(server.id) == null && !kIsWeb) {
     final connected = await connectForStatistics(context, ref, server);
     if (!connected || !context.mounted) return null;
   }
   return showCloudFilePicker(
     context,
-    sftp: () => manager.withClient(server.id, (client) => client.sftp()),
+    // A browser has no SSH, so the picker browses through the daemon's file
+    // API; a native client keeps SFTP and its connect prompt.
+    files: () => resolveRemoteFileClient(
+      manager: manager,
+      registry: ref.read(maidCafeSessionRegistryProvider),
+      server: server,
+      daemonAllowed: kIsWeb,
+    ),
     title: title,
     subtitle: server.name,
     initialPath: initialPath,

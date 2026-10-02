@@ -627,8 +627,10 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialPath,
     String? paneId,
   }) {
-    // The file manager browses the local disk and SFTP; a browser has neither.
-    if (kIsWeb) return;
+    // The file manager browses the local disk, SFTP, or the MaidCafe daemon's
+    // file API. A browser has neither of the first two but can use the daemon,
+    // so it needs a route rather than a blanket refusal.
+    if (kIsWeb && !server.hasMaidCafeTerminalRoute) return;
     if (paneId != null) focusPane(paneId);
     final tab = FileManagementTab(
       id: 'files-${DateTime.now().microsecondsSinceEpoch}',
@@ -648,8 +650,9 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     required bool isRemote,
     String? paneId,
   }) {
-    // The editor reads and writes through dart:io files or SFTP.
-    if (kIsWeb) return;
+    // The editor reads and writes through dart:io, SFTP or the daemon's file
+    // API; a browser can only reach a remote file through the daemon.
+    if (kIsWeb && (!isRemote || !server.hasMaidCafeTerminalRoute)) return;
     final existing = state.tabs.whereType<FileEditorTab>().where((tab) {
       return tab.serverId == server.id &&
           tab.path == path &&

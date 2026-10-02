@@ -45,7 +45,7 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 | Dashboard | Grid of server cards with live status, latency (network and SSH round-trip), load, memory, and uptime; reorder via context menu, organize into groups, tag, and customize with environment variables; pin runtimes and watched processes for a realtime multi-server overview |
 | Activity | Real-time performance charts (CPU, memory, network, disk), backed by MaidCafe history when the daemon is installed |
 | Terminal | Full SSH terminal with split panes, drag-and-drop tabs, command palette, right-click menu, OSC 52 clipboard support, and terminal color schemes |
-| File Management | Dual-pane SFTP browser with drag-and-drop transfers, in-app editor, and keyboard shortcuts (copy/cut/paste, rename, refresh, search, delete) |
+| File Management | Dual-pane SFTP browser with drag-and-drop transfers, in-app editor, and keyboard shortcuts (copy/cut/paste, rename, refresh, search, delete); a browser build browses the remote pane through the MaidCafe daemon's file API, including roots the daemon writes as root through `maidkit-priv` |
 | Processes | List and kill running processes; pin and watch processes with usage history (realtime via the MaidCafe daemon) |
 | Services | Systemd unit management (start/stop/enable/disable) |
 | Web Servers | nginx and Caddy configuration management |

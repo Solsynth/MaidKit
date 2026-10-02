@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import 'package:maid_kit/servers/remote_file_system.dart';
 import 'package:maid_kit/theme.dart';
 
 /// What the picker should allow the user to choose.
@@ -38,14 +39,14 @@ class CloudPickedPath {
 
 /// Opens a bottom sheet for browsing and selecting remote paths over SFTP.
 ///
-/// Provide [sftp] as a factory that returns an authenticated [SftpClient]. The
+/// Provide [files] as a factory that returns an authenticated transport: the
 /// picker reuses that client for listing and navigation only.
 ///
 /// Returns `null` if dismissed, otherwise one or more [CloudPickedPath] values
 /// depending on [allowMultiple].
 Future<List<CloudPickedPath>?> showCloudFilePicker(
   BuildContext context, {
-  required Future<SftpClient> Function() sftp,
+  required Future<RemoteFileClient> Function() files,
   String? title,
   String? subtitle,
   String initialPath = '.',
@@ -59,7 +60,7 @@ Future<List<CloudPickedPath>?> showCloudFilePicker(
     useSafeArea: true,
     useRootNavigator: true,
     builder: (_) => _CloudFilePickerSheet(
-      sftp: sftp,
+      files: files,
       title: title,
       subtitle: subtitle,
       initialPath: initialPath,
@@ -72,7 +73,7 @@ Future<List<CloudPickedPath>?> showCloudFilePicker(
 
 class _CloudFilePickerSheet extends StatefulWidget {
   const _CloudFilePickerSheet({
-    required this.sftp,
+    required this.files,
     required this.initialPath,
     required this.selection,
     required this.allowMultiple,
@@ -81,7 +82,7 @@ class _CloudFilePickerSheet extends StatefulWidget {
     this.subtitle,
   });
 
-  final Future<SftpClient> Function() sftp;
+  final Future<RemoteFileClient> Function() files;
   final String initialPath;
   final CloudFilePickerSelection selection;
   final bool allowMultiple;
@@ -96,7 +97,7 @@ class _CloudFilePickerSheet extends StatefulWidget {
 class _CloudFilePickerSheetState extends State<_CloudFilePickerSheet> {
   late final TextEditingController _pathController;
   late final FocusNode _pathFocusNode;
-  Future<SftpClient>? _client;
+  Future<RemoteFileClient>? _client;
   var _path = '.';
   List<SftpName> _entries = const [];
   final _selectedPaths = <String>{};
@@ -134,7 +135,7 @@ class _CloudFilePickerSheetState extends State<_CloudFilePickerSheet> {
     };
   }
 
-  Future<SftpClient> _sftp() => _client ??= widget.sftp();
+  Future<RemoteFileClient> _files() => _client ??= widget.files();
 
   Future<void> _refresh() async {
     setState(() {
@@ -142,9 +143,9 @@ class _CloudFilePickerSheetState extends State<_CloudFilePickerSheet> {
       _error = null;
     });
     try {
-      final sftp = await _sftp();
-      final absolute = await sftp.absolute(_path);
-      final entries = await sftp.listdir(absolute);
+      final files = await _files();
+      final absolute = await files.absolute(_path);
+      final entries = await files.listdir(absolute);
       entries.removeWhere(
         (entry) => entry.filename == '.' || entry.filename == '..',
       );

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/servers/maidcafe_install.dart';
+import 'package:maid_kit/servers/maidcafe_priv.dart';
 
 /// A realistic existing `/etc/maidcafe/config.toml` for patch-based saves.
 const _baseConfig = '''
@@ -870,5 +871,173 @@ command = "/bin/true"
     final cpu = decodeAlarmFragmentFromScript(script, 'cpu_percent');
     expect(cpu, contains('kind = "cpu_percent"'));
     expect(cpu, contains('threshold = 85.00'));
+  });
+
+  group('privileged file roots', () {
+    /// The daemon config an install script writes, decoded from the base64 it
+    /// carries. Grepping the script for config text would pass on the comment
+    /// above the payload; decoding checks what the daemon will actually read.
+    String configFromInstallScript(String script) {
+      final match = RegExp(
+        r'''printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > "\$work_dir/config.toml"''',
+      ).firstMatch(script);
+      expect(match, isNotNull, reason: 'no embedded config found');
+      return utf8.decode(base64Decode(match!.group(1)!));
+    }
+
+    const nginx = MaidCafeFileRoot(
+      path: '/etc/nginx',
+      privileged: true,
+      profile: 'nginx',
+    );
+    const shared = MaidCafeFileRoot(path: '/srv/app');
+
+    test('root validity mirrors what the helper accepts', () {
+      expect(nginx.isValid, isTrue);
+      expect(shared.isValid, isTrue);
+      // A relative path, a profile name the helper's pattern rejects, and a
+      // mode the helper refuses are all configuration errors.
+      expect(const MaidCafeFileRoot(path: 'srv/app').isValid, isFalse);
+      expect(
+        const MaidCafeFileRoot(
+          path: '/etc/nginx',
+          privileged: true,
+          profile: 'Nginx Prod',
+        ).isValid,
+        isFalse,
+      );
+      expect(
+        const MaidCafeFileRoot(
+          path: '/etc/nginx',
+          privileged: true,
+          profile: 'nginx',
+          modes: ['0666'],
+        ).isValid,
+        isFalse,
+      );
+      expect(
+        const MaidCafeFileRoot(
+          path: '/etc/nginx',
+          privileged: true,
+          profile: '',
+        ).isValid,
+        isFalse,
+      );
+    });
+
+    test('the daemon config declares every root as a table', () {
+      final config = maidCafeFilesConfig(const [shared, nginx]);
+      expect(config, contains('[daemon.files]'));
+      expect(config, contains('allowWrite = true'));
+      // Both roots are tables, so one shape covers privileged and not.
+      expect(config, contains('path = "/srv/app"'));
+      expect(config, contains('path = "/etc/nginx"'));
+      // Only the privileged root names a profile.
+      expect(
+        'privileged = true'.allMatches(config).length,
+        1,
+        reason: 'only the privileged root should be marked',
+      );
+      expect(config, contains('profile = "nginx"'));
+    });
+
+    test('no roots leaves the file API out of the config entirely', () {
+      expect(maidCafeFilesConfig(const []), isEmpty);
+      // An invalid root is dropped rather than written as a broken entry.
+      expect(maidCafeFilesConfig(const [MaidCafeFileRoot(path: 'rel')]), isEmpty);
+    });
+
+    test('the profile file carries only privileged roots', () {
+      final toml = maidCafePrivToml(const [shared, nginx]);
+      expect(toml, contains('name = "nginx"'));
+      expect(toml, contains('path = "/etc/nginx"'));
+      expect(toml, contains('modes = ["0644", "0640"]'));
+      // The unprivileged root must not be reachable through the root helper.
+      expect(toml, isNot(contains('/srv/app')));
+      expect(maidCafePrivToml(const [shared]), isEmpty);
+    });
+
+    test('escaping keeps a path from breaking out of its TOML string', () {
+      final config = maidCafeFilesConfig(const [
+        MaidCafeFileRoot(path: '/srv/a"b\\c'),
+      ]);
+      expect(config, contains(r'path = "/srv/a\"b\\c"'));
+    });
+
+    test('the install script installs the helper before the config', () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        fileRoots: const [nginx],
+        privHelperBase64: 'aGVscGVy',
+      );
+      // The daemon refuses to start when a privileged root's helper is missing,
+      // so the helper, its profiles and its rule must land first.
+      final privIndex = script.indexOf('/etc/sudoers.d/maidkit-priv');
+      final configIndex = script.indexOf(
+        'install -o root -g maidcafe -m 0660',
+      );
+      expect(privIndex, greaterThan(-1));
+      expect(configIndex, greaterThan(privIndex));
+      // The rule comes from the helper itself and is validated before install.
+      expect(script, contains('maidkit-priv" sudoers'));
+      expect(script, contains('visudo -cf'));
+      // A profile file the helper cannot parse fails the install, not the first
+      // write.
+      expect(script, contains('fs profiles'));
+      // The helper binary is deployed through /dev/stdin, like action scripts.
+      expect(
+        script,
+        contains('install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/maidkit-priv'),
+      );
+      // The config it writes declares the root the helper was just granted.
+      // The config is base64-embedded in the script, so it is decoded the way
+      // the install decodes it rather than grepped for.
+      expect(configFromInstallScript(script), contains('profile = "nginx"'));
+      expect(configFromInstallScript(script), contains('privileged = true'));
+    });
+
+    test('without privileged roots the standing grant is removed', () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        fileRoots: const [shared],
+      );
+      expect(script, contains('rm -f /etc/sudoers.d/maidkit-priv'));
+      expect(script, contains('rm -f /etc/maidkit/priv.toml'));
+      // An unprivileged root is served by the daemon account, so no rule is
+      // installed for it.
+      expect(script, isNot(contains('NOPASSWD')));
+    });
+
+    test('stdio names the SSH account in the rule', () {
+      final script = buildMaidCafePrivScript(
+        const [nginx],
+        stdio: true,
+        helperBase64: null,
+      );
+      expect(script, contains(r'rule_user="${SUDO_USER:-$(id -un)}"'));
+      // No bundle for this platform, so the helper binary is not written — the
+      // installed one is left alone (the profile file still is, so /dev/stdin
+      // appears for that payload).
+      expect(
+        script,
+        isNot(contains('0755 /dev/stdin /usr/local/libexec/maidkit-priv')),
+      );
+      expect(script, contains('if [ ! -x /usr/local/libexec/maidkit-priv ]'));
+    });
+
+    test('privileged roots without a helper on the host fail loudly', () {
+      final script = buildMaidCafePrivScript(
+        const [nginx],
+        stdio: false,
+        helperBase64: null,
+      );
+      expect(script, contains('declare no privileged roots'));
+    });
   });
 }
