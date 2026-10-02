@@ -70,8 +70,7 @@ String maidCafeFilesConfig(List<MaidCafeFileRoot>? roots) {
     // Writing is the interesting half of this feature, so it is on by default
     // here; a read-only root is an operator's deliberate choice, not the
     // default a generated config should make.
-    ..writeln('allowWrite = true')
-    ..writeln('privilegedHelper = ${_toml('/usr/local/libexec/maidkit-priv')}');
+    ..writeln('allowWrite = true');
   for (final root in valid) {
     buffer
       ..writeln()
@@ -84,6 +83,81 @@ String maidCafeFilesConfig(List<MaidCafeFileRoot>? roots) {
     }
   }
   return buffer.toString();
+}
+
+/// The keys [maidCafeFilesConfig] writes. Any other key an operator has in
+/// `[daemon.files]` — a read cap, a dedicated secret, a list cap — is not this
+/// app's to drop, so the section rewrite keeps it.
+const maidCafeGeneratedFilesKeys = {'enabled', 'allowwrite'};
+
+/// Replaces the `[daemon.files]` section of [currentConfig] with [generated],
+/// keeping every key the generator does not write.
+///
+/// The section is rewritten as a whole because its roots are an array of
+/// tables, which a key-by-key patcher cannot address. That makes preserving the
+/// rest of the section this function's job: without it, saving a root would
+/// silently reset an operator's `maxReadBytes` or drop a dedicated `secret`.
+///
+/// Everything outside the section — the rest of the file, comments included —
+/// is carried across untouched, and a file with no such section gains one at
+/// the end.
+String mergeMaidCafeFilesConfig(String currentConfig, String generated) {
+  if (generated.isEmpty) return currentConfig;
+  final lines = currentConfig.split('\n');
+  final before = <String>[];
+  final after = <String>[];
+  final kept = <String>[];
+  var inSection = false;
+  var inTable = false;
+  var found = false;
+  for (final line in lines) {
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('[')) {
+      // The section and its roots sub-tables; the table itself is what may
+      // carry unmodelled keys.
+      inSection =
+          trimmed == '[daemon.files]' || trimmed.startsWith('[[daemon.files.');
+      inTable = trimmed == '[daemon.files]';
+      if (inSection) {
+        found = true;
+        continue;
+      }
+    }
+    if (inSection) {
+      if (!inTable) continue;
+      final separator = trimmed.indexOf('=');
+      if (separator <= 0) continue;
+      final key = trimmed.substring(0, separator).trim().toLowerCase();
+      if (maidCafeGeneratedFilesKeys.contains(key)) continue;
+      kept.add(line);
+      continue;
+    }
+    (found ? after : before).add(line);
+  }
+
+  final body = generated.split('\n');
+  final insertAt = body.indexWhere((line) => line.startsWith('[['));
+  final at = insertAt < 0 ? body.length : insertAt;
+  final section = <String>[
+    ...body.sublist(0, at),
+    ...kept,
+    if (kept.isNotEmpty) '',
+    ...body.sublist(at),
+  ];
+  if (!found) {
+    // No section to replace: the generated one goes at the end, separated from
+    // whatever table the file ended with.
+    final head = <String>[...before];
+    while (head.isNotEmpty && head.last.trim().isEmpty) {
+      head.removeLast();
+    }
+    return '${[...head, '', ...section].join('\n').trimRight()}\n';
+  }
+  return [
+    ...before,
+    ...section,
+    ...after,
+  ].join('\n');
 }
 
 /// Renders the helper's profile file for the privileged [roots].

@@ -141,6 +141,69 @@ enabled = true
     });
   });
 
+  group('mergeMaidCafeFilesConfig', () {
+    const existing = '''[daemon]
+id = "host"
+
+[daemon.files]
+enabled = true
+allowWrite = false
+maxReadBytes = 1048576
+secret = "files-secret"
+
+[[daemon.files.roots]]
+path = "/old"
+''';
+
+    test('keeps the keys it does not generate', () {
+      final merged = mergeMaidCafeFilesConfig(
+        existing,
+        maidCafeFilesConfig(const [MaidCafeFileRoot(path: '/srv/app')]),
+      );
+      // The app owns enabled/allowWrite; everything else in the table is the
+      // operator's, and losing a read cap or a secret to an unrelated save is
+      // exactly the kind of silent change this avoids.
+      expect(merged, contains('maxReadBytes = 1048576'));
+      expect(merged, contains('secret = "files-secret"'));
+      expect(merged, contains('allowWrite = true'));
+      expect('enabled = true'.allMatches(merged).length, 1);
+      expect(merged, contains('path = "/srv/app"'));
+      expect(merged, isNot(contains('/old')));
+      // The kept keys land in the table, not inside a root entry.
+      final rootsAt = merged.indexOf('[[daemon.files.roots]]');
+      expect(merged.indexOf('maxReadBytes'), lessThan(rootsAt));
+      // And the result still parses back to what was intended.
+      expect(parseMaidCafeFileRoots(merged), hasLength(1));
+      expect(merged, contains('[daemon]'));
+    });
+
+    test('an empty generation leaves the file alone', () {
+      expect(mergeMaidCafeFilesConfig(existing, ''), existing);
+    });
+
+    test('a file with no section gains one, and keeps the rest', () {
+      const plain = '[daemon]\nid = "host"\n';
+      final merged = mergeMaidCafeFilesConfig(
+        plain,
+        maidCafeFilesConfig(const [MaidCafeFileRoot(path: '/srv')]),
+      );
+      // The section is appended; the file it was appended to survives, which
+      // is the whole point of merging rather than replacing the text.
+      expect(merged, startsWith('[daemon]\nid = "host"'));
+      expect(merged, contains('[daemon.files]'));
+      expect(merged, contains('path = "/srv"'));
+      expect(parseMaidCafeFileRoots(merged), hasLength(1));
+      expect(merged.trim().endsWith('path = "/srv"'), isTrue);
+    });
+
+    test('is idempotent', () {
+      const roots = [MaidCafeFileRoot(path: '/srv/app')];
+      final once = mergeMaidCafeFilesConfig(existing, maidCafeFilesConfig(roots));
+      final twice = mergeMaidCafeFilesConfig(once, maidCafeFilesConfig(roots));
+      expect(twice, once);
+    });
+  });
+
   group('the generated pair of allowlists', () {
     test('a privileged root appears in both, an ordinary one in one', () {
       const roots = [

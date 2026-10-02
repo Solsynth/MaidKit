@@ -803,12 +803,28 @@ printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
 # by saving any unrelated setting, so it is carried across verbatim: from the
 # section header to the next table that is not part of it, which keeps the
 # [[daemon.files.roots]] entries with their parent.
-if ! grep -q '^\\[daemon\\.files\\]' "\$work_dir/config.toml" &&
-   [ -f $configPath ] && grep -q '^\\[daemon\\.files\\]' $configPath; then
-  awk '/^\\[daemon\\.files\\]/{keep=1}
-       keep && /^\\[/ && !/^\\[daemon\\.files/ && !/^\\[\\[daemon\\.files/{keep=0}
-       keep' $configPath >> "\$work_dir/config.toml"
-fi
+# [daemon.files] and [daemon.priv] are carried across when this app does not
+# model them. The config is regenerated whole, so without this an operator's own
+# file roots — or the `systemd = true` switch on the privileged helper — would
+# be erased by saving an unrelated setting.
+#
+# Fixed-string matching throughout, and no regex in the awk: a header like
+# `[daemon.files]` is a character class in a regular expression, and the escapes
+# needed to make it literal are the kind that fail silently when they survive
+# one layer too many.
+for unmodelled in daemon.files daemon.priv; do
+  header="[\$unmodelled]"
+  nested="[[\$unmodelled."
+  if ! grep -Fqx "\$header" "\$work_dir/config.toml" &&
+     [ -f $configPath ] && grep -Fqx "\$header" $configPath; then
+    awk -v header="\$header" -v nested="\$nested" '
+      { sub(/\r\$/, "") }
+      \$0 == header { keep = 1 }
+      keep && substr(\$0, 1, 1) == "[" && \$0 != header && index(\$0, nested) != 1 { keep = 0 }
+      keep
+    ' $configPath >> "\$work_dir/config.toml"
+  fi
+done
 
 $configInstall "\$work_dir/config.toml" $configPath
 # The stable machine identity: written once and never touched again, so the

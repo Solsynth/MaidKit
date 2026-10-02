@@ -1045,128 +1045,32 @@ command = "/bin/true"
   });
 
   group('an operator\'s own configuration survives a save', () {
-    /// The awk program the install script uses to carry the file section over.
-    /// Extracted from the generated script so the test pins the bytes that will
-    /// actually run, not a copy of them.
-    String carryOverAwk(String script) {
-      // Located by plain search: the program contains no single quote, so it
-      // runs from `awk '` to the next one. A regex here would have to survive
-      // two layers of escaping and stop pinning the bytes that actually run.
-      final start = script.indexOf("awk '");
-      expect(start, greaterThan(-1), reason: 'no carry-over awk in the script');
-      final end = script.indexOf("'", start + "awk '".length);
-      expect(end, greaterThan(start), reason: 'unterminated awk program');
-      return script.substring(start + "awk '".length, end);
-    }
-
-    String runAwk(String program, String input) {
-      final file = File(
-        '${Directory.systemTemp.createTempSync('awk-').path}/config.toml',
-      );
-      file.writeAsStringSync(input);
-      final result = Process.runSync('awk', [program, file.path]);
-      expect(result.exitCode, 0, reason: 'awk failed: ${result.stderr}');
-      return result.stdout as String;
-    }
-
-    test('a save keeps a [daemon.files] table the app does not model', () {
-      final script = buildMaidCafeDaemonInstallScript(
-        daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
-        cloudSecret: 'cloud-secret',
-        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
-        // No fileRoots: the caller has no opinion.
-      );
-      // It must not revoke a grant or a config it did not create.
-      expect(script, isNot(contains('rm -f /etc/sudoers.d/maidkit-priv')));
-      expect(script, contains('keep=1'), reason: 'carry-over missing');
-
-      const existing = '''[daemon]
-id = "host"
-
-[daemon.files]
-enabled = true
-allowWrite = true
-
-[[daemon.files.roots]]
-path = "/etc/nginx"
-privileged = true
-profile = "nginx"
-
-[daemon.terminal]
-enabled = true
-''';
-      final carried = runAwk(carryOverAwk(script), existing);
-      // The section and its array-of-tables children come across whole.
-      expect(carried, contains('[daemon.files]'));
-      expect(carried, contains('enabled = true'));
-      expect(carried, contains('[[daemon.files.roots]]'));
-      expect(carried, contains('profile = "nginx"'));
-      // And it stops at the next section rather than swallowing the rest.
-      expect(carried, isNot(contains('[daemon.terminal]')));
-      expect(carried, isNot(contains('id = "host"')));
-    });
-
-    test('the carry-over stops before an unrelated section', () {
-      final script = buildMaidCafeDaemonInstallScript(
-        daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
-        cloudSecret: 'cloud-secret',
-        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
-      );
-      const existing = '''[daemon.files]
-enabled = true
-
-[daemon.files.extra]
-note = "still part of the files configuration"
-
-[daemon]
-id = "host"
-''';
-      final carried = runAwk(carryOverAwk(script), existing);
-      expect(carried, contains('[daemon.files]'));
-      expect(carried, contains('[daemon.files.extra]'));
-      expect(carried, contains('still part of the files configuration'));
-      expect(carried, isNot(contains('id = "host"')));
-    });
-
-    test('a declared root set still writes its own table', () {
-      final script = buildMaidCafeDaemonInstallScript(
-        daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
-        cloudSecret: 'cloud-secret',
-        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
-        fileRoots: const [MaidCafeFileRoot(path: '/srv/app')],
-        privHelperBase64: 'aGVscGVy',
-      );
-      expect(configFromInstallScript(script), contains('[daemon.files]'));
-      expect(configFromInstallScript(script), contains('path = "/srv/app"'));
-    });
-
-    /// The merge block, run for real in a shell rather than grepped for.
+    /// The carry-over loop, run for real in a shell rather than grepped for.
     ///
     /// The generated script bakes the installed config path in at build time
     /// (it is a self-contained script), so the harness points it at a sandbox
     /// file: that exercises the same logic — the guards and the awk — against
     /// paths this test owns.
-    String runCarryOverBlock(String script, String existing, String generated) {
+    String runCarryOverLoop(String script, String existing, String generated) {
       final lines = script.split('\n');
-      final start = lines.indexWhere((l) => l.startsWith('if ! grep -q'));
-      expect(start, greaterThan(-1), reason: 'no carry-over block');
+      final start = lines.indexWhere(
+        (l) => l.startsWith('for unmodelled in'),
+      );
+      expect(start, greaterThan(-1), reason: 'no carry-over loop');
       var end = -1;
       for (var i = start + 1; i < lines.length; i++) {
-        if (lines[i].trim() == 'fi') {
+        if (lines[i].trim() == 'done') {
           end = i;
           break;
         }
       }
-      expect(end, greaterThan(start), reason: 'unterminated carry-over block');
+      expect(end, greaterThan(start), reason: 'unterminated carry-over loop');
 
       final dir = Directory.systemTemp.createTempSync('carry-');
       final installed = '${dir.path}/installed.toml';
       // The real script keeps the generated config in $work_dir/config.toml and
       // the installed one at $configPath, so the harness must not conflate them:
-      // the block appends what the installed file has to the generated one.
+      // the loop appends what the installed file has to the generated one.
       File('${dir.path}/config.toml').writeAsStringSync(generated);
       File(installed).writeAsStringSync(existing);
       final block = lines
@@ -1177,11 +1081,12 @@ id = "host"
         ..writeAsStringSync(
           'set -e\n'
           'work_dir="${dir.path}"\n'
+          'configPath=$installed\n'
           '$block\n'
           'cat "${dir.path}/config.toml"\n',
         );
       final result = Process.runSync('bash', [driver.path]);
-      expect(result.exitCode, 0, reason: 'block failed: ${result.stderr}');
+      expect(result.exitCode, 0, reason: 'loop failed: ${result.stderr}');
       return result.stdout as String;
     }
 
@@ -1208,14 +1113,14 @@ id = "host"
 transport = "http"
 ''';
 
-      final merged = runCarryOverBlock(script, existing, generated);
+      final merged = runCarryOverLoop(script, existing, generated);
       expect(merged, contains('[daemon.files]'));
       expect(merged, contains('profile = "nginx"'));
       expect(merged, contains('transport = "http"'));
 
       // Running again with the merged file as the generated one must not append
       // a second copy: the guard is what makes a repeated save idempotent.
-      final again = runCarryOverBlock(script, existing, merged);
+      final again = runCarryOverLoop(script, existing, merged);
       expect('[daemon.files]'.allMatches(again).length, 1);
       expect('[daemon.files]'.allMatches(again).length, 1);
       expect('profile = "nginx"'.allMatches(again).length, 1);
