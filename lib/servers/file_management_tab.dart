@@ -61,6 +61,11 @@ class _TransferSkipped implements Exception {
 /// Per-conflict choice when the transfer conflict mode is [ask].
 enum _TransferConflictChoice { overwrite, keepBoth, skip }
 
+/// Conflict mode used by drag-and-drop uploads. A drop is an explicit,
+/// one-off action, so it always offers the overwrite choice instead of
+/// silently renaming or overwriting the way the saved transfer mode would.
+const TransferConflictMode _kDropConflictMode = TransferConflictMode.ask;
+
 class _TransferController {
   var _isPaused = false;
   var _isCancelled = false;
@@ -1247,7 +1252,9 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         }
         await _refreshLocal();
       } else {
-        final files = entry.serverId == null ? await _files() : await _leftFiles();
+        final files = entry.serverId == null
+            ? await _files()
+            : await _leftFiles();
         final destination = _joinRemotePath(
           _parentRemotePath(entry.path),
           name,
@@ -1383,7 +1390,11 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           continue;
         }
         if (entry.side == _FileSide.local && targetSide == _FileSide.remote) {
-          await _transferLocalToRemote(entry, notify: false);
+          await _transferLocalToRemote(
+            entry,
+            notify: false,
+            conflictMode: _kDropConflictMode,
+          );
         } else if (entry.side == _FileSide.remote &&
             targetSide == _FileSide.local) {
           await _transferRemoteToLocal(entry, notify: false);
@@ -1631,7 +1642,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   /// which case a browser falls back to the MaidCafe daemon and a native
   /// client keeps asking for a connection, which is the behavior the file
   /// surfaces have always had.
-  Future<RemoteFileClient> _openFileClient(int serverId, SSHClient? owner) async {
+  Future<RemoteFileClient> _openFileClient(
+    int serverId,
+    SSHClient? owner,
+  ) async {
     if (owner == null && !kIsWeb) {
       throw const ServerConnectionRequiredException();
     }
@@ -1964,6 +1978,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   Future<void> _transferLocalToRemote(
     _ClipboardEntry entry, {
     bool notify = true,
+    TransferConflictMode? conflictMode,
     Future<void> Function()? onSuccess,
   }) async {
     if (entry.isDirectory) {
@@ -1971,10 +1986,16 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         Directory(entry.path),
         entry.name,
         notify: notify,
+        conflictMode: conflictMode,
         onSuccess: onSuccess,
       );
     } else {
-      await _upload(File(entry.path), notify: notify, onSuccess: onSuccess);
+      await _upload(
+        File(entry.path),
+        notify: notify,
+        conflictMode: conflictMode,
+        onSuccess: onSuccess,
+      );
     }
   }
 
@@ -2151,6 +2172,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   Future<void> _upload(
     FileSystemEntity entry, {
     bool notify = true,
+    TransferConflictMode? conflictMode,
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
@@ -2167,6 +2189,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           files,
           _remotePath,
           _entityName(entry),
+          conflictMode: conflictMode,
         );
         if (remotePath == null) throw const _TransferSkipped();
         final remoteFile = await files.open(
@@ -2203,6 +2226,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Directory directory,
     String name, {
     bool notify = true,
+    TransferConflictMode? conflictMode,
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
@@ -2216,6 +2240,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           files,
           _remotePath,
           name,
+          conflictMode: conflictMode,
         );
         if (remoteRoot == null) throw const _TransferSkipped();
         try {
@@ -2303,6 +2328,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         await _uploadBytes(
           await item.readAsBytes(),
           item.name.isEmpty ? 'upload.bin' : item.name,
+          conflictMode: _kDropConflictMode,
         );
         continue;
       }
@@ -2314,6 +2340,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           );
       await _upload(
         File(item.path),
+        conflictMode: _kDropConflictMode,
         onFinish: hasSecurityScopedAccess
             ? () => DesktopDrop.instance.stopAccessingSecurityScopedResource(
                 bookmark: bookmark,
@@ -2330,6 +2357,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Uint8List bytes,
     String name, {
     bool notify = true,
+    TransferConflictMode? conflictMode,
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
@@ -2343,6 +2371,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           files,
           _remotePath,
           name,
+          conflictMode: conflictMode,
         );
         if (remotePath == null) throw const _TransferSkipped();
         final remoteFile = await files.open(
@@ -2512,7 +2541,8 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
               }
               transferredBytes += chunk.length;
               reportProgress(transferredBytes);
-              if (sink != null && transferredBytes % (1024 * 1024) < chunk.length) {
+              if (sink != null &&
+                  transferredBytes % (1024 * 1024) < chunk.length) {
                 await sink.flush();
               }
             }
@@ -2822,7 +2852,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     }
   }
 
-  Future<void> _deleteRemoteDirectory(RemoteFileClient files, String path) async {
+  Future<void> _deleteRemoteDirectory(
+    RemoteFileClient files,
+    String path,
+  ) async {
     final entries = await files.listdir(path);
     for (final entry in entries) {
       if (entry.filename == '.' || entry.filename == '..') continue;
@@ -2895,14 +2928,18 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     }
   }
 
+  /// Resolves where [name] should land inside [directory] on the remote side,
+  /// honoring [conflictMode] when given and the configured transfer mode
+  /// otherwise.
   Future<String?> _resolveRemoteDestination(
     RemoteFileClient files,
     String directory,
-    String name,
-  ) async {
+    String name, {
+    TransferConflictMode? conflictMode,
+  }) async {
     final candidate = _joinRemotePath(directory, name);
     if (!await _remoteExists(files, candidate)) return candidate;
-    switch (_conflictMode) {
+    switch (conflictMode ?? _conflictMode) {
       case TransferConflictMode.rename:
         return _uniqueRemotePath(files, directory, name);
       case TransferConflictMode.overwrite:
@@ -4136,8 +4173,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         // Mobile always shows the local pane; collapse is wide-layout only. A
         // browser has no local pane at all, so it never takes width there.
         final forceLocal = !wide;
-        final showLocalTarget =
-            !kIsWeb && (forceLocal || !_localCollapsed);
+        final showLocalTarget = !kIsWeb && (forceLocal || !_localCollapsed);
         final showRemoteTarget = !_remoteCollapsed;
         final availableWidth = constraints.maxWidth - _paneDividerWidth;
         final paneRatio = _clampPaneSplitRatio(_paneSplitRatio, availableWidth);
@@ -4282,83 +4318,81 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   /// The local-disk pane: the file browser's left side off the web.
   Widget _buildLocalPane(TextStyle? pathTextStyle) {
     return _FilePane(
-        title: 'fileManagerLocal'.tr(),
-        path: _localDirectory.path,
-        pathTextStyle: pathTextStyle,
-        searchInput: _leftSearchOpen ? _searchInput(_FileSide.local) : null,
-        focused: _focusedSide == _FileSide.local,
-        dropHighlighted: _dropTargetSide == _FileSide.local,
+      title: 'fileManagerLocal'.tr(),
+      path: _localDirectory.path,
+      pathTextStyle: pathTextStyle,
+      searchInput: _leftSearchOpen ? _searchInput(_FileSide.local) : null,
+      focused: _focusedSide == _FileSide.local,
+      dropHighlighted: _dropTargetSide == _FileSide.local,
+      canGoUp: _localDirectory.parent.path != _localDirectory.path,
+      onGoUp: _goUpLocal,
+      onPathTap: _chooseLocalDirectory,
+      onRefresh: _refreshLocal,
+      onFocus: () => _focusSide(_FileSide.local),
+      loading: _loadingLocal,
+      error: _localError,
+      clipboardHint: _clipboardHint(_FileSide.local),
+      backgroundMenu: () => _paneBackgroundMenu(_FileSide.local),
+      canAcceptDrop: (data) => data.side == _FileSide.remote,
+      onDragEntered: () => setState(() => _dropTargetSide = _FileSide.local),
+      onDragExited: () {
+        if (_dropTargetSide == _FileSide.local) {
+          setState(() => _dropTargetSide = null);
+        }
+      },
+      onAcceptDrop: (data) => _handleInternalDrop(data, _FileSide.local),
+      headerActions: [
+        _searchToggle(_FileSide.local),
+        IconButton(
+          tooltip: 'fileManagerCreateFolder'.tr(),
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          onPressed: _workingPath == null
+              ? () => _createFolder(_FileSide.local)
+              : null,
+          icon: const Icon(Symbols.create_new_folder, size: 18),
+        ),
+        IconButton(
+          tooltip: 'fileManagerUseAnotherServer'.tr(),
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          onPressed: _chooseLeftServer,
+          icon: const Icon(Symbols.swap_horiz, size: 18),
+        ),
+      ],
+      onPointerDown: (event) => _handlePanePointerDown(event, _FileSide.local),
+      child: _LocalFileList(
+        entries: _displayedLocalEntries,
+        expandHidden: _leftSearchController.text.trim().isNotEmpty,
+        scrollController: _localListController,
         canGoUp: _localDirectory.parent.path != _localDirectory.path,
         onGoUp: _goUpLocal,
-        onPathTap: _chooseLocalDirectory,
-        onRefresh: _refreshLocal,
-        onFocus: () => _focusSide(_FileSide.local),
-        loading: _loadingLocal,
-        error: _localError,
-        clipboardHint: _clipboardHint(_FileSide.local),
-        backgroundMenu: () => _paneBackgroundMenu(_FileSide.local),
-        canAcceptDrop: (data) => data.side == _FileSide.remote,
-        onDragEntered: () =>
-            setState(() => _dropTargetSide = _FileSide.local),
-        onDragExited: () {
-          if (_dropTargetSide == _FileSide.local) {
-            setState(() => _dropTargetSide = null);
+        emptyMessage: _leftSearchController.text.trim().isEmpty
+            ? null
+            : 'fileManagerNoMatches'.tr(),
+        selectedPaths: _selectedLocalPaths,
+        cutPaths: _cutPathsFor(_FileSide.local),
+        onTapEntry: (entry, index) {
+          _selectLocal(
+            entry,
+            index: index,
+            toggle: _isMultiModifierPressed,
+            range: _isRangeModifierPressed,
+          );
+        },
+        onEdit: (entry) {
+          if (isLocalFile(entry)) {
+            unawaited(_editLocal(File(entry.path)));
           }
         },
-        onAcceptDrop: (data) => _handleInternalDrop(data, _FileSide.local),
-        headerActions: [
-          _searchToggle(_FileSide.local),
-          IconButton(
-            tooltip: 'fileManagerCreateFolder'.tr(),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: _workingPath == null
-                ? () => _createFolder(_FileSide.local)
-                : null,
-            icon: const Icon(Symbols.create_new_folder, size: 18),
-          ),
-          IconButton(
-            tooltip: 'fileManagerUseAnotherServer'.tr(),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: _chooseLeftServer,
-            icon: const Icon(Symbols.swap_horiz, size: 18),
-          ),
-        ],
-        onPointerDown: (event) =>
-            _handlePanePointerDown(event, _FileSide.local),
-        child: _LocalFileList(
-          entries: _displayedLocalEntries,
-          expandHidden: _leftSearchController.text.trim().isNotEmpty,
-          scrollController: _localListController,
-          canGoUp: _localDirectory.parent.path != _localDirectory.path,
-          onGoUp: _goUpLocal,
-          emptyMessage: _leftSearchController.text.trim().isEmpty
-              ? null
-              : 'fileManagerNoMatches'.tr(),
-          selectedPaths: _selectedLocalPaths,
-          cutPaths: _cutPathsFor(_FileSide.local),
-          onTapEntry: (entry, index) {
-            _selectLocal(
-              entry,
-              index: index,
-              toggle: _isMultiModifierPressed,
-              range: _isRangeModifierPressed,
-            );
-          },
-          onEdit: (entry) {
-            if (isLocalFile(entry)) {
-              unawaited(_editLocal(File(entry.path)));
-            }
-          },
-          onOpen: _openLocal,
-          dragDataFor: _dragDataForLocal,
-          onContextPrepare: _ensureLocalContextSelection,
-          menuProvider: _localEntryMenu,
-        ),
-      );
+        onOpen: _openLocal,
+        dragDataFor: _dragDataForLocal,
+        onContextPrepare: _ensureLocalContextSelection,
+        menuProvider: _localEntryMenu,
+      ),
+    );
   }
 
   Widget _buildLeftRemotePane(TextStyle? pathTextStyle) {

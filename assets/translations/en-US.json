@@ -1820,7 +1820,7 @@
   "settingsThemeSystem": "System",
   "settingsTransferConflictAsk": "Ask me each time",
   "settingsTransferConflictMode": "File name conflicts during transfers",
-  "settingsTransferConflictModeHint": "Choose how transfers handle files and folders that already exist.",
+  "settingsTransferConflictModeHint": "Choose how transfers handle files and folders that already exist. Drag-and-drop uploads always ask.",
   "settingsTransferConflictOverwrite": "Overwrite the existing entry",
   "settingsTransferConflictRename": "Keep both (rename the new one)",
   "settingsTitle": "Settings",

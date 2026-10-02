@@ -1817,7 +1817,7 @@
   "settingsThemeSystem": "跟随系统",
   "settingsTransferConflictAsk": "每次询问",
   "settingsTransferConflictMode": "传输时文件名冲突",
-  "settingsTransferConflictModeHint": "选择传输遇到同名文件或文件夹时的处理方式。",
+  "settingsTransferConflictModeHint": "选择传输遇到同名文件或文件夹时的处理方式。拖拽上传时始终会询问。",
   "settingsTransferConflictOverwrite": "覆盖已有条目",
   "settingsTransferConflictRename": "两者都保留（重命名新文件）",
   "settingsTitle": "设置",
