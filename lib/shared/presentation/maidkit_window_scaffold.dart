@@ -13,6 +13,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:maid_kit/servers/app_theme_preferences.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
+import 'package:maid_kit/servers/window_state_preferences.dart';
 import 'task_progress.dart';
 
 /// Closes the desktop window without a visible teardown stall.
@@ -21,11 +22,20 @@ import 'task_progress.dart';
 /// on screen while the engines (Flutter, plus WebView2's title-bar engine)
 /// shut down and stop pumping messages, which reads as a freeze. Hide first,
 /// then quit. On macOS/Linux `destroy()` tears down immediately either way.
+///
+/// `destroy()` quits the process without emitting a window-close event on
+/// Windows and macOS, so the geometry is flushed here while the isolate still
+/// runs — that is the only save the in-app close button gets. The flush is
+/// bounded so a stalled platform call cannot trap the app on a hidden window.
 Future<void> closeMaidKitWindow() async {
   // window_manager has no web implementation; the browser tab owns its own
   // lifetime, so there is no window to hide or destroy.
   if (kIsWeb) return;
   await windowManager.hide();
+  await saveMaidKitWindowStateFromWindow().timeout(
+    const Duration(milliseconds: 750),
+    onTimeout: () {},
+  );
   await windowManager.destroy();
 }
 

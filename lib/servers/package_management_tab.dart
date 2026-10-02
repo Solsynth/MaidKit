@@ -6,6 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package_models.dart';
 import 'server_connection_actions.dart';
@@ -409,6 +410,7 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
           ? PackageAction.remove
           : PackageAction.install;
       return ContextMenuWidget(
+        desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
         menuProvider: (_) => Menu(
           children: [
             MenuAction(

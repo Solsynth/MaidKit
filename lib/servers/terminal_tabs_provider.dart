@@ -304,6 +304,11 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   final _lastBufferRows = <String, int>{};
   final _cachedHistory = <String, String>{};
 
+  /// Cleanups keyed by terminal tab id. A daemon terminal opened through a
+  /// temporary SSH forward stops that forward here, so it lives exactly as long
+  /// as its terminal and no other tab is affected.
+  final _tabCleanups = <String, Future<void> Function()>{};
+
   /// Every workspace mutation schedules a debounced snapshot save.
   ///
   /// The pristine default is exempt so it never overwrites a real snapshot on
@@ -558,12 +563,15 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// Opens a terminal over [server]'s MaidCafe daemon WebSocket endpoint.
   ///
   /// [target] carries the resolved endpoint and credential so the caller can
-  /// report "not configured" before a socket is opened.
+  /// report "not configured" before a socket is opened. [onClose] runs when the
+  /// tab goes away — a daemon reached through a temporary SSH forward stops it
+  /// there, so the forward lives exactly as long as its terminal.
   Future<void> openMaidCafe(
     Server server,
     MaidCafeTerminalTarget target, {
     String? paneId,
     String? initialOutput,
+    Future<void> Function()? onClose,
   }) async {
     if (paneId != null) focusPane(paneId);
     final handle = await ref
@@ -575,6 +583,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       serverName: server.name,
       terminal: handle.adapter,
     );
+    if (onClose != null) _tabCleanups[handle.id] = onClose;
     _insertTab(tab, targetPaneId: paneId);
     _watchTerminalDone(handle);
   }
@@ -959,6 +968,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   void _removeTab(String tabId) {
     final tabIndex = state.tabs.indexWhere((tab) => tab.id == tabId);
     if (tabIndex < 0) return;
+    final cleanup = _tabCleanups.remove(tabId);
+    if (cleanup != null) unawaited(cleanup());
     _releaseSessionTabViewKey(tabId);
     _lastBufferRows.remove(tabId);
     _cachedHistory.remove(tabId);

@@ -72,6 +72,16 @@ class Servers extends Table {
   TextColumn get maidCafeDaemonId => text().nullable()();
   BoolColumn get maidCafeTerminalViaCloud =>
       boolean().withDefault(const Constant(false))();
+  // The port the daemon itself reported it listens on. A native client learns
+  // it over SSH and stores it, so a browser build — which can neither probe the
+  // daemon nor open a tunnel — can dial the server host on that port instead of
+  // the tunnel's loopback address.
+  IntColumn get maidCafeTerminalPort => integer().nullable()();
+  // Whether the daemon's terminal endpoint is enabled, as read from its own
+  // configuration over SSH. Null until a client has read it. A disabled
+  // terminal refuses every session, so nothing in front of it — an open port
+  // included — can help, which is what a failure message has to say first.
+  BoolColumn get maidCafeTerminalEnabled => boolean().nullable()();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -399,7 +409,7 @@ class AppDatabase extends _$AppDatabase {
   static const String webDatabaseName = 'maid_kit';
 
   @override
-  int get schemaVersion => 37;
+  int get schemaVersion => 39;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -833,6 +843,29 @@ class AppDatabase extends _$AppDatabase {
         }
         if (!existing.contains('last_server_ids')) {
           await m.addColumn(scriptSnippets, scriptSnippets.lastServerIds);
+        }
+      }
+      if (from < 38) {
+        // The learned daemon port. A database created before this version has
+        // no such column; the guard keeps the step idempotent for one that was
+        // created with the current definition in this same pass.
+        final portColumn = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name = 'maid_cafe_terminal_port'",
+        ).get();
+        if (portColumn.isEmpty) {
+          await m.addColumn(servers, servers.maidCafeTerminalPort);
+        }
+      }
+      if (from < 39) {
+        // Whether the daemon's terminal endpoint is enabled; unknown (null) for
+        // every row written before a client read the daemon's configuration.
+        final terminalColumn = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name = 'maid_cafe_terminal_enabled'",
+        ).get();
+        if (terminalColumn.isEmpty) {
+          await m.addColumn(servers, servers.maidCafeTerminalEnabled);
         }
       }
     },

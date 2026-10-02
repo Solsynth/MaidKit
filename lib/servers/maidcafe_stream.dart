@@ -8,6 +8,7 @@ import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 
 import 'maidcafe_install.dart';
+import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
 
 const maidCafeDefaultPort = 8747;
@@ -220,6 +221,10 @@ class MaidCafeDaemonAccess {
     this.listenHost,
     this.cloudUrl,
     this.cloudSecret,
+    this.terminalEnabled,
+    this.terminalRelayEnabled,
+    this.terminalSecret,
+    this.terminalAllowedOrigins = const [],
     this.metricsInterval,
     this.logsInterval,
     this.requestTimeout,
@@ -238,6 +243,22 @@ class MaidCafeDaemonAccess {
   final String? listenHost;
   final String? cloudUrl;
   final String? cloudSecret;
+
+  /// Whether the daemon's terminal endpoint is enabled, read from the
+  /// configuration. Null when the configuration does not say — the install
+  /// script does not write that section, so it is the daemon's own default.
+  final bool? terminalEnabled;
+
+  /// `daemon.terminal.relay.enabled`: whether the daemon serves sessions the
+  /// cloud hands over. The cloud's own daemon record has to opt in as well.
+  final bool? terminalRelayEnabled;
+
+  /// `daemon.terminal.secret`, when the configuration sets one.
+  final String? terminalSecret;
+
+  /// `daemon.terminal.allowedOrigins`: the browser origins the daemon accepts
+  /// a terminal handshake from.
+  final List<String> terminalAllowedOrigins;
   final String? metricsInterval;
   final String? logsInterval;
   final String? requestTimeout;
@@ -438,6 +459,21 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
   ];
   final listen = _configValue(config, 'listen');
   final listenUri = listen == null ? null : Uri.tryParse('http://$listen');
+  final terminal = parseMaidCafeTerminalConfig(fullConfig);
+  // What the daemon's own configuration says. When the app's connection is
+  // refused with "the terminal is off" while the editor shows it on, this line
+  // and the daemon's log are the two halves of the answer.
+  maidCafeLog(
+    'read the daemon configuration for "${server.name}": '
+    'transport=${_configValue(config, "transport")} '
+    'listen=${_configValue(config, "listen")}, '
+    'terminal.enabled=${terminal.enabled}, '
+    'terminal.relay.enabled=${terminal.relayEnabled}, '
+    'terminal.shells=${terminal.shells}, '
+    'terminal.allowedOrigins=${terminal.allowedOrigins}, '
+    'terminal.secret=${maidCafeDescribeCredential(terminal.secret)}, '
+    'metricsSecret=${maidCafeDescribeCredential(_configValue(config, "metricsSecret"))}',
+  );
   return MaidCafeDaemonAccess(
     port:
         listenUri?.port != null &&
@@ -461,6 +497,10 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
       _configValue(config, 'maxConcurrentRuns') ?? '',
     ),
     configText: fullConfig,
+    terminalEnabled: terminal.enabled,
+    terminalRelayEnabled: terminal.relayEnabled,
+    terminalSecret: terminal.secret,
+    terminalAllowedOrigins: terminal.allowedOrigins,
     actions: actions,
     alarms: [
       for (final fragment in alarmConfigs.values)
@@ -496,6 +536,163 @@ String? _configValue(String config, String key) {
   final value = match?.group(1) ?? match?.group(2);
   return value?.trim().isEmpty ?? true ? null : value!.trim();
 }
+
+/// The daemon's terminal endpoint settings, as its configuration declares them.
+///
+/// Every field stays null (or empty) when the configuration does not say, so a
+/// caller can tell "switched off" from "never configured".
+class MaidCafeTerminalConfig {
+  const MaidCafeTerminalConfig({
+    this.enabled,
+    this.secret,
+    this.allowedOrigins = const [],
+    this.relayEnabled,
+    this.shells = const [],
+  });
+
+  /// `daemon.terminal.enabled`.
+  final bool? enabled;
+
+  /// `daemon.terminal.relay.enabled`: whether this host serves sessions the
+  /// cloud hands over. Independent of [enabled] — a relayed session rides the
+  /// daemon's outbound socket, so the direct endpoint may stay off.
+  final bool? relayEnabled;
+
+  /// `daemon.terminal.secret`; the daemon falls back to its metrics secret.
+  final String? secret;
+
+  /// `daemon.terminal.shells`: the absolute shell paths a session may request.
+  /// The daemon refuses a configuration that enables the terminal — directly or
+  /// through the relay — while this list is empty.
+  final List<String> shells;
+
+  /// `daemon.terminal.allowedOrigins`: the browser origins the daemon accepts
+  /// a terminal handshake from.
+  final List<String> allowedOrigins;
+}
+
+/// Reads the `daemon.terminal` section from a daemon configuration.
+///
+/// The daemon accepts those settings both as keys inside `[daemon.terminal]`
+/// and as dotted keys (`daemon.terminal.enabled`), and the origin list may be
+/// written across several lines, so all of those are understood. Public so the
+/// parse can be unit-tested without a live daemon.
+MaidCafeTerminalConfig parseMaidCafeTerminalConfig(String configText) {
+  bool? enabled;
+  bool? relayEnabled;
+  String? secret;
+  final origins = <String>[];
+  final shells = <String>[];
+  var section = '';
+  String? openListKey;
+  final openList = StringBuffer();
+
+  void commit(String key, String raw) {
+    switch (key) {
+      case 'enabled':
+      case 'enable':
+        enabled ??= _parseTomlBool(raw);
+      case 'secret':
+        final value = _unquoteTomlValue(raw);
+        if (value.isNotEmpty) secret ??= value;
+      case 'allowedorigins':
+      case 'allowed_origins':
+      case 'origins':
+        if (origins.isEmpty) origins.addAll(_parseTomlStringList(raw));
+      case 'shells':
+        if (shells.isEmpty) shells.addAll(_parseTomlStringList(raw));
+    }
+  }
+
+  for (final line in const LineSplitter().convert(configText)) {
+    final trimmed = line.trim();
+    if (openListKey != null) {
+      openList.write(' $trimmed');
+      if (trimmed.contains(']')) {
+        commit(openListKey, openList.toString());
+        openListKey = null;
+        openList.clear();
+      }
+      continue;
+    }
+    if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) {
+      section = trimmed;
+      continue;
+    }
+    final separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    var key = trimmed.substring(0, separator).trim().toLowerCase();
+    final inTerminal = section == '[daemon.terminal]';
+    final inRelay = section == '[daemon.terminal.relay]';
+    if (!inTerminal && !inRelay) {
+      // Outside those tables only an explicitly qualified key counts.
+      final prefix = const [
+        'daemon.terminal.',
+        'terminal.',
+      ].where(key.startsWith).firstOrNull;
+      if (prefix == null) continue;
+      key = key.substring(prefix.length);
+    }
+    final value = trimmed.substring(separator + 1).trim();
+    // The relay switch, however it is spelled: its own table, a relay.* key in
+    // the terminal table, or a fully dotted key.
+    if ((inRelay && (key == 'enabled' || key == 'enable')) ||
+        key == 'relay.enabled' ||
+        key == 'relay.enable') {
+      relayEnabled ??= _parseTomlBool(value);
+      continue;
+    }
+    // Anything else in the relay table (users, pollWait) is not parsed.
+    if (inRelay) continue;
+    if ((key == 'allowedorigins' ||
+            key == 'allowed_origins' ||
+            key == 'origins' ||
+            key == 'shells') &&
+        value.startsWith('[') &&
+        !value.contains(']')) {
+      openListKey = key;
+      openList
+        ..clear()
+        ..write(value);
+      continue;
+    }
+    commit(key, value);
+  }
+  return MaidCafeTerminalConfig(
+    enabled: enabled,
+    relayEnabled: relayEnabled,
+    secret: secret,
+    shells: shells,
+    allowedOrigins: origins,
+  );
+}
+
+/// Reads `daemon.terminal.enabled` from a daemon configuration, or null when
+/// the configuration does not say.
+bool? parseMaidCafeTerminalEnabled(String configText) =>
+    parseMaidCafeTerminalConfig(configText).enabled;
+
+bool? _parseTomlBool(String raw) =>
+    switch (_unquoteTomlValue(raw).toLowerCase()) {
+      'true' => true,
+      'false' => false,
+      _ => null,
+    };
+
+/// The value of a TOML scalar, unquoted and without a trailing comment.
+String _unquoteTomlValue(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.substring(1, trimmed.length - 1);
+  }
+  return trimmed.split('#').first.trim();
+}
+
+/// The quoted items of a TOML string array.
+List<String> _parseTomlStringList(String raw) => RegExp(
+  r'"((?:[^"\\]|\\.)*)"',
+).allMatches(raw).map((match) => match.group(1)!).toList();
 
 bool _configBool(String config, String key, {bool fallback = false}) =>
     switch (_configValue(config, key)?.toLowerCase()) {

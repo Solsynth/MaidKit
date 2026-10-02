@@ -1629,11 +1629,12 @@ class _TerminalServerGrid extends ConsumerWidget {
         final openCount = tabs.tabs
             .where((tab) => tab.serverId == server.id)
             .length;
-        // A browser can only reach a daemon terminal over WebSocket, and it
-        // has no local disk or SFTP for the file manager.
+        // A browser can only reach a terminal over the MaidCafe daemon
+        // WebSocket, and it has no local disk or SFTP for the file manager.
         final canOpenTerminal =
             !kIsWeb ||
-            server.connectionType == ServerConnectionType.maidcafe.name;
+            server.connectionType == ServerConnectionType.maidcafe.name ||
+            server.hasMaidCafeTerminalRoute;
         return Card(
           margin: EdgeInsets.zero,
           child: Padding(

@@ -13,6 +13,36 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 
 void main() {
+  test('the refusal is mapped to the policy that produced it', () {
+    MaidCafeTerminalHandshakeFailure map(int status, Object? body) =>
+        maidCafeHandshakeFailureFrom(status, body);
+
+    // The daemon answers each pre-upgrade check with its own status and JSON.
+    expect(
+      map(403, {'error': 'terminal disabled'}),
+      MaidCafeTerminalHandshakeFailure.disabled,
+    );
+    expect(
+      map(403, {'error': 'terminal remote access is disabled'}),
+      MaidCafeTerminalHandshakeFailure.remote,
+    );
+    expect(
+      map(401, {'error': 'unauthorized'}),
+      MaidCafeTerminalHandshakeFailure.credential,
+    );
+    expect(
+      map(501, {'error': 'terminal unsupported on this platform'}),
+      MaidCafeTerminalHandshakeFailure.unsupported,
+    );
+    expect(
+      map(429, {'error': 'too many terminal sessions'}),
+      MaidCafeTerminalHandshakeFailure.busy,
+    );
+    // A rejected Origin is written by the WebSocket library: 403, no body.
+    expect(map(403, ''), MaidCafeTerminalHandshakeFailure.origin);
+    expect(map(200, {'ok': true}), MaidCafeTerminalHandshakeFailure.unknown);
+  });
+
   test('endpoint keeps the scheme security and any base path', () {
     expect(
       const MaidCafeTerminalTarget(
@@ -308,29 +338,265 @@ void main() {
         MaidCafeTerminalTarget(baseUrl: baseUrl, secret: 'wrong'),
       ),
       throwsA(
-        isA<MaidCafeTerminalException>().having(
-          (error) => error.message,
-          'message',
-          contains('allowedOrigins'),
-        ),
+        isA<MaidCafeTerminalException>()
+            // The daemon answered 401, so the diagnosis names the credential
+            // and does not send the user after the port or the origin list.
+            .having(
+              (error) => error.handshake,
+              'handshake',
+              MaidCafeTerminalHandshakeFailure.credential,
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              allOf(
+                contains('rejected this credential'),
+                isNot(contains('allowedOrigins')),
+              ),
+            ),
       ),
     );
     expect(manager.current, isEmpty);
   });
+
+  test('a switched-off terminal is reported as switched off', () async {
+    // How the real daemon answers while daemon.terminal.enabled is false.
+    final daemon = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    daemon.listen((request) async {
+      request.response.statusCode = HttpStatus.forbidden;
+      request.response.write('{"ok":false,"error":"terminal disabled"}');
+      await request.response.close();
+    });
+    addTearDown(() => daemon.close(force: true));
+
+    final manager = MaidCafeTerminalConnectionManager(
+      () => _AdapterFactory(_RecordingAdapter()),
+    );
+    addTearDown(manager.dispose);
+
+    final baseUrl = 'http://127.0.0.1:${daemon.port}';
+    await expectLater(
+      manager.openTerminal(
+        _daemonServer(baseUrl),
+        MaidCafeTerminalTarget(baseUrl: baseUrl, secret: 'secret'),
+      ),
+      throwsA(
+        isA<MaidCafeTerminalException>()
+            .having(
+              (error) => error.handshake,
+              'handshake',
+              MaidCafeTerminalHandshakeFailure.disabled,
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              allOf(contains('switched off'), isNot(contains('origin'))),
+            ),
+      ),
+    );
+  });
+
+  test('a switched-off terminal is reported as switched off', () async {
+    // How the real daemon answers while daemon.terminal.enabled is false.
+    final daemon = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    daemon.listen((request) async {
+      request.response.statusCode = HttpStatus.forbidden;
+      request.response.write('{"ok":false,"error":"terminal disabled"}');
+      await request.response.close();
+    });
+    addTearDown(() => daemon.close(force: true));
+
+    final manager = MaidCafeTerminalConnectionManager(
+      () => _AdapterFactory(_RecordingAdapter()),
+    );
+    addTearDown(manager.dispose);
+
+    final baseUrl = 'http://127.0.0.1:${daemon.port}';
+    await expectLater(
+      manager.openTerminal(
+        _daemonServer(baseUrl),
+        MaidCafeTerminalTarget(baseUrl: baseUrl, secret: 'secret'),
+      ),
+      throwsA(
+        isA<MaidCafeTerminalException>()
+            .having(
+              (error) => error.handshake,
+              'handshake',
+              MaidCafeTerminalHandshakeFailure.disabled,
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              allOf(contains('switched off'), isNot(contains('origin'))),
+            ),
+      ),
+    );
+  });
+
+  test(
+    'serves an SSH server over the daemon, one socket per session',
+    () async {
+      final sockets = <WebSocket>[];
+      final daemon = await _FakeDaemon.start((socket, request) {
+        sockets.add(socket);
+        socket.add(
+          jsonEncode({
+            'type': 'hello',
+            'version': 'v1',
+            'session': 'session-${sockets.length}',
+            'shell': '/bin/sh',
+            'user': 'deploy',
+            'cols': 80,
+            'rows': 24,
+          }),
+        );
+      });
+      addTearDown(daemon.stop);
+
+      final manager = MaidCafeTerminalConnectionManager(
+        () => _AdapterFactory(_RecordingAdapter()),
+      );
+      addTearDown(manager.dispose);
+
+      // A browser cannot open a raw SSH socket, so an SSH server that carries a
+      // daemon route is served here instead.
+      final server = _daemonServer(
+        daemon.baseUrl,
+        connectionType: ServerConnectionType.ssh.name,
+      );
+      final target = MaidCafeTerminalTarget(
+        baseUrl: daemon.baseUrl,
+        secret: 'metrics-secret',
+      );
+
+      final first = await manager.openTerminal(server, target);
+      final second = await manager.openTerminal(server, target);
+      addTearDown(() => manager.closeTerminal(first.id));
+      addTearDown(() => manager.closeTerminal(second.id));
+
+      // Every session owns its socket, so any number run at the same time.
+      expect(first.id, isNot(second.id));
+      expect(sockets, hasLength(2));
+    },
+  );
+
+  test('a server reports a daemon route only when it has one', () {
+    expect(
+      _daemonServer('http://127.0.0.1:8747').hasMaidCafeTerminalRoute,
+      isTrue,
+    );
+    // The route is a transport, not a connection type.
+    expect(
+      _daemonServer(
+        'http://127.0.0.1:8747',
+        connectionType: ServerConnectionType.ssh.name,
+      ).hasMaidCafeTerminalRoute,
+      isTrue,
+    );
+    expect(_sshServer().hasMaidCafeTerminalRoute, isFalse);
+    // A cloud route needs the daemon identity to address.
+    expect(_sshServer(viaCloud: true).hasMaidCafeTerminalRoute, isFalse);
+    expect(
+      _sshServer(daemonId: 'daemon-1', viaCloud: true).hasMaidCafeTerminalRoute,
+      isTrue,
+    );
+    expect(_sshServer(url: '   ').hasMaidCafeTerminalRoute, isFalse);
+    // A port a native client learned is a route on its own.
+    expect(_sshServer(daemonPort: 9000).hasMaidCafeTerminalRoute, isTrue);
+  });
+
+  test('a browser dials the server host on the learned daemon port', () {
+    // The native client reaches the daemon through its SSH tunnel, so what it
+    // stores is a loopback address; a browser has no tunnel and dials the host.
+    expect(
+      _sshServer(
+        url: 'http://127.0.0.1:8747',
+        daemonPort: 8747,
+      ).maidCafeBrowserTerminalUrl,
+      'http://ssh.local:8747',
+    );
+    // With no stored endpoint at all, the learned port is enough to try.
+    expect(
+      _sshServer(daemonPort: 9000).maidCafeBrowserTerminalUrl,
+      'http://ssh.local:9000',
+    );
+    // Without a learned port the stored address still carries one.
+    expect(
+      _sshServer(url: 'http://127.0.0.1:8747').maidCafeBrowserTerminalUrl,
+      'http://ssh.local:8747',
+    );
+    // A path-prefixed reverse proxy keeps its prefix.
+    expect(
+      _sshServer(
+        url: 'http://127.0.0.1:8747/maidcafe',
+        daemonPort: 8747,
+      ).maidCafeBrowserTerminalUrl,
+      'http://ssh.local:8747/maidcafe',
+    );
+    // An endpoint that is already reachable is left alone.
+    expect(
+      _sshServer(
+        url: 'https://host.tailnet.ts.net',
+        daemonPort: 8747,
+      ).maidCafeBrowserTerminalUrl,
+      'https://host.tailnet.ts.net',
+    );
+    // Nothing to dial.
+    expect(_sshServer().maidCafeBrowserTerminalUrl, isNull);
+    expect(_sshServer(url: '   ').maidCafeBrowserTerminalUrl, isNull);
+    expect(
+      _sshServer(
+        url: 'http://127.0.0.1:8747',
+        host: '',
+      ).maidCafeBrowserTerminalUrl,
+      'http://127.0.0.1:8747',
+    );
+    // A row that is itself loopback stays on loopback.
+    expect(
+      _sshServer(
+        host: '127.0.0.1',
+        daemonPort: 9000,
+      ).maidCafeBrowserTerminalUrl,
+      'http://127.0.0.1:9000',
+    );
+  });
 }
 
-Server _daemonServer(String endpoint) => Server(
-  id: 7,
-  name: 'Daemon host',
-  host: 'daemon.local',
-  port: 8747,
-  username: '',
+/// An SSH server row that may also carry a MaidCafe daemon route.
+Server _sshServer({
+  String host = 'ssh.local',
+  String? url,
+  String? daemonId,
+  int? daemonPort,
+  bool viaCloud = false,
+}) => Server(
+  id: 3,
+  name: 'SSH host',
+  host: host,
+  port: 22,
+  username: 'deploy',
   collectStats: false,
   collectSystemInfo: false,
-  connectionType: ServerConnectionType.maidcafe.name,
-  maidCafeTerminalUrl: endpoint,
-  maidCafeTerminalViaCloud: false,
+  connectionType: ServerConnectionType.ssh.name,
+  maidCafeTerminalUrl: url,
+  maidCafeDaemonId: daemonId,
+  maidCafeTerminalPort: daemonPort,
+  maidCafeTerminalViaCloud: viaCloud,
 );
+
+Server _daemonServer(String endpoint, {String connectionType = 'maidcafe'}) =>
+    Server(
+      id: 7,
+      name: 'Daemon host',
+      host: 'daemon.local',
+      port: 8747,
+      username: '',
+      collectStats: false,
+      collectSystemInfo: false,
+      connectionType: connectionType,
+      maidCafeTerminalUrl: endpoint,
+      maidCafeTerminalViaCloud: false,
+    );
 
 /// A WebSocket endpoint that speaks the daemon's side of the terminal
 /// protocol, so the transport is exercised over a real socket.

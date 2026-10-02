@@ -22,6 +22,7 @@ import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/platform/platform_support.dart'
     show platformPathSeparator;
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/presentation/task_progress.dart';
 import 'package:maid_kit/theme.dart';
@@ -4651,6 +4652,7 @@ class _FilePane extends StatelessWidget {
     return Listener(
       onPointerDown: onPointerDown,
       child: ContextMenuWidget(
+        desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
         menuProvider: (_) => backgroundMenu(),
         child: DragTarget<_FileDragData>(
           onWillAcceptWithDetails: (details) {
@@ -4870,6 +4872,7 @@ class _LocalFileList extends StatelessWidget {
       final dragData = dragDataFor(entry);
       final isSymbolicLink = entry is Link;
       return ContextMenuWidget(
+        desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
         menuProvider: (_) {
           onContextPrepare(entry, index);
           return menuProvider(entry, index);
@@ -5002,6 +5005,7 @@ class _RemoteFileList extends StatelessWidget {
       final dragData = dragDataFor(entry);
       final isSymbolicLink = symbolicLinkPaths.contains(path);
       return ContextMenuWidget(
+        desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
         menuProvider: (_) {
           onContextPrepare(entry, index);
           return menuProvider(entry, index);

@@ -10,6 +10,7 @@ import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:solsynth_express/solsynth_express.dart';
 
 import 'maidcafe_service.dart';
+import 'maidcafe_stream.dart';
 import 'package_models.dart';
 import 'server_providers.dart';
 
@@ -528,17 +529,24 @@ Future<void> _installMaidCafeDaemon({
       );
     },
   );
-  await ref
-      .read(serverRepositoryProvider)
-      .updateMaidCafeConfig(
-        server,
-        daemonUrl: 'http://$listenHost:$port',
-        metricsSecret: apiSecret,
-        // A cloud-registered daemon gets its uuid stored so the server editor
-        // can prefill it and a relayed terminal can address the session; a
-        // local-only install has no cloud identity.
-        daemonId: cloudUrl.isEmpty ? null : daemonId,
-      );
+  final repository = ref.read(serverRepositoryProvider);
+  await repository.updateMaidCafeConfig(
+    server,
+    daemonUrl: 'http://$listenHost:$port',
+    metricsSecret: apiSecret,
+    // A cloud-registered daemon gets its uuid stored so the server editor
+    // can prefill it and a relayed terminal can address the session; a
+    // local-only install has no cloud identity.
+    daemonId: cloudUrl.isEmpty ? null : daemonId,
+  );
+  // The daemon is installed and running: point the shell route at it.
+  await repository.configureMaidCafeTerminal(
+    server,
+    port: port,
+    listenHost: listenHost,
+    apiSecret: apiSecret,
+    daemonId: cloudUrl.isEmpty ? null : daemonId,
+  );
 }
 
 /// The systemd unit MaidKit owns for the daemon. sudo needs its setuid bit
@@ -815,6 +823,79 @@ String patchMaidCafeConfigText(
   return result.join('\n');
 }
 
+/// Patches the `[daemon.terminal]` table of [currentConfig] with [values].
+///
+/// [patchMaidCafeConfigText] only reaches the `[daemon]` table, but the daemon
+/// keeps its terminal endpoint in `[daemon.terminal]`. The table is created at
+/// the end of the file when it does not exist, and keys it does not mention are
+/// left untouched, so a hand-written origin list or comment survives.
+String patchMaidCafeTerminalConfigText(
+  String currentConfig,
+  Map<String, String> values,
+) => patchMaidCafeTomlTable(currentConfig, 'daemon.terminal', values);
+
+/// Patches `[daemon.terminal.relay]`, the table that lets the cloud hand
+/// sessions to this daemon. It is off by default and independent of the direct
+/// endpoint, so it is written on its own.
+String patchMaidCafeTerminalRelayConfigText(
+  String currentConfig,
+  Map<String, String> values,
+) => patchMaidCafeTomlTable(currentConfig, 'daemon.terminal.relay', values);
+
+/// Patches one TOML table of [currentConfig] in place.
+///
+/// Keys [values] mentions are replaced (a trailing comment is kept), every other
+/// key, comment and table is left byte-for-byte alone, and a table that does not
+/// exist yet is appended at the end of the file.
+String patchMaidCafeTomlTable(
+  String currentConfig,
+  String table,
+  Map<String, String> values,
+) {
+  if (values.isEmpty) return currentConfig;
+  final header = '[$table]';
+  final lines = currentConfig.split('\n');
+  final missing = <String>{...values.keys};
+  final result = <String>[];
+  var inSection = false;
+  var sectionEnd = -1;
+  for (final line in lines) {
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('[')) {
+      if (inSection) sectionEnd = result.length;
+      inSection = trimmed == header;
+      result.add(line);
+      continue;
+    }
+    if (!inSection) {
+      result.add(line);
+      continue;
+    }
+    var replaced = false;
+    for (final entry in values.entries) {
+      if (RegExp(r'^\s*' + RegExp.escape(entry.key) + r'\s*=').hasMatch(line)) {
+        result.add('${entry.key} = ${entry.value}');
+        missing.remove(entry.key);
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) result.add(line);
+  }
+  if (inSection) sectionEnd = result.length;
+  if (missing.isNotEmpty) {
+    final insertion = <String>[
+      for (final key in missing) '$key = ${values[key]}',
+    ];
+    if (sectionEnd >= 0) {
+      result.insertAll(sectionEnd, ['', ...insertion]);
+    } else {
+      result.addAll(['', header, ...insertion]);
+    }
+  }
+  return result.join('\n');
+}
+
 /// Serializes a managed-upload patch (`statusUploadEnabled` bool,
 /// `managedContainers` / `managedComposes` string lists) into pre-formatted
 /// TOML literals for [buildMaidCafeUploadsPatchScript].
@@ -862,6 +943,25 @@ printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $
 /// `[[daemon.actions]]` blocks out into fragments, deploys the action files,
 /// reconciles the sudoers rule and systemd unit, and restarts the daemon.
 /// The daemon binary is never replaced.
+/// The browser origin the official MaidKit web build is served from.
+///
+/// It is seeded into the daemon's terminal origin list when the terminal is
+/// configured without one, so the hosted build can attach without the user
+/// editing the daemon by hand. Another deployment adds its own origin in the
+/// daemon's config editor.
+const List<String> maidCafeDefaultTerminalOrigins = [
+  'https://mkw.solsynth.dev',
+];
+
+/// The shell a session gets when the configuration names none.
+///
+/// The daemon rejects a configuration that enables its terminal — directly or
+/// through the relay — while `daemon.terminal.shells` is empty, and a rejected
+/// configuration leaves the running daemon on its previous policy. Writing the
+/// switch without this list is therefore what "enabled but still refused" looks
+/// like from the outside.
+const List<String> maidCafeDefaultTerminalShells = ['/bin/bash'];
+
 String buildMaidCafeDaemonConfigScript({
   required String currentConfig,
   required String daemonId,
@@ -879,6 +979,11 @@ String buildMaidCafeDaemonConfigScript({
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
+  bool? terminalEnabled,
+  String terminalSecret = '',
+  List<String> terminalAllowedOrigins = const [],
+  bool? terminalRelayEnabled,
+  List<String> terminalShells = const [],
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
     throw ArgumentError.value(
@@ -919,7 +1024,7 @@ systemctl daemon-reload
 # ExecReload fall back to a restart, which picks the config up anyway.
 systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemon
 ''';
-  final patched =
+  var patched =
       patchMaidCafeConfigText(stripMaidCafeInlineActions(currentConfig), {
         'id': _tomlString(daemonId.trim()),
         'transport': _tomlString(transport.trim()),
@@ -935,6 +1040,50 @@ systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemo
         'maxBodyBytes': '$maxBodyBytes',
         'maxConcurrentRuns': '$maxConcurrentRuns',
       });
+  // The terminal endpoint lives in its own table; only what the caller knows is
+  // written, so a daemon configured by hand keeps the rest of its section.
+  //
+  // An origin list the daemon already has is never replaced. When the terminal
+  // is switched on and neither the caller nor the daemon names an origin, the
+  // hosted web build's origin is seeded, because a browser with no allowed
+  // origin can never attach.
+  final existingTerminal = parseMaidCafeTerminalConfig(currentConfig);
+  final origins = terminalAllowedOrigins.isNotEmpty
+      ? terminalAllowedOrigins
+      : (terminalEnabled == true && existingTerminal.allowedOrigins.isEmpty
+            ? maidCafeDefaultTerminalOrigins
+            : const <String>[]);
+  // The daemon refuses a configuration that turns the terminal on — directly or
+  // through the relay — with no shell list, and then keeps running the policy it
+  // already had: the switch reads as on while every session is refused. So a
+  // shell list is written whenever the result would enable either switch,
+  // including for a file that was already enabled without one.
+  final enablesTerminal =
+      terminalEnabled == true ||
+      terminalRelayEnabled == true ||
+      existingTerminal.enabled == true ||
+      existingTerminal.relayEnabled == true;
+  final shells = terminalShells.isNotEmpty
+      ? terminalShells
+      : (enablesTerminal && existingTerminal.shells.isEmpty
+            ? maidCafeDefaultTerminalShells
+            : const <String>[]);
+  patched = patchMaidCafeTerminalConfigText(patched, {
+    if (terminalEnabled != null) 'enabled': '$terminalEnabled',
+    if (terminalSecret.trim().isNotEmpty)
+      'secret': _tomlString(terminalSecret.trim()),
+    if (origins.isNotEmpty)
+      'allowedOrigins':
+          '[${[for (final origin in origins) _tomlString(origin)].join(', ')}]',
+    if (shells.isNotEmpty)
+      'shells':
+          '[${[for (final shell in shells) _tomlString(shell)].join(', ')}]',
+  });
+  // Cloud-relayed sessions are a second opt-in on the daemon's side; the cloud
+  // only mints a ticket once its own daemon record opted in as well.
+  patched = patchMaidCafeTerminalRelayConfigText(patched, {
+    if (terminalRelayEnabled != null) 'enabled': '$terminalRelayEnabled',
+  });
   final encodedConfig = base64Encode(utf8.encode(patched));
   return '''set -eu
 install -d -o root -g root -m 0755 /etc/maidcafe

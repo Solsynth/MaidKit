@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
@@ -8,6 +9,54 @@ import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_repository.dart';
 import 'package:maid_kit/servers/vault_service.dart';
+
+/// In-memory stand-in for the OS keychain, so vault creation (which caches the
+/// sync passphrase) works without a platform implementation.
+class _MemoryStorage extends FlutterSecureStorage {
+  final Map<String, String> values = {};
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => values[key];
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
+}
 
 /// drift_flutter resolves its native database directory through
 /// path_provider; point it at the system temp directory in tests.
@@ -77,6 +126,260 @@ void main() {
         '/srv/projects',
         '/var/log',
       ]);
+    });
+
+    test('a detected daemon configures the shell route', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'daemon-host',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+
+      // What a probe (or an install) learned about the daemon.
+      await vaultRepository.configureMaidCafeTerminal(
+        created,
+        port: 9443,
+        listenHost: '127.0.0.1',
+        apiSecret: 'daemon-secret',
+        daemonId: 'daemon-1',
+        terminalEnabled: false,
+      );
+
+      final server = (await vaultRepository.all()).single;
+      expect(server.maidCafeTerminalPort, 9443);
+      // The daemon's own terminal switch travels with the route, so a failure
+      // message does not blame a port that is already open.
+      expect(server.maidCafeTerminalEnabled, isFalse);
+      // The daemon only listens on its own loopback, so that is the address the
+      // app dials (a native client through its forward).
+      expect(server.maidCafeTerminalUrl, 'http://127.0.0.1:9443');
+      expect(server.maidCafeDaemonId, 'daemon-1');
+      expect(server.encryptedMaidCafeMetricsSecret, isNotNull);
+      expect(server.hasMaidCafeTerminalRoute, isTrue);
+      expect(
+        (await vaultRepository.maidCafeTerminalTargetFor(
+          server,
+          browserBuild: false,
+        ))?.baseUrl,
+        'http://127.0.0.1:9443',
+      );
+      // A browser dials the server host on the learned port instead.
+      expect(
+        (await vaultRepository.maidCafeTerminalTargetFor(
+          server,
+          browserBuild: true,
+        ))?.baseUrl,
+        'http://10.0.0.9:9443',
+      );
+    });
+
+    test('the daemon terminal switch is recorded on its own', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'daemon-host',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      expect(
+        (await vaultRepository.all()).single.maidCafeTerminalEnabled,
+        isNull,
+      );
+
+      await vaultRepository.setMaidCafeTerminalEnabled(created, true);
+      expect(
+        (await vaultRepository.all()).single.maidCafeTerminalEnabled,
+        isTrue,
+      );
+
+      // A daemon that stops stating it clears the knowledge again.
+      await vaultRepository.setMaidCafeTerminalEnabled(created, null);
+      expect(
+        (await vaultRepository.all()).single.maidCafeTerminalEnabled,
+        isNull,
+      );
+    });
+
+    test(
+      'a daemon address keeps an announced host and falls back to loopback',
+      () {
+        expect(
+          maidCafeDialUrl('daemon.example', 8747),
+          'http://daemon.example:8747',
+        );
+        // Listening on every interface says nothing this app can dial.
+        expect(maidCafeDialUrl('0.0.0.0', 8747), 'http://127.0.0.1:8747');
+        expect(maidCafeDialUrl('::', 8747), 'http://127.0.0.1:8747');
+        expect(maidCafeDialUrl(null, 8747), 'http://127.0.0.1:8747');
+      },
+    );
+
+    test('a learned credential is stored like an entered one', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'daemon-host',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      expect(await vaultRepository.maidCafeMetricsSecretFor(created), isNull);
+
+      // What reading the daemon's configuration over SSH does with the secret
+      // it found: the route that could not be built now has a credential.
+      await vaultRepository.setMaidCafeMetricsSecret(created, 'daemon-secret');
+      final stored = (await vaultRepository.all()).single;
+      expect(
+        await vaultRepository.maidCafeMetricsSecretFor(stored),
+        'daemon-secret',
+      );
+      // The ciphertext is what lands in the row, never the secret itself.
+      expect(
+        stored.encryptedMaidCafeMetricsSecret,
+        isNot(contains('daemon-secret')),
+      );
+
+      // An empty report never clears a good credential.
+      await vaultRepository.setMaidCafeMetricsSecret(stored, '   ');
+      expect(
+        await vaultRepository.maidCafeMetricsSecretFor(
+          (await vaultRepository.all()).single,
+        ),
+        'daemon-secret',
+      );
+    });
+
+    test('a forced route overrides the stored transport preference', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'relay-host',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+          maidCafeTerminalUrl: 'https://daemon.example',
+          maidCafeDaemonId: 'daemon-1',
+          maidCafeTerminalViaCloud: true,
+        ),
+      );
+      await vaultRepository.updateMaidCafeConfig(
+        created,
+        daemonUrl: 'http://127.0.0.1:8747',
+        metricsSecret: 'metrics',
+      );
+      final server = (await vaultRepository.all()).single;
+
+      // The relay needs a cloud session, so asking for it must fail loudly
+      // instead of quietly dialing the daemon.
+      expect(
+        await vaultRepository.maidCafeTerminalTargetFor(
+          server,
+          useCloudRelay: true,
+        ),
+        isNull,
+      );
+      // Forcing the daemon route ignores the stored relay preference.
+      final direct = await vaultRepository.maidCafeTerminalTargetFor(
+        server,
+        useCloudRelay: false,
+      );
+      expect(direct?.baseUrl, 'https://daemon.example');
+      expect(direct?.isRelayed, isFalse);
+      // The stored preference falls back to the daemon on a device with no
+      // cloud session.
+      final auto = await vaultRepository.maidCafeTerminalTargetFor(server);
+      expect(auto?.isRelayed, isFalse);
+      expect(auto?.baseUrl, 'https://daemon.example');
+    });
+
+    test(
+      'a learned daemon port is saved and dialed on the browser host',
+      () async {
+        // An unlocked vault with an in-memory keychain, so the metrics secret
+        // the daemon terminal authorizes with can be encrypted.
+        final vault = VaultService(database, secureStorage: _MemoryStorage());
+        await vault.create('password');
+        final vaultRepository = ServerRepository(database, vault);
+
+        final credentialId = await insertCredential();
+        final created = await vaultRepository.create(
+          ServerDraft(
+            name: 'web-host',
+            host: '10.0.0.9',
+            port: 22,
+            username: 'root',
+            credentialId: credentialId,
+            maidCafeTerminalUrl: 'http://127.0.0.1:8747',
+          ),
+        );
+        // A native client probes the daemon over SSH; the address it records is
+        // its own tunnel loopback, and the port travels with it.
+        await vaultRepository.updateMaidCafeConfig(
+          created,
+          daemonUrl: 'http://127.0.0.1:8747',
+          metricsSecret: 'metrics',
+        );
+        final server = (await vaultRepository.all()).single;
+        expect(server.maidCafeTerminalPort, 8747);
+
+        // A browser has no tunnel, so it dials the same daemon on the host.
+        final browser = await vaultRepository.maidCafeTerminalTargetFor(
+          server,
+          browserBuild: true,
+        );
+        expect(browser?.baseUrl, 'http://10.0.0.9:8747');
+
+        // A native client keeps the tunnel address it stored.
+        final native = await vaultRepository.maidCafeTerminalTargetFor(
+          server,
+          browserBuild: false,
+        );
+        expect(native?.baseUrl, 'http://127.0.0.1:8747');
+      },
+    );
+
+    test('a cleared daemon config drops the learned port', () async {
+      final credentialId = await insertCredential();
+      final created = await repository.create(
+        ServerDraft(
+          name: 'web-host',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      await repository.updateMaidCafeConfig(
+        created,
+        daemonUrl: 'http://127.0.0.1:9000',
+      );
+      expect((await repository.all()).single.maidCafeTerminalPort, 9000);
+
+      await repository.clearMaidCafeConfig(created);
+      expect((await repository.all()).single.maidCafeTerminalPort, isNull);
     });
 
     test('create and update persist chained jump hosts', () async {

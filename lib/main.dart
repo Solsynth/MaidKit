@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
@@ -114,41 +116,65 @@ Future<void> main(List<String> args) async {
     // Keep the desktop window resizable below the responsive breakpoint so
     // narrow-layout behavior can be exercised without a mobile device.
     const minimumSize = Size(390, 520);
+    const defaultSize = Size(1180, 760);
     final savedWindowState = await loadMaidKitWindowState();
     // A crash or force-kill after a resize can leave the saved bounds pointing
     // at a display that is no longer attached (or at one arranged away from
-    // the origin). Move the window back onto an attached display, keeping the
-    // saved size, when that happened.
-    final recoveryFrame = savedWindowState == null
+    // the origin). Re-apply the saved frame — position included — but move the
+    // window back onto an attached display, keeping its size, when it no
+    // longer touches one.
+    final restoreFrame = savedWindowState == null
         ? null
-        : recoveryFrameFor(
+        : restoreFrameFor(
             saved: savedWindowState.bounds,
             displays: await loadDisplayWorkAreas(),
             minimumSize: minimumSize,
           );
     final windowOptions = WindowOptions(
-      // Restore the user-adjusted window bounds. A maximized window is
-      // reported as maximized rather than by its (unstable) frame size, so it
-      // is re-maximized after the window is created at the saved frame size.
-      size: savedWindowState?.bounds.size,
+      // Restore the user-adjusted window size. A maximized window is reported
+      // as maximized rather than by its (unstable) frame size, so it is
+      // re-maximized after the window is created at the saved frame size.
+      size: restoreFrame?.size ?? savedWindowState?.bounds.size ?? defaultSize,
       minimumSize: minimumSize,
+      // The saved position is re-applied below; only a fresh window is centered.
       center: savedWindowState == null,
       titleBarStyle: TitleBarStyle.hidden,
       windowButtonVisibility: true,
     );
+    // `waitUntilReadyToShow` does not await its callback, so wait for the
+    // restore below to finish before the state listener snapshots the current
+    // geometry. Otherwise that baseline write races the restored position and
+    // immediately overwrites it with the platform's default one.
+    final restored = Completer<void>();
+    var restoreScheduled = false;
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
-      if (recoveryFrame != null) {
-        await windowManager.setBounds(recoveryFrame);
+      restoreScheduled = true;
+      try {
+        if (restoreFrame != null) {
+          await windowManager.setBounds(restoreFrame);
+        }
+        if (savedWindowState?.maximized ?? false) {
+          await windowManager.maximize();
+        }
+      } catch (_) {
+        // Restoring the exact frame is best-effort; the window still shows.
       }
-      if (savedWindowState?.maximized ?? false) {
-        await windowManager.maximize();
+      try {
+        await windowManager.show();
+        await windowManager.focus();
+      } finally {
+        if (!restored.isCompleted) restored.complete();
       }
-      await windowManager.show();
-      await windowManager.focus();
     });
+    if (restoreScheduled) await restored.future;
     // Keep the persisted geometry fresh for the rest of the session, and make
-    // a final best-effort write when the title-bar close button is used.
-    await MaidKitWindowStateListener().start();
+    // a final best-effort write when the window is closed through the native
+    // path (the in-app close button goes through `closeMaidKitWindow`, which
+    // flushes the same state before quitting).
+    final windowStateListener = MaidKitWindowStateListener(
+      initial: savedWindowState,
+    );
+    await windowStateListener.start();
     MaidKitWindowStateListener.onAppClose(saveMaidKitWindowStateFromWindow);
     MaidKitWindowStateListener.onAppClose(
       () => container.read(terminalTabsProvider.notifier).saveSnapshotNow(),

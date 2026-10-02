@@ -1,11 +1,13 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:uuid/uuid.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'port_forwarding_models.dart';
 import 'server_models.dart';
+import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
 import 'vault_service.dart';
 
@@ -247,6 +249,13 @@ class ServerRepository {
     String? daemonId,
   }) async {
     final normalizedUrl = normalizeMaidCafeLocalDaemonUrl(daemonUrl);
+    // The port the daemon runs on travels in this address, and a browser build
+    // cannot probe for it: keep it whenever the caller learned it, so the web
+    // client can dial the server host instead of the tunnel's loopback address.
+    final daemonUri = Uri.tryParse(normalizedUrl);
+    final daemonPort = daemonUri != null && daemonUri.hasPort
+        ? daemonUri.port
+        : null;
     final encryptedSecret =
         webhookSecret == null || webhookSecret.trim().isEmpty
         ? null
@@ -291,6 +300,106 @@ class ServerRepository {
         maidCafeDaemonId: daemonId == null || daemonId.trim().isEmpty
             ? const Value.absent()
             : Value(daemonId.trim()),
+        maidCafeTerminalPort: daemonPort == null
+            ? const Value.absent()
+            : Value(daemonPort),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  /// Configures the daemon **shell** route for [server] from what an install or
+  /// a probe just learned: the port the daemon listens on, the address this app
+  /// dials for a terminal, its own API credential, and its cloud identity when
+  /// it has one.
+  ///
+  /// Called as soon as a MaidCafe installation is detected, so a shell can be
+  /// opened over the daemon (or through the relay) without filling the endpoint
+  /// in by hand. The stored address is the app's own dial address — loopback
+  /// when the daemon only listens locally, which a native client reaches through
+  /// its SSH forward and a browser client re-points at the server host (see
+  /// [ServerMaidCafeRoute.maidCafeBrowserTerminalUrl]).
+  Future<void> configureMaidCafeTerminal(
+    Server server, {
+    required int port,
+    String? listenHost,
+    String? apiSecret,
+    String? daemonId,
+    bool? terminalEnabled,
+  }) async {
+    final encryptedMetricsSecret = apiSecret == null || apiSecret.trim().isEmpty
+        ? null
+        : await _vault.encrypt(
+            apiSecret.trim(),
+            context: 'maidcafe-metrics-secret',
+          );
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeTerminalUrl: Value(maidCafeDialUrl(listenHost, port)),
+        maidCafeTerminalPort: Value(port),
+        maidCafeTerminalEnabled: terminalEnabled == null
+            ? const Value.absent()
+            : Value(terminalEnabled),
+        encryptedMaidCafeMetricsSecret: encryptedMetricsSecret == null
+            ? const Value.absent()
+            : Value(encryptedMetricsSecret.bytes),
+        maidCafeMetricsSecretNonce: encryptedMetricsSecret == null
+            ? const Value.absent()
+            : Value(encryptedMetricsSecret.nonce),
+        maidCafeDaemonId: daemonId == null || daemonId.trim().isEmpty
+            ? const Value.absent()
+            : Value(daemonId.trim()),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  /// Records the cloud daemon uuid for [server], so the relay can address it
+  /// without looking the registration up again.
+  Future<void> setMaidCafeDaemonId(Server server, String daemonId) async {
+    final id = daemonId.trim();
+    if (id.isEmpty) return;
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeDaemonId: Value(id),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  /// Records whether the daemon's terminal endpoint is enabled, as read from
+  /// its configuration. Null clears the knowledge again (a daemon that does not
+  /// state it), so a failure message knows when it has to guess.
+  Future<void> setMaidCafeTerminalEnabled(Server server, bool? enabled) async {
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeTerminalEnabled: Value(enabled),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  /// Stores the metrics secret the daemon reports, for a client that had none
+  /// or had a stale one.
+  Future<void> setMaidCafeMetricsSecret(Server server, String secret) async {
+    final trimmed = secret.trim();
+    if (trimmed.isEmpty) return;
+    final encrypted = await _vault.encrypt(
+      trimmed,
+      context: 'maidcafe-metrics-secret',
+    );
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        encryptedMaidCafeMetricsSecret: Value(encrypted.bytes),
+        maidCafeMetricsSecretNonce: Value(encrypted.nonce),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -302,6 +411,10 @@ class ServerRepository {
     )..where((table) => table.id.equals(server.id))).write(
       ServersCompanion(
         maidCafeDaemonUrl: const Value(null),
+        // The learned daemon port and terminal switch describe a daemon this
+        // row no longer has.
+        maidCafeTerminalPort: const Value(null),
+        maidCafeTerminalEnabled: const Value(null),
         encryptedMaidCafeWebhookSecret: const Value(null),
         maidCafeWebhookSecretNonce: const Value(null),
         encryptedMaidCafeMetricsSecret: const Value(null),
@@ -352,15 +465,38 @@ class ServerRepository {
   /// The direct credential is the dedicated terminal secret when one is stored,
   /// and the stored daemon metrics secret otherwise — the same fallback the
   /// daemon itself applies to `daemon.terminal.secret`.
+  /// [browserBuild] picks the browser view of a stored endpoint: a browser
+  /// cannot use the native client's SSH tunnel, so [Server.host] is dialed on
+  /// the daemon port a native client learned instead of the tunnel's loopback
+  /// address (see [ServerMaidCafeRoute.maidCafeBrowserTerminalUrl]). Injected
+  /// rather than read from [kIsWeb] so tests can drive either flow.
+  /// [useCloudRelay] forces the relay (`true`) or the daemon itself
+  /// (`false`); null follows the server's own setting. A route that cannot be
+  /// built — no daemon id, no cloud session, no endpoint — resolves to null, so
+  /// callers can report why before a socket is opened.
+  /// [relayDaemonId] overrides the stored cloud identity for the relay, for a
+  /// caller that found the registration in the workspace again (see
+  /// [pickMaidCafeDaemonForServer]).
   Future<MaidCafeTerminalTarget?> maidCafeTerminalTargetFor(
-    Server server,
-  ) async {
-    final daemonId = server.maidCafeDaemonId?.trim();
+    Server server, {
+    bool browserBuild = kIsWeb,
+    bool? useCloudRelay,
+    String? relayDaemonId,
+  }) async {
+    final daemonId = (relayDaemonId ?? server.maidCafeDaemonId)?.trim();
     final service = maidCafeService;
-    if (server.maidCafeTerminalViaCloud &&
-        daemonId != null &&
-        daemonId.isNotEmpty &&
-        service != null) {
+    final relay = useCloudRelay ?? server.maidCafeTerminalViaCloud;
+    maidCafeLog(
+      'route for "${server.name}": '
+      'requested=${useCloudRelay ?? 'server setting'} '
+      'stored=${server.maidCafeTerminalViaCloud} relay=$relay '
+      'daemonId=${daemonId ?? 'none'}',
+    );
+    if (relay && daemonId != null && daemonId.isNotEmpty && service != null) {
+      maidCafeLog(
+        'dialing the cloud relay at ${service.baseUrl} for daemon $daemonId '
+        '(credential: a ticket minted per session, nothing stored)',
+      );
       return MaidCafeTerminalTarget(
         baseUrl: service.baseUrl,
         // The relay credential is the minted ticket, so the daemon secret is
@@ -374,12 +510,43 @@ class ServerRepository {
         ),
       );
     }
-    final url = server.maidCafeTerminalUrl?.trim();
-    if (url == null || url.isEmpty) return null;
-    final secret =
-        await maidCafeTerminalSecretFor(server) ??
-        await maidCafeMetricsSecretFor(server);
-    if (secret == null || secret.isEmpty) return null;
+    // The relay was asked for explicitly and cannot be built: the server has
+    // no daemon identity or this device has no cloud session.
+    if (useCloudRelay == true) {
+      maidCafeLog(
+        'relay was requested but cannot be built: '
+        'daemonId=${daemonId ?? 'none'} cloudService=${service != null}',
+      );
+      return null;
+    }
+    final url = browserBuild
+        ? server.maidCafeBrowserTerminalUrl
+        : server.maidCafeTerminalUrl?.trim();
+    if (url == null || url.isEmpty) {
+      maidCafeLog(
+        'no daemon endpoint for "${server.name}": stored=${server.maidCafeTerminalUrl} '
+        'browserHost=${server.maidCafeBrowserTerminalUrl}',
+      );
+      return null;
+    }
+    final terminalSecret = await maidCafeTerminalSecretFor(server);
+    final metricsSecret = await maidCafeMetricsSecretFor(server);
+    final secret = terminalSecret ?? metricsSecret;
+    maidCafeLog(
+      'dialing the daemon at $url; credential: '
+      '${terminalSecret != null && terminalSecret.isNotEmpty
+          ? 'dedicated terminal secret'
+          : metricsSecret != null && metricsSecret.isNotEmpty
+          ? 'metrics secret'
+          : 'none stored'} '
+      '${maidCafeDescribeSecret(terminalSecret: terminalSecret, metricsSecret: metricsSecret)}',
+    );
+    if (secret == null || secret.isEmpty) {
+      maidCafeLog(
+        'no credential is stored, so the direct route cannot be built',
+      );
+      return null;
+    }
     return MaidCafeTerminalTarget(baseUrl: url, secret: secret);
   }
 

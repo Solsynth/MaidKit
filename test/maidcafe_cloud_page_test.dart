@@ -8,7 +8,6 @@ import 'package:easy_localization/src/localization.dart' as ez;
 import 'package:easy_localization/src/translations.dart' as ez_tr;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
@@ -16,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
 import 'package:maid_kit/servers/maidcafe_daemon_detail_page.dart';
+import 'package:maid_kit/servers/maidcafe_notifications_tab.dart';
 import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_connect.dart';
 import 'package:maid_kit/servers/maidcafe_preferences.dart';
@@ -361,7 +361,7 @@ void main() {
     expect(find.text('exit code 1'), findsOneWidget);
   });
 
-  testWidgets('notifications refresh from pull and top-edge hover', (
+  testWidgets('notifications refresh from pull and the toolbar button', (
     tester,
   ) async {
     var fetches = 0;
@@ -377,28 +377,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(fetches, 1);
 
-    final refreshIndicator = find.byType(RefreshIndicator);
-    final refreshTopLeft = tester.getTopLeft(refreshIndicator);
+    final feed = find.descendant(
+      of: find.byType(MaidCafeNotificationsTab),
+      matching: find.byType(RefreshIndicator),
+    );
     await tester.dragFrom(
-      refreshTopLeft + const Offset(300, 180),
+      tester.getTopLeft(feed) + const Offset(300, 120),
       const Offset(0, 420),
     );
     await tester.pumpAndSettle();
-    expect(fetches, greaterThan(1));
+    final afterPull = fetches;
+    expect(afterPull, greaterThan(1));
 
-    final refreshButton = find.byKey(
-      const ValueKey('maidcafe-notifications-refresh'),
+    await tester.tap(
+      find.byKey(const ValueKey('maidcafe-notifications-refresh')),
     );
-    final ignorePointer = find
-        .ancestor(of: refreshButton, matching: find.byType(IgnorePointer))
-        .first;
-    expect(tester.widget<IgnorePointer>(ignorePointer).ignoring, isTrue);
-    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
-    final topLeft = tester.getTopLeft(refreshIndicator);
-    await gesture.moveTo(topLeft + const Offset(100, 2));
-    await tester.pump();
-    expect(tester.widget<IgnorePointer>(ignorePointer).ignoring, isFalse);
-    await gesture.removePointer();
+    await tester.pumpAndSettle();
+    expect(fetches, greaterThan(afterPull));
   });
 
   testWidgets('fleet card surfaces a cloud heartbeat disconnect', (

@@ -14,6 +14,7 @@ import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 
 import 'deployment_project_models.dart';
@@ -483,6 +484,8 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
                               .where((r) => r.projectId == project.id)
                               .toList();
                           return ContextMenuWidget(
+                            desktopMenuWidgetBuilder:
+                                maidKitDesktopMenuWidgetBuilder,
                             menuProvider: (_) => Menu(
                               children: [
                                 MenuAction(

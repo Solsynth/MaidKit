@@ -97,6 +97,11 @@ Future<MaidCafeServerProbe> probeMaidCafeServer({
           server: server,
           sudoPassword: await maidCafeSudoPassword(ref, server),
         );
+        // Detecting the installation is also the moment its shell route is
+        // configured, so a terminal can be opened over the daemon (or the
+        // relay) without filling the endpoint in by hand. Best-effort: a
+        // failed write must not turn a successful probe into an error.
+        await _configureDetectedDaemon(ref, server, access);
         return MaidCafeServerProbe(
           MaidCafeServerProbeStatus.installed,
           access: access,
@@ -121,6 +126,49 @@ Future<MaidCafeServerProbe> probeMaidCafeServer({
       MaidCafeServerProbeStatus.error,
       message: error.toString(),
     );
+  }
+}
+
+/// Points [server]'s daemon shell route at the installation just read.
+///
+/// Skipped when the row already carries the same route, so opening the dialog
+/// twice does not rewrite the database. Failures are swallowed: the probe is
+/// reporting installation state, and the user can configure the route by hand.
+Future<void> _configureDetectedDaemon(
+  Ref ref,
+  Server server,
+  MaidCafeDaemonAccess access,
+) async {
+  final port = access.port;
+  if (port == null) return;
+  final secretStored =
+      server.encryptedMaidCafeMetricsSecret != null ||
+      server.encryptedMaidCafeTerminalSecret != null;
+  final daemonId = access.id?.trim();
+  final terminalEnabled = access.terminalEnabled;
+  final routeKnown =
+      server.maidCafeTerminalPort == port &&
+      (server.maidCafeTerminalUrl?.trim().isNotEmpty ?? false) &&
+      secretStored &&
+      (terminalEnabled == null ||
+          server.maidCafeTerminalEnabled == terminalEnabled) &&
+      (daemonId == null ||
+          daemonId.isEmpty ||
+          server.maidCafeDaemonId == daemonId);
+  if (routeKnown) return;
+  try {
+    await ref
+        .read(serverRepositoryProvider)
+        .configureMaidCafeTerminal(
+          server,
+          port: port,
+          listenHost: access.listenHost,
+          apiSecret: access.apiSecret,
+          daemonId: daemonId,
+          terminalEnabled: terminalEnabled,
+        );
+  } catch (_) {
+    // Best-effort; the probe result is what the caller asked for.
   }
 }
 

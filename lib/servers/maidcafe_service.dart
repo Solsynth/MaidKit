@@ -66,11 +66,19 @@ class MaidCafeDaemon {
     required this.updatedAt,
     this.hostId,
     this.disconnectedAt,
+    this.terminalRelayEnabled = false,
   });
 
   final String id;
   final String name;
   final bool enabled;
+
+  /// Whether this host accepts cloud-relayed terminals. The cloud refuses to
+  /// mint a relayed session until the daemon opted in here, and the daemon only
+  /// serves those sessions when its own `daemon.terminal.relay.enabled` is on:
+  /// both switches have to be set.
+  final bool terminalRelayEnabled;
+
   final DateTime? lastSeenAt;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -94,8 +102,52 @@ class MaidCafeDaemon {
       createdAt: _requiredDate(json, 'created_at'),
       updatedAt: _requiredDate(json, 'updated_at'),
       hostId: (hostId == null || hostId.isEmpty) ? null : hostId,
+      // Absent on a daemon that never opted in, and on older responses.
+      terminalRelayEnabled: json['terminal_relay_enabled'] == true,
     );
   }
+}
+
+/// The cloud daemon that belongs to a server called [serverName].
+///
+/// The app registers a daemon under the server's name, so a row that never
+/// stored the uuid — an import, a row synced from another device, a daemon
+/// registered from elsewhere — can still address the relay instead of reading
+/// as "not configured". Only an unambiguous match is used: two daemons sharing
+/// a name have to be resolved in the cloud page by hand.
+MaidCafeDaemon? pickMaidCafeDaemonForServer(
+  List<MaidCafeDaemon> daemons,
+  String serverName,
+) {
+  final name = serverName.trim().toLowerCase();
+  if (name.isEmpty) return null;
+  final matches = [
+    for (final daemon in daemons)
+      if (daemon.name.trim().toLowerCase() == name) daemon,
+  ];
+  return matches.length == 1 ? matches.single : null;
+}
+
+/// The cloud daemon to address for a server: the stored [daemonId] when the
+/// workspace still has it, otherwise the registration under [serverName].
+///
+/// A stored uuid goes stale — the daemon was re-registered, deleted, or the row
+/// came from a device that never saw the change — and a relay session addressed
+/// at a removed or foreign daemon is exactly what the cloud answers with
+/// "forbidden". Re-checking the identity against the workspace is what turns
+/// that back into a usable one.
+MaidCafeDaemon? resolveMaidCafeDaemon(
+  List<MaidCafeDaemon> daemons,
+  String serverName, {
+  String? daemonId,
+}) {
+  final id = daemonId?.trim();
+  if (id != null && id.isNotEmpty) {
+    for (final daemon in daemons) {
+      if (daemon.id == id) return daemon;
+    }
+  }
+  return pickMaidCafeDaemonForServer(daemons, serverName);
 }
 
 class MaidCafeDaemonCredential extends MaidCafeDaemon {
@@ -108,6 +160,7 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
     required super.updatedAt,
     super.hostId,
     super.disconnectedAt,
+    super.terminalRelayEnabled,
     required this.secret,
   });
 
@@ -125,6 +178,7 @@ class MaidCafeDaemonCredential extends MaidCafeDaemon {
       updatedAt: daemon.updatedAt,
       hostId: daemon.hostId,
       disconnectedAt: daemon.disconnectedAt,
+      terminalRelayEnabled: daemon.terminalRelayEnabled,
       secret: secret,
     );
   }
@@ -962,8 +1016,9 @@ class MaidCafeService {
     String daemonId, {
     String? name,
     bool? enabled,
+    bool? terminalRelayEnabled,
   }) async {
-    if (name == null && enabled == null) {
+    if (name == null && enabled == null && terminalRelayEnabled == null) {
       throw const MaidCafeException(
         'At least one daemon field must be provided.',
         kind: MaidCafeErrorKind.validation,
@@ -972,6 +1027,9 @@ class MaidCafeService {
     final data = <String, dynamic>{};
     if (name != null) data['name'] = name;
     if (enabled != null) data['enabled'] = enabled;
+    if (terminalRelayEnabled != null) {
+      data['terminal_relay_enabled'] = terminalRelayEnabled;
+    }
     final response = await _cloudRequest(
       (token) => _dio.patch<dynamic>(
         '$_apiBase/daemons/${_pathPart(daemonId)}',

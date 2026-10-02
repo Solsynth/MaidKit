@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:maid_kit/data/local/app_database.dart';
+
 import 'maidcafe_service.dart';
 
 enum CredentialType { password, privateKey, none }
@@ -219,7 +222,85 @@ ServerConnectionType serverConnectionTypeFromName(String? raw) =>
 ///
 /// On macOS, the unsandboxed Runner opens /dev/cu.* device nodes directly.
 /// Windows and Linux need their own transport before this flag can cover them.
-const bool serialPortsSupported = true;
+/// A browser has no device nodes and no platform channel to open one, so
+/// serial servers are offered read-only there and cannot be connected.
+const bool serialPortsSupported = !kIsWeb;
+
+/// Whether [server] carries a usable MaidCafe daemon terminal route.
+///
+/// The daemon endpoint is a transport, not a connection type: an SSH server
+/// can store one too, and then serves its terminal over the daemon wherever a
+/// raw socket is impossible (a browser build), while native builds keep using
+/// SSH. See [MaidCafeTerminalTarget].
+extension ServerMaidCafeRoute on Server {
+  /// A stored endpoint, a cloud relay identity, or a port a native client
+  /// learned for the daemon all reach a terminal.
+  bool get hasMaidCafeTerminalRoute {
+    final url = maidCafeTerminalUrl?.trim();
+    if (url != null && url.isNotEmpty) return true;
+    final daemonId = maidCafeDaemonId?.trim();
+    if (maidCafeTerminalViaCloud && daemonId != null && daemonId.isNotEmpty) {
+      return true;
+    }
+    return maidCafeTerminalPort != null;
+  }
+
+  /// The daemon terminal endpoint a browser should dial, or null when the row
+  /// carries none.
+  ///
+  /// A native client reaches the daemon through its own SSH tunnel, so the
+  /// endpoint it stores is a loopback address (`http://127.0.0.1:<port>`). A
+  /// browser has no tunnel and would dial its own machine, so when only such an
+  /// address (or none at all) is stored the endpoint is rebuilt against
+  /// [Server.host] on [Server.maidCafeTerminalPort], the port the daemon itself
+  /// reported. A stored endpoint that already names a non-loopback host is
+  /// returned unchanged.
+  ///
+  /// The rebuilt endpoint keeps the stored scheme — plain `http` for a tunnel
+  /// address — so a page served over https blocks that socket as mixed content;
+  /// reaching a plain-http daemon from one needs a TLS front, the same rule the
+  /// endpoint editor enforces for non-loopback addresses.
+  String? get maidCafeBrowserTerminalUrl {
+    final stored = maidCafeTerminalUrl?.trim();
+    final storedUrl = (stored == null || stored.isEmpty)
+        ? null
+        : Uri.tryParse(stored);
+    if (storedUrl != null && !_maidCafeHostIsLoopback(storedUrl.host)) {
+      return stored;
+    }
+    final host = this.host.trim();
+    final port =
+        maidCafeTerminalPort ??
+        (storedUrl != null && storedUrl.hasPort ? storedUrl.port : null);
+    if (port == null || host.isEmpty) {
+      return storedUrl == null ? null : stored;
+    }
+    return Uri(
+      scheme: storedUrl?.scheme ?? 'http',
+      host: host,
+      port: port,
+      path: storedUrl?.path ?? '',
+    ).toString();
+  }
+}
+
+/// The address this app dials for a daemon terminal when the daemon announces
+/// [listenHost] and [port].
+///
+/// Loopback is used when the daemon only listens locally or on every interface:
+/// a native client reaches that through its SSH forward, and a browser client
+/// re-points the stored address at the server host (see
+/// [ServerMaidCafeRoute.maidCafeBrowserTerminalUrl]). An announced host is kept
+/// as-is, because that is the address the daemon itself is reachable at.
+String maidCafeDialUrl(String? listenHost, int port) {
+  final host = (listenHost ?? '').trim();
+  final announced =
+      host.isNotEmpty && host != '0.0.0.0' && host != '::' && host != '[::]';
+  return 'http://${announced ? host : '127.0.0.1'}:$port';
+}
+
+bool _maidCafeHostIsLoopback(String host) =>
+    host == 'localhost' || host == '127.0.0.1' || host == '::1';
 
 /// Subprotocol token prefix that carries a terminal credential. A browser
 /// cannot set an `Authorization` header on a WebSocket handshake, so the

@@ -139,6 +139,20 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   late final TextEditingController _cloudSecretController;
   late final TextEditingController _metricsSecretController;
   late final TextEditingController _metricsIntervalController;
+  late final TextEditingController _terminalSecretController;
+  late final TextEditingController _terminalOriginsController;
+
+  /// `daemon.terminal.enabled` as the editor has it, and whether the daemon's
+  /// configuration stated it — an untouched switch must not be written back as
+  /// "off" for a daemon that never mentioned it.
+  bool _terminalEnabled = false;
+  bool _terminalEnabledKnown = false;
+
+  /// `daemon.terminal.relay.enabled`, the daemon's opt-in for sessions the
+  /// cloud hands over. Saving also mirrors it onto the cloud's daemon record,
+  /// which refuses to mint a relayed session until it is set.
+  bool _terminalRelayEnabled = false;
+  bool _terminalRelayEnabledKnown = false;
   late final TextEditingController _logsIntervalController;
   late final TextEditingController _requestTimeoutController;
   late final TextEditingController _scriptTimeoutController;
@@ -206,6 +220,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _cloudSecretController = TextEditingController();
     _metricsSecretController = TextEditingController();
     _metricsIntervalController = TextEditingController(text: '1m');
+    _terminalSecretController = TextEditingController();
+    _terminalOriginsController = TextEditingController();
     _logsIntervalController = TextEditingController(text: '30s');
     _requestTimeoutController = TextEditingController(text: '10s');
     _scriptTimeoutController = TextEditingController(text: '30s');
@@ -244,6 +260,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _cloudSecretController.dispose();
     _metricsSecretController.dispose();
     _metricsIntervalController.dispose();
+    _terminalSecretController.dispose();
+    _terminalOriginsController.dispose();
     _logsIntervalController.dispose();
     _requestTimeoutController.dispose();
     _scriptTimeoutController.dispose();
@@ -275,6 +293,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         ? value
         : null;
   }
+
+  /// The daemon terminal origins, one per line in the editor.
+  List<String> get _terminalOrigins => _terminalOriginsController.text
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
 
   int _configInt(TextEditingController controller, int fallback) =>
       int.tryParse(controller.text.trim()) ?? fallback;
@@ -342,6 +367,22 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     setText(_logsIntervalController, config.logsInterval);
     setText(_requestTimeoutController, config.requestTimeout);
     setText(_scriptTimeoutController, config.scriptTimeout);
+    setText(_terminalSecretController, config.terminalSecret);
+    if (config.terminalAllowedOrigins.isNotEmpty) {
+      _terminalOriginsController.text = config.terminalAllowedOrigins.join(
+        '\n',
+      );
+    } else {
+      // Seed the hosted web build's origin: a browser with no allowed origin
+      // can never attach, and this is the one users start from.
+      _terminalOriginsController.text = maidCafeDefaultTerminalOrigins.join(
+        '\n',
+      );
+    }
+    _terminalEnabledKnown = config.terminalEnabled != null;
+    _terminalEnabled = config.terminalEnabled ?? false;
+    _terminalRelayEnabledKnown = config.terminalRelayEnabled != null;
+    _terminalRelayEnabled = config.terminalRelayEnabled ?? false;
     if (config.maxBodyBytes != null) {
       _maxBodyBytesController.text = '${config.maxBodyBytes}';
     }
@@ -890,6 +931,12 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             scriptTimeout: _configText(_scriptTimeoutController, '30s'),
             maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
             maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
+            terminalEnabled: _terminalEnabledKnown ? _terminalEnabled : null,
+            terminalSecret: _terminalSecretController.text.trim(),
+            terminalAllowedOrigins: _terminalOrigins,
+            terminalRelayEnabled: _terminalRelayEnabledKnown
+                ? _terminalRelayEnabled
+                : null,
             actions: List.unmodifiable(_actions),
             alarms: List.unmodifiable(_alarms),
           ),
@@ -919,6 +966,31 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Mirrors the relay switch onto the cloud's daemon record.
+  ///
+  /// The cloud refuses to mint a relayed session while that record has not
+  /// opted in, so writing only the daemon's configuration would leave the
+  /// relay broken with a bare "forbidden". A failure here is reported but does
+  /// not undo the configuration that is already deployed.
+  Future<void> _syncRelayOptIn() async {
+    if (!_terminalRelayEnabledKnown) return;
+    final daemonId = widget.server.maidCafeDaemonId?.trim();
+    if (daemonId == null || daemonId.isEmpty) return;
+    try {
+      await ref
+          .read(maidCafeServiceProvider)
+          .updateDaemon(daemonId, terminalRelayEnabled: _terminalRelayEnabled);
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _message = 'maidCafeTerminalRelayOptInFailed'.tr(
+            args: [error.toString()],
+          ),
+        );
+      }
     }
   }
 
@@ -968,6 +1040,12 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             scriptTimeout: _configText(_scriptTimeoutController, '30s'),
             maxBodyBytes: _configInt(_maxBodyBytesController, 65536),
             maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
+            terminalEnabled: _terminalEnabledKnown ? _terminalEnabled : null,
+            terminalSecret: _terminalSecretController.text.trim(),
+            terminalAllowedOrigins: _terminalOrigins,
+            terminalRelayEnabled: _terminalRelayEnabledKnown
+                ? _terminalRelayEnabled
+                : null,
             actions: List.unmodifiable(_actions),
             alarms: List.unmodifiable(_alarms),
           ),
@@ -984,6 +1062,14 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             daemonUrl: 'http://127.0.0.1:$port',
             metricsSecret: apiSecret,
           );
+      // The check reads this to tell a closed port from a terminal that is
+      // switched off; only claim it when this editor wrote the switch.
+      if (_terminalEnabledKnown) {
+        await ref
+            .read(serverRepositoryProvider)
+            .setMaidCafeTerminalEnabled(widget.server, _terminalEnabled);
+      }
+      await _syncRelayOptIn();
       // The config and scripts are on the server; the reopen failure below is
       // connection-only, so the local snapshot is already committed.
       _savedActions = List.unmodifiable(_actions);
@@ -2136,6 +2222,47 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
           ),
         ],
       ),
+      _configGroup(
+        title: 'maidCafeGroupTerminal'.tr(),
+        fields: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _terminalEnabled,
+            title: Text('maidCafeTerminalEnabled'.tr()),
+            subtitle: Text('maidCafeTerminalEnabledHint'.tr()),
+            onChanged: _busy
+                ? null
+                : (value) => setState(() {
+                    _terminalEnabled = value;
+                    _terminalEnabledKnown = true;
+                  }),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _terminalRelayEnabled,
+            title: Text('maidCafeTerminalRelay'.tr()),
+            subtitle: Text('maidCafeTerminalRelayHint'.tr()),
+            onChanged: _busy
+                ? null
+                : (value) => setState(() {
+                    _terminalRelayEnabled = value;
+                    _terminalRelayEnabledKnown = true;
+                  }),
+          ),
+          _configTextField(
+            controller: _terminalSecretController,
+            label: 'maidCafeTerminalSecret'.tr(),
+            helperText: 'maidCafeTerminalSecretHint'.tr(),
+            obscureText: true,
+          ),
+          _configTextField(
+            controller: _terminalOriginsController,
+            label: 'maidCafeTerminalOrigins'.tr(),
+            helperText: 'maidCafeTerminalOriginsHint'.tr(),
+            maxLines: 3,
+          ),
+        ],
+      ),
       const SizedBox(height: 4),
       Align(
         alignment: Alignment.centerLeft,
@@ -2334,6 +2461,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     String? helperText,
     bool readOnly = false,
     bool obscureText = false,
+    int? maxLines,
     TextInputType? keyboardType,
     ValueChanged<String>? onChanged,
   }) => TextField(
@@ -2341,6 +2469,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     enabled: !_busy,
     obscureText: obscureText,
     readOnly: readOnly,
+    maxLines: obscureText ? 1 : maxLines,
     keyboardType: keyboardType,
     style: readOnly
         ? TextStyle(

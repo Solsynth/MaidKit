@@ -59,6 +59,40 @@ Rect? recoveryFrameFor({
   );
 }
 
+/// The frame to apply once the window has been created, or `null` when the
+/// saved frame should be left alone.
+///
+/// [WindowOptions] only carries a size, so the saved position has to be
+/// re-applied explicitly; otherwise the platform picks the position and the
+/// stored one is lost on every launch. Returns [saved] when it still touches an
+/// attached display, the [recoveryFrameFor] frame when it does not, and `null`
+/// when the platform cannot report the display layout — the caller then keeps
+/// the saved size and lets the window manager place the window rather than
+/// guessing a position.
+Rect? restoreFrameFor({
+  required Rect saved,
+  required List<Rect> displays,
+  required Size minimumSize,
+}) {
+  if (displays.isEmpty) return null;
+  final recovery = recoveryFrameFor(
+    saved: saved,
+    displays: displays,
+    minimumSize: minimumSize,
+  );
+  if (recovery != null) return recovery;
+  // A stored frame below the minimum size (a leftover taskbar-icon frame, for
+  // instance) is grown back into a usable window instead of being applied.
+  final width = saved.width < minimumSize.width
+      ? minimumSize.width
+      : saved.width;
+  final height = saved.height < minimumSize.height
+      ? minimumSize.height
+      : saved.height;
+  if (width == saved.width && height == saved.height) return saved;
+  return Rect.fromLTWH(saved.left, saved.top, width, height);
+}
+
 Rect _nearestDisplay(Rect saved, List<Rect> displays) {
   var nearest = displays.first;
   var nearestDistance = double.infinity;

@@ -16,6 +16,7 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/containers/project_repository.dart';
 import 'package:maid_kit/containers/deployment_project_models.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
 import 'server_models.dart';
@@ -943,6 +944,7 @@ class _SiteTile extends StatelessWidget {
     ].join(' · ');
 
     return ContextMenuWidget(
+      desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
       menuProvider: (_) => _menu(),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),

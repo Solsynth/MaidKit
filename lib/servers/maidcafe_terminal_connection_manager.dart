@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
 import 'server_models.dart';
 import 'ssh_connection_manager.dart';
@@ -35,9 +38,175 @@ WebSocketChannel _connectMaidCafeTerminal(
   List<String> protocols,
 ) => WebSocketChannel.connect(endpoint, protocols: protocols);
 
+/// The message for a direct daemon route that did not open.
+///
+/// Only the cases the probe could not classify fall back to listing the likely
+/// causes, and then by platform: a browser handshake carries an Origin, a native
+/// one does not.
+String _maidCafeDaemonHandshakeMessage(
+  MaidCafeTerminalTarget target,
+  Object error,
+  MaidCafeTerminalHandshakeFailure? failure,
+) {
+  final at = 'Cannot open the MaidCafe daemon terminal at ${target.baseUrl}';
+  return switch (failure) {
+    MaidCafeTerminalHandshakeFailure.disabled =>
+      '$at: the daemon is serving with its terminal endpoint switched off, so '
+          'it refuses every session. If it was just enabled, the daemon is '
+          'still running an older configuration — restart it and check its '
+          'log. Otherwise enable it in the MaidCafe tab.',
+    MaidCafeTerminalHandshakeFailure.credential =>
+      '$at: the daemon rejected this credential. It accepts its terminal '
+          'secret, or its metrics secret when no terminal secret is set; '
+          're-read the daemon configuration or enter the credential in the '
+          'server settings.',
+    MaidCafeTerminalHandshakeFailure.remote =>
+      '$at: the daemon only accepts terminal sessions from local or private '
+          'addresses. Reach it over SSH or the local network, or allow remote '
+          'sessions on the daemon.',
+    MaidCafeTerminalHandshakeFailure.origin =>
+      '$at: the daemon refused this browser origin. Add it to the allowed '
+          'origins in the MaidCafe tab.',
+    MaidCafeTerminalHandshakeFailure.unsupported =>
+      '$at: the daemon cannot serve a terminal on its platform.',
+    MaidCafeTerminalHandshakeFailure.busy =>
+      '$at: the daemon is already at its terminal session limit. Close a '
+          'session and try again.',
+    MaidCafeTerminalHandshakeFailure.unknown =>
+      '$at: the daemon refused the handshake without saying why: $error',
+    // Not diagnosed: nothing answered, or this build cannot ask. List what to
+    // check for the client that is running.
+    null =>
+      kIsWeb
+          ? '$at: no answer from the endpoint, or the handshake was refused. '
+                'Check the daemon endpoint and that this origin is among the '
+                'allowed origins.'
+          : '$at: $error. Check the daemon endpoint, the terminal credential, '
+                'and that the daemon answers on this address.',
+  };
+}
+
+/// Which part of the daemon's terminal policy refused a handshake.
+///
+/// The daemon checks its policy in a fixed order before it upgrades the socket,
+/// so the refusal is a policy answer, not a transport problem: the port is
+/// reachable and something said no. [unknown] means the endpoint answered in a
+/// way the probe does not classify — past the checks, the socket itself was
+/// refused.
+enum MaidCafeTerminalHandshakeFailure {
+  /// The daemon's terminal endpoint is switched off.
+  disabled,
+
+  /// The credential this client sent was not accepted.
+  credential,
+
+  /// The daemon only accepts sessions from local or private addresses.
+  remote,
+
+  /// A browser origin the daemon does not allow (browser builds only).
+  origin,
+
+  /// The daemon cannot serve a terminal on its platform.
+  unsupported,
+
+  /// The daemon is already at its concurrent session limit.
+  busy,
+
+  /// Answered, but not by any check the probe knows.
+  unknown,
+}
+
+/// Maps the daemon's answer to one plain HTTP GET on the terminal endpoint onto
+/// the policy that refused the handshake.
+///
+/// The daemon validates enabled → platform → peer address → credential before
+/// it upgrades, and reports each failure as JSON with its own status, so the
+/// answer names the cause instead of leaving the client to guess. Pure so the
+/// mapping is unit-tested without a daemon.
+MaidCafeTerminalHandshakeFailure maidCafeHandshakeFailureFrom(
+  int status,
+  Object? body,
+) {
+  final text = body is Map
+      ? '${body['error'] ?? ''}'.toLowerCase()
+      : '$body'.toLowerCase();
+  if (status == 401) return MaidCafeTerminalHandshakeFailure.credential;
+  if (status == 501) return MaidCafeTerminalHandshakeFailure.unsupported;
+  if (status == 429) return MaidCafeTerminalHandshakeFailure.busy;
+  if (status == 403) {
+    // Order matters: the remote-access message is worded "disabled" too, so the
+    // more specific causes are matched before the generic disabled one.
+    if (text.contains('remote')) return MaidCafeTerminalHandshakeFailure.remote;
+    if (text.contains('disabl')) {
+      return MaidCafeTerminalHandshakeFailure.disabled;
+    }
+    // A rejected Origin is written by the WebSocket library, not the daemon,
+    // so it arrives with no JSON body at all.
+    return MaidCafeTerminalHandshakeFailure.origin;
+  }
+  return MaidCafeTerminalHandshakeFailure.unknown;
+}
+
+/// Asks the daemon which policy refused a failed handshake, or null when it
+/// cannot be asked.
+///
+/// Browser builds cannot make the request (the daemon sets no CORS headers) and
+/// a relayed route authenticates at the cloud, so both keep the generic report.
+Future<MaidCafeTerminalHandshakeFailure?> diagnoseMaidCafeTerminalHandshake(
+  MaidCafeTerminalTarget target,
+  String credential,
+) async {
+  if (kIsWeb || target.isRelayed || credential.isEmpty) return null;
+  // The endpoint is the WebSocket URL; the same host answers a plain request,
+  // and the policy checks run before the upgrade either way.
+  final socket = target.endpoint;
+  final uri = socket.replace(scheme: socket.scheme == 'wss' ? 'https' : 'http');
+  final dio = Dio(
+    BaseOptions(
+      headers: <String, String>{'Authorization': 'Bearer $credential'},
+      connectTimeout: const Duration(seconds: 4),
+      receiveTimeout: const Duration(seconds: 4),
+      // The refusal *is* the answer, so every status is a success here.
+      validateStatus: (_) => true,
+    ),
+  );
+  try {
+    maidCafeLog(
+      'asking $uri why the handshake failed; credential '
+      '${maidCafeDescribeCredential(credential)}',
+    );
+    final response = await dio.getUri<dynamic>(uri);
+    final failure = maidCafeHandshakeFailureFrom(
+      response.statusCode ?? 0,
+      response.data,
+    );
+    maidCafeLog(
+      'the daemon answered HTTP ${response.statusCode} → $failure '
+      '(body: ${response.data})',
+    );
+    return failure;
+  } catch (error) {
+    // Nothing answered: a different problem, reported as such.
+    maidCafeLog('the diagnostic request itself failed', error: error);
+    return null;
+  } finally {
+    dio.close(force: true);
+  }
+}
+
 /// Raised when a daemon terminal cannot be opened or ends abnormally.
 class MaidCafeTerminalException implements Exception {
-  const MaidCafeTerminalException(this.message, {this.exitCode, this.reason});
+  const MaidCafeTerminalException(
+    this.message, {
+    this.exitCode,
+    this.reason,
+    this.handshake,
+  });
+
+  /// The policy that refused the handshake, when it was diagnosed. Callers use
+  /// it to give advice that matches the cause — a daemon that answered is not a
+  /// port or firewall problem.
+  final MaidCafeTerminalHandshakeFailure? handshake;
 
   final String message;
 
@@ -76,20 +245,20 @@ class MaidCafeTerminalConnectionManager {
 
   /// Opens a terminal on [server]'s daemon [target].
   ///
-  /// Throws [MaidCafeTerminalException] when the server is not a daemon
-  /// terminal, when the handshake is refused (a wrong credential, a disabled
-  /// endpoint, a rejected origin, or an unreachable daemon), or when the daemon
-  /// cannot start the shell.
+  /// [target] identifies the route and credential, so any server that resolved
+  /// one can be served here — an SSH server whose host also runs the daemon
+  /// uses this transport where a raw socket is unavailable (a browser build).
+  /// Each call owns one socket and one PTY, so several sessions on the same
+  /// server run at the same time.
+  ///
+  /// Throws [MaidCafeTerminalException] when the handshake is refused (a wrong
+  /// credential, a disabled endpoint, a rejected origin, or an unreachable
+  /// daemon), or when the daemon cannot start the shell.
   Future<TerminalSessionHandle> openTerminal(
     Server server,
     MaidCafeTerminalTarget target, {
     String? initialOutput,
   }) async {
-    if (server.connectionType != ServerConnectionType.maidcafe.name) {
-      throw ArgumentError(
-        'Server ${server.id} is not a MaidCafe daemon terminal connection.',
-      );
-    }
     final terminal = _terminalAdapterFactory().create();
     if (initialOutput != null && initialOutput.isNotEmpty) {
       terminal.replayHistory(initialOutput);
@@ -108,6 +277,12 @@ class MaidCafeTerminalConnectionManager {
               'rows': '$maidCafeTerminalInitialRows',
             },
           );
+    maidCafeLog(
+      'opening "${server.name}" (id=${server.id}) at $endpoint\n'
+      '  relayed=${target.isRelayed} storedEndpoint=${target.baseUrl}\n'
+      '  credential=${maidCafeDescribeCredential(credential)}, '
+      'subprotocol token carries ${credential.length} chars encoded',
+    );
     final channel = _socketFactory(endpoint, [credential]);
     final connection = _MaidCafeTerminalConnection(
       serverId: server.id,
@@ -120,16 +295,31 @@ class MaidCafeTerminalConnectionManager {
       // Nothing listens to the output stream yet, and an unlistened
       // single-subscription close never completes, so it is fire and forget.
       unawaited(connection.output.close());
+      if (target.isRelayed) {
+        throw MaidCafeTerminalException(
+          'Cannot open the cloud-relayed MaidCafe terminal at '
+          '${target.baseUrl}: $error. Check that you are signed in '
+          'with Solarpass and that this workspace still owns the '
+          'daemon.',
+        );
+      }
+      // A refused handshake is a policy answer: ask which policy, so the
+      // message names it rather than sending the user after the port, the
+      // credential and the origin list all at once.
+      maidCafeLog('the socket to $endpoint never upgraded', error: error);
+      final failure = await diagnoseMaidCafeTerminalHandshake(
+        target,
+        credential,
+      );
+      if (failure == null) {
+        maidCafeLog(
+          'nothing answered the diagnostic request: the endpoint is '
+          'unreachable, or this build cannot ask it',
+        );
+      }
       throw MaidCafeTerminalException(
-        target.isRelayed
-            ? 'Cannot open the cloud-relayed MaidCafe terminal at '
-                  '${target.baseUrl}: $error. Check that you are signed in '
-                  'with Solarpass and that this workspace still owns the '
-                  'daemon.'
-            : 'Cannot open the MaidCafe daemon terminal at ${target.baseUrl}: '
-                  '$error. Check the daemon endpoint, the terminal credential, '
-                  'and that this origin is listed in '
-                  'daemon.terminal.allowedOrigins.',
+        _maidCafeDaemonHandshakeMessage(target, error, failure),
+        handshake: failure,
       );
     }
     final binding = TerminalSessionBinding(
@@ -185,8 +375,15 @@ class MaidCafeTerminalConnectionManager {
         maidCafeTerminalInitialRows,
       );
     } on MaidCafeException catch (error) {
+      // The cloud mints the session, so a refusal here is about the daemon
+      // record and the account, never about a port or a firewall. A relayed
+      // session needs the host to opt in twice: daemon.terminal.relay.enabled
+      // in its configuration and terminal_relay_enabled on its cloud record.
       throw MaidCafeTerminalException(
-        'Cannot open the cloud-relayed MaidCafe terminal: ${error.message}',
+        'The cloud refused the relay session (${error.message}). Check that '
+        'the daemon serves relayed terminals (daemon.terminal.relay.enabled and '
+        'its cloud daemon record) and that this device is signed in with the '
+        'account that owns the workspace.',
       );
     } catch (error) {
       throw MaidCafeTerminalException(

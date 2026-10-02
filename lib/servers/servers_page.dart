@@ -14,6 +14,7 @@ import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/github/github_workflow_strip.dart';
+import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/collapsible_section.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
@@ -645,12 +646,63 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                               child: card,
                             );
                           }
+                          final hasDaemonId =
+                              server.maidCafeDaemonId?.trim().isNotEmpty ??
+                              false;
                           return ContextMenuWidget(
+                            desktopMenuWidgetBuilder:
+                                maidKitDesktopMenuWidgetBuilder,
                             menuProvider: (_) => Menu(
                               children: [
                                 MenuAction(
                                   title: 'serversEditServer'.tr(),
                                   callback: () => widget.onEdit(server),
+                                ),
+                                MenuSeparator(),
+                                // The daemon and the relay are transports of
+                                // their own: a native client keeps its SSH
+                                // session for everything else and can still
+                                // attach a terminal through either of them.
+                                MenuAction(
+                                  title: 'serversOpenViaMaidCafeDaemon'.tr(),
+                                  image: MenuImage.icon(Symbols.terminal),
+                                  attributes: MenuActionAttributes(
+                                    disabled: !server.hasMaidCafeTerminalRoute,
+                                  ),
+                                  callback: () => unawaited(
+                                    openMaidCafeTerminalSession(
+                                      context,
+                                      ref,
+                                      server,
+                                      route: MaidCafeTerminalRoute.daemon,
+                                    ),
+                                  ),
+                                ),
+                                MenuAction(
+                                  title: 'serversOpenViaMaidCafeRelay'.tr(),
+                                  image: MenuImage.icon(Symbols.cloud),
+                                  attributes: MenuActionAttributes(
+                                    disabled: !hasDaemonId,
+                                  ),
+                                  callback: () => unawaited(
+                                    openMaidCafeTerminalSession(
+                                      context,
+                                      ref,
+                                      server,
+                                      route: MaidCafeTerminalRoute.relay,
+                                    ),
+                                  ),
+                                ),
+                                MenuAction(
+                                  title: 'serversCheckMaidCafe'.tr(),
+                                  image: MenuImage.icon(Symbols.network_check),
+                                  callback: () => unawaited(
+                                    checkMaidCafeConnectivity(
+                                      context,
+                                      ref,
+                                      server,
+                                    ),
+                                  ),
                                 ),
                                 MenuSeparator(),
                                 MenuAction(
@@ -2224,6 +2276,92 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     return null;
   }
 
+  /// The same check for an optional route: an SSH server may leave the daemon
+  /// endpoint empty and stay a plain SSH server.
+  String? _validateOptionalMaidCafeTerminalUrl(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return null;
+    return _validateMaidCafeTerminalUrl(raw);
+  }
+
+  /// True when the server already carries a daemon route, so the SSH editor
+  /// section opens expanded instead of hiding a configured endpoint.
+  bool get _maidCafeRouteConfigured =>
+      _maidCafeTerminalUrl.text.trim().isNotEmpty ||
+      _maidCafeDaemonId.text.trim().isNotEmpty;
+
+  /// The MaidCafe daemon terminal fields: the only terminal transport of a
+  /// MaidCafe server, and an optional extra route for an SSH server, which
+  /// uses it where a raw socket is impossible (a browser build).
+  List<Widget> _maidCafeTerminalFields(
+    BuildContext context, {
+    required bool urlRequired,
+  }) => [
+    TextFormField(
+      controller: _maidCafeTerminalUrl,
+      keyboardType: TextInputType.url,
+      autocorrect: false,
+      decoration: InputDecoration(
+        labelText: 'serverMaidCafeTerminalUrlLabel'.tr(),
+        helperText: 'serverMaidCafeTerminalUrlHint'.tr(),
+      ),
+      validator: urlRequired
+          ? _validateMaidCafeTerminalUrl
+          : _validateOptionalMaidCafeTerminalUrl,
+    ),
+    const SizedBox(height: 12),
+    TextFormField(
+      controller: _maidCafeTerminalSecret,
+      obscureText: true,
+      autocorrect: false,
+      decoration: InputDecoration(
+        labelText: 'serverMaidCafeTerminalSecretLabel'.tr(),
+        helperText: 'serverMaidCafeTerminalSecretHint'.tr(),
+      ),
+    ),
+    if (widget.maidCafeTerminalSecretStored &&
+        !_clearMaidCafeTerminalSecret) ...[
+      const SizedBox(height: 4),
+      TextButton.icon(
+        onPressed: () => setState(() => _clearMaidCafeTerminalSecret = true),
+        icon: const Icon(Symbols.delete, size: 18),
+        label: Text('serverMaidCafeTerminalSecretForget'.tr()),
+      ),
+    ],
+    if (_clearMaidCafeTerminalSecret) ...[
+      const SizedBox(height: 4),
+      Text(
+        'serverMaidCafeTerminalSecretWillClear'.tr(),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.error,
+        ),
+      ),
+    ],
+    const SizedBox(height: 12),
+    TextFormField(
+      controller: _maidCafeDaemonId,
+      autocorrect: false,
+      decoration: InputDecoration(
+        labelText: 'serverMaidCafeDaemonIdLabel'.tr(),
+        helperText: 'serverMaidCafeDaemonIdHint'.tr(),
+      ),
+    ),
+    SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      value: _maidCafeTerminalViaCloud,
+      title: Text('serverMaidCafeViaCloudLabel'.tr()),
+      subtitle: Text('serverMaidCafeViaCloudHint'.tr()),
+      onChanged: (value) => setState(() => _maidCafeTerminalViaCloud = value),
+    ),
+    const SizedBox(height: 12),
+    Text(
+      'serverMaidCafeTerminalNote'.tr(),
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    ),
+  ];
+
   void _save() {
     if (!_form.currentState!.validate()) return;
     if (_hasJumpHostCycle()) {
@@ -2249,9 +2387,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     }
     // Routing through the cloud needs a daemon identity to address; the id can
     // also be entered by hand when the app did not create the daemon.
-    if (_connectionType == ServerConnectionType.maidcafe &&
-        _maidCafeTerminalViaCloud &&
-        _maidCafeDaemonId.text.trim().isEmpty) {
+    if (_maidCafeTerminalViaCloud && _maidCafeDaemonId.text.trim().isEmpty) {
       showStyledSnackBar(
         message: 'serverMaidCafeDaemonIdRequired'.tr(),
         title: 'serverMaidCafeDaemonIdRequired'.tr(),
@@ -2319,24 +2455,26 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                 flowControl: _serialFlowControl,
               )
             : null,
-        // Same rule as the serial settings: switching transport drops that
-        // transport's configuration instead of leaving a dead endpoint (and a
-        // dead credential) behind.
-        maidCafeTerminalUrl: _connectionType == ServerConnectionType.maidcafe
-            ? _maidCafeTerminalUrl.text.trim()
-            : null,
-        maidCafeTerminalSecret: _connectionType == ServerConnectionType.maidcafe
-            ? _maidCafeTerminalSecret.text
-            : null,
-        maidCafeDaemonId: _connectionType == ServerConnectionType.maidcafe
-            ? _maidCafeDaemonId.text.trim()
-            : null,
+        // The serial settings belong to the serial transport alone, so
+        // switching away drops them instead of leaving a dead device behind.
+        // The daemon route is a transport of its own: it survives an SSH
+        // server, which uses it where a raw socket is impossible (a browser
+        // build), and only disappears when the server becomes a serial one.
+        maidCafeTerminalUrl: _connectionType == ServerConnectionType.serial
+            ? null
+            : _maidCafeTerminalUrl.text.trim(),
+        maidCafeTerminalSecret: _connectionType == ServerConnectionType.serial
+            ? null
+            : _maidCafeTerminalSecret.text,
+        maidCafeDaemonId: _connectionType == ServerConnectionType.serial
+            ? null
+            : _maidCafeDaemonId.text.trim(),
         maidCafeTerminalViaCloud:
-            _connectionType == ServerConnectionType.maidcafe &&
+            _connectionType != ServerConnectionType.serial &&
             _maidCafeTerminalViaCloud,
         clearMaidCafeTerminalSecret:
             _clearMaidCafeTerminalSecret ||
-            _connectionType != ServerConnectionType.maidcafe,
+            _connectionType == ServerConnectionType.serial,
       ),
     );
   }
@@ -2374,10 +2512,16 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                     value: ServerConnectionType.ssh,
                     label: Text('serverConnectionSsh'.tr()),
                   ),
-                  if (serialPortsSupported && widget.initial != null)
+                  if (widget.initial != null)
                     ButtonSegment(
                       value: ServerConnectionType.serial,
                       label: Text('serverConnectionSerial'.tr()),
+                      // A browser has no device nodes: the stored type stays
+                      // visible for an existing server but cannot be picked.
+                      enabled: serialPortsSupported,
+                      tooltip: serialPortsSupported
+                          ? null
+                          : 'serverSerialNotSupported'.tr(),
                     ),
                   ButtonSegment(
                     value: ServerConnectionType.maidcafe,
@@ -2742,67 +2886,21 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                   ],
                 ),
               ] else if (_connectionType == ServerConnectionType.maidcafe) ...[
-                TextFormField(
-                  controller: _maidCafeTerminalUrl,
-                  keyboardType: TextInputType.url,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    labelText: 'serverMaidCafeTerminalUrlLabel'.tr(),
-                    helperText: 'serverMaidCafeTerminalUrlHint'.tr(),
-                  ),
-                  validator: _validateMaidCafeTerminalUrl,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _maidCafeTerminalSecret,
-                  obscureText: true,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    labelText: 'serverMaidCafeTerminalSecretLabel'.tr(),
-                    helperText: 'serverMaidCafeTerminalSecretHint'.tr(),
-                  ),
-                ),
-                if (widget.maidCafeTerminalSecretStored &&
-                    !_clearMaidCafeTerminalSecret) ...[
-                  const SizedBox(height: 4),
-                  TextButton.icon(
-                    onPressed: () =>
-                        setState(() => _clearMaidCafeTerminalSecret = true),
-                    icon: const Icon(Symbols.delete, size: 18),
-                    label: Text('serverMaidCafeTerminalSecretForget'.tr()),
-                  ),
-                ],
-                if (_clearMaidCafeTerminalSecret) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'serverMaidCafeTerminalSecretWillClear'.tr(),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _maidCafeDaemonId,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    labelText: 'serverMaidCafeDaemonIdLabel'.tr(),
-                    helperText: 'serverMaidCafeDaemonIdHint'.tr(),
-                  ),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: _maidCafeTerminalViaCloud,
-                  title: Text('serverMaidCafeViaCloudLabel'.tr()),
-                  subtitle: Text('serverMaidCafeViaCloudHint'.tr()),
-                  onChanged: (value) =>
-                      setState(() => _maidCafeTerminalViaCloud = value),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'serverMaidCafeTerminalNote'.tr(),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ..._maidCafeTerminalFields(context, urlRequired: true),
+              ] else if (_connectionType == ServerConnectionType.ssh) ...[
+                // A browser cannot open a raw SSH socket, so an SSH server can
+                // also store a MaidCafe daemon route and serve its terminal
+                // over the daemon there. Native builds keep using SSH and
+                // ignore this section.
+                ExpansionTile(
+                  initiallyExpanded: _maidCafeRouteConfigured,
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(bottom: 12),
+                  title: Text('serverMaidCafeDaemonFallbackTitle'.tr()),
+                  subtitle: Text('serverMaidCafeDaemonFallbackHint'.tr()),
+                  children: _maidCafeTerminalFields(
+                    context,
+                    urlRequired: false,
                   ),
                 ),
               ] else ...[

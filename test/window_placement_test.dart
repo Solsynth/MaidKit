@@ -102,6 +102,54 @@ void main() {
     );
   });
 
+  group('restoreFrameFor', () {
+    test('re-applies the saved frame, position included', () {
+      const saved = Rect.fromLTWH(-1253, 0, 1253, 985);
+
+      expect(
+        restoreFrameFor(
+          saved: saved,
+          displays: const [_builtIn, _sidecar],
+          minimumSize: _minimumSize,
+        ),
+        saved,
+      );
+    });
+
+    test('moves a frame left on a detached display onto one that exists', () {
+      expect(
+        restoreFrameFor(
+          saved: const Rect.fromLTWH(2000, 100, 1200, 800),
+          displays: const [_builtIn, _sidecar],
+          minimumSize: _minimumSize,
+        ),
+        const Rect.fromLTWH(156, 107.5, 1200, 800),
+      );
+    });
+
+    test('grows a stored frame below the minimum size', () {
+      expect(
+        restoreFrameFor(
+          saved: const Rect.fromLTWH(100, 100, 160, 31),
+          displays: const [_builtIn, _sidecar],
+          minimumSize: _minimumSize,
+        ),
+        const Rect.fromLTWH(100, 100, 390, 520),
+      );
+    });
+
+    test('leaves the position alone when the layout is unknown', () {
+      expect(
+        restoreFrameFor(
+          saved: const Rect.fromLTWH(9000, 9000, 800, 600),
+          displays: const [],
+          minimumSize: _minimumSize,
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('loadDisplayWorkAreas', () {
     tearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

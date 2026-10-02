@@ -72,6 +72,151 @@ String decodeAlarmFragmentFromScript(String script, String kind) {
 }
 
 void main() {
+  test('enabling the terminal always writes a shell allowlist', () {
+    // The daemon rejects a configuration that enables the terminal — directly
+    // or through the relay — with no shells, and a rejected configuration
+    // leaves it running the policy it already had, so the switch would read as
+    // on while every session is still refused.
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+      terminalEnabled: true,
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('enabled = true'));
+    expect(config, contains('shells = ["/bin/bash"]'));
+  });
+
+  test('the relay opt-in also gets a shell allowlist', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'stdio',
+      terminalRelayEnabled: true,
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('shells = ["/bin/bash"]'));
+  });
+
+  test('a terminal that is not enabled keeps the shells the daemon has', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig:
+          '[daemon]\nlisten = "127.0.0.1:8747"\n\n'
+          '[daemon.terminal]\nenabled = false\n'
+          'shells = ["/bin/zsh"]\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('shells = ["/bin/zsh"]'));
+    expect(config, isNot(contains('/bin/bash')));
+  });
+
+  test('the config script writes the daemon terminal table', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+      terminalEnabled: true,
+      terminalSecret: 'terminal-secret',
+      terminalAllowedOrigins: ['https://app.example'],
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('[daemon.terminal]'));
+    expect(config, contains('enabled = true'));
+    expect(config, contains('secret = "terminal-secret"'));
+    expect(config, contains('allowedOrigins = ["https://app.example"]'));
+    // The daemon table keeps being written as before.
+    expect(config, contains('id = "daemon-1"'));
+    expect(config, contains('listen = "127.0.0.1:8747"'));
+  });
+
+  test('the terminal origin list defaults to the hosted web build', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+      terminalEnabled: true,
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('allowedOrigins = ["https://mkw.solsynth.dev"]'));
+  });
+
+  test('an existing terminal origin list is not replaced', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig:
+          '[daemon]\nlisten = "127.0.0.1:8747"\n\n'
+          '[daemon.terminal]\nenabled = true\n'
+          'allowedOrigins = ["https://mine.example"]\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+      terminalEnabled: true,
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('https://mine.example'));
+    expect(config, isNot(contains('mkw.solsynth.dev')));
+  });
+
+  test('the config script can opt the daemon into relayed sessions', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+      terminalRelayEnabled: true,
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    expect(config, contains('[daemon.terminal.relay]'));
+    expect(config, contains('enabled = true'));
+    // The direct endpoint is a separate switch and stays unmentioned.
+    expect(config, isNot(contains('[daemon.terminal]\nenabled')));
+  });
+
+  test('the config script leaves an unknown terminal switch alone', () {
+    final script = buildMaidCafeDaemonConfigScript(
+      currentConfig:
+          '[daemon]\nlisten = "127.0.0.1:8747"\n\n'
+          '[daemon.terminal]\nenabled = true\n',
+      daemonId: 'daemon-1',
+      cloudUrl: 'https://cloud.example',
+      cloudSecret: 'cloud-secret',
+      apiSecret: 'metrics-secret',
+      transport: 'http',
+    );
+    final config = decodeMaidCafeConfigFromScript(script);
+
+    // Nothing was known about the switch, so the daemon's own stays as it is.
+    expect(config, contains('enabled = true'));
+  });
+
   test(
     'installer script encodes cloud credentials outside shell arguments',
     () {

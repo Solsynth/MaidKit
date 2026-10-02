@@ -1,6 +1,6 @@
 {
-    "name": "maid_kit",
-    "short_name": "maid_kit",
+    "name": "MaidKit",
+    "short_name": "MaidKit",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#ffffff",
