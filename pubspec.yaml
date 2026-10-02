@@ -48,15 +48,15 @@ dependencies:
   flutter_code_editor: ^0.3.5
   flutter_app_update:
     git:
-      url: https://src.solsynth.dev/SoSYS/Solian.git
+      url: https://src.solsynth.dev/SoSYS/Socommon.git
       path: packages/flutter_app_update
-      ref: ab66b772e6fe4955626a303e0449495b07f1e7e5
+      ref: f6205b293205777ce79f4d7b66fc943c12672fbc
   flutter_hooks: ^0.21.3+1
   solsynth_express:
     git:
-      url: https://src.solsynth.dev/SoSYS/Solian.git
+      url: https://src.solsynth.dev/SoSYS/Socommon.git
       path: packages/solsynth_express
-      ref: ab66b772e6fe4955626a303e0449495b07f1e7e5
+      ref: f6205b293205777ce79f4d7b66fc943c12672fbc
   flutter_secure_storage: ^10.3.4
   flutter_web_auth_2: ^5.1.0
   hooks_riverpod: ^3.4.3
@@ -64,9 +64,9 @@ dependencies:
   intl: ^0.20.3
   island_ui_foundation:
     git:
-      url: https://src.solsynth.dev/SoSYS/Solian.git
+      url: https://src.solsynth.dev/SoSYS/Socommon.git
       path: packages/island_ui_foundation
-      ref: ab66b772e6fe4955626a303e0449495b07f1e7e5
+      ref: f6205b293205777ce79f4d7b66fc943c12672fbc
   window_manager:
     git:
       url: https://github.com/boyan01/window_manager.git
