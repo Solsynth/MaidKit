@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:maidterm/maidterm.dart' as maidterm;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -201,8 +202,41 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
 
   @override
   void showKeyboard() {
-    if (!_disposed) _controller.showKeyboard();
+    if (_disposed) return;
+    // MaidTerm ignores `showKeyboard` while it already reports `showing`, but
+    // on Android that state outlives the IME: the platform dismisses the
+    // keyboard (the IME's hide key, the back gesture) by closing the text
+    // input connection without moving focus. Dropping through `hidden` first
+    // makes the follow-up `showKeyboard` reopen the connection and raise the
+    // IME again.
+    if (_platformDismissesImeSilently &&
+        _imeHeight == 0 &&
+        _controller.keyboardState == maidterm.KeyboardState.showing) {
+      _controller.hideKeyboard();
+    }
+    _controller.showKeyboard();
   }
+
+  /// Whether the platform can hide the IME out from under a still-focused
+  /// view, leaving MaidTerm's `KeyboardState` stale.
+  ///
+  /// Android — and Android-compatible builds such as HarmonyOS — dismiss the
+  /// soft keyboard without changing focus. Every other platform we ship moves
+  /// focus instead, which MaidTerm already handles.
+  static bool get _platformDismissesImeSilently =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  /// Height of the platform IME in logical pixels, or null when no view is
+  /// attached to report it.
+  ///
+  /// Read from the platform rather than [MediaQuery]: the window scaffold
+  /// rescales its insets, and this needs the device's own value.
+  static double? get _imeHeight => WidgetsBinding
+      .instance
+      .platformDispatcher
+      .implicitView
+      ?.viewInsets
+      .bottom;
 
   @override
   void hideKeyboard() {
@@ -346,7 +380,11 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
         onPaste: () => unawaited(_pasteFromClipboard()),
         onSelectAll: _controller.selectAll,
       ),
-      child: terminal,
+      // Tapping a terminal whose IME the platform dismissed must bring the
+      // keyboard back; nothing else can, since focus never moved.
+      child: _platformDismissesImeSilently
+          ? _SoftKeyboardTapReveal(onTap: showKeyboard, child: terminal)
+          : terminal,
     );
   }
 
@@ -564,6 +602,70 @@ class _MaidTermMatch {
   final int row;
   final int start;
   final int end;
+}
+
+/// Raw pointer observer that re-raises the soft keyboard on a tap.
+///
+/// Android dismisses the IME — through its hide key or the back gesture —
+/// without moving focus, so [maidterm.TerminalView]'s focus-only tap handler
+/// has nothing left to re-trigger. Raw pointer events are the one hook that
+/// stays out of the gesture arena [maidterm.TerminalView]'s own tap
+/// recognizer has to win, so this never competes with selection, links, or
+/// the scrollable above.
+///
+/// Only a single pointer that travels less than [kTouchSlop] counts, so
+/// scrolling the scrollback never summons the keyboard mid-swipe.
+class _SoftKeyboardTapReveal extends StatefulWidget {
+  const _SoftKeyboardTapReveal({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_SoftKeyboardTapReveal> createState() => _SoftKeyboardTapRevealState();
+}
+
+class _SoftKeyboardTapRevealState extends State<_SoftKeyboardTapReveal> {
+  int? _pointer;
+  Offset _origin = Offset.zero;
+  bool _travelled = false;
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (_pointer != null) {
+      // A second finger is a pinch or two-finger scroll, never a tap.
+      _travelled = true;
+      return;
+    }
+    _pointer = event.pointer;
+    _origin = event.position;
+    _travelled = false;
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer) return;
+    if ((event.position - _origin).distance > kTouchSlop) _travelled = true;
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (event.pointer != _pointer) return;
+    final tapped = !_travelled;
+    _pointer = null;
+    if (tapped) widget.onTap();
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (event.pointer == _pointer) _pointer = null;
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerDown: _handlePointerDown,
+    onPointerMove: _handlePointerMove,
+    onPointerUp: _handlePointerUp,
+    onPointerCancel: _handlePointerCancel,
+    child: widget.child,
+  );
 }
 
 /// Focus host for read-only log surfaces on the ghostty renderer.

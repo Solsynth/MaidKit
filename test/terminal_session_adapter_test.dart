@@ -12,7 +12,6 @@ import 'package:maid_kit/servers/maidterm_session_adapter.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_adapter_preferences.dart';
 import 'package:maid_kit/servers/terminal_color_scheme.dart';
-import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 
@@ -195,13 +194,23 @@ void main() {
     expect(options.single.family, 'CascadiaCode-Black');
   });
 
-  test('applies the selected palette to the terminal renderer', () async {
+  testWidgets('applies the selected palette to the terminal renderer', (
+    tester,
+  ) async {
     final scheme = TerminalColorSchemes.catppuccinMocha;
     final adapter = MaidTermSessionAdapter(colorScheme: scheme);
     addTearDown(adapter.dispose);
 
-    final menuView = adapter.buildView() as AppContextMenuRegion;
-    final view = menuView.child as maidterm.TerminalView;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(width: 800, height: 600, child: adapter.buildView()),
+      ),
+    );
+    await tester.pump();
+
+    final view = tester.widget<maidterm.TerminalView>(
+      find.byType(maidterm.TerminalView),
+    );
     expect(view.theme!.background, scheme.background);
     expect(view.theme!.foreground, scheme.foreground);
     expect(view.theme!.cursorMotionDuration, const Duration(milliseconds: 90));
@@ -753,6 +762,93 @@ void main() {
       expect(rule.idleStyle?.backgroundColor, isNotNull);
     }
   });
+
+  testWidgets(
+    'Android re-raises the keyboard after the IME hides itself',
+    (tester) => _withAndroidPlatform(() async {
+      tester.view.viewInsets = const FakeViewPadding();
+      addTearDown(tester.view.resetViewInsets);
+
+      final adapter = MaidTermSessionAdapter();
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.testTextInput.log.map((call) => call.method),
+        contains('TextInput.show'),
+        reason: 'autofocus must raise the keyboard',
+      );
+
+      // Android dismisses the IME the way its back gesture does: the text
+      // input connection closes and the IME height drops while the terminal
+      // keeps focus.
+      tester.testTextInput.closeConnection();
+      tester.testTextInput.hide();
+      tester.testTextInput.log.clear();
+
+      await tester.tap(find.byType(maidterm.TerminalView));
+      await tester.pump();
+
+      expect(
+        tester.testTextInput.log.map((call) => call.method),
+        containsAllInOrder(const ['TextInput.setClient', 'TextInput.show']),
+        reason: 'the tap must re-open the text input connection',
+      );
+    }),
+  );
+
+  testWidgets(
+    'Android leaves a raised keyboard alone when tapped',
+    (tester) => _withAndroidPlatform(() async {
+      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+      addTearDown(tester.view.resetViewInsets);
+
+      final adapter = MaidTermSessionAdapter();
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+      tester.testTextInput.log.clear();
+
+      await tester.tap(find.byType(maidterm.TerminalView));
+      await tester.pump();
+
+      final methods = tester.testTextInput.log.map((call) => call.method);
+      expect(methods, isNot(contains('TextInput.clearClient')));
+      expect(methods, isNot(contains('TextInput.show')));
+    }),
+  );
+}
+
+/// Runs [body] with the Android terminal path selected.
+///
+/// The override is a foundation debug variable, so it must be cleared inside
+/// the test body: the binding verifies those variables before `addTearDown`
+/// callbacks run.
+Future<void> _withAndroidPlatform(Future<void> Function() body) async {
+  debugDefaultTargetPlatformOverride = TargetPlatform.android;
+  try {
+    await body();
+  } finally {
+    debugDefaultTargetPlatformOverride = null;
+  }
 }
 
 /// Mocks the window-manager focus probe and the local-notification channel,

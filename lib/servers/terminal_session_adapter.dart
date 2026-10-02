@@ -165,6 +165,10 @@ abstract interface class TerminalSessionAdapter {
   void sendInput(String text);
 
   /// Shows the platform software keyboard and focuses this terminal.
+  ///
+  /// Must actually raise the keyboard, including when the platform dismissed
+  /// it without moving focus — Android's IME hide key and back gesture do —
+  /// rather than trusting the renderer's own idea of a visible keyboard.
   void showKeyboard();
 
   /// Hides the platform software keyboard without dropping terminal focus.

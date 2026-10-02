@@ -77,6 +77,14 @@ translated inside each backend, so preferences apply to both.
 - **PTY pixel metrics** are reported to the transport by both backends, but in
   a browser only the MaidCafe-over-WebSocket transport and the no-op serial
   transport can consume them; SSH needs raw sockets and cannot run on web.
+- **Soft-keyboard re-raising** is a ghostty-backend concern on Android: the
+  platform dismisses the IME (its hide key, the back gesture) without moving
+  focus, so MaidTerm's `KeyboardState` stays `showing` and its focus-driven
+  re-show never fires again. The backend reveals the keyboard on tap-like
+  touches — raw pointer events, so MaidTerm's own tap recognizer keeps winning
+  the arena — and `showKeyboard` drops through `hidden` whenever the platform
+  reports no IME height. Other platforms move focus instead and need nothing
+  extra.
 
 ## Adding or replacing a backend
 
