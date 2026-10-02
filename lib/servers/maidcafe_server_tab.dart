@@ -16,6 +16,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
 
 import 'maidcafe_endpoint_section.dart';
+import 'maidcafe_health_section.dart';
 import 'maidcafe_install.dart';
 import 'maidcafe_priv.dart';
 import 'maidcafe_uninstall.dart';
@@ -1490,8 +1491,15 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             _conflictPrompt()
           else if (_state == _MaidCafeState.notInstalled)
             _notInstalledPrompt(context)
-          else if (_state == _MaidCafeState.running)
+          else if (_state == _MaidCafeState.running) ...[
+            // The daemon's own overview of how the host is doing, before the
+            // operations that act on it.
+            if (_stream != null) ...[
+              MaidCafeHealthSection(session: _stream!),
+              const SizedBox(height: 16),
+            ],
             _installationRunning(),
+          ],
           if (_message != null) ...[
             const SizedBox(height: 12),
             Text(_message!, style: theme.textTheme.bodySmall),

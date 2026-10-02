@@ -310,6 +310,13 @@ final maidCafeMetricsProvider =
       return ref.watch(maidCafeServiceProvider).listMetrics(daemonId);
     });
 
+/// The daemon's latest host health as the cloud stored it: the score and band
+/// its newest metric carried, and whether that reading is still current.
+final maidCafeDaemonHealthProvider =
+    FutureProvider.family<MaidCafeDaemonHealthReport, String>((ref, daemonId) {
+      return ref.watch(maidCafeServiceProvider).fetchDaemonHealth(daemonId);
+    });
+
 final maidCafeCloudActionsProvider =
     FutureProvider.family<List<MaidCafeCloudAction>, String>((ref, daemonId) {
       return ref.watch(maidCafeServiceProvider).listActions(daemonId);

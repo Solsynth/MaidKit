@@ -1080,12 +1080,24 @@ class MaidCafeStreamSession {
 
   String? get version => _version;
 
+  /// Parses the daemon's unauthenticated `/health` probe, which reports the
+  /// version it runs. Distinct from [healthReport], the authenticated overview
+  /// of how the host is doing.
   Future<Map<String, dynamic>> health() async {
     final result = await _get('/health');
     final value = result['version']?.toString().trim();
     _version = value == null || value.isEmpty ? null : value;
     return result;
   }
+
+  /// The daemon's overview of host health: its weighted score over CPU,
+  /// memory, swap, disk, load, process memory and webhook failures, with every
+  /// dimension's value, thresholds and severity. Parse it with
+  /// `parseMaidCafeHealthReport`.
+  ///
+  /// A daemon older than the health feature answers with no such route, which
+  /// arrives as [MaidCafeRouteMissingException] rather than a failed read.
+  Future<Map<String, dynamic>> healthReport() => _get('/api/v1/health');
 
   Future<Map<String, dynamic>> metrics() => _get('/api/v1/metrics');
 
@@ -1589,6 +1601,9 @@ class MaidCafeStreamSession {
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
         throw const MaidCafeUnauthorizedException();
+      }
+      if (_isMaidCafeMissingRoute(error)) {
+        throw MaidCafeRouteMissingException(path);
       }
       throw StateError(_dioError(error));
     }

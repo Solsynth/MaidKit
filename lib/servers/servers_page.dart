@@ -21,6 +21,7 @@ import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'maidcafe_service.dart';
 import 'server_connection_actions.dart';
 import 'dashboard_runtimes_section.dart';
+import 'server_health_chip.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'serial_port_client.dart';
@@ -1079,6 +1080,10 @@ class _ServerCard extends ConsumerWidget {
     final textTheme = theme.textTheme;
     final hideAddresses = ref.watch(hideServerAddressesProvider);
     final connectionType = serverConnectionTypeFromName(server.connectionType);
+    // SSH is the only transport that opens its own connection to collect
+    // statistics; serial and daemon hosts have no SSH route at all, so their
+    // card names the transport instead of offering an SSH-shaped action.
+    final isTerminalOnly = connectionType != ServerConnectionType.ssh;
     // Statistics come from the MaidCafe daemon when the host runs one on a
     // directly reachable address — no SSH session is opened for them. The SSH
     // route stays the default for every other host, and for a daemon host it
@@ -1167,6 +1172,13 @@ class _ServerCard extends ConsumerWidget {
                         ],
                       ),
                     ),
+                    // The daemon's own score for the host it runs on, read
+                    // with the rest of the snapshot. A route that cannot score
+                    // health (SSH) shows no chip at all.
+                    if (stats?.health != null) ...[
+                      ServerHealthChip(health: stats!.health, compact: compact),
+                      const SizedBox(width: 4),
+                    ],
                     IconButton(
                       tooltip: 'serversRefreshStatistics'.tr(),
                       visualDensity: VisualDensity.compact,

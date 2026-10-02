@@ -22,6 +22,7 @@ import 'maidcafe_connect.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_notifications_tab.dart';
 import 'maidcafe_service.dart';
+import 'server_health_chip.dart';
 import 'server_providers.dart';
 import 'solarpass_device_code_dialog.dart';
 
@@ -90,7 +91,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   }
 
   /// Re-fetches the daemon records (last-seen) and each daemon's metric
-  /// history and reported actions from the cloud.
+  /// history, reported health and actions from the cloud.
   void _refreshCloudData() {
     if (!mounted) return;
     final workspaceId = _effectiveWorkspaceId;
@@ -104,6 +105,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     if (daemons == null) return;
     for (final daemon in daemons) {
       ref.invalidate(maidCafeMetricsProvider(daemon.id));
+      ref.invalidate(maidCafeDaemonHealthProvider(daemon.id));
       ref.invalidate(maidCafeCloudActionsProvider(daemon.id));
     }
   }
@@ -969,6 +971,10 @@ class _DaemonFleetCard extends ConsumerWidget {
     final textTheme = theme.textTheme;
     final metrics = ref.watch(maidCafeMetricsProvider(daemon.id));
     final history = metrics.asData?.value ?? const <MaidCafeMetric>[];
+    final reportedHealth = ref
+        .watch(maidCafeDaemonHealthProvider(daemon.id))
+        .asData
+        ?.value;
     // The API returns newest-first; the chart reads oldest → newest.
     final ordered = [...history]..sort((a, b) => a.sentAt.compareTo(b.sentAt));
     final samples = ordered.length > 24
@@ -1126,27 +1132,43 @@ class _DaemonFleetCard extends ConsumerWidget {
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: Text(
-                enabled
-                    ? [
-                        'maidCafeEnabled'.tr(),
-                        lastSeen == null
-                            ? 'maidCafeNeverSeen'.tr()
-                            : 'maidCafeLastSeen'.tr(
-                                args: [
-                                  DateFormat(
-                                    'yyyy-MM-dd HH:mm',
-                                  ).format(lastSeen.toLocal()),
-                                ],
-                              ),
-                        ?uptimeLabel,
-                      ].join(' · ')
-                    : 'maidCafeDisabled'.tr(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
+              child: Row(
+                children: [
+                  // The score the daemon embedded in its newest metric. A
+                  // disabled daemon has no live reading to report, and a stale
+                  // one is rendered in the neutral color by the chip itself.
+                  if (enabled && reportedHealth?.health != null) ...[
+                    ServerHealthChip(
+                      health: reportedHealth!.health,
+                      stale: reportedHealth.stale,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      enabled
+                          ? [
+                              'maidCafeEnabled'.tr(),
+                              lastSeen == null
+                                  ? 'maidCafeNeverSeen'.tr()
+                                  : 'maidCafeLastSeen'.tr(
+                                      args: [
+                                        DateFormat(
+                                          'yyyy-MM-dd HH:mm',
+                                        ).format(lastSeen.toLocal()),
+                                      ],
+                                    ),
+                              ?uptimeLabel,
+                            ].join(' · ')
+                          : 'maidCafeDisabled'.tr(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

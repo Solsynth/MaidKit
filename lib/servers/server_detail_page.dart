@@ -29,6 +29,7 @@ import 'port_forwarding_tab.dart';
 import 'privacy_preferences.dart';
 import 'runtime_monitoring_tab.dart';
 import 'server_connection_actions.dart';
+import 'server_health_chip.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'systemd_tab.dart';
@@ -1197,8 +1198,25 @@ class _MetricGrid extends StatelessWidget {
         ? null
         : stats!.swapTotalKb! - stats!.swapFreeKb!;
     final disks = stats!.disks;
+    final health = stats!.health;
     return Column(
       children: [
+        // The daemon's own verdict on the host, first in the grid: it is the
+        // one figure that already folds every dimension below it together.
+        if (health != null) ...[
+          _MetricCard(
+            icon: Symbols.monitor_heart,
+            label: 'detailHealth',
+            value: '${health.score}',
+            detail: serverHealthStatusLabel(health.status),
+            progress: health.score / 100,
+            progressColor: serverHealthStatusColor(
+              health.status,
+              Theme.of(context).colorScheme,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         _MetricCard(
           icon: Symbols.speed,
           label: 'detailLoadAverage',
@@ -1283,6 +1301,7 @@ class _MetricCard extends StatelessWidget {
     required this.value,
     this.detail,
     this.progress,
+    this.progressColor,
   });
 
   final IconData icon;
@@ -1290,6 +1309,9 @@ class _MetricCard extends StatelessWidget {
   final String value;
   final String? detail;
   final double? progress;
+
+  /// Tints the progress bar when the metric has a state worth naming (health).
+  final Color? progressColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1324,7 +1346,11 @@ class _MetricCard extends StatelessWidget {
               const SizedBox(height: 8),
               ClipRRect(
                 borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(value: progress, minHeight: 4),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 4,
+                  color: progressColor,
+                ),
               ),
             ],
             if (detail != null) ...[

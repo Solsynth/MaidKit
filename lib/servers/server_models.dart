@@ -586,6 +586,59 @@ class DiskUsage {
   }
 }
 
+/// The band the MaidCafe daemon's host health score falls into. The daemon
+/// bands its weighted score at 90 (`healthy`) and 70 (`degraded`); everything
+/// below is `critical`.
+enum ServerHealthStatus {
+  healthy,
+  degraded,
+  critical;
+
+  /// Tolerant wire lookup for a health band. A band this build does not know —
+  /// a newer daemon, or a sample ingested before health reporting existed,
+  /// which the cloud calls `unknown` — parses to null so a surface shows no
+  /// band rather than a wrong one.
+  static ServerHealthStatus? fromWire(Object? raw) {
+    final value = raw?.toString().trim().toLowerCase();
+    if (value == null || value.isEmpty) return null;
+    for (final status in values) {
+      if (status.name == value) return status;
+    }
+    return null;
+  }
+}
+
+/// The daemon's summary of host health: the weighted score it computed for one
+/// metric sample and the band that score falls into.
+///
+/// Health is all-or-nothing. A score is meaningless without its band, so
+/// [serverHealthFromWire] yields null unless both halves are present and
+/// trustworthy, and no surface ever renders a bare number or a band on its
+/// own.
+class ServerHealth {
+  const ServerHealth({required this.score, required this.status});
+
+  /// 0..100, where 100 is every scored dimension at or below its warning
+  /// threshold.
+  final int score;
+
+  final ServerHealthStatus status;
+}
+
+/// Builds [ServerHealth] from a wire score and band, or null when either half
+/// is missing, the band is unknown, or the score is outside 0..100.
+ServerHealth? serverHealthFromWire(Object? score, Object? status) {
+  final band = ServerHealthStatus.fromWire(status);
+  final value = switch (score) {
+    final int value => value,
+    final num value => value.toInt(),
+    final String value => int.tryParse(value.trim()),
+    _ => null,
+  };
+  if (band == null || value == null || value < 0 || value > 100) return null;
+  return ServerHealth(score: value, status: band);
+}
+
 class ServerStats {
   const ServerStats({
     required this.collectorId,
@@ -603,6 +656,7 @@ class ServerStats {
     this.uptime,
     this.gpus = const [],
     this.disks = const [],
+    this.health,
   });
 
   final String collectorId;
@@ -624,6 +678,11 @@ class ServerStats {
   /// mounts), root first. Empty when the collector only exposes the root
   /// aggregate.
   final List<DiskUsage> disks;
+
+  /// The daemon's own health score for this sample, or null when the route
+  /// cannot report one: the SSH collectors do not score health, and a daemon
+  /// older than the health feature sends neither half.
+  final ServerHealth? health;
 }
 
 class ServerProcess {

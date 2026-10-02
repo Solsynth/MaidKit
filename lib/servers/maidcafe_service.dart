@@ -639,6 +639,43 @@ class MaidCafeDaemonHealth {
       );
 }
 
+/// The daemon's latest host health as the cloud stores it, taken from the
+/// newest metric sample it ingested. Distinct from [MaidCafeDaemonHealth],
+/// which is the cloud's own liveness answer.
+class MaidCafeDaemonHealthReport {
+  const MaidCafeDaemonHealthReport({
+    required this.daemonId,
+    this.health,
+    this.evaluatedAt,
+    this.receivedAt,
+    this.stale = false,
+  });
+
+  final String daemonId;
+
+  /// The score and band the daemon reported, or null when it never reported
+  /// any — samples ingested before the health feature carry `unknown`.
+  final ServerHealth? health;
+
+  /// When the daemon evaluated the sample, and when the cloud received it.
+  final DateTime? evaluatedAt;
+  final DateTime? receivedAt;
+
+  /// Whether the report no longer describes the host: the cloud marks a report
+  /// older than its disconnect window `stale` rather than showing a live score
+  /// for a daemon that stopped reporting.
+  final bool stale;
+
+  factory MaidCafeDaemonHealthReport.fromJson(Map<String, dynamic> json) =>
+      MaidCafeDaemonHealthReport(
+        daemonId: _requiredString(json, 'daemon_id'),
+        health: serverHealthFromWire(json['score'], json['status']),
+        evaluatedAt: _optionalDate(json, 'evaluated_at'),
+        receivedAt: _optionalDate(json, 'received_at'),
+        stale: json['stale'] == true,
+      );
+}
+
 class MaidCafeWebhookResult {
   const MaidCafeWebhookResult({
     required this.statusCode,
@@ -822,6 +859,18 @@ class MaidCafeService {
       return null;
     }
     return MaidCafeNotification.fromJson(_responseMap(response));
+  }
+
+  /// The daemon's latest host health (score, band and whether the reading is
+  /// still current), taken from the newest metric sample the cloud stored.
+  Future<MaidCafeDaemonHealthReport> fetchDaemonHealth(String daemonId) async {
+    final response = await _cloudRequest(
+      (token) => _dio.get<dynamic>(
+        '$_apiBase/daemons/${_pathPart(daemonId)}/health',
+        options: _cloudOptions(token),
+      ),
+    );
+    return MaidCafeDaemonHealthReport.fromJson(_responseMap(response));
   }
 
   Future<List<MaidCafeNotification>> listNotifications({

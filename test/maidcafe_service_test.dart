@@ -254,6 +254,60 @@ void main() {
     expect(empty.metricsRetentionDays, isNull);
   });
 
+  test('daemon health is fetched with the bearer and parsed', () async {
+    late RequestOptions request;
+    final dio = Dio()
+      ..httpClientAdapter = _Adapter((options) async {
+        request = options;
+        return _json({
+          'daemon_id': 'daemon-1',
+          'score': 84,
+          'status': 'degraded',
+          'evaluated_at': '2026-08-15T12:00:00Z',
+          'received_at': '2026-08-15T12:00:01Z',
+          'stale': false,
+        }, 200);
+      });
+    final service = MaidCafeService(
+      baseUrl: 'https://mk.solsynth.dev',
+      cloudSync: CloudSyncService(vaultId: 'test'),
+      accessToken: () async => 'solar-token',
+      dio: dio,
+      secureStorage: _MemoryStorage(),
+    );
+
+    final report = await service.fetchDaemonHealth('daemon-1');
+
+    expect(request.method, 'GET');
+    expect(
+      request.uri.toString(),
+      'https://mk.solsynth.dev/api/daemons/daemon-1/health',
+    );
+    expect(request.headers['Authorization'], 'Bearer solar-token');
+    expect(report.daemonId, 'daemon-1');
+    expect(report.health!.score, 84);
+    expect(report.health!.status, ServerHealthStatus.degraded);
+    expect(report.evaluatedAt, DateTime.utc(2026, 8, 15, 12));
+    expect(report.receivedAt, DateTime.utc(2026, 8, 15, 12, 0, 1));
+    expect(report.stale, isFalse);
+  });
+
+  test('a sample ingested before health reporting carries no score', () {
+    // The cloud answers `unknown` with a zero score for those samples; a chip
+    // showing "0" would claim a critical host instead of no reading at all.
+    final report = MaidCafeDaemonHealthReport.fromJson(const {
+      'daemon_id': 'daemon-1',
+      'score': 0,
+      'status': 'unknown',
+      'evaluated_at': '2026-08-15T12:00:00Z',
+      'received_at': '2026-08-15T12:00:01Z',
+      'stale': true,
+    });
+
+    expect(report.health, isNull);
+    expect(report.stale, isTrue);
+  });
+
   test(
     'local invocation keeps raw bytes and signs with the local secret',
     () async {
