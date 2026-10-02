@@ -1257,4 +1257,127 @@ transport = "http"
       expect(profiles, greaterThan(binary));
     });
   });
+
+  group('saving configuration writes the file roots', () {
+    /// The config a sync script patches, recovered from the base64 it carries.
+    ///
+    /// Anchored on the config install line: with roots declared the script also
+    /// embeds the helper's profile file the same way, and that payload must not
+    /// be mistaken for the configuration.
+    String syncConfig(String script) {
+      final match = RegExp(
+        r'''printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| install -o root -g maidcafe -m 0660 /dev/stdin /etc/maidcafe/config.toml''',
+      ).firstMatch(script);
+      expect(match, isNotNull, reason: 'no embedded config');
+      return utf8.decode(base64Decode(match!.group(1)!));
+    }
+
+    const current = '''[daemon]
+id = "host"
+transport = "http"
+metricsSecret = "secret"
+
+[daemon.terminal]
+enabled = true
+''';
+
+    String sync({List<MaidCafeFileRoot>? roots}) =>
+        buildMaidCafeDaemonConfigScript(
+          currentConfig: current,
+          daemonId: 'host',
+          cloudUrl: 'https://mk.solsynth.dev',
+          cloudSecret: 'cloud-secret',
+          transport: 'http',
+          listenHost: '127.0.0.1',
+          port: 8747,
+          apiSecret: 'secret',
+          fileRoots: roots,
+        );
+
+    test('null roots leave an operator section untouched', () {
+      final script = sync();
+      // Nothing about the files table or its grant is mentioned at all.
+      expect(script, isNot(contains('[daemon.files]')));
+      expect(script, isNot(contains('maidkit-priv')));
+      expect(script, isNot(contains('sudoers.d/maidkit-priv')));
+    });
+
+    test('declared roots are written and the helper is granted first', () {
+      final script = sync(
+        roots: const [
+          MaidCafeFileRoot(path: '/srv/app'),
+          MaidCafeFileRoot(
+            path: '/etc/nginx',
+            privileged: true,
+            profile: 'nginx',
+          ),
+        ],
+      );
+      final patched = syncConfig(script);
+      expect(patched, contains('[daemon.files]'));
+      expect(patched, contains('path = "/srv/app"'));
+      expect(patched, contains('profile = "nginx"'));
+      expect(patched, contains('[daemon.terminal]'));
+
+      // The grant and the profiles land before the configuration that names
+      // them, because the daemon validates its helper at load.
+      // The config install line, not the first base64 payload in the script
+      // (the profile file is embedded the same way).
+      final profiles = script.indexOf(
+        'base64 -d | install -o root -g root -m 0644 /dev/stdin /etc/maidkit/priv.toml',
+      );
+      final rule = script.indexOf(r'/etc/sudoers.d/maidkit-priv');
+      final config = script.indexOf(
+        'base64 -d | install -o root -g maidcafe -m 0660 /dev/stdin /etc/maidcafe/config.toml',
+      );
+      expect(profiles, greaterThan(-1));
+      expect(rule, greaterThan(-1));
+      expect(config, greaterThan(-1));
+      expect(rule, greaterThan(profiles));
+      expect(config, greaterThan(rule));
+    });
+
+    test('an empty list tears the section and the grant down', () {
+      final script = sync(roots: const []);
+      expect(syncConfig(script), isNot(contains('[daemon.files]')));
+      expect(script, contains('rm -f /etc/sudoers.d/maidkit-priv'));
+      expect(script, contains('rm -f /etc/maidkit/priv.toml'));
+    });
+
+    test('a relative root is rejected before any script is built', () {
+      expect(
+        () => sync(roots: const [MaidCafeFileRoot(path: 'srv/app')]),
+        throwsArgumentError,
+      );
+      expect(
+        () => sync(
+          roots: const [
+            MaidCafeFileRoot(path: '/etc/nginx', privileged: true),
+          ],
+        ),
+        throwsArgumentError,
+        reason: 'a privileged root needs a profile name',
+      );
+    });
+
+    test('the install extracts the helper from the bundle', () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'host',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+      );
+      // The bundle carries the helper; the install must place it, or a
+      // privileged root declared later cannot start.
+      expect(script, contains('maidkit-priv'));
+      expect(
+        script,
+        contains('/usr/local/libexec/maidkit-priv'),
+      );
+      final extraction = script.indexOf('helper_binary=');
+      final configInstall = script.indexOf('-m 0660 "\$work_dir/config.toml"');
+      expect(extraction, greaterThan(-1));
+      expect(configInstall, greaterThan(extraction));
+    });
+  });
 }

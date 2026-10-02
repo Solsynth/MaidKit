@@ -9,6 +9,7 @@ import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 
 import 'maidcafe_install.dart';
+import 'maidcafe_priv.dart';
 import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
 import 'server_models.dart';
@@ -235,6 +236,7 @@ class MaidCafeDaemonAccess {
     this.maxConcurrentRuns,
     this.actions = const [],
     this.alarms = const [],
+    this.fileRoots = const [],
     this.configText = '',
   });
   final int? port;
@@ -272,6 +274,10 @@ class MaidCafeDaemonAccess {
   /// Alarm thresholds declared in the daemon's `alarmsDir` fragments. Alarms
   /// are evaluated daemon-side; this list is what the config editor edits.
   final List<MaidCafeAlarmDefinition> alarms;
+
+  /// `daemon.files.roots`: the directories the daemon's file API serves, with
+  /// their privilege policy. Empty when the daemon serves no files at all.
+  final List<MaidCafeFileRoot> fileRoots;
 
   /// The raw `/etc/maidcafe/config.toml` text, for patch-based updates that
   /// preserve everything the model does not parse.
@@ -508,6 +514,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
       for (final fragment in alarmConfigs.values)
         parseMaidCafeAlarmFragment(fragment),
     ],
+    fileRoots: parseMaidCafeFileRoots(fullConfig),
   );
 });
 

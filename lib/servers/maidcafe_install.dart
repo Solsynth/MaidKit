@@ -639,6 +639,16 @@ String buildMaidCafeDaemonInstallScript({
     actions: actions,
     alarms: alarms,
   );
+  for (final root in fileRoots ?? const <MaidCafeFileRoot>[]) {
+    if (!root.isValid) {
+      throw ArgumentError.value(
+        root.path,
+        'fileRoots',
+        'must be an absolute path, and a privileged one needs a profile name '
+            'and a permitted mode',
+      );
+    }
+  }
   final runAsUsers = maidCafeActionRunAsUsers(actions);
   final resolvedApiSecret = apiSecret.trim().isEmpty
       ? generateMaidCafeApiSecret()
@@ -667,6 +677,17 @@ daemon_binary="\$(find "\$work_dir/extracted" -type f -name maidcafe-daemon -pri
 test -n "\$daemon_binary"
 
 install -o root -g root -m 0755 "\$daemon_binary" /usr/local/bin/maidcafe-daemon
+
+# The bundle may also carry the privileged file helper. It is installed here,
+# before the configuration that names it, because the daemon refuses to start
+# when a privileged root's helper is missing. A bundle without one (an older
+# release, or a platform that has no sudo) simply leaves the path absent, and a
+# privileged root declared later fails with a message saying so.
+helper_binary="\$(find "\$work_dir/extracted" -type f -name maidkit-priv -print -quit)"
+if [ -n "\$helper_binary" ]; then
+  install -d -o root -g root -m 0755 /usr/local/libexec
+  install -o root -g root -m 0755 "\$helper_binary" /usr/local/libexec/maidkit-priv
+fi
 ''';
   // Restart the service and verify health using the secret in the existing
   // config (never rewritten by an update).
@@ -1032,6 +1053,13 @@ String buildMaidCafeDaemonConfigScript({
   List<String> terminalAllowedOrigins = const [],
   bool? terminalRelayEnabled,
   List<String> terminalShells = const [],
+  /// Directories the daemon's file API may serve, or null when this caller does
+  /// not model them: null leaves the section and any installed grant alone,
+  /// which is what keeps an operator's own configuration from being erased.
+  List<MaidCafeFileRoot>? fileRoots,
+  /// The compiled helper, when the caller has it rather than the bundle having
+  /// installed it already. Null is the normal case for a save.
+  String? privHelperBase64,
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
     throw ArgumentError.value(
@@ -1047,6 +1075,16 @@ String buildMaidCafeDaemonConfigScript({
     actions: actions,
     alarms: alarms,
   );
+  for (final root in fileRoots ?? const <MaidCafeFileRoot>[]) {
+    if (!root.isValid) {
+      throw ArgumentError.value(
+        root.path,
+        'fileRoots',
+        'must be an absolute path, and a privileged one needs a profile name '
+            'and a permitted mode',
+      );
+    }
+  }
   final runAsUsers = maidCafeActionRunAsUsers(actions);
   final configPath = transport == 'stdio'
       ? '/etc/maidcafe/config.stdio.toml'
@@ -1132,9 +1170,22 @@ systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemo
   patched = patchMaidCafeTerminalRelayConfigText(patched, {
     if (terminalRelayEnabled != null) 'enabled': '$terminalRelayEnabled',
   });
+  // File roots live in their own table with an array of tables beneath it, so
+  // the section is replaced as a whole rather than patched key by key. A caller
+  // that does not model roots passes null and its section is left alone.
+  patched = patchMaidCafeFilesConfigText(patched, fileRoots);
+  final privScript = buildMaidCafePrivScript(
+    fileRoots,
+    stdio: transport == 'stdio',
+    helperBase64: privHelperBase64,
+  );
   final encodedConfig = base64Encode(utf8.encode(patched));
   return '''set -eu
 install -d -o root -g root -m 0755 /etc/maidcafe
+# The helper, its profiles and its sudoers rule must exist before the daemon
+# configuration that declares a privileged root: the daemon validates its
+# helper at load and refuses to start without it.
+$privScript
 printf '%s' '$encodedConfig' | base64 -d | install -o root -g $installGroup -m $installMode /dev/stdin $configPath
 ${buildMaidCafeActionScriptsScript(actions, stdio: transport == 'stdio', runAsUsers: runAsUsers)}
 ${buildMaidCafeAlarmFragmentsScript(alarms, stdio: transport == 'stdio')}

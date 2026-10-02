@@ -17,6 +17,7 @@ import 'package:styled_widget/styled_widget.dart';
 
 import 'maidcafe_endpoint_section.dart';
 import 'maidcafe_install.dart';
+import 'maidcafe_priv.dart';
 import 'maidcafe_uninstall.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
@@ -170,6 +171,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   String? _streamStatus;
   String? _latestVersion;
   List<MaidCafeActionDefinition>? _savedActions;
+  /// The file roots the daemon serves, as loaded from its configuration. Null
+  /// until a configuration has been read: a tab that has not read one must not
+  /// claim the host has no roots, because saving that claim would delete the
+  /// section an operator wrote by hand.
+  List<MaidCafeFileRoot>? _fileRoots;
+  List<MaidCafeFileRoot>? _savedFileRoots;
+  var _showRootComposer = false;
   String? _runningActionName;
   // Alarm thresholds declared in the daemon's alarmsDir fragments. Edited
   // here (the daemon evaluates them locally) and deployed with the config.
@@ -393,6 +401,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     if (config.transport == 'stdio' || config.transport == 'http') {
       _transport = config.transport!;
     }
+    _fileRoots = List.unmodifiable(config.fileRoots);
+    _savedFileRoots = _fileRoots;
     ref
         .read(maidCafeActionsProvider.notifier)
         .setForServer(widget.server.id, config.actions);
@@ -556,6 +566,68 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _actionResults.remove(action.name);
   }
 
+  /// The roots to write on save: null while none has been read, so an
+  /// unread configuration is never replaced with an empty section.
+  List<MaidCafeFileRoot>? get _fileRootsForSave => _fileRoots;
+
+  void _addFileRoot(MaidCafeFileRoot root) {
+    final current = _fileRoots ?? const <MaidCafeFileRoot>[];
+    _fileRoots = List.unmodifiable([...current, root]);
+    setState(() {
+      _showRootComposer = false;
+      _message = null;
+    });
+  }
+
+  void _removeFileRoot(int index) {
+    final current = _fileRoots;
+    if (current == null || index < 0 || index >= current.length) return;
+    _fileRoots = List.unmodifiable([
+      for (var i = 0; i < current.length; i++)
+        if (i != index) current[i],
+    ]);
+    setState(() => _message = null);
+  }
+
+  void _stageFileRoot(int index, MaidCafeFileRoot root) {
+    final current = _fileRoots;
+    if (current == null || index < 0 || index >= current.length) return;
+    _fileRoots = List.unmodifiable([
+      for (var i = 0; i < current.length; i++) i == index ? root : current[i],
+    ]);
+    // The provider is read rather than watched elsewhere, so an explicit
+    // rebuild is what keeps the dirty footer honest while editing.
+    setState(() {});
+  }
+
+  void _discardFileRootChanges() {
+    final saved = _savedFileRoots;
+    if (saved == null) return;
+    setState(() {
+      _fileRoots = saved;
+      _showRootComposer = false;
+      _message = null;
+    });
+  }
+
+  bool get _fileRootsDirty {
+    final saved = _savedFileRoots;
+    final current = _fileRoots;
+    if (current == null) return false;
+    if (saved == null) return current.isNotEmpty;
+    if (saved.length != current.length) return true;
+    for (var i = 0; i < saved.length; i++) {
+      if (!_sameFileRoot(saved[i], current[i])) return true;
+    }
+    return false;
+  }
+
+  bool _sameFileRoot(MaidCafeFileRoot a, MaidCafeFileRoot b) =>
+      a.path == b.path &&
+      a.privileged == b.privileged &&
+      a.profile == b.profile &&
+      a.modes.join(',') == b.modes.join(',');
+
   void _discardActionChanges() {
     final saved = _savedActions;
     if (saved == null) return;
@@ -717,6 +789,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
       actions: List.unmodifiable(_actions),
       alarms: List.unmodifiable(_alarms),
+      fileRoots: _fileRootsForSave,
       updateOnly: updating,
     );
   }
@@ -793,6 +866,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         maxConcurrentRuns: _configInt(_maxConcurrentRunsController, 4),
         actions: List.unmodifiable(_actions),
         alarms: List.unmodifiable(_alarms),
+        fileRoots: _fileRootsForSave,
         updateOnly: updating,
       );
       await _cacheMaidCafePort(port);
@@ -1049,6 +1123,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                 : null,
             actions: List.unmodifiable(_actions),
             alarms: List.unmodifiable(_alarms),
+            fileRoots: _fileRootsForSave,
           ),
           onOutput: onOutput,
           sshUserIsRoot: widget.server.username == 'root',
@@ -1074,6 +1149,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       // The config and scripts are on the server; the reopen failure below is
       // connection-only, so the local snapshot is already committed.
       _savedActions = List.unmodifiable(_actions);
+      _savedFileRoots = _fileRoots;
       final opened = await _openStream(port: port, force: true);
       if (!opened) return;
       if (mounted) {
@@ -1455,7 +1531,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   }
 
   Widget _payloadTabs(BuildContext context) => DefaultTabController(
-    length: 5,
+    length: 6,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1478,6 +1554,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
               label: 'maidCafeActions'.tr(),
             ),
             IconLabelTab(
+              icon: const Icon(Symbols.folder_open, size: 18),
+              label: 'maidCafeFilesTab'.tr(),
+            ),
+            IconLabelTab(
               icon: const Icon(Symbols.receipt_long, size: 18),
               label: 'maidCafeAuditTab'.tr(),
             ),
@@ -1490,6 +1570,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
               _uploadsTab(context),
               _alarmsTab(context),
               _actionsTab(context),
+              _filesTab(context),
               _auditTab(context),
             ],
           ),
@@ -1620,6 +1701,146 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       ],
     );
   }
+
+  /// The directories the daemon's file API serves.
+  ///
+  /// This is what makes a browser able to manage files without SSH, and the
+  /// reason a root can be marked privileged: writes there go through the
+  /// `maidkit-priv` helper as root, which is how a web client edits an nginx or
+  /// Caddy configuration. The editor writes both allowlists at once — the
+  /// daemon's roots and the helper's profiles — so they cannot drift apart.
+  Widget _filesTab(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final roots = _fileRoots;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                'maidCafeFilesHint'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (roots == null)
+                Text(
+                  'maidCafeFilesUnread'.tr(),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                )
+              else ...[
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(
+                          () => _showRootComposer = !_showRootComposer,
+                        ),
+                  icon: Icon(
+                    _showRootComposer ? Symbols.close : Symbols.add,
+                  ),
+                  label: Text(
+                    _showRootComposer
+                        ? 'maidCafeCancel'.tr()
+                        : 'maidCafeAddRoot'.tr(),
+                  ),
+                ),
+                if (_showRootComposer) ...[
+                  const SizedBox(height: 8),
+                  _rootComposer(context),
+                ],
+                const SizedBox(height: 16),
+                if (roots.isEmpty && !_showRootComposer)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      'maidCafeNoRoots'.tr(),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                for (var i = 0; i < roots.length; i++) ...[
+                  _MaidCafeRootCard(
+                    key: ValueKey('maidcafe-root-${roots[i].path}-$i'),
+                    root: roots[i],
+                    busy: _busy,
+                    onChanged: (root) => _stageFileRoot(i, root),
+                    onDelete: () => _removeFileRoot(i),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ],
+            ],
+          ),
+        ),
+        _filesFooter(context),
+      ],
+    );
+  }
+
+  Widget _filesFooter(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final dirty = _fileRootsDirty;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Row(
+          children: [
+            if (dirty) ...[
+              Icon(Symbols.circle, size: 8, color: scheme.primary),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Text(
+                dirty
+                    ? 'maidCafeUnsavedChanges'.tr()
+                    : 'maidCafeAllChangesSaved'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (dirty) ...[
+              OutlinedButton(
+                onPressed: _busy ? null : _discardFileRootChanges,
+                child: Text('maidCafeDiscardChanges'.tr()),
+              ),
+              const SizedBox(width: 8),
+            ],
+            FilledButton.icon(
+              onPressed: dirty && !_busy
+                  ? () => _syncConfiguration(
+                      successMessage: 'maidCafeSaveRootsSuccess'.tr(),
+                    )
+                  : null,
+              icon: const Icon(Symbols.save),
+              label: Text('maidCafeSaveActions'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _rootComposer(BuildContext context) => _MaidCafeRootCard(
+    key: const ValueKey('maidcafe-root-composer'),
+    root: const MaidCafeFileRoot(path: ''),
+    busy: _busy,
+    composer: true,
+    onChanged: (_) {},
+    onSubmit: _addFileRoot,
+    onDelete: () => setState(() => _showRootComposer = false),
+  );
 
   Widget _auditTab(BuildContext context) {
     final theme = Theme.of(context);
@@ -2864,6 +3085,205 @@ class MaidCafeInstallSheetState extends State<MaidCafeInstallSheet>
           ),
         ),
       ],
+    );
+  }
+}
+
+/// One file root: the path the daemon serves, and whether writing there needs
+/// root through the helper.
+///
+/// A privileged root is the whole reason this editor exists — it is how a
+/// browser edits a file root owns — so the card states plainly what enabling it
+/// installs: a profile in the helper's own file and a sudoers rule scoped to the
+/// helper, neither of which is a general root shell.
+class _MaidCafeRootCard extends StatefulWidget {
+  const _MaidCafeRootCard({
+    super.key,
+    required this.root,
+    required this.busy,
+    required this.onChanged,
+    required this.onDelete,
+    this.onSubmit,
+    this.composer = false,
+  });
+
+  final MaidCafeFileRoot root;
+  final bool busy;
+  final ValueChanged<MaidCafeFileRoot> onChanged;
+  final VoidCallback onDelete;
+
+  /// Adds the root. Only the composer has one; a saved card edits in place.
+  final ValueChanged<MaidCafeFileRoot>? onSubmit;
+  final bool composer;
+
+  @override
+  State<_MaidCafeRootCard> createState() => _MaidCafeRootCardState();
+}
+
+class _MaidCafeRootCardState extends State<_MaidCafeRootCard> {
+  late final TextEditingController _path;
+  late final TextEditingController _profile;
+  late bool _privileged;
+  late List<String> _modes;
+
+  /// The modes the helper accepts. Anything else is refused at install, so the
+  /// editor only offers a choice that can work.
+  static const _modeChoices = ['0644', '0640', '0600', '0755', '0750', '0700'];
+
+  @override
+  void initState() {
+    super.initState();
+    _path = TextEditingController(text: widget.root.path);
+    _profile = TextEditingController(text: widget.root.profile);
+    _privileged = widget.root.privileged;
+    _modes = widget.root.modes.isEmpty
+        ? ['0644', '0640']
+        : List.of(widget.root.modes);
+  }
+
+  @override
+  void dispose() {
+    _path.dispose();
+    _profile.dispose();
+    super.dispose();
+  }
+
+  MaidCafeFileRoot get _current => MaidCafeFileRoot(
+    path: _path.text.trim(),
+    privileged: _privileged,
+    profile: _privileged ? _profile.text.trim() : '',
+    modes: _privileged ? _modes : const ['0644', '0640'],
+  );
+
+  void _report() => widget.onChanged(_current);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final valid = _current.isValid;
+    return Card.outlined(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _path,
+              enabled: !widget.busy,
+              decoration: InputDecoration(
+                labelText: 'maidCafeRootPath'.tr(),
+                hintText: '/srv/app',
+                isDense: true,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                _report();
+                setState(() {});
+              },
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _privileged,
+              onChanged: widget.busy
+                  ? null
+                  : (value) {
+                      setState(() => _privileged = value);
+                      _report();
+                    },
+              title: Text('maidCafeRootPrivileged'.tr()),
+              subtitle: Text(
+                _privileged
+                    ? 'maidCafeRootPrivilegedOn'.tr()
+                    : 'maidCafeRootPrivilegedOff'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (_privileged) ...[
+              TextField(
+                controller: _profile,
+                enabled: !widget.busy,
+                decoration: InputDecoration(
+                  labelText: 'maidCafeRootProfile'.tr(),
+                  hintText: 'nginx',
+                  isDense: true,
+                  border: const OutlineInputBorder(),
+                ),
+                onChanged: (_) {
+                  _report();
+                  setState(() {});
+                },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'maidCafeRootModes'.tr(),
+                style: theme.textTheme.labelLarge,
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final mode in _modeChoices)
+                    FilterChip(
+                      label: Text(mode),
+                      selected: _modes.contains(mode),
+                      onSelected: widget.busy
+                          ? null
+                          : (selected) {
+                              setState(() {
+                                if (selected) {
+                                  if (!_modes.contains(mode)) _modes.add(mode);
+                                } else {
+                                  _modes.remove(mode);
+                                }
+                                if (_modes.isEmpty) _modes.add(mode);
+                              });
+                              _report();
+                            },
+                    ),
+                ],
+              ),
+            ],
+            if (!valid && _path.text.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'maidCafeRootInvalid'.tr(),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.error,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: widget.busy ? null : widget.onDelete,
+                  icon: const Icon(Symbols.delete),
+                  label: Text(
+                    widget.composer
+                        ? 'maidCafeCancel'.tr()
+                        : 'maidCafeRemoveRoot'.tr(),
+                  ),
+                ),
+                if (widget.onSubmit != null) ...[
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: widget.busy || !valid || _path.text.trim().isEmpty
+                        ? null
+                        : () => widget.onSubmit!(_current),
+                    icon: const Icon(Symbols.add),
+                    label: Text('maidCafeAddRoot'.tr()),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

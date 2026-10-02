@@ -217,3 +217,186 @@ String _toml(String value) {
       .replaceAll('\t', '\\t');
   return '"$escaped"';
 }
+
+/// Reads the file roots a daemon's configuration declares.
+///
+/// Both shapes are understood, because both exist in the field: the current
+/// `[[daemon.files.roots]]` array of tables, and the bare `roots = ["/srv"]`
+/// list the first release wrote. The daemon itself still accepts the bare form,
+/// so the editor has to show what such a host actually has rather than claiming
+/// it has no roots.
+List<MaidCafeFileRoot> parseMaidCafeFileRoots(String configText) {
+  final roots = <MaidCafeFileRoot>[];
+  var section = '';
+
+  // One `[[daemon.files.roots]]` entry accumulates here until the next header.
+  String? entryPath;
+  var entryPrivileged = false;
+  var entryProfile = '';
+  final entryModes = <String>[];
+  String? openListKey;
+  final openList = StringBuffer();
+
+  void commitEntry() {
+    if (entryPath == null) return;
+    roots.add(
+      MaidCafeFileRoot(
+        path: entryPath!,
+        privileged: entryPrivileged,
+        profile: entryProfile,
+        modes: entryModes.isEmpty ? const ['0644', '0640'] : List.of(entryModes),
+      ),
+    );
+    entryPath = null;
+    entryPrivileged = false;
+    entryProfile = '';
+    entryModes.clear();
+  }
+
+  void commitKey(String key, String raw) {
+    switch (key) {
+      case 'path':
+        entryPath ??= _filesTomlString(raw);
+      case 'privileged':
+      case 'privilegedwrite':
+        if (_filesTomlBool(raw) == true) entryPrivileged = true;
+      case 'profile':
+        final value = _filesTomlString(raw);
+        if (value.isNotEmpty) entryProfile = value;
+      case 'modes':
+      case 'mode':
+        if (entryModes.isEmpty) entryModes.addAll(_filesTomlStringList(raw));
+    }
+  }
+
+  for (final line in configText.split('\n')) {
+    final trimmed = line.trim();
+    if (openListKey != null) {
+      openList.write(' $trimmed');
+      if (trimmed.contains(']')) {
+        if (section == '[daemon.files]') {
+          _commitBareRoots(openList.toString(), roots);
+        } else {
+          commitKey(openListKey, openList.toString());
+        }
+        openListKey = null;
+        openList.clear();
+      }
+      continue;
+    }
+    if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) {
+      // A new header ends whatever the previous one was describing.
+      if (section == '[[daemon.files.roots]]') commitEntry();
+      section = trimmed;
+      continue;
+    }
+    final separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    final key = trimmed.substring(0, separator).trim().toLowerCase();
+    final value = trimmed.substring(separator + 1).trim();
+    if (section == '[[daemon.files.roots]]') {
+      if ((key == 'modes' || key == 'mode') &&
+          value.startsWith('[') &&
+          !value.contains(']')) {
+        openListKey = key;
+        openList
+          ..clear()
+          ..write(value);
+        continue;
+      }
+      commitKey(key, value);
+      continue;
+    }
+    if (section != '[daemon.files]') continue;
+    if (key == 'roots' || key == 'root') {
+      if (value.startsWith('[') && !value.contains(']')) {
+        openListKey = key;
+        openList
+          ..clear()
+          ..write(value);
+        continue;
+      }
+      _commitBareRoots(value, roots);
+    }
+  }
+  if (section == '[[daemon.files.roots]]') commitEntry();
+  return roots;
+}
+
+/// Appends the bare `roots = ["/srv"]` entries, which predate per-root
+/// privileges and mean an ordinary, unprivileged root.
+void _commitBareRoots(String raw, List<MaidCafeFileRoot> roots) {
+  for (final path in _filesTomlStringList(raw)) {
+    roots.add(MaidCafeFileRoot(path: path));
+  }
+}
+
+String _filesTomlString(String raw) => _tomlUnquote(raw);
+List<String> _filesTomlStringList(String raw) => RegExp(
+  r'"((?:[^"\\]|\\.)*)"',
+).allMatches(raw).map((match) => match.group(1)!).toList();
+bool? _filesTomlBool(String raw) => switch (_tomlUnquote(raw).toLowerCase()) {
+  'true' => true,
+  'false' => false,
+  _ => null,
+};
+
+String _tomlUnquote(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.substring(1, trimmed.length - 1);
+  }
+  return trimmed.split('#').first.trim();
+}
+
+/// Rewrites the `[daemon.files]` table of [currentConfig] to match [roots],
+/// leaving every other table, key and comment byte-for-byte alone.
+///
+/// A null [roots] means the caller does not model file roots and the section is
+/// left untouched, which is what keeps an operator's hand-written configuration
+/// from being erased by an unrelated save. An empty list is an explicit
+/// teardown and removes the section.
+///
+/// The section is replaced as a whole rather than key by key: its roots are an
+/// array of tables, which a scalar patcher cannot address, and a section that is
+/// rewritten entirely is one whose `[[daemon.files.roots]]` children cannot be
+/// left behind next to a new set.
+String patchMaidCafeFilesConfigText(
+  String currentConfig,
+  List<MaidCafeFileRoot>? roots,
+) {
+  if (roots == null) return currentConfig;
+  final lines = currentConfig.split('\n');
+  final kept = <String>[];
+  var inFiles = false;
+  for (final line in lines) {
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('[')) {
+      // The section and everything belonging to it: the table itself and each
+      // of its roots entries.
+      inFiles = trimmed == '[daemon.files]' ||
+          trimmed.startsWith('[[daemon.files.roots]]') ||
+          trimmed.startsWith('[[daemon.files.');
+      if (inFiles) continue;
+    }
+    if (inFiles) continue;
+    kept.add(line);
+  }
+  final body = maidCafeFilesConfig(roots);
+  if (body.isEmpty) {
+    return _collapseBlankLines(kept.join('\n'));
+  }
+  // The generated section is a table, so it cannot live inside another one: a
+  // `[daemon]` table that is still open when the file ends takes the appended
+  // headers as part of it. Appending after a trailing blank keeps the file
+  // readable either way.
+  final text = kept.join('\n');
+  final separator = text.endsWith('\n') ? '' : '\n';
+  return _collapseBlankLines('$text$separator\n$body');
+}
+
+/// Drops runs of blank lines left behind by a removed section.
+String _collapseBlankLines(String text) =>
+    '${text.replaceAll(RegExp(r'\n{3,}'), '\n\n').trimRight()}\n';
+
