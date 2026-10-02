@@ -74,6 +74,18 @@ String decodeAlarmFragmentFromScript(String script, String kind) {
   return utf8.decode(base64Decode(match.group(1)!));
 }
 
+/// Decodes the `/etc/maidkit/priv.toml` payload a generated script installs, so
+/// a test asserts on the grant file itself rather than on a comment near it.
+String decodePrivTomlFromScript(String script) {
+  final match = RegExp(
+    r"printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d \| "
+    r'install -o root -g root -m 0644 /dev/stdin /etc/maidkit/priv\.toml',
+  ).firstMatch(script);
+  if (match == null) {
+    fail('no embedded priv.toml found in generated script');
+  }
+  return utf8.decode(base64Decode(match.group(1)!));
+}
 
 /// The daemon config an install script writes, decoded from the base64 it
 /// carries. Grepping the script for config text would pass on the comment above
@@ -947,7 +959,10 @@ command = "/bin/true"
     test('no roots leaves the file API out of the config entirely', () {
       expect(maidCafeFilesConfig(const []), isEmpty);
       // An invalid root is dropped rather than written as a broken entry.
-      expect(maidCafeFilesConfig(const [MaidCafeFileRoot(path: 'rel')]), isEmpty);
+      expect(
+        maidCafeFilesConfig(const [MaidCafeFileRoot(path: 'rel')]),
+        isEmpty,
+      );
     });
 
     test('the profile file carries only privileged roots', () {
@@ -979,9 +994,7 @@ command = "/bin/true"
       // The daemon refuses to start when a privileged root's helper is missing,
       // so the helper, its profiles and its rule must land first.
       final privIndex = script.indexOf('/etc/sudoers.d/maidkit-priv');
-      final configIndex = script.indexOf(
-        'install -o root -g maidcafe -m 0660',
-      );
+      final configIndex = script.indexOf('install -o root -g maidcafe -m 0660');
       expect(privIndex, greaterThan(-1));
       expect(configIndex, greaterThan(privIndex));
       // The rule comes from the helper itself and is validated before install.
@@ -993,7 +1006,9 @@ command = "/bin/true"
       // The helper binary is deployed through /dev/stdin, like action scripts.
       expect(
         script,
-        contains('install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/maidkit-priv'),
+        contains(
+          'install -o root -g root -m 0755 /dev/stdin /usr/local/libexec/maidkit-priv',
+        ),
       );
       // The config it writes declares the root the helper was just granted.
       // The config is base64-embedded in the script, so it is decoded the way
@@ -1044,6 +1059,119 @@ command = "/bin/true"
     });
   });
 
+  group('host-wide helper grants', () {
+    const packages = MaidCafePackageGrant(
+      manager: 'apt',
+      verbs: ['refresh', 'install'],
+    );
+    const firewall = MaidCafeFirewallGrant(
+      backend: 'ufw',
+      verbs: ['allow', 'deny', 'delete'],
+    );
+
+    test('a fresh install writes both halves of the routing', () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        priv: const MaidCafePrivSection(packages: true, firewall: true),
+        packages: packages,
+        firewall: firewall,
+      );
+      // The grant file carries the tables the daemon routes to.
+      final grant = decodePrivTomlFromScript(script);
+      expect(grant, contains('[packages]'));
+      expect(grant, contains('manager = "apt"'));
+      expect(grant, contains('verbs = ["refresh", "install"]'));
+      expect(grant, contains('[firewall]'));
+      expect(grant, contains('backend = "ufw"'));
+      // And the config the daemon loads turns the routing on.
+      final config = configFromInstallScript(script);
+      expect(config, contains('[daemon.priv]'));
+      expect(config, contains('packages = true'));
+      expect(config, contains('firewall = true'));
+      expect(config, contains('systemd = false'));
+      // The helper, its grants and its rule land before the config that routes
+      // through them, because the daemon refuses to start without the helper.
+      final privIndex = script.indexOf('/etc/sudoers.d/maidkit-priv');
+      final configIndex = script.indexOf('install -o root -g maidcafe -m 0660');
+      expect(privIndex, greaterThan(-1));
+      expect(configIndex, greaterThan(privIndex));
+    });
+
+    test('grants alone install the helper and its rule', () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+        packages: packages,
+      );
+      expect(script, contains('maidkit-priv" sudoers'));
+      expect(script, contains('visudo -cf'));
+      final grant = decodePrivTomlFromScript(script);
+      expect(grant, contains('[packages]'));
+      expect(grant, isNot(contains('[[profiles]]')));
+    });
+
+    test('an unmodelled priv table stays out of the config', () {
+      final script = buildMaidCafeDaemonInstallScript(
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
+      );
+      // No priv section is written, so the carry-over loop keeps an operator's
+      // own table instead of replacing it with nothing.
+      expect(configFromInstallScript(script), isNot(contains('[daemon.priv]')));
+      expect(script, contains('for unmodelled in daemon.files daemon.priv'));
+      // A caller that models nothing leaves the installed grant file alone.
+      expect(script, isNot(contains('/etc/maidkit/priv.toml')));
+    });
+
+    test('a save patches only the switches it models', () {
+      final script = buildMaidCafeDaemonConfigScript(
+        currentConfig: _baseConfig,
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+        priv: const MaidCafePrivSection(packages: true, firewall: true),
+      );
+      final config = decodeMaidCafeConfigFromScript(script);
+      expect(config, contains('[daemon.priv]'));
+      expect(config, contains('packages = true'));
+      expect(config, contains('firewall = true'));
+      // The rest of the file the app does not model survives the patch.
+      expect(config, contains('ci-deploy'));
+      expect(config, contains('metricsSecret = "metrics-secret"'));
+    });
+
+    test('a save leaves an operator priv table alone when not modelled', () {
+      const existing = '''
+[daemon]
+id = "maidkit-1"
+transport = "http"
+cloudUrl = "https://mk.solsynth.dev"
+cloudSecret = "cloud-secret"
+
+[daemon.priv]
+systemd = true
+helper = "/opt/maidkit-priv"
+''';
+      final script = buildMaidCafeDaemonConfigScript(
+        currentConfig: existing,
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://mk.solsynth.dev',
+        cloudSecret: 'cloud-secret',
+      );
+      final config = decodeMaidCafeConfigFromScript(script);
+      expect(config, contains('systemd = true'));
+      expect(config, contains('helper = "/opt/maidkit-priv"'));
+      expect(config, isNot(contains('packages')));
+    });
+  });
+
   group('an operator\'s own configuration survives a save', () {
     /// The carry-over loop, run for real in a shell rather than grepped for.
     ///
@@ -1053,9 +1181,7 @@ command = "/bin/true"
     /// paths this test owns.
     String runCarryOverLoop(String script, String existing, String generated) {
       final lines = script.split('\n');
-      final start = lines.indexWhere(
-        (l) => l.startsWith('for unmodelled in'),
-      );
+      final start = lines.indexWhere((l) => l.startsWith('for unmodelled in'));
       expect(start, greaterThan(-1), reason: 'no carry-over loop');
       var end = -1;
       for (var i = start + 1; i < lines.length; i++) {
@@ -1256,9 +1382,7 @@ enabled = true
       );
       expect(
         () => sync(
-          roots: const [
-            MaidCafeFileRoot(path: '/etc/nginx', privileged: true),
-          ],
+          roots: const [MaidCafeFileRoot(path: '/etc/nginx', privileged: true)],
         ),
         throwsArgumentError,
         reason: 'a privileged root needs a profile name',
@@ -1275,10 +1399,7 @@ enabled = true
       // The bundle carries the helper; the install must place it, or a
       // privileged root declared later cannot start.
       expect(script, contains('maidkit-priv'));
-      expect(
-        script,
-        contains('/usr/local/libexec/maidkit-priv'),
-      );
+      expect(script, contains('/usr/local/libexec/maidkit-priv'));
       final extraction = script.indexOf('helper_binary=');
       final configInstall = script.indexOf('-m 0660 "\$work_dir/config.toml"');
       expect(extraction, greaterThan(-1));

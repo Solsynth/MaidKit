@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
+import 'package:maid_kit/servers/ssh_connection_manager.dart';
 
 List<int> _bytes(String text) => utf8.encode(text);
 
@@ -13,6 +15,80 @@ String _hexEncode(String text) => utf8
     .encode(text)
     .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
     .join();
+
+/// A stand-in for the daemon's native-op routes: it records every request and
+/// answers the execution response shape the Go daemon produces, so the client's
+/// paths, bodies and headers are exercised over real HTTP.
+class _OpDaemon {
+  HttpServer? _server;
+  final List<({String method, String path, Map<String, Object?> body})>
+  requests = [];
+  final Map<String, String> headers = {};
+
+  /// Paths that answer a body-less 404, the way a daemon older than the route
+  /// does. Everything else answers an op result.
+  final Set<String> missingRoutes = {};
+
+  /// Paths that answer a 404 with the daemon's own JSON error body.
+  final Map<String, String> errorRoutes = {};
+
+  String get baseUrl => 'http://127.0.0.1:${_server!.port}';
+
+  Future<void> start() async {
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server!.listen(_handle);
+  }
+
+  Future<void> stop() async => _server?.close(force: true);
+
+  void _handle(HttpRequest request) async {
+    final raw = await utf8.decoder.bind(request).join();
+    for (final name in [
+      'authorization',
+      'x-maidcafe-signature',
+      'x-maidcafe-invoked-by',
+    ]) {
+      final value = request.headers.value(name);
+      if (value != null) headers[name] = value;
+    }
+    final path = request.uri.path;
+    if (path == '/health') {
+      _json(request, {'ok': true, 'mode': 'daemon', 'id': 'host-1'});
+      return;
+    }
+    requests.add((
+      method: request.method,
+      path: path,
+      body: raw.isEmpty
+          ? const <String, Object?>{}
+          : (jsonDecode(raw) as Map).cast<String, Object?>(),
+    ));
+    if (missingRoutes.contains(path)) {
+      request.response.statusCode = 404;
+      await request.response.close();
+      return;
+    }
+    final error = errorRoutes[path];
+    if (error != null) {
+      request.response.statusCode = 404;
+      _json(request, {'error': error});
+      return;
+    }
+    _json(request, {
+      'ok': true,
+      'name': path,
+      'exit_code': 0,
+      'stdout': 'done\n',
+      'stderr': '',
+    });
+  }
+
+  void _json(HttpRequest request, Map<String, Object?> body) {
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(jsonEncode(body));
+    request.response.close();
+  }
+}
 
 void main() {
   group('parseMaidCafeActionScripts', () {
@@ -671,6 +747,164 @@ cooldownSeconds = 60
     test('accepts a numeric exit code from JSON', () {
       final result = MaidCafeOpResult.parse({'ok': false, 'exit_code': 1.0});
       expect(result.exitCode, 1);
+    });
+  });
+
+  group('runPackageAction', () {
+    late _OpDaemon daemon;
+    late MaidCafeStreamSession session;
+    const secret = 'metrics-secret';
+
+    setUp(() async {
+      daemon = _OpDaemon();
+      await daemon.start();
+      session = await MaidCafeStreamSession.openAt(
+        manager: SshConnectionManager(() => throw UnimplementedError()),
+        baseUrl: daemon.baseUrl,
+        apiSecret: secret,
+      );
+    });
+
+    tearDown(() async => daemon.stop());
+
+    test('refresh posts an empty body to the refresh route', () async {
+      final result = await session.runPackageAction('refresh');
+      expect(result.ok, isTrue);
+      final request = daemon.requests.single;
+      expect(request.method, 'POST');
+      expect(request.path, '/api/v1/packages/refresh');
+      // refresh and upgrade take no package, and the daemon refuses one; a
+      // name passed anyway must never reach the wire.
+      expect(request.body, isEmpty);
+      expect(daemon.headers['authorization'], 'Bearer $secret');
+    });
+
+    test('install carries the package name', () async {
+      await session.runPackageAction('install', name: 'nginx');
+      final request = daemon.requests.single;
+      expect(request.path, '/api/v1/packages/install');
+      expect(request.body, {'name': 'nginx'});
+    });
+
+    test('remove trims the name and omits an empty one', () async {
+      await session.runPackageAction('remove', name: '  nginx  ');
+      expect(daemon.requests.last.body, {'name': 'nginx'});
+      await session.runPackageAction('remove', name: '   ');
+      expect(daemon.requests.last.body, isEmpty);
+    });
+
+    test('forwards the invoking user', () async {
+      await session.runPackageAction('upgrade', invokedBy: 'alice');
+      expect(daemon.headers['x-maidcafe-invoked-by'], 'alice');
+    });
+  });
+
+  group('runFirewallAction', () {
+    late _OpDaemon daemon;
+    late MaidCafeStreamSession session;
+
+    setUp(() async {
+      daemon = _OpDaemon();
+      await daemon.start();
+      session = await MaidCafeStreamSession.openAt(
+        manager: SshConnectionManager(() => throw UnimplementedError()),
+        baseUrl: daemon.baseUrl,
+      );
+    });
+
+    tearDown(() async => daemon.stop());
+
+    test('enable posts no rule fields', () async {
+      await session.runFirewallAction('enable');
+      final request = daemon.requests.single;
+      expect(request.path, '/api/v1/firewall/enable');
+      expect(request.body, isEmpty);
+    });
+
+    test('allow carries the rule and omits empty fields', () async {
+      await session.runFirewallAction(
+        'allow',
+        port: '80',
+        protocol: 'tcp',
+        source: 'any',
+      );
+      expect(daemon.requests.last.path, '/api/v1/firewall/allow');
+      expect(daemon.requests.last.body, {
+        'port': '80',
+        'protocol': 'tcp',
+        'source': 'any',
+      });
+      // An empty source means "any" to the daemon, so it is left out rather
+      // than sent as a blank string.
+      await session.runFirewallAction('deny', port: '22', protocol: 'tcp');
+      expect(daemon.requests.last.body, {'port': '22', 'protocol': 'tcp'});
+    });
+
+    test('delete names the action it deletes', () async {
+      await session.runFirewallAction(
+        'delete',
+        ruleAction: 'allow',
+        port: '8080',
+        protocol: 'tcp',
+        source: '203.0.113.4',
+      );
+      expect(daemon.requests.last.path, '/api/v1/firewall/delete');
+      expect(daemon.requests.last.body, {
+        'port': '8080',
+        'protocol': 'tcp',
+        'source': '203.0.113.4',
+        'rule_action': 'allow',
+      });
+      // enable/disable never take the field, whichever other fields arrive.
+      await session.runFirewallAction('disable', ruleAction: 'allow');
+      expect(daemon.requests.last.body, isEmpty);
+    });
+  });
+
+  group('a route the daemon does not have', () {
+    late _OpDaemon daemon;
+    late MaidCafeStreamSession session;
+
+    setUp(() async {
+      daemon = _OpDaemon();
+      await daemon.start();
+      session = await MaidCafeStreamSession.openAt(
+        manager: SshConnectionManager(() => throw UnimplementedError()),
+        baseUrl: daemon.baseUrl,
+      );
+    });
+
+    tearDown(() async => daemon.stop());
+
+    test('is reported as a missing route, so a caller can fall back', () async {
+      daemon.missingRoutes.addAll([
+        '/api/v1/packages/refresh',
+        '/api/v1/firewall/enable',
+      ]);
+      await expectLater(
+        session.runPackageAction('refresh'),
+        throwsA(isA<MaidCafeRouteMissingException>()),
+      );
+      await expectLater(
+        session.runFirewallAction('enable'),
+        throwsA(isA<MaidCafeRouteMissingException>()),
+      );
+    });
+
+    test('a 404 the handler wrote is a failure, not a missing route', () async {
+      // The daemon's own handler answering means the endpoint exists: the
+      // caller must not fall back and re-run the operation over SSH.
+      daemon.errorRoutes['/api/v1/packages/install'] = 'invalid package name';
+      await expectLater(
+        session.runPackageAction('install', name: 'nginx'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('invalid package name'),
+          ),
+        ),
+      );
     });
   });
 }

@@ -9,6 +9,8 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package_models.dart';
+import 'maidcafe_session_registry.dart';
+import 'maidcafe_stream.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -39,12 +41,16 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
   final _searchController = TextEditingController();
   PackageManager? _manager;
   var _busy = false;
+  late final MaidCafeSessionRegistry _sessionRegistry;
+  MaidCafeStreamSession? _maidCafeStream;
 
   bool get _isRoot => widget.server.username == 'root';
 
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     if (widget.connected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load());
     }
@@ -53,8 +59,16 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
   @override
   void didUpdateWidget(PackageManagementTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected &&
-        (!oldWidget.connected || oldWidget.server.id != widget.server.id)) {
+    final serverChanged = oldWidget.server.id != widget.server.id;
+    if (serverChanged) {
+      _sessionRegistry.release(oldWidget.server);
+      _sessionRegistry.retain(widget.server);
+      _maidCafeStream = null;
+    } else if (!widget.connected && oldWidget.connected) {
+      _sessionRegistry.invalidate(widget.server);
+      _maidCafeStream = null;
+    }
+    if (widget.connected && (!oldWidget.connected || serverChanged)) {
       _load();
     }
   }
@@ -62,7 +76,21 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
   @override
   void dispose() {
     _searchController.dispose();
+    _sessionRegistry.release(widget.server);
     super.dispose();
+  }
+
+  /// The shared daemon session, when this server has one.
+  ///
+  /// The daemon has no package status endpoint — reads stay on SSH — so this
+  /// only feeds the mutating actions, which prefer the native op and fall back
+  /// to SSH when the daemon is older than the route.
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    _maidCafeStream = session;
+    return session;
   }
 
   Future<String?> _sudoPassword() async {
@@ -136,6 +164,26 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
         subtitle: '${manager.label} · ${widget.server.name}',
         command: _actionDescription(action, packageName),
         run: (onOutput) async {
+          final session = await _ensureMaidCafeStream();
+          if (session != null) {
+            try {
+              // Daemon present: run the native package op. The manager is the
+              // helper's grant or the daemon's own sudo rule to choose, and a
+              // real failure surfaces as an error instead of being retried
+              // over SSH.
+              final result = await session.runPackageAction(
+                action.name,
+                name: packageName,
+                invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+              );
+              result.ensureSuccess();
+              if (result.stdout.isNotEmpty) onOutput(result.stdout);
+              if (result.stderr.isNotEmpty) onOutput(result.stderr);
+              return;
+            } on MaidCafeRouteMissingException {
+              // Daemon older than /api/v1/packages: fall back to SSH.
+            }
+          }
           await ref
               .read(connectionManagerProvider)
               .runPackageAction(

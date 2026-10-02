@@ -111,6 +111,23 @@ class _FakeSession implements MaidCafeStreamSession {
   }) => throw UnimplementedError();
 
   @override
+  Future<MaidCafeOpResult> runPackageAction(
+    String verb, {
+    String? name,
+    String? invokedBy,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<MaidCafeOpResult> runFirewallAction(
+    String verb, {
+    String? ruleAction,
+    String? port,
+    String? protocol,
+    String? source,
+    String? invokedBy,
+  }) => throw UnimplementedError();
+
+  @override
   Future<void> sendTestNotification() => throw UnimplementedError();
   @override
   Future<List<MaidCafeAuditEntry>> audit({int limit = 50}) =>

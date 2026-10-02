@@ -377,6 +377,9 @@ Future<void> installMaidCafeDaemon({
   String? channel,
   List<MaidCafeAlarmDefinition> alarms = const [],
   List<MaidCafeFileRoot>? fileRoots,
+  MaidCafePrivSection? priv,
+  MaidCafePackageGrant? packages,
+  MaidCafeFirewallGrant? firewall,
   int port = 8747,
   String? apiSecret,
 }) => _installMaidCafeDaemon(
@@ -391,6 +394,9 @@ Future<void> installMaidCafeDaemon({
   channel: channel,
   alarms: alarms,
   fileRoots: fileRoots,
+  priv: priv,
+  packages: packages,
+  firewall: firewall,
   port: port,
   apiSecret: apiSecret ?? generateMaidCafeApiSecret(),
 );
@@ -404,6 +410,9 @@ Future<void> installMaidCafeApplication({
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
   List<MaidCafeFileRoot>? fileRoots,
+  MaidCafePrivSection? priv,
+  MaidCafePackageGrant? packages,
+  MaidCafeFirewallGrant? firewall,
   String? privHelperBase64,
   int port = 8747,
   String? apiSecret,
@@ -437,6 +446,9 @@ Future<void> installMaidCafeApplication({
   actions: actions,
   alarms: alarms,
   fileRoots: fileRoots,
+  priv: priv,
+  packages: packages,
+  firewall: firewall,
   privHelperBase64: privHelperBase64,
   title: 'maidCafeInstallApplicationRunning'.tr(),
   channel: channel,
@@ -465,6 +477,15 @@ Future<void> _installMaidCafeDaemon({
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
   List<MaidCafeFileRoot>? fileRoots,
+
+  /// The daemon's `[daemon.priv]` routing switches, or null when this caller
+  /// does not model them: null leaves an existing table over.
+  MaidCafePrivSection? priv,
+
+  /// Package and firewall grants for the helper's file.
+  MaidCafePackageGrant? packages,
+  MaidCafeFirewallGrant? firewall,
+
   /// The compiled `maidkit-priv` helper, when the caller has it from the
   /// daemon bundle for this platform. Null leaves an installed helper alone and
   /// only reconciles the profiles and the rule.
@@ -533,6 +554,9 @@ Future<void> _installMaidCafeDaemon({
           actions: actions,
           alarms: alarms,
           fileRoots: fileRoots,
+          priv: priv,
+          packages: packages,
+          firewall: firewall,
           privHelperBase64: privHelperBase64,
           updateOnly: updateOnly,
         ),
@@ -607,6 +631,7 @@ String buildMaidCafeDaemonInstallScript({
   int maxConcurrentRuns = 4,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
+
   /// Directories the daemon's file API may serve, and which of them need root.
   /// The generated script installs the privileged helper, its profiles and its
   /// sudoers rule before it writes the config that declares them.
@@ -615,10 +640,21 @@ String buildMaidCafeDaemonInstallScript({
   /// `[daemon.files]` table and any installed helper grant are left alone. An
   /// empty list is an explicit teardown.
   List<MaidCafeFileRoot>? fileRoots,
+
   /// The compiled `maidkit-priv` helper, base64-encoded, when the caller has it
   /// from the daemon bundle. Null leaves an installed helper alone and only
   /// reconciles the profiles and the rule.
   String? privHelperBase64,
+
+  /// The daemon's `[daemon.priv]` routing switches, or null when this caller
+  /// does not model them: null leaves an existing table over rather than
+  /// switching an operator's routing off.
+  MaidCafePrivSection? priv,
+
+  /// Package and firewall grants for the helper's file. Supplying either makes
+  /// the caller the owner of that file, exactly as declaring file roots does.
+  MaidCafePackageGrant? packages,
+  MaidCafeFirewallGrant? firewall,
   // When true the script replaces only the daemon binary, records the new
   // version in the existing config and restarts the service; everything else
   // (action fragments, scripts, sudoers rule and systemd unit) is left
@@ -771,16 +807,19 @@ $restartHealth''';
         maxBodyBytes: maxBodyBytes,
         maxConcurrentRuns: maxConcurrentRuns,
         fileRoots: fileRoots,
+        priv: priv,
       ),
     ),
   );
-  // The helper, its profiles and its sudoers rule must exist before the daemon
-  // configuration that declares a privileged root, because the daemon refuses
-  // to start when a privileged root's helper is missing.
+  // The helper, its grants and its sudoers rule must exist before the daemon
+  // configuration that routes an operation through it, because the daemon
+  // refuses to start when a routed operation's helper is missing.
   final privScript = buildMaidCafePrivScript(
     fileRoots,
     stdio: stdio,
     helperBase64: privHelperBase64,
+    packages: packages,
+    firewall: firewall,
   );
 
   return '''set -eu
@@ -1069,13 +1108,25 @@ String buildMaidCafeDaemonConfigScript({
   List<String> terminalAllowedOrigins = const [],
   bool? terminalRelayEnabled,
   List<String> terminalShells = const [],
+
   /// Directories the daemon's file API may serve, or null when this caller does
   /// not model them: null leaves the section and any installed grant alone,
   /// which is what keeps an operator's own configuration from being erased.
   List<MaidCafeFileRoot>? fileRoots,
+
   /// The compiled helper, when the caller has it rather than the bundle having
   /// installed it already. Null is the normal case for a save.
   String? privHelperBase64,
+
+  /// The daemon's `[daemon.priv]` routing switches, or null when this caller
+  /// does not model them: null leaves the table alone, which is what keeps an
+  /// operator's own helper routing from being erased by an unrelated save.
+  MaidCafePrivSection? priv,
+
+  /// Package and firewall grants for the helper's file. Supplying either makes
+  /// the caller the owner of that file, exactly as declaring file roots does.
+  MaidCafePackageGrant? packages,
+  MaidCafeFirewallGrant? firewall,
 }) {
   if (transport != 'stdio' && (port < maidCafeMinimumPort || port > 65535)) {
     throw ArgumentError.value(
@@ -1190,10 +1241,24 @@ systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemo
   // the section is replaced as a whole rather than patched key by key. A caller
   // that does not model roots passes null and its section is left alone.
   patched = patchMaidCafeFilesConfigText(patched, fileRoots);
+  // The helper's routing is a flat table of switches, so it is patched key by
+  // key: a caller that does not model it passes null and any table an operator
+  // wrote — and the switches in it this app does not show — survives.
+  if (priv != null) {
+    patched = patchMaidCafeTomlTable(patched, 'daemon.priv', {
+      if (priv.helper.trim().isNotEmpty)
+        'helper': _tomlString(priv.helper.trim()),
+      'systemd': '${priv.systemd}',
+      'packages': '${priv.packages}',
+      'firewall': '${priv.firewall}',
+    });
+  }
   final privScript = buildMaidCafePrivScript(
     fileRoots,
     stdio: transport == 'stdio',
     helperBase64: privHelperBase64,
+    packages: packages,
+    firewall: firewall,
   );
   final encodedConfig = base64Encode(utf8.encode(patched));
   return '''set -eu
@@ -1343,6 +1408,7 @@ String _maidCafeConfig({
   int maxConcurrentRuns = 4,
   String actionsDir = '/etc/maidcafe/actions',
   List<MaidCafeFileRoot>? fileRoots,
+  MaidCafePrivSection? priv,
 }) {
   final versionLine = version.trim().isEmpty
       ? ''
@@ -1353,6 +1419,11 @@ String _maidCafeConfig({
   final metricsSecretLine = metricsSecret.trim().isEmpty
       ? ''
       : ' metricsSecret = ${_tomlString(metricsSecret.trim())}\n';
+  final filesSection = maidCafeFilesConfig(fileRoots);
+  final privSection = maidCafePrivConfig(priv);
+  final privBlock = privSection.isEmpty
+      ? ''
+      : '${filesSection.isEmpty ? '' : '\n'}$privSection';
   return '''[daemon]
  id = ${_tomlString(daemonId)}
 $versionLine transport = ${_tomlString(transport)}
@@ -1365,7 +1436,7 @@ $listenLine$metricsSecretLine cloudUrl = ${_tomlString(cloudUrl)}
  maxBodyBytes = $maxBodyBytes
  maxConcurrentRuns = $maxConcurrentRuns
  actionsDir = ${_tomlString(actionsDir)}
-${maidCafeFilesConfig(fileRoots)}'''
+$filesSection$privBlock'''
       .replaceAll('\n ', '\n');
 }
 

@@ -21,6 +21,31 @@ class MaidCafeUnauthorizedException implements Exception {
   const MaidCafeUnauthorizedException();
 }
 
+/// Raised when the daemon answers a body-less 404 for a path this build calls:
+/// it predates that endpoint.
+///
+/// Distinct from a failed operation because the two call for opposite
+/// reactions — a caller may fall back to SSH for a route the daemon does not
+/// have, but must never re-run a mutating operation that already executed and
+/// failed. A 404 that carries the daemon's JSON error body is the daemon's own
+/// handler answering (a missing file, an unknown name), not a missing route.
+class MaidCafeRouteMissingException implements Exception {
+  const MaidCafeRouteMissingException(this.path);
+
+  /// The request path the daemon did not have.
+  final String path;
+
+  @override
+  String toString() => 'MaidCafe has no endpoint for $path.';
+}
+
+/// Whether [error] is the body-less 404 a daemon that lacks the route returns.
+bool _isMaidCafeMissingRoute(DioException error) {
+  if (error.response?.statusCode != 404) return false;
+  final data = error.response?.data;
+  return !(data is Map && data['error'] != null);
+}
+
 /// Event types the daemon may broadcast on `/api/v1/stream`.
 ///
 /// `hello` is always the first frame, regardless of the requested whitelist.
@@ -237,6 +262,7 @@ class MaidCafeDaemonAccess {
     this.actions = const [],
     this.alarms = const [],
     this.fileRoots = const [],
+    this.priv,
     this.configText = '',
   });
   final int? port;
@@ -278,6 +304,11 @@ class MaidCafeDaemonAccess {
   /// `daemon.files.roots`: the directories the daemon's file API serves, with
   /// their privilege policy. Empty when the daemon serves no files at all.
   final List<MaidCafeFileRoot> fileRoots;
+
+  /// `daemon.priv`: where the privileged helper lives and which operation
+  /// families the daemon routes through it. Null when the configuration has no
+  /// such table — which is not the same as one with every switch off.
+  final MaidCafePrivSection? priv;
 
   /// The raw `/etc/maidcafe/config.toml` text, for patch-based updates that
   /// preserve everything the model does not parse.
@@ -515,6 +546,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
         parseMaidCafeAlarmFragment(fragment),
     ],
     fileRoots: parseMaidCafeFileRoots(fullConfig),
+    priv: parseMaidCafePrivConfig(fullConfig),
   );
 });
 
@@ -830,6 +862,47 @@ List<String> parseMaidCafeTomlStringArray(String raw) {
 /// relay path set up by the caller).
 bool _acceptHttpStatus(int? status) =>
     status != null && status >= 200 && status < 400;
+
+/// The body of a `/api/v1/packages/<verb>` request.
+///
+/// `install` and `remove` name a package; `refresh` and `upgrade` do not, and
+/// the daemon refuses a body that names one anyway — so the name is only ever
+/// sent for the two verbs that take it, and an empty name is left out rather
+/// than sent as an empty string. A name that is not sent is the daemon's own
+/// 400 to raise, not this builder's to guess around.
+Map<String, dynamic> maidCafePackageActionBody(String verb, {String? name}) {
+  if (verb != 'install' && verb != 'remove') return const {};
+  final trimmed = name?.trim() ?? '';
+  return trimmed.isEmpty ? const {} : {'name': trimmed};
+}
+
+/// The body of a `/api/v1/firewall/<verb>` request.
+///
+/// `enable` and `disable` take no rule at all. The rest take the rule's port,
+/// protocol and source, each omitted when empty (empty means "any" to the
+/// daemon); `delete` additionally names the action the deleted rule had, since
+/// a firewall identifies a rule by its full text. Empty fields are omitted
+/// rather than sent blank, so the daemon's grammar sees only what was meant.
+Map<String, dynamic> maidCafeFirewallActionBody(
+  String verb, {
+  String? ruleAction,
+  String? port,
+  String? protocol,
+  String? source,
+}) {
+  if (verb == 'enable' || verb == 'disable') return const {};
+  String? clean(String? value) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  return {
+    'port': ?clean(port),
+    'protocol': ?clean(protocol),
+    'source': ?clean(source),
+    if (verb == 'delete') 'rule_action': ?clean(ruleAction),
+  };
+}
 
 class MaidCafeStreamSession {
   MaidCafeStreamSession._(
@@ -1197,20 +1270,22 @@ class MaidCafeStreamSession {
 
   /// Creates one directory.
   Future<Map<String, dynamic>> fileMkdir(String path, {bool parents = false}) =>
-      _postSigned('/api/v1/files/mkdir', body: {
-        'path': path,
-        'parents': parents,
-      });
+      _postSigned(
+        '/api/v1/files/mkdir',
+        body: {'path': path, 'parents': parents},
+      );
 
   /// Deletes one path, or the tree beneath it when [recursive] is set.
   ///
   /// A daemon refuses a recursive delete inside a privileged root and answers
   /// `501`; that refusal travels back as the error message.
-  Future<Map<String, dynamic>> fileDelete(String path, {bool recursive = false}) =>
-      _postSigned('/api/v1/files/delete', body: {
-        'path': path,
-        'recursive': recursive,
-      });
+  Future<Map<String, dynamic>> fileDelete(
+    String path, {
+    bool recursive = false,
+  }) => _postSigned(
+    '/api/v1/files/delete',
+    body: {'path': path, 'recursive': recursive},
+  );
 
   /// Renames a path within one root.
   Future<Map<String, dynamic>> fileMove(String from, String to) =>
@@ -1221,11 +1296,10 @@ class MaidCafeStreamSession {
     String from,
     String to, {
     bool overwrite = false,
-  }) => _postSigned('/api/v1/files/copy', body: {
-    'from': from,
-    'to': to,
-    'overwrite': overwrite,
-  });
+  }) => _postSigned(
+    '/api/v1/files/copy',
+    body: {'from': from, 'to': to, 'overwrite': overwrite},
+  );
 
   /// Builds a file-API request path with its query.
   static String _filePath(String path, Map<String, String> query) =>
@@ -1407,6 +1481,52 @@ class MaidCafeStreamSession {
     return MaidCafeOpResult.parse(result);
   }
 
+  /// Runs one native package operation through the daemon's helper routing.
+  /// [verb] is the wire verb (`refresh`, `upgrade`, `install`, `remove`);
+  /// [name] is the package for `install`/`remove` and is left out for the
+  /// other two. The manager is the helper's own grant to choose, so no caller
+  /// can point the root invocation at a different one.
+  Future<MaidCafeOpResult> runPackageAction(
+    String verb, {
+    String? name,
+    String? invokedBy,
+  }) async {
+    final result = await _postSigned(
+      '/api/v1/packages/$verb',
+      body: maidCafePackageActionBody(verb, name: name),
+      invokedBy: invokedBy,
+    );
+    return MaidCafeOpResult.parse(result);
+  }
+
+  /// Runs one native firewall operation through the daemon's helper routing.
+  /// [verb] is the wire verb (`enable`, `disable`, `allow`, `deny`, `delete`);
+  /// [port], [protocol] and [source] describe the rule (empty means "any"),
+  /// and [ruleAction] is required only for `delete`, because a firewall
+  /// identifies a rule by its full text and a delete has to name the action it
+  /// deletes.
+  Future<MaidCafeOpResult> runFirewallAction(
+    String verb, {
+    String? ruleAction,
+    String? port,
+    String? protocol,
+    String? source,
+    String? invokedBy,
+  }) async {
+    final result = await _postSigned(
+      '/api/v1/firewall/$verb',
+      body: maidCafeFirewallActionBody(
+        verb,
+        ruleAction: ruleAction,
+        port: port,
+        protocol: protocol,
+        source: source,
+      ),
+      invokedBy: invokedBy,
+    );
+    return MaidCafeOpResult.parse(result);
+  }
+
   /// POSTs [path] with a body signature like [invokeAction], returning the
   /// decoded JSON response.
   Future<Map<String, dynamic>> _postSigned(
@@ -1454,6 +1574,9 @@ class MaidCafeStreamSession {
       if (error.response?.statusCode == 401) {
         throw const MaidCafeUnauthorizedException();
       }
+      if (_isMaidCafeMissingRoute(error)) {
+        throw MaidCafeRouteMissingException(path);
+      }
       throw StateError(_dioError(error));
     }
   }
@@ -1490,6 +1613,9 @@ class MaidCafeStreamSession {
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
         throw const MaidCafeUnauthorizedException();
+      }
+      if (_isMaidCafeMissingRoute(error)) {
+        throw MaidCafeRouteMissingException(path);
       }
       throw StateError(_dioError(error));
     }

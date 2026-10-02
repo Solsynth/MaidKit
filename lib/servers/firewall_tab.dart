@@ -6,6 +6,8 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'firewall_models.dart';
+import 'maidcafe_session_registry.dart';
+import 'maidcafe_stream.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -32,12 +34,16 @@ class FirewallTab extends ConsumerStatefulWidget {
 class _FirewallTabState extends ConsumerState<FirewallTab> {
   AsyncValue<FirewallStatus> _status = const AsyncValue.loading();
   var _busy = false;
+  late final MaidCafeSessionRegistry _sessionRegistry;
+  MaidCafeStreamSession? _maidCafeStream;
 
   bool get _isRoot => widget.server.username == 'root';
 
   @override
   void initState() {
     super.initState();
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     if (widget.connected) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load());
     }
@@ -46,10 +52,60 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
   @override
   void didUpdateWidget(FirewallTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.connected &&
-        (!oldWidget.connected || oldWidget.server.id != widget.server.id)) {
+    final serverChanged = oldWidget.server.id != widget.server.id;
+    if (serverChanged) {
+      _sessionRegistry.release(oldWidget.server);
+      _sessionRegistry.retain(widget.server);
+      _maidCafeStream = null;
+    } else if (!widget.connected && oldWidget.connected) {
+      _sessionRegistry.invalidate(widget.server);
+      _maidCafeStream = null;
+    }
+    if (widget.connected && (!oldWidget.connected || serverChanged)) {
       _load();
     }
+  }
+
+  @override
+  void dispose() {
+    _sessionRegistry.release(widget.server);
+    super.dispose();
+  }
+
+  /// The shared daemon session, when this server has one.
+  ///
+  /// The daemon has no firewall status endpoint — reads stay on SSH — so this
+  /// only feeds the mutating actions.
+  Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
+    final cached = _maidCafeStream;
+    if (cached != null && !cached.isClosed) return cached;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    _maidCafeStream = session;
+    return session;
+  }
+
+  /// Runs [daemon] through the MaidCafe session when one is available, falling
+  /// back to [ssh] when there is none or when the daemon predates the route.
+  ///
+  /// Only a missing route falls back: a refusal from a daemon that has the
+  /// endpoint is a real failure, and re-running it over SSH would be a second
+  /// firewall change the user did not ask for. A null [daemon] means the action
+  /// has no daemon form at all (a verb the helper does not implement) and goes
+  /// straight to SSH.
+  Future<void> _preferDaemon(
+    Future<void> Function(MaidCafeStreamSession session)? daemon,
+    Future<void> Function() ssh,
+  ) async {
+    final session = daemon == null ? null : await _ensureMaidCafeStream();
+    if (session != null) {
+      try {
+        await daemon!(session);
+        return;
+      } on MaidCafeRouteMissingException {
+        // Daemon older than /api/v1/firewall: fall back to SSH.
+      }
+    }
+    await ssh();
   }
 
   Future<String?> _sudoPassword() async {
@@ -168,14 +224,27 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
     );
     if (approved != true || !mounted) return;
     await _run(() async {
-      await ref
-          .read(connectionManagerProvider)
-          .setFirewallEnabled(
-            widget.server.id,
-            enabled: enabled,
-            sshUserIsRoot: _isRoot,
-            sudoPassword: await _sudoPassword(),
+      await _preferDaemon(
+        (session) async {
+          // Daemon present: run the native firewall op, which elevates through
+          // the helper's grant.
+          final result = await session.runFirewallAction(
+            enabled ? 'enable' : 'disable',
+            invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
           );
+          result.ensureSuccess();
+        },
+        () async {
+          await ref
+              .read(connectionManagerProvider)
+              .setFirewallEnabled(
+                widget.server.id,
+                enabled: enabled,
+                sshUserIsRoot: _isRoot,
+                sudoPassword: await _sudoPassword(),
+              );
+        },
+      );
     }, success: enabled ? 'firewallEnabled'.tr() : 'firewallDisabled'.tr());
   }
 
@@ -184,15 +253,37 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
     if (status == null || !status.backend.supportsRuleEditing) return;
     final draft = await _showAddRuleSheet(context);
     if (draft == null || !mounted) return;
+    // The daemon's rule verbs are allow and deny; reject stays on SSH.
+    final daemonVerb = switch (draft.action) {
+      FirewallAction.allow => 'allow',
+      FirewallAction.deny => 'deny',
+      _ => null,
+    };
     await _run(() async {
-      await ref
-          .read(connectionManagerProvider)
-          .addFirewallRule(
-            widget.server.id,
-            draft: draft,
-            sshUserIsRoot: _isRoot,
-            sudoPassword: await _sudoPassword(),
-          );
+      await _preferDaemon(
+        daemonVerb == null
+            ? null
+            : (session) async {
+                final result = await session.runFirewallAction(
+                  daemonVerb,
+                  port: draft.port,
+                  protocol: draft.protocol,
+                  source: draft.source,
+                  invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+                );
+                result.ensureSuccess();
+              },
+        () async {
+          await ref
+              .read(connectionManagerProvider)
+              .addFirewallRule(
+                widget.server.id,
+                draft: draft,
+                sshUserIsRoot: _isRoot,
+                sudoPassword: await _sudoPassword(),
+              );
+        },
+      );
     }, success: 'firewallRuleAdded'.tr());
   }
 
@@ -237,15 +328,38 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
       ),
     );
     if (approved != true || !mounted) return;
+    // A delete has to name the action the rule carries, and the daemon's verbs
+    // are allow and deny; a rule parsed without one stays on SSH.
+    final daemonVerb = switch (rule.action) {
+      FirewallAction.allow || FirewallAction.deny => 'delete',
+      _ => null,
+    };
     await _run(() async {
-      await ref
-          .read(connectionManagerProvider)
-          .deleteFirewallRule(
-            widget.server.id,
-            rule: rule,
-            sshUserIsRoot: _isRoot,
-            sudoPassword: await _sudoPassword(),
-          );
+      await _preferDaemon(
+        daemonVerb == null
+            ? null
+            : (session) async {
+                final result = await session.runFirewallAction(
+                  daemonVerb,
+                  ruleAction: rule.action?.name,
+                  port: rule.port,
+                  protocol: rule.protocol,
+                  source: rule.source,
+                  invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+                );
+                result.ensureSuccess();
+              },
+        () async {
+          await ref
+              .read(connectionManagerProvider)
+              .deleteFirewallRule(
+                widget.server.id,
+                rule: rule,
+                sshUserIsRoot: _isRoot,
+                sudoPassword: await _sudoPassword(),
+              );
+        },
+      );
     }, success: 'firewallRuleDeleted'.tr());
   }
 
