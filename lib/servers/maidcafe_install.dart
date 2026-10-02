@@ -376,7 +376,7 @@ Future<void> installMaidCafeDaemon({
   required String? sudoPassword,
   String? channel,
   List<MaidCafeAlarmDefinition> alarms = const [],
-  List<MaidCafeFileRoot> fileRoots = const [],
+  List<MaidCafeFileRoot>? fileRoots,
   int port = 8747,
   String? apiSecret,
 }) => _installMaidCafeDaemon(
@@ -403,7 +403,7 @@ Future<void> installMaidCafeApplication({
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
-  List<MaidCafeFileRoot> fileRoots = const [],
+  List<MaidCafeFileRoot>? fileRoots,
   String? privHelperBase64,
   int port = 8747,
   String? apiSecret,
@@ -464,7 +464,7 @@ Future<void> _installMaidCafeDaemon({
   String? channel,
   List<MaidCafeActionDefinition> actions = const [],
   List<MaidCafeAlarmDefinition> alarms = const [],
-  List<MaidCafeFileRoot> fileRoots = const [],
+  List<MaidCafeFileRoot>? fileRoots,
   /// The compiled `maidkit-priv` helper, when the caller has it from the
   /// daemon bundle for this platform. Null leaves an installed helper alone and
   /// only reconciles the profiles and the rule.
@@ -610,7 +610,11 @@ String buildMaidCafeDaemonInstallScript({
   /// Directories the daemon's file API may serve, and which of them need root.
   /// The generated script installs the privileged helper, its profiles and its
   /// sudoers rule before it writes the config that declares them.
-  List<MaidCafeFileRoot> fileRoots = const [],
+  ///
+  /// Null means the caller does not model file roots: the existing
+  /// `[daemon.files]` table and any installed helper grant are left alone. An
+  /// empty list is an explicit teardown.
+  List<MaidCafeFileRoot>? fileRoots,
   /// The compiled `maidkit-priv` helper, base64-encoded, when the caller has it
   /// from the daemon bundle. Null leaves an installed helper alone and only
   /// reconciles the profiles and the rule.
@@ -772,6 +776,18 @@ printf '%s\n' 'maidkit' > "\$work_dir/maidkit-managed"
 install -o root -g root -m 0644 "\$work_dir/maidkit-managed" /etc/maidcafe/maidkit-managed
 $privScript
 printf '%s' '$encodedConfig' | base64 -d > "\$work_dir/config.toml"
+# This config is regenerated whole, so it only carries a [daemon.files] table
+# when the caller declares one. An operator's own table — the only way to
+# configure the file API before this app modelled it — would otherwise be lost
+# by saving any unrelated setting, so it is carried across verbatim: from the
+# section header to the next table that is not part of it, which keeps the
+# [[daemon.files.roots]] entries with their parent.
+if ! grep -q '^\\[daemon\\.files\\]' "\$work_dir/config.toml" &&
+   [ -f $configPath ] && grep -q '^\\[daemon\\.files\\]' $configPath; then
+  awk '/^\\[daemon\\.files\\]/{keep=1}
+       keep && /^\\[/ && !/^\\[daemon\\.files/ && !/^\\[\\[daemon\\.files/{keep=0}
+       keep' $configPath >> "\$work_dir/config.toml"
+fi
 
 $configInstall "\$work_dir/config.toml" $configPath
 # The stable machine identity: written once and never touched again, so the
@@ -1259,7 +1275,7 @@ String _maidCafeConfig({
   int maxBodyBytes = 65536,
   int maxConcurrentRuns = 4,
   String actionsDir = '/etc/maidcafe/actions',
-  List<MaidCafeFileRoot> fileRoots = const [],
+  List<MaidCafeFileRoot>? fileRoots,
 }) {
   final versionLine = version.trim().isEmpty
       ? ''

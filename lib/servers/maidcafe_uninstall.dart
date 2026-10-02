@@ -100,6 +100,13 @@ if command -v pgrep >/dev/null 2>&1 && pgrep -x maidcafe-daemon >/dev/null 2>&1;
 fi
 
 rm -f /etc/sudoers.d/maidcafe-actions
+# The privileged file helper's grant goes first, so no window exists where the
+# rule outlives the binary it names. Its profiles authorize directories and are
+# worth nothing without it, but they are removed too: an uninstall should leave
+# no part of the privileged path behind.
+rm -f /etc/sudoers.d/maidkit-priv
+rm -f /usr/local/libexec/maidkit-priv
+rm -rf /etc/maidkit
 rm -f /usr/local/bin/maidcafe-daemon
 rm -rf /etc/maidcafe
 $userCleanup''';

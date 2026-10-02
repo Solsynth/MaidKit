@@ -53,10 +53,16 @@ class MaidCafeFileRoot {
 ///
 /// Every root is a table, never a bare path: a privileged root needs a profile
 /// name beside it, and one shape for both kinds keeps this generator honest.
-/// Returns an empty string when there is nothing to serve, so a daemon without
-/// file roots keeps the file API off rather than serving an empty allowlist.
-String maidCafeFilesConfig(List<MaidCafeFileRoot> roots) {
-  final valid = roots.where((root) => root.isValid).toList();
+///
+/// A null [roots] means the caller has no opinion — it does not model the file
+/// API — and renders nothing; the install then carries an existing
+/// `[daemon.files]` table over rather than dropping it. An empty list is an
+/// explicit "serve nothing" and renders nothing either, but the privileged
+/// helper's grant is revoked for it (see [buildMaidCafePrivScript]): the
+/// difference between "I did not say" and "I said none" decides whether an
+/// operator's own configuration survives an unrelated save.
+String maidCafeFilesConfig(List<MaidCafeFileRoot>? roots) {
+  final valid = roots?.where((root) => root.isValid).toList() ?? const [];
   if (valid.isEmpty) return '';
   final buffer = StringBuffer()
     ..writeln('[daemon.files]')
@@ -130,13 +136,14 @@ String maidCafePrivToml(List<MaidCafeFileRoot> roots) {
 /// Linux and macOS); the script then keeps any installed helper and only
 /// reconciles the profiles and the rule.
 String buildMaidCafePrivScript(
-  List<MaidCafeFileRoot> roots, {
+  List<MaidCafeFileRoot>? roots, {
   required bool stdio,
   String? helperBase64,
 }) {
   final privileged = roots
-      .where((root) => root.privileged && root.isValid)
-      .toList();
+          ?.where((root) => root.privileged && root.isValid)
+          .toList() ??
+      const <MaidCafeFileRoot>[];
   // The daemon runs as the SSH user in stdio mode; sudo sets SUDO_USER when the
   // install was elevated, so that is the account the rule must name. The
   // expression is evaluated by the install script, not written literally.
@@ -151,10 +158,17 @@ String buildMaidCafePrivScript(
       : "printf '%s' '$helperBase64' | base64 -d | "
             'install -o root -g root -m 0755 /dev/stdin $helperPath';
 
+  // A caller that does not model file roots says nothing about them, and
+  // removing a grant this save did not create would revoke a feature the
+  // operator configured. Only an explicit empty declaration does that.
+  if (roots == null) {
+    if (helperBase64 == null) return '';
+    return '''
+install -d -o root -g root -m 0755 /usr/local/libexec
+$installHelper''';
+  }
   if (privileged.isEmpty) {
     return '''
-install -d -o root -g root -m 0755 /etc/maidkit
-$installHelper
 rm -f /etc/sudoers.d/maidkit-priv
 rm -f $configPath''';
   }
