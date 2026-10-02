@@ -333,6 +333,51 @@ void main() {
       expect(listed.single['name'], 'echo');
     });
 
+    test('streams non-ASCII tool results over SSE', () async {
+      // Regression: the response defaulted to Latin-1, so `write` threw on
+      // any non-Latin-1 character (e.g. a CJK server name). The throw happened
+      // inside the outgoing listener, dropping the event and leaving the
+      // calling agent waiting forever.
+      final sseRequest = await http.getUrl(
+        Uri.parse('http://127.0.0.1:${server.boundPort}/sse'),
+      );
+      final sseResponse = await sseRequest.close();
+      final reader = _SseReader(
+        sseResponse.transform(utf8.decoder).transform(const LineSplitter()),
+      );
+      final sessionId = (await reader.nextData())!.split('sessionId=').last;
+
+      Future<Map<String, dynamic>> post(Object message) async {
+        final request = await http.postUrl(
+          Uri.parse(
+            'http://127.0.0.1:${server.boundPort}/message?sessionId=$sessionId',
+          ),
+        );
+        request.headers.contentType = ContentType(
+          'application',
+          'json',
+          charset: 'utf-8',
+        );
+        request.write(jsonEncode(message));
+        final response = await request.close();
+        expect(response.statusCode, 202);
+        await response.drain<void>();
+        return jsonDecode((await reader.nextData())!) as Map<String, dynamic>;
+      }
+
+      const text = '跳板机 / 计算节点';
+      final result = await post(
+        _request(1, 'tools/call', {
+          'name': 'echo',
+          'arguments': {'text': text},
+        }),
+      );
+      final content =
+          (result['result'] as Map<String, dynamic>)['content']
+              as List<dynamic>;
+      expect((content.single as Map<String, dynamic>)['text'], 'echo: $text');
+    });
+
     test('POST /message without a session answers 404', () async {
       final request = await http.postUrl(
         Uri.parse('http://127.0.0.1:${server.boundPort}/message'),

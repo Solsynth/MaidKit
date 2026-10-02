@@ -296,7 +296,16 @@ class LocalMcpServer {
       // not push buffered bytes to the client before the response closes.
       // Unbuffered writes are what keep SSE events flowing incrementally.
       ..bufferOutput = false
-      ..headers.set('Content-Type', 'text/event-stream')
+      // Explicit UTF-8: without a charset, dart:io defaults the response
+      // encoding to Latin-1, and `write` throws on any non-Latin-1 character
+      // (e.g. a CJK server name). That throw happens inside the outgoing
+      // listener, so the event is dropped and the calling agent waits
+      // forever. SSE is defined as UTF-8 anyway.
+      ..headers.contentType = ContentType(
+        'text',
+        'event-stream',
+        charset: 'utf-8',
+      )
       ..headers.set('Cache-Control', 'no-cache')
       ..headers.set('Connection', 'keep-alive')
       ..headers.set('Access-Control-Allow-Origin', '*')
