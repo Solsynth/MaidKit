@@ -88,6 +88,9 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
     final themeMode = ref.watch(themeModeProvider);
     final appSeedColor = ref.watch(appSeedColorProvider);
     ref.watch(serverMetricsRefreshSchedulerProvider);
+    // Reads host statistics straight from MaidCafe daemons (no SSH), which is
+    // the only statistics route a browser build has.
+    ref.watch(maidCafeStatsSchedulerProvider);
     final appUiFontFamily = ref.watch(appUiFontFamilyProvider);
     // Starts the local MCP server when the user enabled it, so other agents
     // can connect right after the app launches. It serves HTTP on the loopback

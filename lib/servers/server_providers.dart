@@ -34,6 +34,8 @@ import 'maidcafe_service.dart';
 import 'maidcafe_terminal_connection_manager.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_session_registry.dart';
+import 'maidcafe_stats.dart';
+import 'maidcafe_stats_scheduler.dart';
 import 'metrics_refresh_preferences.dart';
 import 'port_forwarding_models.dart';
 import 'privacy_preferences.dart';
@@ -1620,3 +1622,57 @@ final serverMetricsRefreshSchedulerProvider =
       ref.onDispose(scheduler.dispose);
       return scheduler;
     });
+
+/// The direct daemon route for host statistics — no SSH session involved.
+///
+/// It exists so a daemon-backed host can report its load, memory, disk and
+/// uptime without the app holding a connection to the server, which is what a
+/// browser build cannot do at all and what a fleet of servers pays for in
+/// `sshd` slots.
+final maidCafeStatsCollectorProvider = Provider<MaidCafeStatsCollector>((ref) {
+  return MaidCafeStatsCollector(
+    repository: ref.watch(serverRepositoryProvider),
+    manager: ref.watch(connectionManagerProvider),
+  );
+});
+
+/// The latest daemon-read statistics per server id. Empty until a daemon
+/// answers, and an id is removed when its daemon stops answering so a card
+/// never shows a stale reading as live.
+class MaidCafeStatsNotifier extends Notifier<Map<int, MaidCafeServerStats>> {
+  @override
+  Map<int, MaidCafeServerStats> build() => const {};
+
+  void set(int serverId, MaidCafeServerStats? snapshot) {
+    if (snapshot == null) {
+      if (!state.containsKey(serverId)) return;
+      state = {...state}..remove(serverId);
+      return;
+    }
+    final previous = state[serverId];
+    if (previous != null && previous.fetchedAt == snapshot.fetchedAt) return;
+    state = {...state, serverId: snapshot};
+  }
+}
+
+final maidCafeStatsProvider =
+    NotifierProvider<MaidCafeStatsNotifier, Map<int, MaidCafeServerStats>>(
+      MaidCafeStatsNotifier.new,
+    );
+
+/// Refreshes the daemon statistics on the same cadence the SSH scheduler uses.
+/// Read once at startup (see `app.dart`) so the dashboard fills in without a
+/// tab having to ask first, in a browser build included.
+final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
+  final collector = ref.watch(maidCafeStatsCollectorProvider);
+  final notifier = ref.read(maidCafeStatsProvider.notifier);
+  final scheduler = MaidCafeStatsScheduler(
+    collect: collector.collect,
+    onSnapshot: notifier.set,
+  );
+  final interval = ref.watch(serverMetricsRefreshIntervalProvider);
+  final servers = ref.watch(serversProvider).asData?.value ?? const <Server>[];
+  scheduler.update(interval: interval, servers: servers);
+  ref.onDispose(scheduler.dispose);
+  return scheduler;
+});

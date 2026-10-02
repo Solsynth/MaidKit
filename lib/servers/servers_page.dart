@@ -329,21 +329,15 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
 
   var _showSearch = false;
   List<int>? _pendingOrder;
-  @override
-  void initState() {
-    super.initState();
-    _scrollController.addListener(_onScroll);
-  }
 
-  void _onScroll() {
-    if (_scrollController.hasClients && _scrollController.offset > 400) {
-      _showSearchBar();
-    }
-  }
-
+  /// Reveals the header search field and brings it back into view.
+  ///
+  /// The field lives in the scrolling header now, so it can be scrolled off:
+  /// clearing focus first makes the re-focus below re-run the field's own
+  /// "keep the caret visible" scroll even when it is already focused.
   void _showSearchBar() {
-    if (_showSearch) return;
-    setState(() => _showSearch = true);
+    if (!_showSearch) setState(() => _showSearch = true);
+    _searchFocusNode.unfocus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _searchFocusNode.requestFocus();
     });
@@ -483,246 +477,207 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
             },
           ),
         },
-        child: Column(
-          children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 240),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) => SizeTransition(
-                sizeFactor: animation,
-                alignment: Alignment.topCenter,
-                child: FadeTransition(opacity: animation, child: child),
+        child: CustomScrollView(
+          controller: _scrollController,
+          slivers: [
+            // The dashboard header scrolls with the catalog: contextual cards,
+            // the search field, and tag filters are content, not fixed chrome.
+            _AnimatedHeaderSliver(
+              key: const ValueKey('servers-restore-workspace'),
+              visible: showRestoreCard,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                child: _RestoreWorkspaceCard(
+                  isRestoring: _isRestoringWorkspace,
+                  onPressed: () => unawaited(_restoreWorkspace()),
+                ),
               ),
-              child: showRestoreCard
-                  ? Padding(
-                      key: const ValueKey('servers-restore-workspace'),
-                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                      child: _RestoreWorkspaceCard(
-                        isRestoring: _isRestoringWorkspace,
-                        onPressed: () => unawaited(_restoreWorkspace()),
-                      ),
-                    )
-                  : const SizedBox.shrink(
-                      key: ValueKey('servers-restore-none'),
-                    ),
             ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 240),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) => SizeTransition(
-                sizeFactor: animation,
-                alignment: Alignment.topCenter,
-                child: FadeTransition(opacity: animation, child: child),
+            _AnimatedHeaderSliver(
+              key: const ValueKey('servers-reconnect-all'),
+              visible: disconnectedServers.length > 1,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+                child: _ReconnectAllCard(
+                  count: disconnectedServers.length,
+                  isReconnecting: _isReconnecting,
+                  onPressed: () => _reconnectAll(disconnectedServers),
+                ),
               ),
-              child: disconnectedServers.length > 1
-                  ? Padding(
-                      key: const ValueKey('servers-reconnect-all'),
-                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                      child: _ReconnectAllCard(
-                        count: disconnectedServers.length,
-                        isReconnecting: _isReconnecting,
-                        onPressed: () => _reconnectAll(disconnectedServers),
-                      ),
-                    )
-                  : const SizedBox.shrink(
-                      key: ValueKey('servers-reconnect-none'),
-                    ),
             ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 240),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) => SizeTransition(
-                sizeFactor: animation,
-                alignment: Alignment.topCenter,
-                child: FadeTransition(opacity: animation, child: child),
+            _AnimatedHeaderSliver(
+              key: const ValueKey('servers-search'),
+              visible: _showSearch,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'serversSearchHint'.tr(),
+                    prefixIcon: const Icon(Symbols.search, size: 20),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'commonClearSearch'.tr(),
+                            icon: const Icon(Symbols.close, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                          ),
+                  ),
+                  onChanged: (value) => setState(() => _query = value),
+                ),
               ),
-              child: _showSearch
-                  ? Padding(
-                      key: const ValueKey('servers-search'),
-                      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                      child: TextField(
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          hintText: 'serversSearchHint'.tr(),
-                          prefixIcon: const Icon(Symbols.search, size: 20),
-                          suffixIcon: _query.isEmpty
-                              ? null
-                              : IconButton(
-                                  tooltip: 'commonClearSearch'.tr(),
-                                  icon: const Icon(Symbols.close, size: 18),
-                                  onPressed: () {
-                                    _searchController.clear();
-                                    setState(() => _query = '');
-                                  },
-                                ),
-                        ),
-                        onChanged: (value) => setState(() => _query = value),
-                      ),
-                    )
-                  : const SizedBox.shrink(key: ValueKey('servers-search-none')),
             ),
             if (allTags.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final tag in allTags)
-                        FilterChip(
-                          label: Text(tag),
-                          visualDensity: VisualDensity.compact,
-                          selected: _selectedTags.contains(tag),
-                          onSelected: (selected) => setState(() {
-                            if (selected) {
-                              _selectedTags.add(tag);
-                            } else {
-                              _selectedTags.remove(tag);
-                            }
-                          }),
-                        ),
-                    ],
+              SliverToBoxAdapter(
+                key: const ValueKey('servers-tag-filters'),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final tag in allTags)
+                          FilterChip(
+                            label: Text(tag),
+                            visualDensity: VisualDensity.compact,
+                            selected: _selectedTags.contains(tag),
+                            onSelected: (selected) => setState(() {
+                              if (selected) {
+                                _selectedTags.add(tag);
+                              } else {
+                                _selectedTags.remove(tag);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            if (visibleServers.isEmpty)
-              Expanded(
-                child: CustomScrollView(
-                  slivers: [
-                    const SliverToBoxAdapter(
-                      child: GithubWorkflowStatusStrip(),
-                    ),
-                    const SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: Center(child: _NoServersMatch()),
-                    ),
-                    SliverToBoxAdapter(child: _arrangeServersFooter(context)),
-                  ],
-                ),
-              )
-            else
-              Expanded(
-                child: CustomScrollView(
-                  controller: _scrollController,
-                  slivers: [
-                    const SliverToBoxAdapter(child: DashboardRuntimesSection()),
-                    const SliverToBoxAdapter(
-                      child: GithubWorkflowStatusStrip(),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.all(24),
-                      sliver: SliverGrid(
-                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 380,
-                          mainAxisExtent: isCompactView ? 200 : 320,
-                          mainAxisSpacing: 16,
-                          crossAxisSpacing: 16,
-                        ),
-                        delegate: SliverChildBuilderDelegate((context, index) {
-                          final server = visibleServers[index];
-                          final session = sessionsByServerId[server.id];
-                          final card = _ServerCard(
-                            server: server,
-                            session: session,
-                            compact: isCompactView,
-                            onConnect: () => widget.onConnect(server),
-                            onOpenDetail: () => widget.onOpenDetail(server),
-                            onOpenTerminal: () => widget.onOpenTerminal(server),
-                            onOpenFiles: () => widget.onOpenFiles(server),
-                            onRefresh: () => widget.onRefresh(server),
-                          );
-                          if (_isArranging) {
-                            return _ReorderableServerTile(
-                              server: server,
-                              isSavingOrder: _isSavingOrder,
-                              onMoveBefore: _moveBefore,
-                              child: card,
-                            );
-                          }
-                          final hasDaemonId =
-                              server.maidCafeDaemonId?.trim().isNotEmpty ??
-                              false;
-                          return ContextMenuWidget(
-                            desktopMenuWidgetBuilder:
-                                maidKitDesktopMenuWidgetBuilder,
-                            menuProvider: (_) => Menu(
-                              children: [
-                                MenuAction(
-                                  title: 'serversEditServer'.tr(),
-                                  callback: () => widget.onEdit(server),
-                                ),
-                                MenuSeparator(),
-                                // The daemon and the relay are transports of
-                                // their own: a native client keeps its SSH
-                                // session for everything else and can still
-                                // attach a terminal through either of them.
-                                MenuAction(
-                                  title: 'serversOpenViaMaidCafeDaemon'.tr(),
-                                  image: MenuImage.icon(Symbols.terminal),
-                                  attributes: MenuActionAttributes(
-                                    disabled: !server.hasMaidCafeTerminalRoute,
-                                  ),
-                                  callback: () => unawaited(
-                                    openMaidCafeTerminalSession(
-                                      context,
-                                      ref,
-                                      server,
-                                      route: MaidCafeTerminalRoute.daemon,
-                                    ),
-                                  ),
-                                ),
-                                MenuAction(
-                                  title: 'serversOpenViaMaidCafeRelay'.tr(),
-                                  image: MenuImage.icon(Symbols.cloud),
-                                  attributes: MenuActionAttributes(
-                                    disabled: !hasDaemonId,
-                                  ),
-                                  callback: () => unawaited(
-                                    openMaidCafeTerminalSession(
-                                      context,
-                                      ref,
-                                      server,
-                                      route: MaidCafeTerminalRoute.relay,
-                                    ),
-                                  ),
-                                ),
-                                MenuAction(
-                                  title: 'serversCheckMaidCafe'.tr(),
-                                  image: MenuImage.icon(Symbols.network_check),
-                                  callback: () => unawaited(
-                                    checkMaidCafeConnectivity(
-                                      context,
-                                      ref,
-                                      server,
-                                    ),
-                                  ),
-                                ),
-                                MenuSeparator(),
-                                MenuAction(
-                                  title: 'serversDeleteServer'.tr(),
-                                  attributes: const MenuActionAttributes(
-                                    destructive: true,
-                                  ),
-                                  callback: () => widget.onDelete(server),
-                                ),
-                              ],
+            if (visibleServers.isEmpty) ...[
+              const SliverToBoxAdapter(
+                key: ValueKey('dashboard-workflow-strip'),
+                child: GithubWorkflowStatusStrip(),
+              ),
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(child: _NoServersMatch()),
+              ),
+            ] else ...[
+              const SliverToBoxAdapter(
+                key: ValueKey('dashboard-runtimes'),
+                child: DashboardRuntimesSection(),
+              ),
+              const SliverToBoxAdapter(
+                key: ValueKey('dashboard-workflow-strip'),
+                child: GithubWorkflowStatusStrip(),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.all(24),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 380,
+                    mainAxisExtent: isCompactView ? 200 : 320,
+                    mainAxisSpacing: 16,
+                    crossAxisSpacing: 16,
+                  ),
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final server = visibleServers[index];
+                    final session = sessionsByServerId[server.id];
+                    final card = _ServerCard(
+                      server: server,
+                      session: session,
+                      compact: isCompactView,
+                      onConnect: () => widget.onConnect(server),
+                      onOpenDetail: () => widget.onOpenDetail(server),
+                      onOpenTerminal: () => widget.onOpenTerminal(server),
+                      onOpenFiles: () => widget.onOpenFiles(server),
+                      onRefresh: () => widget.onRefresh(server),
+                    );
+                    if (_isArranging) {
+                      return _ReorderableServerTile(
+                        server: server,
+                        isSavingOrder: _isSavingOrder,
+                        onMoveBefore: _moveBefore,
+                        child: card,
+                      );
+                    }
+                    final hasDaemonId =
+                        server.maidCafeDaemonId?.trim().isNotEmpty ?? false;
+                    return ContextMenuWidget(
+                      desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
+                      menuProvider: (_) => Menu(
+                        children: [
+                          MenuAction(
+                            title: 'serversEditServer'.tr(),
+                            callback: () => widget.onEdit(server),
+                          ),
+                          MenuSeparator(),
+                          // The daemon and the relay are transports of
+                          // their own: a native client keeps its SSH
+                          // session for everything else and can still
+                          // attach a terminal through either of them.
+                          MenuAction(
+                            title: 'serversOpenViaMaidCafeDaemon'.tr(),
+                            image: MenuImage.icon(Symbols.terminal),
+                            attributes: MenuActionAttributes(
+                              disabled: !server.hasMaidCafeTerminalRoute,
                             ),
-                            child: card,
-                          );
-                        }, childCount: visibleServers.length),
+                            callback: () => unawaited(
+                              openMaidCafeTerminalSession(
+                                context,
+                                ref,
+                                server,
+                                route: MaidCafeTerminalRoute.daemon,
+                              ),
+                            ),
+                          ),
+                          MenuAction(
+                            title: 'serversOpenViaMaidCafeRelay'.tr(),
+                            image: MenuImage.icon(Symbols.cloud),
+                            attributes: MenuActionAttributes(
+                              disabled: !hasDaemonId,
+                            ),
+                            callback: () => unawaited(
+                              openMaidCafeTerminalSession(
+                                context,
+                                ref,
+                                server,
+                                route: MaidCafeTerminalRoute.relay,
+                              ),
+                            ),
+                          ),
+                          MenuAction(
+                            title: 'serversCheckMaidCafe'.tr(),
+                            image: MenuImage.icon(Symbols.network_check),
+                            callback: () => unawaited(
+                              checkMaidCafeConnectivity(context, ref, server),
+                            ),
+                          ),
+                          MenuSeparator(),
+                          MenuAction(
+                            title: 'serversDeleteServer'.tr(),
+                            attributes: const MenuActionAttributes(
+                              destructive: true,
+                            ),
+                            callback: () => widget.onDelete(server),
+                          ),
+                        ],
                       ),
-                    ),
-                    SliverToBoxAdapter(child: _arrangeServersFooter(context)),
-                  ],
+                      child: card,
+                    );
+                  }, childCount: visibleServers.length),
                 ),
               ),
+            ],
+            SliverToBoxAdapter(child: _arrangeServersFooter(context)),
           ],
         ),
       ),
@@ -788,6 +743,39 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Animates one dashboard header section in and out of the catalog.
+///
+/// The header used to sit in a fixed column above the scroll view; it is now
+/// part of the same [CustomScrollView] as the server grid, so each section
+/// owns a [SliverToBoxAdapter] and keeps its enter/exit transition.
+class _AnimatedHeaderSliver extends StatelessWidget {
+  const _AnimatedHeaderSliver({
+    super.key,
+    required this.visible,
+    required this.child,
+  });
+
+  final bool visible;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverToBoxAdapter(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 240),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) => SizeTransition(
+          sizeFactor: animation,
+          alignment: Alignment.topCenter,
+          child: FadeTransition(opacity: animation, child: child),
+        ),
+        child: visible ? child : const SizedBox.shrink(),
       ),
     );
   }
@@ -1091,12 +1079,21 @@ class _ServerCard extends ConsumerWidget {
     final textTheme = theme.textTheme;
     final hideAddresses = ref.watch(hideServerAddressesProvider);
     final connectionType = serverConnectionTypeFromName(server.connectionType);
-    // SSH is the only transport this card can collect statistics over, so a
-    // serial or daemon server shows its transport instead of a stats grid.
-    final isTerminalOnly = connectionType != ServerConnectionType.ssh;
-    final connected = session?.status == SessionStatus.connected;
-    final connecting = session?.status == SessionStatus.connecting;
-    final failed = session?.status == SessionStatus.failed;
+    // Statistics come from the MaidCafe daemon when the host runs one on a
+    // directly reachable address — no SSH session is opened for them. The SSH
+    // route stays the default for every other host, and for a daemon host it
+    // remains the fallback while the direct route answers nothing.
+    final daemonStats = ref.watch(maidCafeStatsProvider)[server.id];
+    final stats = daemonStats?.stats ?? session?.stats;
+    final systemInfo = session?.systemInfo;
+    final statsFromDaemon = daemonStats != null;
+    // A card with daemon statistics is live without an SSH session: that is the
+    // point of the direct route, and the only statistics route in a browser.
+    final connected =
+        session?.status == SessionStatus.connected || statsFromDaemon;
+    final connecting =
+        session?.status == SessionStatus.connecting && !statsFromDaemon;
+    final failed = session?.status == SessionStatus.failed && !statsFromDaemon;
 
     return Card(
       margin: EdgeInsets.zero,
@@ -1173,9 +1170,17 @@ class _ServerCard extends ConsumerWidget {
                     IconButton(
                       tooltip: 'serversRefreshStatistics'.tr(),
                       visualDensity: VisualDensity.compact,
-                      onPressed: isTerminalOnly
+                      // A daemon-backed card refreshes the daemon; an SSH card
+                      // refreshes the session it already holds.
+                      onPressed: !connected
                           ? null
-                          : (connected ? onRefresh : null),
+                          : statsFromDaemon
+                          ? () => unawaited(
+                              ref
+                                  .read(maidCafeStatsSchedulerProvider)
+                                  .refreshServer(server),
+                            )
+                          : onRefresh,
                       icon: const Icon(Symbols.refresh),
                     ),
                   ],
