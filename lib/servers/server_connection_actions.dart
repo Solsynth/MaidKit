@@ -336,16 +336,23 @@ typedef ResolvedMaidCafeTerminal = ({
 ///
 /// [relay] forces the cloud relay (`true`) or the daemon itself (`false`);
 /// null follows the server's own setting.
+///
+/// [browserBuild] resolves the endpoint the way a browser would dial it — the
+/// server host on the port the daemon reported, never this client's own
+/// loopback — which is the route to report when asking whether a client without
+/// an SSH tunnel can reach the daemon.
 Future<ResolvedMaidCafeTerminal> resolveMaidCafeTerminal(
   WidgetRef ref,
   Server server, {
   bool? relay,
   bool allowForward = true,
+  bool browserBuild = kIsWeb,
   String? relayDaemonId,
 }) async {
   final repository = ref.read(serverRepositoryProvider);
   final target = await repository.maidCafeTerminalTargetFor(
     server,
+    browserBuild: browserBuild,
     useCloudRelay: relay,
     relayDaemonId: relayDaemonId,
   );
@@ -425,45 +432,49 @@ Future<bool> openMaidCafeTerminalSession(
     'open requested for "${server.name}": '
     'route=${route?.name ?? 'the server setting'}',
   );
-  if (!relay && await _maidCafeCredentialMissing(ref, server)) {
-    // Detection stores the endpoint and the switch but leaves the credential
-    // unread, and the daemon needs one: without it the route cannot even be
-    // built. Reading the daemon's own configuration is what makes the direct
-    // route work on a client that never filled the field in by hand.
-    await _maidCafeLearnConfig(ref, server);
-  }
-  final resolution = await resolveMaidCafeTerminal(
-    ref,
-    server,
-    relay: route == null ? null : relay,
-    relayDaemonId: relay
-        ? (await maidCafeRelayIdentity(ref, server)).daemonId
-        : null,
-  );
-  final target = resolution.target;
-  if (target == null) {
-    maidCafeLog(
-      'no route to "${server.name}" could be built for '
-      'route=${route?.name ?? 'the server setting'}; '
-      'daemonUrl=${server.maidCafeTerminalUrl} '
-      'daemonId=${server.maidCafeDaemonId} '
-      'port=${server.maidCafeTerminalPort}',
-    );
-    await resolution.stop?.call();
-    if (context.mounted) {
-      _reportUnavailableMaidCafeRoute(context, server, route);
-    }
-    return false;
-  }
-  if (!context.mounted) {
-    await resolution.stop?.call();
-    return false;
-  }
+  if (!context.mounted) return false;
+  // The spinner goes up before anything slow. Resolving the route can open an
+  // SSH session to read the daemon's configuration and start a port forward,
+  // and a menu item that appears to do nothing for that long reads as broken.
   final loading = showMaidKitLoadingModal(
     context,
     message: 'serverOpeningMaidCafeTerminal'.tr(args: [server.name]),
   );
+  // The forward, when one is opened, belongs to the tab once the terminal is
+  // handed over; until then this call owns stopping it.
+  Future<void> Function()? stop;
+  var handedOff = false;
   try {
+    if (!relay && await _maidCafeCredentialMissing(ref, server)) {
+      // Detection stores the endpoint and the switch but leaves the credential
+      // unread, and the daemon needs one: without it the route cannot even be
+      // built. Reading the daemon's own configuration is what makes the direct
+      // route work on a client that never filled the field in by hand.
+      await _maidCafeLearnConfig(ref, server);
+    }
+    final resolution = await resolveMaidCafeTerminal(
+      ref,
+      server,
+      relay: route == null ? null : relay,
+      relayDaemonId: relay
+          ? (await maidCafeRelayIdentity(ref, server)).daemonId
+          : null,
+    );
+    stop = resolution.stop;
+    final target = resolution.target;
+    if (target == null) {
+      maidCafeLog(
+        'no route to "${server.name}" could be built for '
+        'route=${route?.name ?? 'the server setting'}; '
+        'daemonUrl=${server.maidCafeTerminalUrl} '
+        'daemonId=${server.maidCafeDaemonId} '
+        'port=${server.maidCafeTerminalPort}',
+      );
+      if (context.mounted) {
+        _reportUnavailableMaidCafeRoute(context, server, route);
+      }
+      return false;
+    }
     await ref
         .read(terminalTabsProvider.notifier)
         .openMaidCafe(
@@ -473,10 +484,10 @@ Future<bool> openMaidCafeTerminalSession(
           // The forward, when there is one, lives exactly as long as the tab.
           onClose: resolution.stop,
         );
+    handedOff = true;
     return true;
   } catch (error) {
     maidCafeLog('the terminal for "${server.name}" did not open', error: error);
-    await resolution.stop?.call();
     if (context.mounted) {
       showStyledSnackBar(
         // An unreachable direct route is usually a closed port or a daemon that
@@ -495,20 +506,34 @@ Future<bool> openMaidCafeTerminalSession(
     return false;
   } finally {
     loading.dismiss();
+    // A route that was resolved but never handed to a tab leaves its forward
+    // behind otherwise.
+    if (!handedOff) await stop?.call();
   }
 }
 
-/// What to open on the server when its daemon cannot be reached directly.
+/// What to open — and rebind — on the server when its daemon cannot be reached
+/// directly.
+///
+/// A daemon listening on loopback is unreachable from any other host whatever
+/// the firewall allows, so the advice names the listen address first: opening
+/// the port alone leaves exactly the same failure.
 String maidCafeExposeHint(Server server) {
   final exposure = maidCafeExposure(server);
-  return 'maidCafeCheckExposeHint'.tr(
-    args: ['${exposure.port}', exposure.listenHost],
-  );
+  return exposure.listensOnlyLocally
+      ? 'maidCafeCheckExposeAndBindHint'.tr(args: ['${exposure.port}'])
+      : 'maidCafeCheckExposeHint'.tr(
+          args: ['${exposure.port}', exposure.listenHost],
+        );
 }
 
 /// The one-line form of [maidCafeExposeHint], for a failure message.
-String maidCafeExposePortHint(Server server) =>
-    'maidCafeExposePortShort'.tr(args: ['${maidCafeExposure(server).port}']);
+String maidCafeExposePortHint(Server server) {
+  final exposure = maidCafeExposure(server);
+  return exposure.listensOnlyLocally
+      ? 'maidCafeExposePortBindShort'.tr(args: ['${exposure.port}'])
+      : 'maidCafeExposePortShort'.tr(args: ['${exposure.port}']);
+}
 
 /// What to do about a direct route that failed, or an empty string when the
 /// message already says it.
@@ -588,24 +613,48 @@ Future<void> checkMaidCafeConnectivity(
   Server server,
 ) async {
   final manager = ref.read(maidCafeTerminalConnectionManagerProvider);
-  // Read (or refresh) the daemon's own terminal switch first: it decides
-  // whether an unreachable route is a config problem or a network one.
-  final terminalEnabled = await _maidCafeTerminalEnabled(ref, server);
-  // A daemon registered in the cloud is not "not configured": find its uuid
-  // again before the relay route is called missing.
-  final relayIdentity = await maidCafeRelayIdentity(ref, server);
+
+  // The two reads below are the slow part — one may open an SSH session to read
+  // the daemon's configuration, the other lists the cloud workspace — and they
+  // are not needed until a route is actually probed. Awaiting them first left
+  // the menu item doing nothing for as long as they took, with no spinner,
+  // because the sheet that owns the spinner had not been shown yet. They are
+  // started inside the run instead, so the sheet opens on the same frame and
+  // its own progress indicator covers the wait.
+  //
+  // Memoized: both routes call [run] concurrently, and each of these must
+  // happen once.
+  Future<bool?>? terminalEnabledFuture;
+  Future<({String? daemonId, String missingKey})>? relayIdentityFuture;
+  Future<bool?> terminalEnabled() =>
+      terminalEnabledFuture ??= _maidCafeTerminalEnabled(ref, server);
+  Future<({String? daemonId, String missingKey})> relayIdentity() =>
+      relayIdentityFuture ??= maidCafeRelayIdentity(ref, server);
 
   Future<MaidCafeConnectivityReport> run({required bool relay}) async {
     Future<void> Function()? stop;
     try {
+      // Read (or refresh) the daemon's own terminal switch: it decides whether
+      // an unreachable route is a config problem or a network one.
+      final enabled = await terminalEnabled();
+      // A daemon registered in the cloud is not "not configured": find its uuid
+      // again before the relay route is called missing.
+      final identity = await relayIdentity();
       return await runMaidCafeConnectivityCheck(
         MaidCafeConnectivityProbes(
           resolveTarget: ({required relay}) async {
+            // A browser is the client this check exists for: it has no SSH
+            // tunnel, so the direct route is dialed at the server host on the
+            // port the daemon reported. Tunneling here would answer "reachable"
+            // for a daemon no browser can reach, and would report a throwaway
+            // loopback port the user cannot act on.
             final resolution = await resolveMaidCafeTerminal(
               ref,
               server,
               relay: relay,
-              relayDaemonId: relay ? relayIdentity.daemonId : null,
+              allowForward: false,
+              browserBuild: true,
+              relayDaemonId: relay ? identity.daemonId : null,
             );
             stop = resolution.stop;
             return resolution.target;
@@ -617,11 +666,11 @@ Future<void> checkMaidCafeConnectivity(
           },
         ),
         relay: relay,
-        terminalEnabled: terminalEnabled,
+        terminalEnabled: enabled,
         // Say why the relay is missing: no session, or no daemon registered
         // under this server's name.
         notConfiguredKey: relay
-            ? relayIdentity.missingKey
+            ? identity.missingKey
             : 'maidCafeCheckNotConfigured',
       );
     } finally {
@@ -629,8 +678,8 @@ Future<void> checkMaidCafeConnectivity(
     }
   }
 
-  // Reading the daemon's configuration above is an async gap the sheet's
-  // context must not cross.
+  // Nothing has been awaited yet, so the sheet opens immediately and its own
+  // progress indicator covers the reads above.
   if (!context.mounted) return;
   await showMaidCafeConnectivitySheet(
     context,
@@ -639,6 +688,9 @@ Future<void> checkMaidCafeConnectivity(
     // A direct route that never answers names the port to expose — unless the
     // terminal endpoint is switched off, which the sheet checks first.
     directUnreachableHint: maidCafeExposeHint(server),
+    // The direct route is dialed the way a browser would, so the address in the
+    // report is the server's, not this client's own loopback endpoint.
+    directRouteNote: 'maidCafeCheckBrowserRouteNote'.tr(),
   );
 }
 

@@ -15,6 +15,7 @@ import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_connection_actions.dart';
 import 'server_detail_page.dart';
+import 'session_lookup.dart';
 import 'maidcafe_server_tab.dart';
 import 'servers_page.dart';
 import 'file_editor_tab.dart';
@@ -68,6 +69,7 @@ class SessionsWorkspace extends ConsumerWidget {
             session: focusedSession,
             terminal: focusedTerminal?.terminal,
             terminalId: focusedTerminal?.id,
+            transport: focusedTerminal?.transport,
           ),
         ],
       ),
@@ -80,9 +82,7 @@ SshSessionInfo? _sessionForTab(
   SessionTab? tab,
 ) {
   if (tab == null) return null;
-  return sessions.asData?.value
-      .where((item) => item.serverId == tab.serverId)
-      .firstOrNull;
+  return sessionForServer(sessions.asData?.value ?? const [], tab.serverId);
 }
 
 /// Opens the file management tab for [server]'s side.
@@ -1118,11 +1118,13 @@ class _AnimatedTerminalStatusBar extends StatelessWidget {
     required this.session,
     required this.terminal,
     required this.terminalId,
+    required this.transport,
   });
 
   final SshSessionInfo? session;
   final TerminalSessionAdapter? terminal;
   final String? terminalId;
+  final TerminalTransport? transport;
 
   @override
   Widget build(BuildContext context) {
@@ -1153,6 +1155,7 @@ class _AnimatedTerminalStatusBar extends StatelessWidget {
               session: session,
               terminal: activeTerminal,
               terminalId: terminalId!,
+              transport: transport,
             ),
     );
   }
@@ -1163,12 +1166,17 @@ class _TerminalStatusBar extends ConsumerStatefulWidget {
     required this.session,
     required this.terminal,
     required this.terminalId,
+    required this.transport,
     super.key,
   });
 
   final SshSessionInfo? session;
   final TerminalSessionAdapter terminal;
   final String terminalId;
+
+  /// Which transport serves this terminal, or null when the tab predates the
+  /// information.
+  final TerminalTransport? transport;
 
   @override
   ConsumerState<_TerminalStatusBar> createState() => _TerminalStatusBarState();
@@ -1236,6 +1244,8 @@ class _TerminalStatusBarState extends ConsumerState<_TerminalStatusBar> {
     ].whereType<String>().join(' · ');
 
     final segments = <Widget>[
+      if (widget.transport case final transport?)
+        _StatusBarTransport(transport: transport),
       if (widget.session case final activeSession?)
         _StatusBarIdentity(session: activeSession),
       if (_latency case final latency?)
@@ -1482,6 +1492,35 @@ class _StatusBarIdentity extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The transport a terminal runs over: an icon, with the name in a tooltip.
+///
+/// The bar is a row of numbers and names, and the transport is a constant of the
+/// session rather than a reading, so it stays an icon — the tooltip answers
+/// "which one is this?" without taking width from the metrics.
+class _StatusBarTransport extends StatelessWidget {
+  const _StatusBarTransport({required this.transport});
+
+  final TerminalTransport transport;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final icon = switch (transport) {
+      TerminalTransport.ssh => Symbols.terminal,
+      // A serial terminal is a cable, not a network session.
+      TerminalTransport.serial => Symbols.cable,
+      // A daemon dialed directly, versus one reached through the cloud.
+      TerminalTransport.maidCafeDirect => Symbols.dns,
+      TerminalTransport.maidCafeRelay => Symbols.cloud,
+    };
+    return Tooltip(
+      message: transport.labelKey.tr(),
+      waitDuration: const Duration(milliseconds: 400),
+      child: Icon(icon, size: 14, color: scheme.onSurfaceVariant),
     );
   }
 }

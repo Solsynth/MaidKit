@@ -233,6 +233,7 @@ void main() {
               directory: '/home/builder/proj',
               history: 'history text',
             ),
+            transport: TerminalTransport.ssh,
           ),
           FileManagementTab(
             id: 'files-1',

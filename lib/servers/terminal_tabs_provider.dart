@@ -55,15 +55,46 @@ sealed class SessionTab {
   SessionTabType get type;
 }
 
+/// How a terminal is connected, for the status bar to name.
+///
+/// The four cases are the transports this app can open a shell over; a MaidCafe
+/// terminal is two of them, because a relayed session rides the cloud and a
+/// direct one dials the daemon itself.
+enum TerminalTransport {
+  ssh('terminalTransportSsh'),
+  serial('terminalTransportSerial'),
+  maidCafeDirect('terminalTransportMaidCafeDirect'),
+  maidCafeRelay('terminalTransportMaidCafeRelay');
+
+  const TerminalTransport(this.labelKey);
+
+  /// Translation key for the human name, shown in a tooltip.
+  final String labelKey;
+}
+
+/// The transport a MaidCafe terminal runs over.
+///
+/// A relayed target goes through the cloud; anything else dials the daemon, on
+/// its own address or through the SSH forward that carries a loopback one.
+TerminalTransport maidCafeTerminalTransport(MaidCafeTerminalTarget target) =>
+    target.isRelayed
+    ? TerminalTransport.maidCafeRelay
+    : TerminalTransport.maidCafeDirect;
+
 class TerminalTab extends SessionTab {
   const TerminalTab({
     required super.id,
     required super.serverId,
     required super.serverName,
     required this.terminal,
+    required this.transport,
   });
 
   final TerminalSessionAdapter terminal;
+
+  /// Which transport serves this terminal. Shown in the status bar, so a
+  /// relayed session is distinguishable from a direct one at a glance.
+  final TerminalTransport transport;
 
   @override
   SessionTabType get type => SessionTabType.terminal;
@@ -528,6 +559,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       serverId: server.id,
       serverName: server.name,
       terminal: handle.adapter,
+      transport: TerminalTransport.ssh,
     );
     _insertTab(tab, targetPaneId: paneId);
     _watchTerminalDone(handle);
@@ -555,6 +587,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       serverId: server.id,
       serverName: server.name,
       terminal: handle.adapter,
+      transport: TerminalTransport.serial,
     );
     _insertTab(tab, targetPaneId: paneId);
     _watchTerminalDone(handle);
@@ -582,6 +615,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       serverId: server.id,
       serverName: server.name,
       terminal: handle.adapter,
+      transport: maidCafeTerminalTransport(target),
     );
     if (onClose != null) _tabCleanups[handle.id] = onClose;
     _insertTab(tab, targetPaneId: paneId);

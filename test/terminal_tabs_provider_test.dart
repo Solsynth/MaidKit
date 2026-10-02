@@ -4,10 +4,46 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 
 void main() {
+  test('a MaidCafe terminal reports the transport it actually uses', () {
+    // The status bar names the connection, so the relay — which rides the cloud
+    // and needs no reachable daemon — cannot read as a direct connection.
+    expect(
+      maidCafeTerminalTransport(
+        const MaidCafeTerminalTarget(
+          baseUrl: 'http://127.0.0.1:8747',
+          secret: 'secret',
+        ),
+      ),
+      TerminalTransport.maidCafeDirect,
+    );
+    expect(
+      maidCafeTerminalTransport(
+        const MaidCafeTerminalTarget(
+          baseUrl: 'https://mk.solsynth.dev',
+          secret: '',
+          relayDaemonId: 'daemon-1',
+        ),
+      ),
+      TerminalTransport.maidCafeRelay,
+    );
+  });
+
+  test('every transport names itself for the tooltip', () {
+    for (final transport in TerminalTransport.values) {
+      expect(transport.labelKey, startsWith('terminalTransport'));
+    }
+    // Distinct keys, so no two transports read the same in the tooltip.
+    expect(
+      TerminalTransport.values.map((t) => t.labelKey).toSet().length,
+      TerminalTransport.values.length,
+    );
+  });
+
   test('executes a saved snippet in the requested terminal', () {
     final adapter = _RecordingTerminalAdapter();
     final container = ProviderContainer();
@@ -19,6 +55,7 @@ void main() {
       serverId: 1,
       serverName: 'Test server',
       terminal: adapter,
+      transport: TerminalTransport.ssh,
     );
     notifier.state = TerminalTabsState(
       tabs: [tab],

@@ -15,6 +15,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
 
+import 'maidcafe_endpoint_section.dart';
 import 'maidcafe_install.dart';
 import 'maidcafe_uninstall.dart';
 import 'maidcafe_stream.dart';
@@ -2221,6 +2222,19 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             keyboardType: TextInputType.number,
           ),
         ],
+      ),
+      MaidCafeEndpointOverrideSection(
+        server: widget.server,
+        port: _configInt(_portController, maidCafeDefaultPort),
+        busy: _busy,
+        onSave: (endpoint) async {
+          await ref
+              .read(serverRepositoryProvider)
+              .setMaidCafeEndpointOverride(widget.server, endpoint);
+          // The shared session was dialing the old address.
+          _sessionRegistry.invalidate(widget.server);
+        },
+        onChanged: () => ref.invalidate(serversProvider),
       ),
       _configGroup(
         title: 'maidCafeGroupTerminal'.tr(),

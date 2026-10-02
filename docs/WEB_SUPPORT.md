@@ -57,6 +57,30 @@ so a relay session is not reported as "not configured", and the hosted web
 build's origin is seeded into the origin list so a browser can attach without
 hand-editing the daemon.
 
+### Endpoint override and a TLS front
+
+A server can name the address this app reaches its daemon at — normally an
+HTTPS reverse proxy that terminates TLS in front of it — in the MaidCafe tab's
+**Endpoint override** section, which also carries copyable Caddy and nginx
+recipes. A non-loopback override must be HTTPS, the same rule the endpoint
+editor enforces, because the daemon serves plain HTTP and the credential would
+otherwise cross the network in the clear. A loopback address is not an override:
+that is the tunnel the app builds for itself.
+
+A session with an override dials it directly and never opens a port forward,
+which is what lets a build with no SSH at all — a browser, above all — still
+reach the daemon's metrics, log stream and config API. Routing falls back to the
+automatic resolution (an SSH forward on desktop, the server host in a browser)
+when no override is set or the override does not answer.
+
+The connectivity check dials the route a **browser** would take, never this
+client's own SSH tunnel: an address that only works because the app is tunneling
+to the daemon's loopback says nothing about whether a web client can reach it,
+and it reports a throwaway port the user cannot act on. The direct section of
+the report therefore shows the server host on the port the daemon reported, and
+the sheet says so, so a green result means a browser can attach and a red one
+names the port to expose.
+
 Every MaidCafe connection writes what it did — the route it chose, the
 endpoint it dialed and a redacted credential (length plus a stable digest, so two
 runs can be compared without the secret being written down) — through

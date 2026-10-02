@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_models.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/server_repository.dart';
 import 'package:maid_kit/servers/vault_service.dart';
 
@@ -227,6 +228,65 @@ void main() {
         expect(maidCafeDialUrl(null, 8747), 'http://127.0.0.1:8747');
       },
     );
+
+    test('the endpoint override round-trips and rejects plain HTTP', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'proxied',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      expect(created.maidCafeEndpointOverride, isNull);
+
+      // The address a TLS front publishes: stored, and read back as the
+      // override the app dials.
+      await vaultRepository.setMaidCafeEndpointOverride(
+        created,
+        'https://daemon.example',
+      );
+      expect(
+        (await vaultRepository.all()).single.maidCafeEndpointOverride,
+        'https://daemon.example',
+      );
+
+      // Clearing it hands routing back to the automatic resolution.
+      await vaultRepository.setMaidCafeEndpointOverride(created, null);
+      expect(
+        (await vaultRepository.all()).single.maidCafeEndpointOverride,
+        isNull,
+      );
+
+      // Plain HTTP to another host is refused: the daemon has no TLS, so the
+      // credential would cross the network in the clear.
+      await expectLater(
+        vaultRepository.setMaidCafeEndpointOverride(
+          created,
+          'http://daemon.example:8747',
+        ),
+        throwsA(isA<MaidCafeException>()),
+      );
+      // Loopback plain HTTP is what an SSH forward dials, so it stays legal.
+      await vaultRepository.setMaidCafeEndpointOverride(
+        created,
+        'http://127.0.0.1:8747',
+      );
+      expect(
+        (await vaultRepository.all()).single.maidCafeTerminalUrl,
+        'http://127.0.0.1:8747',
+      );
+      // ...but it is not an override: it is the app's own tunnel endpoint.
+      expect(
+        (await vaultRepository.all()).single.maidCafeEndpointOverride,
+        isNull,
+      );
+    });
 
     test('a learned credential is stored like an entered one', () async {
       final vault = VaultService(database, secureStorage: _MemoryStorage());

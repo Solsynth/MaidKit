@@ -178,6 +178,30 @@ void main() {
     expect(parse().terminalRelayEnabled, isFalse);
   });
 
+  test('the report shows the endpoint the probe was handed', () async {
+    // The check resolves the browser route and hands it to the probes, so the
+    // address in the report is the one that was dialed — a tunnel port here
+    // would mean the check answered for a client that cannot use it.
+    final report = await runMaidCafeConnectivityCheck(
+      MaidCafeConnectivityProbes(
+        resolveTarget: ({required relay}) async => const MaidCafeTerminalTarget(
+          baseUrl: 'http://host.example:8747',
+          secret: 'secret',
+        ),
+        checkHealth: (baseUrl, secret) async => _health(),
+        openTerminal: (target) async {},
+      ),
+      relay: false,
+    );
+
+    expect(
+      report.steps
+          .firstWhere((step) => step.titleKey == 'maidCafeCheckRoute')
+          .detail,
+      'http://host.example:8747',
+    );
+  });
+
   test('the advice matches the cause of a failed direct route', () {
     MaidCafeTerminalException refused(
       MaidCafeTerminalHandshakeFailure failure,
@@ -207,10 +231,19 @@ void main() {
       ),
       'maidCafeTerminalDisabledShort',
     );
-    // Nothing answered: this is the case the port advice is for.
+    // Nothing answered: this is the case the port advice is for. This daemon
+    // listens on loopback, so the advice names the bind as well as the port.
     expect(
       maidCafeRouteFailureSuffix(
         server,
+        const MaidCafeTerminalException('connection refused'),
+      ),
+      'maidCafeExposePortBindShort',
+    );
+    // A daemon already reachable from another host only needs the port open.
+    expect(
+      maidCafeRouteFailureSuffix(
+        _server(daemonUrl: 'http://10.0.0.5:8747', port: 8747),
         const MaidCafeTerminalException('connection refused'),
       ),
       'maidCafeExposePortShort',
@@ -237,9 +270,13 @@ void main() {
   );
 
   test('an unreachable direct route names the port to expose', () {
-    // Nothing learned yet: the daemon default and loopback.
-    expect(maidCafeExposure(_server()), (port: 8747, listenHost: '127.0.0.1'));
-    // A stored endpoint says both.
+    // Nothing learned yet: the daemon default, listening on its own machine.
+    expect(maidCafeExposure(_server()), (
+      port: 8747,
+      listenHost: '127.0.0.1',
+      listensOnlyLocally: true,
+    ));
+    // A stored endpoint says the port, the address and that it is dialable.
     expect(
       maidCafeExposure(
         _server(
@@ -247,7 +284,7 @@ void main() {
           daemonUrl: 'http://10.0.0.5:9443',
         ),
       ),
-      (port: 9443, listenHost: '10.0.0.5'),
+      (port: 9443, listenHost: '10.0.0.5', listensOnlyLocally: false),
     );
     // The port a probe or install learned wins over an endpoint's.
     expect(
@@ -256,6 +293,53 @@ void main() {
       ).port,
       9000,
     );
+  });
+
+  test('only a dialable endpoint counts as an override', () {
+    // What the user pointed at the daemon: a TLS front on a real host name.
+    expect(
+      _server(terminalUrl: 'https://daemon.example').maidCafeEndpointOverride,
+      'https://daemon.example',
+    );
+    // A loopback address is the route the app builds for itself (an SSH
+    // forward), not an override, so resolving it must stay automatic.
+    for (final url in [
+      'http://127.0.0.1:8747',
+      'http://localhost:8747',
+      'http://[::1]:8747',
+    ]) {
+      expect(
+        _server(terminalUrl: url).maidCafeEndpointOverride,
+        isNull,
+        reason: '$url is not reachable from another host',
+      );
+    }
+    expect(_server().maidCafeEndpointOverride, isNull);
+    expect(_server(terminalUrl: '   ').maidCafeEndpointOverride, isNull);
+  });
+
+  test('a loopback or wildcard bind is reported as unreachable', () {
+    // Opening a port in front of a loopback bind changes nothing, so the advice
+    // has to say which of the two is missing.
+    for (final host in ['127.0.0.1', 'localhost', '::1', '0.0.0.0', '::']) {
+      expect(
+        maidCafeExposure(
+          _server(daemonUrl: 'http://$host:8747'),
+        ).listensOnlyLocally,
+        isTrue,
+        reason: '$host names no address another host can dial',
+      );
+    }
+    // A concrete non-loopback address is dialable; only the firewall is left.
+    for (final host in ['10.0.0.5', 'daemon.example']) {
+      expect(
+        maidCafeExposure(
+          _server(daemonUrl: 'http://$host:8747'),
+        ).listensOnlyLocally,
+        isFalse,
+        reason: '$host is reachable from another host',
+      );
+    }
   });
 
   test('a healthy daemon passes every step', () async {

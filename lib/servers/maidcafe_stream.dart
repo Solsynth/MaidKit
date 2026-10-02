@@ -10,6 +10,7 @@ import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'maidcafe_install.dart';
 import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
+import 'server_models.dart';
 
 const maidCafeDefaultPort = 8747;
 
@@ -847,6 +848,33 @@ class MaidCafeStreamSession {
   /// Whether [close] has been called; a closed session cannot be reused.
   bool get isClosed => _closed;
 
+  /// Opens a session straight at [baseUrl], with no SSH and no port forward.
+  ///
+  /// This is the route an override endpoint serves: a daemon published through
+  /// an HTTPS reverse proxy is reachable on its own, so a client that cannot
+  /// open an SSH channel — a browser build, above all — still gets the daemon's
+  /// metrics, log stream and config API. The caller owns the health check, so a
+  /// wrong address surfaces as a failed open rather than a silent session.
+  static Future<MaidCafeStreamSession> openAt({
+    required SshConnectionManager manager,
+    required String baseUrl,
+    String? apiSecret,
+  }) async {
+    final connection = MaidCafeStreamSession._(
+      manager,
+      null,
+      _newDio(baseUrl, apiSecret),
+      apiSecret,
+    );
+    try {
+      await connection.health();
+      return connection;
+    } catch (_) {
+      await connection.close();
+      rethrow;
+    }
+  }
+
   static Future<MaidCafeStreamSession> open({
     required SshConnectionManager manager,
     required Server server,
@@ -854,6 +882,31 @@ class MaidCafeStreamSession {
     String? apiSecret,
     String? sudoPassword,
   }) async {
+    // An override endpoint is tried first: it is the address the user chose for
+    // this server, and it is the only route that works without SSH.
+    final override = server.maidCafeEndpointOverride;
+    Object? overrideError;
+    if (override != null) {
+      try {
+        return await openAt(
+          manager: manager,
+          baseUrl: override,
+          apiSecret: apiSecret,
+        );
+      } catch (error) {
+        overrideError = error;
+      }
+    }
+    if (manager.clientFor(server.id) == null) {
+      // No SSH session to fall back on, so the override was the only route.
+      if (overrideError != null) {
+        Error.throwWithStackTrace(overrideError, StackTrace.current);
+      }
+      throw StateError(
+        'This server has no reachable MaidCafe endpoint and no SSH session to '
+        'forward through.',
+      );
+    }
     final access = await readMaidCafeConfig(
       manager: manager,
       server: server,

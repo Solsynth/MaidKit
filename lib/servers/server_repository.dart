@@ -385,6 +385,31 @@ class ServerRepository {
     );
   }
 
+  /// Stores the endpoint this app should reach the daemon at, or clears it so
+  /// the route is resolved again (an SSH forward on a native client, the dialed
+  /// host on a browser one).
+  ///
+  /// The same rule as the server editor applies: a non-loopback address must be
+  /// HTTPS, because the daemon itself serves plain HTTP and only a TLS front
+  /// makes it safe to send the credential off the machine.
+  Future<void> setMaidCafeEndpointOverride(
+    Server server,
+    String? endpoint,
+  ) async {
+    final raw = endpoint?.trim();
+    final normalized = raw == null || raw.isEmpty
+        ? null
+        : normalizeMaidCafeLocalDaemonUrl(raw);
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeTerminalUrl: Value(normalized),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
   /// Stores the metrics secret the daemon reports, for a client that had none
   /// or had a stale one.
   Future<void> setMaidCafeMetricsSecret(Server server, String secret) async {

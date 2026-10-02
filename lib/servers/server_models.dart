@@ -260,6 +260,23 @@ extension ServerMaidCafeRoute on Server {
   /// address — so a page served over https blocks that socket as mixed content;
   /// reaching a plain-http daemon from one needs a TLS front, the same rule the
   /// endpoint editor enforces for non-loopback addresses.
+  /// The stored daemon endpoint when it is one a client can dial without a
+  /// tunnel, or null when only a loopback address (or nothing) is stored.
+  ///
+  /// This is the per-server override: an address the user pointed at the
+  /// daemon, typically an HTTPS reverse proxy that terminates TLS in front of
+  /// it. Loopback addresses are what a native client's own SSH forward uses,
+  /// so they are not an override — they are the route the app builds for
+  /// itself.
+  String? get maidCafeEndpointOverride {
+    final stored = maidCafeTerminalUrl?.trim();
+    if (stored == null || stored.isEmpty) return null;
+    final uri = Uri.tryParse(stored);
+    if (uri == null || uri.host.isEmpty) return null;
+    if (_maidCafeHostIsLoopback(uri.host)) return null;
+    return stored;
+  }
+
   String? get maidCafeBrowserTerminalUrl {
     final stored = maidCafeTerminalUrl?.trim();
     final storedUrl = (stored == null || stored.isEmpty)

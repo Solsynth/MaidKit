@@ -260,19 +260,39 @@ String describeMaidCafeError(Object error) {
 /// Read from what the app learned about the daemon — the port column a probe or
 /// an install filled, then the stored endpoints — so an unreachable route names
 /// exactly what to open instead of reporting "cannot connect".
-({int port, String listenHost}) maidCafeExposure(Server server) {
+({int port, String listenHost, bool listensOnlyLocally}) maidCafeExposure(
+  Server server,
+) {
   final terminal = Uri.tryParse(server.maidCafeTerminalUrl?.trim() ?? '');
   final daemon = Uri.tryParse(server.maidCafeDaemonUrl?.trim() ?? '');
+  final listenHost =
+      _maidCafeUrlHost(daemon) ?? _maidCafeUrlHost(terminal) ?? '127.0.0.1';
   return (
     port:
         server.maidCafeTerminalPort ??
         _maidCafeUrlPort(terminal) ??
         _maidCafeUrlPort(daemon) ??
         maidCafeDefaultPort,
-    listenHost:
-        _maidCafeUrlHost(daemon) ?? _maidCafeUrlHost(terminal) ?? '127.0.0.1',
+    listenHost: listenHost,
+    // A loopback (or wildcard) bind is unreachable from another host no matter
+    // what the firewall allows, so opening the port is only half the answer.
+    listensOnlyLocally: _maidCafeHostIsLocalBind(listenHost),
   );
 }
+
+/// Whether [host] can only be reached from the daemon's own machine.
+///
+/// The wildcard address is included: it accepts every interface but names no
+/// address a client can dial, and this app stores a wildcard bind as loopback
+/// for that reason (see [maidCafeDialUrl]).
+bool _maidCafeHostIsLocalBind(String host) => const {
+  '127.0.0.1',
+  'localhost',
+  '::1',
+  '0.0.0.0',
+  '::',
+  '[::]',
+}.contains(host.trim());
 
 int? _maidCafeUrlPort(Uri? uri) => uri != null && uri.hasPort ? uri.port : null;
 
@@ -303,12 +323,16 @@ String maidCafeRouteFailureHint(
 /// [directUnreachableHint] replaces the generic advice on a direct route that
 /// does not answer, so the user is told which port to expose — unless the
 /// daemon's terminal endpoint is off, which is checked first.
+///
+/// [directRouteNote] explains what the direct route actually dialed, so the
+/// address in the report is not mistaken for this client's own endpoint.
 Future<void> showMaidCafeConnectivitySheet(
   BuildContext context, {
   required String serverName,
   required Future<MaidCafeConnectivityReport> Function({required bool relay})
   run,
   String? directUnreachableHint,
+  String? directRouteNote,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -318,6 +342,7 @@ Future<void> showMaidCafeConnectivitySheet(
       serverName: serverName,
       run: run,
       directUnreachableHint: directUnreachableHint,
+      directRouteNote: directRouteNote,
     ),
   );
 }
@@ -327,10 +352,15 @@ class _MaidCafeConnectivitySheet extends StatefulWidget {
     required this.serverName,
     required this.run,
     this.directUnreachableHint,
+    this.directRouteNote,
   });
 
   final String serverName;
   final Future<MaidCafeConnectivityReport> Function({required bool relay}) run;
+
+  /// What the direct route dialed, when that differs from this client's own
+  /// endpoint.
+  final String? directRouteNote;
 
   /// What a failed direct route should tell the user to expose.
   final String? directUnreachableHint;
@@ -406,6 +436,7 @@ class _MaidCafeConnectivitySheetState
                 _ReportSection(
                   report: report,
                   unreachableHint: widget.directUnreachableHint,
+                  routeNote: report.relay ? null : widget.directRouteNote,
                 ),
             ],
             const SizedBox(height: 8),
@@ -443,16 +474,24 @@ class _MaidCafeConnectivitySheetState
 }
 
 class _ReportSection extends StatelessWidget {
-  const _ReportSection({required this.report, this.unreachableHint});
+  const _ReportSection({
+    required this.report,
+    this.unreachableHint,
+    this.routeNote,
+  });
 
   final MaidCafeConnectivityReport report;
 
   /// The port advice for a failed direct route, when the terminal is enabled.
   final String? unreachableHint;
 
+  /// What the direct route dialed, and why.
+  final String? routeNote;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final note = routeNote;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -472,6 +511,16 @@ class _ReportSection extends StatelessWidget {
               failureHint: maidCafeRouteFailureHint(
                 report,
                 report.relay ? null : unreachableHint,
+              ),
+            ),
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 24, top: 4),
+              child: Text(
+                note,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
         ],

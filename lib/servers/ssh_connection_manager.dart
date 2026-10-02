@@ -9,6 +9,7 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/platform/network_ping.dart';
 import 'activity_models.dart';
 import 'crontab_models.dart';
+import 'maidcafe_debug.dart';
 import 'database_models.dart';
 import 'firewall_models.dart';
 import 'package_models.dart';
@@ -152,6 +153,10 @@ class SshConnectionManager {
       );
     }
     _portForwards[id] = connection;
+    maidCafeLog(
+      'port forward $id for server ${server.id} (${info.owner.name}) '
+      'started: ${info.bindHost}:${info.bindPort} → $targetHost:$targetPort',
+    );
     _emitPortForwards();
     return info;
   }
@@ -167,6 +172,10 @@ class SshConnectionManager {
     if (forward == null || (forward.info.isManaged && !allowManaged)) {
       return;
     }
+    maidCafeLog(
+      'port forward $id for server ${forward.info.serverId} '
+      '(${forward.info.owner.name}) stopped',
+    );
     _portForwards.remove(id);
     await forward.close();
     _emitPortForwards();
@@ -185,11 +194,35 @@ class SshConnectionManager {
         localHost: socket.remoteAddress.address,
         localPort: socket.remotePort,
       );
-      unawaited(channel.stream.cast<List<int>>().pipe(socket));
-      unawaited(socket.cast<List<int>>().pipe(channel.sink));
+      // Both directions are guarded. The local end is closed by whoever
+      // finishes first — a daemon terminal tab closing, a forward stopping —
+      // and the peer keeps sending into a socket that is already gone. An
+      // unguarded pipe raises there, and dartssh2 turns an exception raised
+      // while handling a packet into a transport error: the whole SSH
+      // connection would close, taking every other session on it down with the
+      // forward that only this one terminal needed.
+      _pipeForward(channel.stream.cast<List<int>>(), socket, socket.close);
+      _pipeForward(socket.cast<List<int>>(), channel.sink, channel.sink.close);
     } catch (_) {
       await socket.close();
     }
+  }
+
+  /// Pumps [source] into [sink], closing [onDone] and swallowing either end's
+  /// failure. Forwarding is best-effort by nature: the terminal stops working
+  /// when its tunnel breaks, but an error here must not escape as an unhandled
+  /// async error (or, worse, as a transport error on the SSH connection).
+  void _pipeForward(
+    Stream<List<int>> source,
+    StreamSink<List<int>> sink,
+    Future<void> Function() close,
+  ) {
+    unawaited(
+      source
+          .pipe(sink)
+          .catchError((Object _) {})
+          .whenComplete(() => unawaited(close().catchError((Object _) {}))),
+    );
   }
 
   /// Runs a SOCKS5 server handshake on a locally accepted [socket], then
@@ -207,8 +240,10 @@ class SshConnectionManager {
         localPort: socket.remotePort,
       );
       handshake.startPump();
-      unawaited(handshake.stream.cast<List<int>>().pipe(channel.sink));
-      unawaited(channel.stream.cast<List<int>>().pipe(socket));
+      _pipeForward(handshake.stream.cast<List<int>>(), channel.sink, () async {
+        await handshake.dispose();
+      });
+      _pipeForward(channel.stream.cast<List<int>>(), socket, socket.close);
     } on Socks5ProtocolException {
       // The failure reply was already sent (or none applies); just close.
       await handshake.dispose();
@@ -230,8 +265,10 @@ class SshConnectionManager {
   ) async {
     try {
       final socket = await Socket.connect(targetHost, targetPort);
-      unawaited(channel.stream.cast<List<int>>().pipe(socket));
-      unawaited(socket.cast<List<int>>().pipe(channel.sink));
+      // Guarded for the same reason as _pipeLocalConnection: a broken forward
+      // is a failed forward, never a failed SSH transport.
+      _pipeForward(channel.stream.cast<List<int>>(), socket, socket.close);
+      _pipeForward(socket.cast<List<int>>(), channel.sink, channel.sink.close);
     } catch (_) {
       await channel.sink.close();
     }
@@ -4604,6 +4641,13 @@ uname -r
 
   void _handleClientClosed(Server server, SSHClient client, {Object? error}) {
     if (!identical(_sessions[server.id], client)) return;
+    maidCafeLog(
+      'SSH transport for "${server.name}" (id=${server.id}) closed'
+      '${error == null ? ' by the peer' : ''}; '
+      'portForwards=${_portForwards.values.where((f) => f.info.serverId == server.id).length} '
+      'terminals=${_terminals.values.where((t) => t.serverId == server.id).length}',
+      error: error,
+    );
     _sessions.remove(server.id);
     _sessionJumpHosts.remove(server.id);
     unawaited(_closeDependentSessions(server.id));
@@ -4634,6 +4678,10 @@ uname -r
   }
 
   Future<void> disconnect(int serverId) async {
+    maidCafeLog(
+      'disconnect($serverId) requested — every session on it closes, '
+      'including its port forwards and terminals',
+    );
     await _closeDependentSessions(serverId);
     await _stopPortForwardsFor(serverId);
     await _closeTerminalsForJumpHost(serverId);

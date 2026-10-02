@@ -10,7 +10,6 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:system_fonts/system_fonts.dart';
-import 'package:async/async.dart';
 
 import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
 import 'package:maid_kit/agent/mcp_client.dart';
@@ -1500,18 +1499,54 @@ Future<void> _startAutoPortForwards(Ref ref, Server server) async {
   }
 }
 
+/// Merges the transports' session lists into one list of everything connected.
+///
+/// Each transport emits its *own* complete list, so forwarding an event as it
+/// arrives would show only the transport that emitted: opening a MaidCafe
+/// terminal would make every SSH session read as disconnected everywhere the
+/// session list is consulted. Every source's latest list is kept and the union
+/// is emitted on each event, which is what makes one transport's activity
+/// invisible to the others.
+Stream<List<SshSessionInfo>> mergeSessionStreams({
+  required List<Stream<List<SshSessionInfo>>> sources,
+  required List<List<SshSessionInfo>> initial,
+}) {
+  assert(sources.length == initial.length);
+  final latest = List<List<SshSessionInfo>>.of(initial);
+  final controller = StreamController<List<SshSessionInfo>>();
+  final subscriptions = <StreamSubscription<List<SshSessionInfo>>>[];
+
+  List<SshSessionInfo> combined() => [for (final list in latest) ...list];
+
+  controller.onListen = () {
+    controller.add(combined());
+    for (var i = 0; i < sources.length; i++) {
+      final index = i;
+      subscriptions.add(
+        sources[index].listen((value) {
+          latest[index] = value;
+          controller.add(combined());
+        }, onError: controller.addError),
+      );
+    }
+  };
+  controller.onCancel = () async {
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
+    subscriptions.clear();
+  };
+  return controller.stream;
+}
+
 Stream<List<SshSessionInfo>> _watchSessions(
   SshConnectionManager manager,
   SerialConnectionManager serial,
   MaidCafeTerminalConnectionManager maidCafe,
-) async* {
-  yield [...manager.current, ...serial.current, ...maidCafe.current];
-  yield* StreamGroup.merge([
-    manager.sessions,
-    serial.sessions,
-    maidCafe.sessions,
-  ]);
-}
+) => mergeSessionStreams(
+  sources: [manager.sessions, serial.sessions, maidCafe.sessions],
+  initial: [manager.current, serial.current, maidCafe.current],
+);
 
 final serversProvider = StreamProvider<List<Server>>((ref) {
   return ref.watch(serverRepositoryProvider).watchAll();
