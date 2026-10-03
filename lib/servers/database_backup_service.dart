@@ -12,7 +12,6 @@ enum _MergeTable {
   servers,
   savedCredentials,
   composeProjectLinks,
-  containerCacheEntries,
   deploymentProjects,
   deploymentResources,
   scriptSnippets,
@@ -25,7 +24,6 @@ const _mergeTableNames = {
   _MergeTable.servers: 'servers',
   _MergeTable.savedCredentials: 'savedCredentials',
   _MergeTable.composeProjectLinks: 'composeProjectLinks',
-  _MergeTable.containerCacheEntries: 'containerCacheEntries',
   _MergeTable.deploymentProjects: 'deploymentProjects',
   _MergeTable.deploymentResources: 'deploymentResources',
   _MergeTable.scriptSnippets: 'scriptSnippets',
@@ -37,7 +35,11 @@ const _mergeTableNames = {
 /// Creates portable, password-encrypted snapshots of the user-managed data.
 ///
 /// Vault metadata is deliberately excluded: it is tied to the vault on this
-/// device. Credentials are decrypted only while the archive is assembled and
+/// device. So are the device-local records — the container cache and the
+/// servers' `lastConnectedAt` — because they change from ordinary use (a
+/// connection, a container listing) rather than from an edit, and syncing
+/// them would publish a new cloud revision for content the user never
+/// touched. Credentials are decrypted only while the archive is assembled and
 /// are encrypted again with the destination vault key during import.
 class DatabaseBackupService {
   DatabaseBackupService(this._database, this._vault);
@@ -107,12 +109,22 @@ class DatabaseBackupService {
     if (payload['version'] != _formatVersion) {
       throw const FormatException('Unsupported MaidKit backup.');
     }
-    // Export timestamps describe the snapshot, not syncable content.
+    // Export timestamps describe the snapshot, not syncable content. The
+    // container cache is device-local too; older archives still carry it, so
+    // drop the key rather than let it read as a difference worth merging.
     payload.remove('createdAt');
+    payload.remove('containerCacheEntries');
     for (final key in _mergeTableNames.values) {
       // Archives written by older builds may lack tables added later; they
       // normalize to empty lists so merging still works across versions.
       payload[key] = _recordsOrEmpty(payload, key);
+    }
+    // `lastConnectedAt` is device-local bookkeeping. Archives written before
+    // it was excluded still carry it, so drop it here rather than let this
+    // device's connect times read as a difference worth merging — or worse,
+    // as an equal-timestamp conflict.
+    for (final record in payload['servers'] as List<dynamic>) {
+      if (record is Map) record.remove('lastConnectedAt');
     }
     return payload;
   }
@@ -210,13 +222,6 @@ class DatabaseBackupService {
           record['directory'],
           record['scope'],
         ]);
-      case _MergeTable.containerCacheEntries:
-        return _compoundKey([
-          record['serverId'],
-          record['runtime'],
-          record['scope'],
-          record['containerId'],
-        ]);
       case _MergeTable.githubConnections:
         return value(record['accountLogin']);
       case _MergeTable.githubTokens:
@@ -237,10 +242,17 @@ class DatabaseBackupService {
     return values.map((value) => value.toString()).join('\u001f');
   }
 
+  /// How a server row is identified across archives: its stable [syncId] when
+  /// it has one, its local row [id] otherwise. Mirrors [_recordKey], which
+  /// merges on the same identity.
+  String _serverIdentity(String? syncId, int id) {
+    final stable = syncId?.trim() ?? '';
+    return stable.isEmpty ? 'id:$id' : 'syncId:$stable';
+  }
+
   DateTime? _recordTimestamp(_MergeTable table, Map<String, dynamic> record) {
     final fields = switch (table) {
       _MergeTable.composeProjectLinks => ['linkedAt'],
-      _MergeTable.containerCacheEntries => ['cachedAt'],
       _MergeTable.githubRepoPins => ['pinnedAt'],
       _ => ['updatedAt', 'createdAt'],
     };
@@ -278,6 +290,9 @@ class DatabaseBackupService {
     final serverRecords = <Map<String, dynamic>>[];
     for (final server in servers) {
       final record = server.toJson()
+        // When *this* device last reached the server says nothing about the
+        // server itself, and a connection used to rewrite it mid-sync.
+        ..remove('lastConnectedAt')
         ..remove('encryptedCredential')
         ..remove('credentialNonce')
         ..remove('encryptedProxyPassword')
@@ -374,10 +389,6 @@ class DatabaseBackupService {
           (await _database.select(_database.composeProjectLinks).get())
               .map((record) => record.toJson())
               .toList(),
-      'containerCacheEntries':
-          (await _database.select(_database.containerCacheEntries).get())
-              .map((record) => record.toJson())
-              .toList(),
       'deploymentProjects':
           (await _database.select(_database.deploymentProjects).get())
               .map((record) => record.toJson())
@@ -422,7 +433,6 @@ class DatabaseBackupService {
     final servers = _records(payload, 'servers');
     final credentials = _records(payload, 'savedCredentials');
     final composeLinks = _records(payload, 'composeProjectLinks');
-    final cacheEntries = _records(payload, 'containerCacheEntries');
     final projects = _records(payload, 'deploymentProjects');
     final resources = _records(payload, 'deploymentResources');
     final snippets = _records(payload, 'scriptSnippets');
@@ -434,10 +444,17 @@ class DatabaseBackupService {
     final githubRepoPins = _recordsOrEmpty(payload, 'githubRepoPins');
     final githubTokens = _recordsOrEmpty(payload, 'githubTokens');
 
+    // `lastConnectedAt` never travels in an archive, but the import rewrites
+    // every server row, so remember this device's own connect times first.
+    // The container cache is device-local as well and is left untouched.
+    final lastConnectedAtByServer = {
+      for (final server in await _database.select(_database.servers).get())
+        _serverIdentity(server.syncId, server.id): server.lastConnectedAt,
+    };
+
     await _database.transaction(() async {
       await _database.delete(_database.deploymentResources).go();
       await _database.delete(_database.deploymentProjects).go();
-      await _database.delete(_database.containerCacheEntries).go();
       await _database.delete(_database.composeProjectLinks).go();
       await _database.delete(_database.scriptSnippets).go();
       await _database.delete(_database.gitHubRepoPins).go();
@@ -526,7 +543,13 @@ class DatabaseBackupService {
                 host: Value(server.host),
                 port: Value(server.port),
                 username: Value(server.username),
-                lastConnectedAt: Value(server.lastConnectedAt),
+                lastConnectedAt: Value(
+                  lastConnectedAtByServer[_serverIdentity(
+                        server.syncId,
+                        server.id,
+                      )] ??
+                      server.lastConnectedAt,
+                ),
                 syncId: Value(server.syncId),
                 createdAt: Value(server.createdAt),
                 updatedAt: Value(server.updatedAt),
@@ -587,11 +610,6 @@ class DatabaseBackupService {
         await _database
             .into(_database.composeProjectLinks)
             .insert(ComposeProjectLink.fromJson(record).toCompanion(false));
-      }
-      for (final record in cacheEntries) {
-        await _database
-            .into(_database.containerCacheEntries)
-            .insert(ContainerCacheEntry.fromJson(record).toCompanion(false));
       }
       for (final record in projects) {
         await _database

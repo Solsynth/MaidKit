@@ -53,7 +53,10 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
 
   String _friendlyError(Object error) => error is VaultAlreadyExistsException
       ? 'vaultBrowserSingleVault'.tr()
-      : error.toString().replaceFirst(RegExp(r'^(Bad state|ArgumentError): '), '');
+      : error.toString().replaceFirst(
+          RegExp(r'^(Bad state|ArgumentError): '),
+          '',
+        );
 
   @override
   Widget build(BuildContext context) {

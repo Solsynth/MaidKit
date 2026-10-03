@@ -596,7 +596,11 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                       server: server,
                       session: session,
                       compact: isCompactView,
-                      onConnect: () => widget.onConnect(server),
+                      onConnect: () =>
+                          serverConnectionTypeFromName(server.connectionType) ==
+                              ServerConnectionType.ssh
+                          ? widget.onConnect(server)
+                          : widget.onOpenTerminal(server),
                       onOpenDetail: () => widget.onOpenDetail(server),
                       onOpenTerminal: () => widget.onOpenTerminal(server),
                       onOpenFiles: () => widget.onOpenFiles(server),
@@ -1202,7 +1206,11 @@ class _ServerCard extends ConsumerWidget {
               Expanded(
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12),
-                  child: isTerminalOnly
+                  // A serial or daemon server has no SSH route, so its card
+                  // shows the transport instead of a stats grid — unless a
+                  // MaidCafe daemon already answered with real numbers, which
+                  // is exactly what makes those cards useful on the web.
+                  child: isTerminalOnly && stats == null
                       ? _StatsMessage(
                           icon: connectionType == ServerConnectionType.serial
                               ? Symbols.usb
@@ -1213,11 +1221,14 @@ class _ServerCard extends ConsumerWidget {
                         )
                       : connected
                       ? _ServerStats(
-                          stats: session?.stats,
-                          systemInfo: session?.systemInfo,
+                          stats: stats,
+                          systemInfo: systemInfo,
                           compact: compact,
                           collectStats: server.collectStats,
                           collectSystemInfo: server.collectSystemInfo,
+                          sourceLabel: statsFromDaemon
+                              ? 'serversStatsSourceDaemon'.tr()
+                              : null,
                         )
                       : _DisconnectedStats(
                           connecting: connecting,
@@ -1237,6 +1248,9 @@ class _ServerCard extends ConsumerWidget {
                       connecting: connecting,
                       failed: failed,
                       networkLatency: session?.networkLatency,
+                      sourceLabel: statsFromDaemon
+                          ? 'serversStatsSourceDaemon'.tr()
+                          : null,
                     ),
                     const Spacer(),
                     if (!connected && !connecting)
@@ -1410,12 +1424,18 @@ class _ConnectionStatus extends StatelessWidget {
     required this.connecting,
     required this.failed,
     this.networkLatency,
+    this.sourceLabel,
   });
 
   final bool connected;
   final bool connecting;
   final bool failed;
   final Duration? networkLatency;
+
+  /// Replaces the latency readout for a host whose numbers arrive without a
+  /// measured round trip (the daemon route): the chip names the source instead
+  /// of showing a dash that reads as "no latency data".
+  final String? sourceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1442,13 +1462,21 @@ class _ConnectionStatus extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Tooltip(
-            message: 'serversNetworkPingTooltip'.tr(),
-            child: Text(
-              latency == null ? '—' : '${latency.inMilliseconds} ms',
-              style: textTheme.labelLarge?.copyWith(color: latencyColor),
+          if (sourceLabel != null)
+            Text(
+              sourceLabel!,
+              style: textTheme.labelLarge?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            )
+          else
+            Tooltip(
+              message: 'serversNetworkPingTooltip'.tr(),
+              child: Text(
+                latency == null ? '—' : '${latency.inMilliseconds} ms',
+                style: textTheme.labelLarge?.copyWith(color: latencyColor),
+              ),
             ),
-          ),
         ],
       );
     }
@@ -1530,6 +1558,7 @@ class _ServerStats extends StatelessWidget {
     required this.compact,
     required this.collectStats,
     required this.collectSystemInfo,
+    this.sourceLabel,
   });
 
   final ServerStats? stats;
@@ -1537,6 +1566,11 @@ class _ServerStats extends StatelessWidget {
   final bool compact;
   final bool collectStats;
   final bool collectSystemInfo;
+
+  /// Names the transport the numbers came from, when it is worth saying: a
+  /// daemon-backed card reports over HTTP with no SSH session, so the card
+  /// tells the user which route is live. Null hides the note (the SSH default).
+  final String? sourceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1582,6 +1616,17 @@ class _ServerStats extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (sourceLabel != null) ...[
+            Text(
+              sourceLabel!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
           if (stats != null)
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

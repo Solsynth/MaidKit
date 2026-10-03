@@ -472,10 +472,9 @@ class VaultService {
   /// so the later rows are unreachable leftovers: they are deleted here rather
   /// than reported as a database the vault cannot be opened in.
   Future<VaultMetadataData> _metadata() async {
-    final rows =
-        await (_database.select(_database.vaultMetadata)
-              ..orderBy([(table) => OrderingTerm.asc(table.id)]))
-            .get();
+    final rows = await (_database.select(
+      _database.vaultMetadata,
+    )..orderBy([(table) => OrderingTerm.asc(table.id)])).get();
     if (rows.isEmpty) throw StateError('No vault metadata row.');
     if (rows.length > 1) {
       final duplicates = rows.skip(1).map((row) => row.id).toList();

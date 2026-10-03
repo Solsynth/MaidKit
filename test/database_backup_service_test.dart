@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
 import 'package:maid_kit/servers/database_backup_service.dart';
+import 'package:maid_kit/servers/server_models.dart';
+import 'package:maid_kit/servers/server_repository.dart';
 import 'package:maid_kit/servers/vault_service.dart';
 
 Map<String, dynamic> _payload(List<Map<String, dynamic>> servers) => {
@@ -178,6 +180,190 @@ void main() {
       );
 
       expect(result.status, CloudSyncArchiveMergeStatus.conflict);
+    } finally {
+      await database.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('connecting to a server leaves the sync fingerprint alone', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'backup_connect_test',
+    );
+    final database = AppDatabase(filePath: '${directory.path}/vault.sqlite');
+    final vault = VaultService(database);
+    final repository = ServerRepository(database, vault);
+    final backup = DatabaseBackupService(database, vault);
+    try {
+      final server = await repository.create(
+        const ServerDraft(
+          name: 'prod',
+          host: '10.0.0.1',
+          port: 22,
+          username: 'root',
+        ),
+      );
+      final before = await backup.contentFingerprint();
+
+      await repository.markConnected(server.id);
+
+      expect(await backup.contentFingerprint(), before);
+      final stored = await (database.select(
+        database.servers,
+      )..where((table) => table.id.equals(server.id))).getSingle();
+      expect(stored.lastConnectedAt, isNotNull);
+      expect(stored.updatedAt!.isAtSameMomentAs(server.updatedAt!), isTrue);
+    } finally {
+      await database.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('the container cache is not part of the sync payload', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'backup_cache_test',
+    );
+    final database = AppDatabase(filePath: '${directory.path}/vault.sqlite');
+    final vault = VaultService(database);
+    final backup = DatabaseBackupService(database, vault);
+    try {
+      final payload =
+          jsonDecode(await backup.exportPayload()) as Map<String, dynamic>;
+      expect(payload.containsKey('containerCacheEntries'), isFalse);
+
+      final before = await backup.contentFingerprint();
+      await database
+          .into(database.containerCacheEntries)
+          .insert(
+            ContainerCacheEntriesCompanion.insert(
+              serverId: 1,
+              runtime: 'docker',
+              scope: 'user',
+              containerId: 'abc',
+              name: 'web',
+              image: 'nginx:latest',
+              state: 'running',
+              status: 'Up 3 minutes',
+              cachedAt: DateTime.now().toUtc(),
+            ),
+          );
+
+      expect(await backup.contentFingerprint(), before);
+    } finally {
+      await database.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('import keeps device-local connect times and container cache', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'backup_device_local_test',
+    );
+    final database = AppDatabase(filePath: '${directory.path}/vault.sqlite');
+    final vault = VaultService(database);
+    final repository = ServerRepository(database, vault);
+    final backup = DatabaseBackupService(database, vault);
+    try {
+      final server = await repository.create(
+        const ServerDraft(
+          name: 'prod',
+          host: '10.0.0.1',
+          port: 22,
+          username: 'root',
+        ),
+      );
+      await repository.markConnected(server.id);
+      final connectedAt =
+          (await (database.select(
+                database.servers,
+              )..where((table) => table.id.equals(server.id))).getSingle())
+              .lastConnectedAt;
+      await database
+          .into(database.containerCacheEntries)
+          .insert(
+            ContainerCacheEntriesCompanion.insert(
+              serverId: server.id,
+              runtime: 'docker',
+              scope: 'user',
+              containerId: 'abc',
+              name: 'web',
+              image: 'nginx:latest',
+              state: 'running',
+              status: 'Up 3 minutes',
+              cachedAt: DateTime.now().toUtc(),
+            ),
+          );
+
+      // What another device would publish: a real content edit, plus that
+      // device's own connect time and container listing.
+      final archive =
+          jsonDecode(await backup.exportPayload()) as Map<String, dynamic>;
+      final record =
+          (archive['servers'] as List).single as Map<String, dynamic>;
+      record['name'] = 'prod-renamed';
+      record['updatedAt'] = '2030-01-01T00:00:00.000Z';
+      record['lastConnectedAt'] = '2030-01-01T00:00:00.000Z';
+      archive['containerCacheEntries'] = <Map<String, dynamic>>[
+        {
+          'serverId': server.id,
+          'runtime': 'docker',
+          'scope': 'user',
+          'containerId': 'other-device',
+          'name': 'stale',
+          'image': 'busybox',
+          'state': 'exited',
+          'status': 'Exited (0)',
+          'cachedAt': '2030-01-01T00:00:00.000Z',
+        },
+      ];
+
+      await backup.importPayload(jsonEncode(archive));
+
+      final imported = await (database.select(
+        database.servers,
+      )..where((table) => table.id.equals(server.id))).getSingle();
+      expect(imported.name, 'prod-renamed');
+      expect(imported.lastConnectedAt!.isAtSameMomentAs(connectedAt!), isTrue);
+      final cache = await database.select(database.containerCacheEntries).get();
+      expect(cache.map((entry) => entry.containerId), ['abc']);
+    } finally {
+      await database.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('a differing lastConnectedAt alone reads as identical', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'backup_connect_merge_test',
+    );
+    final database = AppDatabase(filePath: '${directory.path}/vault.sqlite');
+    final vault = VaultService(database);
+    final backup = DatabaseBackupService(database, vault);
+    const password = 'current-vault-passphrase';
+    try {
+      Map<String, dynamic> server(String connectedAt) => {
+        'id': 1,
+        'syncId': 'same-server',
+        'name': 'Prod',
+        'updatedAt': '2026-08-08T10:00:00Z',
+        'lastConnectedAt': connectedAt,
+      };
+      final localArchive = await vault.encryptPortable(
+        jsonEncode(_payload([server('2026-08-08T10:00:00Z')])),
+        password,
+      );
+      final remoteArchive = await vault.encryptPortable(
+        jsonEncode(_payload([server('2026-09-09T09:00:00Z')])),
+        password,
+      );
+
+      final result = await backup.compareAndMergeArchives(
+        localArchive: localArchive,
+        remoteArchive: remoteArchive,
+        password: password,
+      );
+
+      expect(result.status, CloudSyncArchiveMergeStatus.identical);
     } finally {
       await database.close();
       await directory.delete(recursive: true);

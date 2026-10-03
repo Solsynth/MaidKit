@@ -91,7 +91,10 @@ class _VaultGateState extends ConsumerState<VaultGate>
 
   String _friendlyError(Object error) => error is VaultAlreadyExistsException
       ? 'vaultBrowserSingleVault'.tr()
-      : error.toString().replaceFirst(RegExp(r'^(Bad state|ArgumentError): '), '');
+      : error.toString().replaceFirst(
+          RegExp(r'^(Bad state|ArgumentError): '),
+          '',
+        );
   void _retryVaultOpen() {
     ref.invalidate(vaultExistsProvider);
   }

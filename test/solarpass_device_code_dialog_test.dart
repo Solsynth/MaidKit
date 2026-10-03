@@ -83,7 +83,9 @@ void main() {
 
     // The code arrives and the flow ends in the same turn, so the route is
     // asked to close before it has ever been built.
-    final result = withSolarpassDeviceCode<String>(context, (onDeviceCode) async {
+    final result = withSolarpassDeviceCode<String>(context, (
+      onDeviceCode,
+    ) async {
       onDeviceCode(_authorization);
       return 'signed-in';
     });

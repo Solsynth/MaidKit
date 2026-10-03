@@ -10,6 +10,7 @@ and what is still open.
 | --- | --- |
 | Terminal rendering | `xterm3` (see `docs/TERMINAL_EMU_ADAPTER.md`) |
 | Terminals | MaidCafe daemon terminals over WebSocket — the only transport that needs no raw socket |
+| Server statistics | MaidCafe daemon `/api/v1/metrics` over HTTP(S) — the only statistics route that needs no SSH |
 | Servers, settings, snippets, GitHub, projects, cloud sync | Local database + HTTP(S) |
 | SSH, serial, local shells | Unavailable (no raw sockets) |
 | File management, file editor | MaidCafe daemon `/api/v1/files` over HTTP(S) for a remote server; the local pane is absent (no local filesystem in a browser) |
@@ -35,6 +36,34 @@ wrong endpoint shows up before a session is opened. On a native client the
 daemon route uses the server's own loopback through a temporary SSH forward when
 one is needed, and the browser build dials the server host on the learned port
 instead.
+
+### Host statistics over the daemon
+
+A host whose daemon answers on an address this client can dial reports its load,
+memory, swap, disk and uptime over `/api/v1/metrics` — **no SSH session is
+opened for them**, on any platform. `MaidCafeStatsCollector`
+(`lib/servers/maidcafe_stats.dart`) resolves that address with
+`maidCafeBrowserTerminalUrl`, the same view a browser gets: the endpoint override
+when one is stored, otherwise the server host on the port the daemon reported. A
+daemon that only listens on the server's own loopback therefore has no direct
+route, so it falls back to the SSH collectors rather than opening a forward —
+the point of the route is that it costs the server no connection at all.
+
+`MaidCafeStatsScheduler` polls on the same cadence as the SSH path, driven by
+`maidCafeStatsSchedulerProvider` from `app.dart` so a browser build collects
+statistics without any tab asking first. Cards and the server detail page read
+`maidCafeStatsProvider` first and fall back to the SSH session's numbers; a
+daemon-backed card is live — `connected` — with no SSH session, and its status
+chip says *"Live from the MaidCafe daemon — no SSH session"* instead of a
+latency readout it never measured. When a daemon stops answering, its snapshot
+is withdrawn instead of being left on screen as if it were current.
+
+The daemon serves this only to a caller that presents its terminal secret or,
+when none is set, its metrics secret — the same fallback the daemon applies to
+`daemon.terminal.secret`. A browser reaching a plain-HTTP daemon from an HTTPS
+page is blocked as mixed content, so that combination needs the TLS front the
+endpoint override section describes; a WebSocket terminal has the same
+requirement.
 
 Detecting an installed daemon over SSH configures that shell route by itself —
 endpoint, port, credential, and cloud identity — and a finished install does the

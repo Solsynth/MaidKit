@@ -21,7 +21,7 @@
 
 MaidKit is a collection of tools used by LittleSheep when acting as a "maid" for servers (i.e., performing server maintenance). The goal is to provide a more convenient way to maintain servers that is non-intrusive — day-to-day management is 100% SSH-based, installing nothing on the server. The optional MaidCafe Cloud layer adds a small outbound-only daemon for fleet management, alarms, and push notifications — no inbound ports required.
 
-Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired by the [Island](https://github.com/Solsynth/HyperNet.Surface) project's desktop-native approach, it brings the same calm, functional philosophy to server administration. A browser build is available as well: it renders terminals with xterm3 and reaches servers through MaidCafe daemons over WebSocket — see [docs/WEB_SUPPORT.md](docs/WEB_SUPPORT.md) for what runs there and what does not.
+Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired by the [Island](https://github.com/Solsynth/HyperNet.Surface) project's desktop-native approach, it brings the same calm, functional philosophy to server administration. A browser build is available as well: it renders terminals with xterm3, reaches servers through MaidCafe daemons over WebSocket, and reads host statistics from those daemons over HTTP without opening an SSH connection — see [docs/WEB_SUPPORT.md](docs/WEB_SUPPORT.md) for what runs there and what does not.
 
 ---
 

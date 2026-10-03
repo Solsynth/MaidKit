@@ -24,6 +24,13 @@ The following records remain local to a device:
 - Learned SSH host-key fingerprints. Trusting a host key is a device-local
   security decision.
 
+The device-local records above are not merely left unapplied on the receiving
+device; they are dropped before the payload leaves the client. They change
+from ordinary use — connecting to a server, listing containers — so including
+them would make a device publish a new revision while the user edited nothing,
+and would turn two devices' differing connect times into an equal-timestamp
+conflict. Connecting to a server therefore must not touch `Servers.updatedAt`.
+
 ## Encryption
 
 The client derives a workspace sync key from the vault password and a

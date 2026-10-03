@@ -103,7 +103,9 @@ void main() {
   });
 
   test('a duplicated browser vault keeps the first row and opens', () async {
-    final directory = await Directory.systemTemp.createTemp('vault_repair_test');
+    final directory = await Directory.systemTemp.createTemp(
+      'vault_repair_test',
+    );
     final database = AppDatabase(filePath: '${directory.path}/vault.sqlite');
     final vault = VaultService(
       database,
@@ -113,8 +115,8 @@ void main() {
     try {
       await vault.create('old-passphrase');
       await vault.lock();
-      final original = (await database.select(database.vaultMetadata).get())
-          .single;
+      final original =
+          (await database.select(database.vaultMetadata).get()).single;
 
       // What the old build did when a browser was offered a second vault: it
       // appended a row to the same database instead of making a new vault.
@@ -132,7 +134,8 @@ void main() {
       expect(
         await vault.unlockWithPassword('old-passphrase'),
         isTrue,
-        reason: 'the password the surviving row was made with must still open it',
+        reason:
+            'the password the surviving row was made with must still open it',
       );
       final repaired = await database.select(database.vaultMetadata).get();
       expect(repaired.length, 1);
@@ -147,11 +150,7 @@ void main() {
     final directory = await Directory.systemTemp.createTemp('vault_erase_test');
     final database = AppDatabase(filePath: '${directory.path}/vault.sqlite');
     final storage = _MemoryStorage();
-    final vault = VaultService(
-      database,
-      secureStorage: storage,
-      isWeb: true,
-    );
+    final vault = VaultService(database, secureStorage: storage, isWeb: true);
     try {
       await vault.create('erase-me');
       await database
@@ -172,7 +171,8 @@ void main() {
       expect(
         await database.select(database.servers).get(),
         isEmpty,
-        reason: 'a leftover server row would still be encrypted with the old key',
+        reason:
+            'a leftover server row would still be encrypted with the old key',
       );
       expect(
         storage.values,

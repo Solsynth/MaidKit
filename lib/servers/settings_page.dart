@@ -2206,9 +2206,13 @@ enum _SettingsTilePosition { only, first, middle, last }
 _SettingsTilePosition _vaultTilePosition(int index, int count) {
   final closesGroup = kIsWeb && index == count - 1;
   if (index == 0) {
-    return closesGroup ? _SettingsTilePosition.only : _SettingsTilePosition.first;
+    return closesGroup
+        ? _SettingsTilePosition.only
+        : _SettingsTilePosition.first;
   }
-  return closesGroup ? _SettingsTilePosition.last : _SettingsTilePosition.middle;
+  return closesGroup
+      ? _SettingsTilePosition.last
+      : _SettingsTilePosition.middle;
 }
 
 const _sectionTilePadding = EdgeInsets.symmetric(horizontal: 16);

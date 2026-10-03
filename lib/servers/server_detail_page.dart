@@ -344,7 +344,14 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   Future<void> _refresh() async {
     if (_refreshing) return;
     final manager = ref.read(connectionManagerProvider);
-    if (manager.clientFor(widget.server.id) == null) return;
+    if (manager.clientFor(widget.server.id) == null) {
+      // No SSH session: the daemon route is the only statistics source this
+      // host has, so refresh it instead of doing nothing.
+      await ref
+          .read(maidCafeStatsSchedulerProvider)
+          .refreshServer(widget.server);
+      return;
+    }
     _refreshing = true;
     try {
       await manager.refreshServerInfo(widget.server);
@@ -486,12 +493,20 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
         .where((item) => item.serverId == widget.server.id)
         .firstOrNull;
     final connected = session?.status == SessionStatus.connected;
+    // A daemon snapshot feeds the overview even when SSH is down: on a browser
+    // build that snapshot is the only statistics route there is.
+    final daemonStats = ref.watch(maidCafeStatsProvider)[widget.server.id];
     final refreshInterval = ref.watch(focusedServerRefreshIntervalProvider);
 
     final workspace = _DetailWorkspace(
       server: widget.server,
       session: session,
       connected: connected,
+      stats: daemonStats?.stats ?? session?.stats,
+      systemInfo: session?.systemInfo,
+      statsSourceLabel: daemonStats != null
+          ? 'serversStatsSourceDaemon'.tr()
+          : null,
       processes: _processes,
       runtimes: _runtimeSnapshot,
       runtimesDataSource: _runtimesDataSource,
@@ -510,7 +525,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
         actions: [
           IconButton(
             tooltip: 'detailRefreshDetails'.tr(),
-            onPressed: connected ? _refresh : null,
+            onPressed: connected || daemonStats != null ? _refresh : null,
             icon: const Icon(Symbols.refresh),
           ),
           const SizedBox(width: 8),
@@ -575,6 +590,9 @@ class _DetailWorkspace extends StatelessWidget {
     required this.onTabChanged,
     required this.initialTab,
     required this.initialComposeProject,
+    this.stats,
+    this.systemInfo,
+    this.statsSourceLabel,
   });
 
   final Server server;
@@ -591,9 +609,25 @@ class _DetailWorkspace extends StatelessWidget {
   final int initialTab;
   final String? initialComposeProject;
 
+  /// Host figures for the overview, already resolved to whichever route
+  /// answered: the daemon when the server runs one on a reachable address, the
+  /// SSH session otherwise. Passed in rather than read off [session] so the
+  /// overview does not care which transport produced them.
+  final ServerStats? stats;
+  final ServerSystemInfo? systemInfo;
+
+  /// Names the transport behind [stats] when it is not the SSH default.
+  final String? statsSourceLabel;
+
   @override
   Widget build(BuildContext context) {
-    final overview = _OverviewPanel(server: server, session: session);
+    final overview = _OverviewPanel(
+      server: server,
+      session: session,
+      stats: stats,
+      systemInfo: systemInfo,
+      statsSourceLabel: statsSourceLabel,
+    );
     final inspector = _InspectorTabs(
       connected: connected,
       connectionError: session?.error,
@@ -651,10 +685,19 @@ class _DetailWorkspace extends StatelessWidget {
 }
 
 class _OverviewPanel extends StatelessWidget {
-  const _OverviewPanel({required this.server, required this.session});
+  const _OverviewPanel({
+    required this.server,
+    required this.session,
+    this.stats,
+    this.systemInfo,
+    this.statsSourceLabel,
+  });
 
   final Server server;
   final SshSessionInfo? session;
+  final ServerStats? stats;
+  final ServerSystemInfo? systemInfo;
+  final String? statsSourceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -665,14 +708,20 @@ class _OverviewPanel extends StatelessWidget {
         const SizedBox(height: 12),
         _ServerIdentity(server: server, session: session),
         const SizedBox(height: 16),
-        _ServerSpecifications(
-          stats: session?.stats,
-          systemInfo: session?.systemInfo,
-        ),
+        _ServerSpecifications(stats: stats, systemInfo: systemInfo),
         const SizedBox(height: 24),
+        if (statsSourceLabel != null) ...[
+          Text(
+            statsSourceLabel!,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         const _SectionLabel('detailPerformance'),
         const SizedBox(height: 12),
-        _MetricGrid(stats: session?.stats),
+        _MetricGrid(stats: stats),
       ],
     );
   }

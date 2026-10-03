@@ -845,14 +845,16 @@ class ServerRepository {
         );
   }
 
+  /// Records that this device just talked to [id]. Connecting is device-local
+  /// bookkeeping, not an edit: [Servers.updatedAt] is deliberately left alone
+  /// so a connection cannot masquerade as changed content and push a cloud
+  /// revision whose payload is otherwise identical. [Servers.lastConnectedAt]
+  /// itself never leaves the device.
   Future<void> markConnected(int id) =>
       (_database.update(
         _database.servers,
       )..where((t) => t.id.equals(id))).write(
-        ServersCompanion(
-          lastConnectedAt: Value(DateTime.now().toUtc()),
-          updatedAt: Value(DateTime.now().toUtc()),
-        ),
+        ServersCompanion(lastConnectedAt: Value(DateTime.now().toUtc())),
       );
 
   /// Persists the dashboard display order. [orderedIds] must list every

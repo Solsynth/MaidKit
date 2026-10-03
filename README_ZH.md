@@ -21,7 +21,7 @@
 
 MaidKit 是小羊在给服务器当女仆的时候（维护服务器）用到的工具合集。旨在提供一个非侵入式（100% 基于 SSH，不在服务器上安装任何软件，不增加安全风险）更加方便的维护服务器。可选的 MaidCafe Cloud 层会安装一个仅主动外连的小型守护进程，用于集群管理、告警和推送通知，无需开放任何入站端口。
 
-基于 Flutter 构建，MaidKit 可在桌面和移动平台上运行。受 [Island](https://github.com/Solsynth/HyperNet.Surface) 项目桌面原生理念的启发，MaidKit 将同样的简洁、实用哲学带到了服务器管理领域。同时提供浏览器版本：终端由 xterm3 渲染，并通过 WebSocket 连接 MaidCafe 守护进程访问服务器——具体可用范围见 [docs/WEB_SUPPORT.md](docs/WEB_SUPPORT.md)。
+基于 Flutter 构建，MaidKit 可在桌面和移动平台上运行。受 [Island](https://github.com/Solsynth/HyperNet.Surface) 项目桌面原生理念的启发，MaidKit 将同样的简洁、实用哲学带到了服务器管理领域。同时提供浏览器版本：终端由 xterm3 渲染，并通过 WebSocket 连接 MaidCafe 守护进程访问服务器，主机统计数据也直接由守护进程经 HTTP 提供，无需建立 SSH 连接——具体可用范围见 [docs/WEB_SUPPORT.md](docs/WEB_SUPPORT.md)。
 
 ---
 

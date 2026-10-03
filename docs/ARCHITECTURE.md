@@ -9,6 +9,11 @@ MaidKit is a desktop-first Flutter application for managing SSH servers.
 - **auto_route** for declarative, nested navigation. Generated route files live beside their router and must not be edited manually.
 - **Drift** for the local SQLite database. The current schema begins with saved server definitions.
 - **dartssh2** for SSH client connections and remote command execution.
+- **MaidCafe daemon over HTTP/SSE/WebSocket** for the optional daemon layer:
+  host statistics, activity history, and terminals reach a daemon without an SSH
+  session (`lib/servers/maidcafe_stats.dart`, `maidcafe_stream.dart`,
+  `maidcafe_terminal_connection_manager.dart`). This is the only route that
+  works in a browser build.
 - **island_ui_foundation** from the Solian Git repository for the desktop window frame and reusable responsive UI utilities.
 - **window_manager** for native desktop window setup, with **screen_retriever** for the display layout saved window bounds are restored against.
 
