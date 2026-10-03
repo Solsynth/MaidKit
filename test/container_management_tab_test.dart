@@ -11,6 +11,7 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 
 /// A daemon session that answers the two calls the container list makes, with
 /// the payloads the Go daemon serves. Everything else stays unimplemented, so a
@@ -95,6 +96,74 @@ class _StubSession implements MaidCafeStreamSession {
         },
       ],
     };
+  }
+
+  @override
+  Future<MaidCafeTask> startComposeAction(
+    String project,
+    String verb,
+    String directory, {
+    String? invokedBy,
+  }) async {
+    composeActions.add('$project|$verb|$directory');
+    // What the daemon answers a stack update with: a task following a plan,
+    // not a result — the update takes minutes and the client does not wait.
+    return MaidCafeTask.parse({
+      'task': {
+        'id': 'task-$project',
+        'name': 'compose.$verb',
+        'display_name': 'Update compose stack',
+        'target': project,
+        'status': 'running',
+        'stages': [
+          {'label': 'pull', 'status': 'running'},
+          {'label': 'recreate', 'status': 'pending'},
+        ],
+        'ok': false,
+        'exit_code': 0,
+        'output_bytes': 0,
+      },
+      'output': '',
+      'output_from': 0,
+    });
+  }
+
+  @override
+  Future<MaidCafeTask> followTask(
+    MaidCafeTask task, {
+    void Function(String chunk)? onOutput,
+    void Function(String label)? onStage,
+    Duration interval = const Duration(seconds: 1),
+  }) async {
+    if (!task.isRunning) return task;
+    final failure = failures[task.target];
+    onStage?.call('pull');
+    onOutput?.call('Pulling web\n');
+    if (failure == null) {
+      onStage?.call('recreate');
+      onOutput?.call('Recreating web\n');
+    }
+    return MaidCafeTask.parse({
+      'task': {
+        'id': task.id,
+        'name': task.name,
+        'target': task.target,
+        'status': failure == null ? 'succeeded' : 'failed',
+        'ok': failure == null,
+        'exit_code': failure == null ? 0 : 1,
+        'stdout': failure == null ? 'Recreating web\n' : '',
+        'stderr': failure ?? '',
+        'stages': [
+          {'label': 'pull', 'status': 'succeeded'},
+          {
+            'label': 'recreate',
+            'status': failure == null ? 'succeeded' : 'pending',
+          },
+        ],
+      },
+      'output': '',
+      'output_from': 0,
+    });
   }
 
   @override
@@ -452,6 +521,59 @@ void main() {
     // says it lives, which is what makes an unassigned project a refusal
     // rather than an update somewhere this app guessed.
     expect(session.composeActions, ['myapp|update|']);
+    // The update is watched in the task terminal; close it so the next test
+    // starts from a clean overlay.
+    await tester.tap(find.text('commonDone'.tr()));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a stack update is a task the terminal follows', (tester) async {
+    final session = _StubSession(
+      stacks: {
+        'stacks': [
+          {
+            'project': 'myapp',
+            'directory': '/opt/myapp',
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+        ],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+    );
+
+    await pump(tester, registry: _StubRegistry(session));
+
+    await tester.tap(find.byIcon(Symbols.upgrade));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    // The update runs as the daemon's task, and the terminal is where it is
+    // watched: what the daemon runs, the stage it is on, and the run's own
+    // output — which is the whole point, since a pull takes minutes and this
+    // client's read timeout is ten seconds.
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ContainerManagementTab)),
+    );
+    final sessions = container.read(deploySessionsProvider);
+    expect(sessions, hasLength(1));
+    final run = sessions.single;
+    expect(run.subtitle, 'myapp');
+    expect(run.command, contains('compose -p myapp pull'));
+    expect(run.command, contains('up -d --force-recreate'));
+    expect(run.log, contains('==> ${'composeStacksStagePull'.tr()}'));
+    expect(run.log, contains('Pulling web'));
+    expect(run.log, contains('Recreating web'));
+    expect(run.status, DeploySessionStatus.succeeded);
+
+    await tester.tap(find.text('commonDone'.tr()));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('every managed stack is updated one at a time', (tester) async {

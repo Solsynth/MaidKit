@@ -248,6 +248,8 @@
   "composeStacksScanPolicy": "根目录：{} · 深度 {}",
   "composeStacksScanResult": "找到 {} 个，新增 {}，更新 {}，移除 {}。",
   "composeStacksScanTitle": "扫描 Compose 项目",
+  "composeStacksStagePull": "正在拉取镜像",
+  "composeStacksStageRecreate": "正在重建容器",
   "composeStacksUpdate": "更新整个栈",
   "composeStacksUpdateAll": "更新全部栈",
   "composeStacksUpdateAllConfirm": "更新全部 {} 个托管栈？每个栈都会拉取所有服务的镜像并据此重建容器，逐个进行。",

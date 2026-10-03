@@ -96,14 +96,9 @@ class MaidCafeOpResult {
   });
 
   factory MaidCafeOpResult.parse(Map<String, dynamic> json) {
-    final rawExitCode = json['exit_code'];
     return MaidCafeOpResult(
       ok: json['ok'] == true,
-      exitCode: rawExitCode is int
-          ? rawExitCode
-          : rawExitCode is num
-          ? rawExitCode.toInt()
-          : -1,
+      exitCode: _parseExitCode(json['exit_code']),
       stdout: json['stdout']?.toString() ?? '',
       stderr: json['stderr']?.toString() ?? '',
     );
@@ -124,6 +119,174 @@ class MaidCafeOpResult {
     throw StateError(context == null ? detail : '$context: $detail');
   }
 }
+
+/// One step of the plan a daemon task is following.
+///
+/// A stage is what an operator reads progress from: it says which step the
+/// operation is on now, and which ones it has not reached.
+class MaidCafeTaskStage {
+  const MaidCafeTaskStage({required this.label, required this.status});
+
+  factory MaidCafeTaskStage.parse(Map<String, dynamic> json) =>
+      MaidCafeTaskStage(
+        label: json['label']?.toString() ?? '',
+        status: json['status']?.toString() ?? '',
+      );
+
+  /// The step's own term for itself: `pull`, `recreate`.
+  final String label;
+
+  /// `pending`, `running`, `succeeded` or `failed`.
+  final String status;
+
+  bool get isPending => status == 'pending';
+  bool get isRunning => status == 'running';
+}
+
+/// A daemon operation this client can follow: what a pull, a recreate or an
+/// update runs as, in place of a request the daemon would have to hold open.
+///
+/// The daemon answers those routes with `202` and a task, because they take
+/// minutes and no client waits that long — this client's own read timeout is
+/// ten seconds of silence. Following one costs a small poll per second, and it
+/// can be left alone: the run belongs to the daemon, so navigating away no
+/// longer abandons an update halfway. The operations that do finish inside
+/// their request still come back as a task here — one that is already done and
+/// has no id, because there is nothing left to ask about.
+class MaidCafeTask {
+  const MaidCafeTask({
+    required this.id,
+    required this.name,
+    required this.displayName,
+    required this.target,
+    required this.status,
+    required this.stages,
+    required this.ok,
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+    required this.error,
+    required this.outputBytes,
+    required this.output,
+    required this.outputFrom,
+    required this.outputTruncated,
+  });
+
+  /// Reads the daemon's answer to a native operation: a task to follow, or a
+  /// result that finished inside the request.
+  factory MaidCafeTask.parse(Map<String, dynamic> json) {
+    final raw = json['task'];
+    if (raw is! Map) return MaidCafeTask._finished(json);
+    final task = Map<String, dynamic>.from(raw);
+    final stages = task['stages'];
+    return MaidCafeTask(
+      id: task['id']?.toString() ?? '',
+      name: task['name']?.toString() ?? '',
+      displayName: task['display_name']?.toString() ?? '',
+      target: task['target']?.toString() ?? '',
+      status: task['status']?.toString() ?? '',
+      stages: [
+        if (stages is List)
+          for (final stage in stages)
+            if (stage is Map)
+              MaidCafeTaskStage.parse(Map<String, dynamic>.from(stage)),
+      ],
+      ok: task['ok'] == true,
+      exitCode: _parseExitCode(task['exit_code']),
+      stdout: task['stdout']?.toString() ?? '',
+      stderr: task['stderr']?.toString() ?? '',
+      error: task['error']?.toString() ?? '',
+      outputBytes: task['output_bytes'] is num
+          ? (task['output_bytes'] as num).toInt()
+          : 0,
+      output: json['output']?.toString() ?? '',
+      outputFrom: json['output_from'] is num
+          ? (json['output_from'] as num).toInt()
+          : 0,
+      outputTruncated: json['output_truncated'] == true,
+    );
+  }
+
+  factory MaidCafeTask._finished(Map<String, dynamic> json) {
+    final result = MaidCafeOpResult.parse(json);
+    return MaidCafeTask(
+      id: '',
+      name: json['name']?.toString() ?? '',
+      displayName: '',
+      target: '',
+      status: result.ok ? 'succeeded' : 'failed',
+      stages: const [],
+      ok: result.ok,
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      error: '',
+      outputBytes: 0,
+      output: '',
+      outputFrom: 0,
+      outputTruncated: false,
+    );
+  }
+
+  final String id;
+  final String name;
+  final String displayName;
+  final String target;
+
+  /// `running`, `succeeded`, `failed` or `canceled`.
+  final String status;
+
+  /// The plan the run is following, in order.
+  final List<MaidCafeTaskStage> stages;
+  final bool ok;
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+
+  /// Why a run did not succeed, in the daemon's own words: a timeout, a
+  /// cancelled run, or the command's failure.
+  final String error;
+
+  /// Everything the run has written, which is the offset to ask from next.
+  final int outputBytes;
+
+  /// The output this read carried — only the bytes the caller had not read
+  /// yet, so a follower appends it.
+  final String output;
+  final int outputFrom;
+
+  /// Whether the bytes before [output] are gone: the daemon keeps a tail of a
+  /// run's output, so a client that fell behind replaces what it holds.
+  final bool outputTruncated;
+
+  bool get isRunning => status == 'running';
+  bool get isCancelled => status == 'canceled';
+
+  /// The step the run is on now, when it is following a plan.
+  MaidCafeTaskStage? get currentStage {
+    for (final stage in stages) {
+      if (stage.isRunning) return stage;
+    }
+    return null;
+  }
+
+  /// The outcome in the shape every daemon operation reports, so a caller that
+  /// only wants success or failure reads a followed task like any other
+  /// result. A task that failed without a command writing anything — a
+  /// timeout, a cancellation — reports the reason in place of stderr.
+  MaidCafeOpResult get result => MaidCafeOpResult(
+    ok: ok,
+    exitCode: exitCode,
+    stdout: stdout,
+    stderr: stderr.trim().isNotEmpty ? stderr : error,
+  );
+}
+
+int _parseExitCode(Object? raw) => raw is int
+    ? raw
+    : raw is num
+    ? raw.toInt()
+    : -1;
 
 /// Parses raw SSE bytes into typed events.
 ///
@@ -1494,12 +1657,33 @@ class MaidCafeStreamSession {
     bool force = false,
     String? invokedBy,
   }) async {
+    final task = await startContainerAction(
+      id,
+      verb,
+      force: force,
+      invokedBy: invokedBy,
+    );
+    return (await followTask(task)).result;
+  }
+
+  /// Starts one native container operation and returns the task it runs as.
+  ///
+  /// `pull` and `update` take minutes, so the daemon answers with a task
+  /// instead of holding the request; everything else finishes inside it and
+  /// comes back as a task that is already done. Use [followTask] to watch one,
+  /// or [runContainerAction] to wait for the outcome.
+  Future<MaidCafeTask> startContainerAction(
+    String id,
+    String verb, {
+    bool force = false,
+    String? invokedBy,
+  }) async {
     final result = await _postSigned(
       '/api/v1/containers/${Uri.encodeComponent(id)}/$verb',
       body: {'force': force},
       invokedBy: invokedBy,
     );
-    return MaidCafeOpResult.parse(result);
+    return MaidCafeTask.parse(result);
   }
 
   /// Sends SIGKILL to [pid] on the daemon host. The daemon refuses pids <= 1.
@@ -1544,12 +1728,92 @@ class MaidCafeStreamSession {
     String directory, {
     String? invokedBy,
   }) async {
+    final task = await startComposeAction(
+      project,
+      verb,
+      directory,
+      invokedBy: invokedBy,
+    );
+    return (await followTask(task)).result;
+  }
+
+  /// Starts one compose action and returns the task it runs as. `pull`,
+  /// `recreate` and `update` pull images and answer with a task; the rest come
+  /// back as a task that has already finished.
+  Future<MaidCafeTask> startComposeAction(
+    String project,
+    String verb,
+    String directory, {
+    String? invokedBy,
+  }) async {
     final result = await _postSigned(
       '/api/v1/compose/${Uri.encodeComponent(project)}/$verb',
       body: {'directory': directory},
       invokedBy: invokedBy,
     );
-    return MaidCafeOpResult.parse(result);
+    return MaidCafeTask.parse(result);
+  }
+
+  /// One read of a task, carrying the output written since [since] — or the
+  /// daemon's retained tail when [since] is omitted.
+  Future<MaidCafeTask> taskStatus(String id, {int? since}) {
+    final query = since == null ? '' : '?since=$since';
+    return _get(
+      '/api/v1/tasks/${Uri.encodeComponent(id)}$query',
+    ).then(MaidCafeTask.parse);
+  }
+
+  /// The daemon's recent tasks, newest first: how a client that lost a task's
+  /// id finds a run again.
+  Future<Map<String, dynamic>> tasks({int? limit}) =>
+      _get(limit == null ? '/api/v1/tasks' : '/api/v1/tasks?limit=$limit');
+
+  /// Stops a running task, leaving the run where it is. The daemon stops the
+  /// command it is on: a compose recreate interrupted this way keeps what it
+  /// had already recreated, which is the honest outcome of stopping it.
+  Future<void> cancelTask(String id) async {
+    await _postSigned(
+      '/api/v1/tasks/${Uri.encodeComponent(id)}/cancel',
+      body: const {},
+    );
+  }
+
+  /// Follows a task until it stops, reporting what the caller should show.
+  ///
+  /// [onOutput] receives the run's own output as it arrives, in order and
+  /// exactly once per byte. [onStage] fires with each stage label — the
+  /// compact progress a list can show — when the run moves to its next step.
+  /// A task that already finished (no id) is returned as it is: there is
+  /// nothing to follow.
+  Future<MaidCafeTask> followTask(
+    MaidCafeTask task, {
+    void Function(String chunk)? onOutput,
+    void Function(String label)? onStage,
+    Duration interval = const Duration(seconds: 1),
+  }) async {
+    if (task.id.isEmpty) return task;
+    var current = task;
+    var since = 0;
+    String? stage;
+    while (current.isRunning) {
+      final next = current.currentStage?.label;
+      if (next != null && next.isNotEmpty && next != stage) {
+        stage = next;
+        onStage?.call(next);
+      }
+      await Future<void>.delayed(interval);
+      current = await taskStatus(current.id, since: since);
+      if (current.output.isNotEmpty) {
+        if (current.outputTruncated) {
+          // The daemon retains a tail: a follower that fell behind says so
+          // rather than pretending the gap was never there.
+          onOutput?.call('\n[earlier output dropped by the daemon]\n');
+        }
+        onOutput?.call(current.output);
+      }
+      since = current.outputBytes;
+    }
+    return current;
   }
 
   /// The compose projects this daemon manages: what a scan assigned to it,

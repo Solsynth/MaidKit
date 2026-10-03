@@ -131,6 +131,41 @@ class _FakeSession implements MaidCafeStreamSession {
   }) => throw UnimplementedError();
 
   @override
+  Future<MaidCafeTask> startContainerAction(
+    String id,
+    String verb, {
+    bool force = false,
+    String? invokedBy,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<MaidCafeTask> startComposeAction(
+    String project,
+    String verb,
+    String directory, {
+    String? invokedBy,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<MaidCafeTask> followTask(
+    MaidCafeTask task, {
+    void Function(String chunk)? onOutput,
+    void Function(String label)? onStage,
+    Duration interval = const Duration(seconds: 1),
+  }) => throw UnimplementedError();
+
+  @override
+  Future<MaidCafeTask> taskStatus(String id, {int? since}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> tasks({int? limit}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> cancelTask(String id) => throw UnimplementedError();
+
+  @override
   Future<MaidCafeOpResult> killProcess(int pid, {String? invokedBy}) =>
       throw UnimplementedError();
 
@@ -196,21 +231,16 @@ class _FakeSession implements MaidCafeStreamSession {
       throw UnimplementedError();
 
   @override
-  Future<Uint8List> fileReadWindow(
-    String path, {
-    int offset = 0,
-    int? limit,
-  }) => throw UnimplementedError();
+  Future<Uint8List> fileReadWindow(String path, {int offset = 0, int? limit}) =>
+      throw UnimplementedError();
 
   @override
   Future<void> fileWriteRaw(String path, List<int> bytes) =>
       throw UnimplementedError();
 
   @override
-  Future<Map<String, dynamic>> fileMkdir(
-    String path, {
-    bool parents = false,
-  }) => throw UnimplementedError();
+  Future<Map<String, dynamic>> fileMkdir(String path, {bool parents = false}) =>
+      throw UnimplementedError();
 
   @override
   Future<Map<String, dynamic>> fileDelete(

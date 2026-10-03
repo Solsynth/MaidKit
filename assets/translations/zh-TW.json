@@ -248,6 +248,8 @@
   "composeStacksScanPolicy": "根目錄：{} · 深度 {}",
   "composeStacksScanResult": "找到 {} 個，新增 {}，更新 {}，移除 {}。",
   "composeStacksScanTitle": "掃描 Compose 專案",
+  "composeStacksStagePull": "正在拉取映像",
+  "composeStacksStageRecreate": "正在重建容器",
   "composeStacksUpdate": "更新整個堆疊",
   "composeStacksUpdateAll": "更新全部堆疊",
   "composeStacksUpdateAllConfirm": "更新全部 {} 個受管堆疊？每個堆疊都會拉取所有服務的映像並據此重建容器，逐個進行。",

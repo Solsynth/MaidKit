@@ -216,7 +216,17 @@ containers are up. That registry is the only source of those rows: the app keeps
 no copy of where a project lives, so a project's row cannot disagree with the
 daemon about it. A project row updates that whole stack (every service pulled,
 its containers recreated), and the header updates every managed stack on the
-server one at a time, reporting each stack's own outcome. What remains SSH-only is the
+server one at a time, reporting each stack's own outcome.
+
+An update is a **task** on the daemon rather than a request the app holds open.
+A pull takes minutes, and a browser client gives up after ten seconds of
+silence — so the app starts the task and follows it instead: the run's output
+streams into the shared task terminal with the stage it is on
+(`pull`, then `recreate`) and a cancel button, and the bulk dialog shows each
+stack's stage as it runs. Because the run belongs to the daemon, hiding the
+terminal or leaving the page no longer abandons an update halfway through: the
+work continues, and the task can be picked up again from the task terminal's
+rail button while it is still running. What remains SSH-only is the
 interactive half — exec, attach, and re-creating a container from its inspect
 payload — which the app does not offer without a shell.
 

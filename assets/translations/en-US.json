@@ -248,6 +248,8 @@
   "composeStacksScanPolicy": "Roots: {} · depth {}",
   "composeStacksScanResult": "Found {}, added {}, updated {}, removed {}.",
   "composeStacksScanTitle": "Scan for Compose projects",
+  "composeStacksStagePull": "Pulling images",
+  "composeStacksStageRecreate": "Recreating containers",
   "composeStacksUpdate": "Update stack",
   "composeStacksUpdateAll": "Update all stacks",
   "composeStacksUpdateAllConfirm": "Update all {} managed stacks? Every service's image is pulled and the containers are recreated on it, one stack at a time.",

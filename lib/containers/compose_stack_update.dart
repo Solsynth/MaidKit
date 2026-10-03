@@ -1,10 +1,12 @@
 import 'package:easy_localization/easy_localization.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
+import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 
 /// Updating a whole compose stack, and every stack on a server.
@@ -14,6 +16,12 @@ import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 /// directory the daemon's registry holds for that project. The app asks for it
 /// without a directory, so the daemon answers where to run — a project nothing
 /// assigned is refused instead of updated somewhere this app guessed.
+///
+/// The daemon answers that call with a task, not a result: a pull is minutes,
+/// and this client's own read timeout is ten seconds. So the app starts the
+/// update, shows it in the shared task terminal — the run's output, its stage,
+/// its cancel — and keeps following it after the modal is hidden, because the
+/// run is the daemon's and no longer dies with the view that asked for it.
 ///
 /// Updating every stack is that same call per assigned stack, run one at a
 /// time: each is a pull and a recreate on a real host, and running them
@@ -31,6 +39,23 @@ class ComposeStackUpdateOutcome {
   final String? error;
 
   bool get ok => error == null;
+}
+
+/// The daemon's stage labels in the app's words. A step the app has not been
+/// taught is shown as the daemon named it, rather than hidden.
+String composeStageLabel(String label) => switch (label) {
+  'pull' => 'composeStacksStagePull'.tr(),
+  'recreate' => 'composeStacksStageRecreate'.tr(),
+  _ => label,
+};
+
+/// The command a stack update runs, as the terminal header shows it: the two
+/// stages the daemon performs, in the project's own directory.
+String composeStackUpdateCommand(ComposeStack stack) {
+  final directory = stack.directory.trim();
+  final where = directory.isEmpty ? '' : 'cd $directory && ';
+  return '${where}compose -p ${stack.project} pull && '
+      'compose -p ${stack.project} up -d --force-recreate';
 }
 
 /// Asks whether to update one whole stack, naming what that does.
@@ -52,39 +77,78 @@ Future<bool> confirmComposeStackUpdateAll(BuildContext context, int count) {
   );
 }
 
-/// Runs one stack's update and reports it the way the rest of the app reports
-/// a daemon operation.
+/// Runs one stack's update in the shared task terminal and reports it the way
+/// the rest of the app reports a daemon operation: the terminal is where the
+/// run is watched — its output as it arrives, the stage it is on, and its
+/// cancel — and hiding it leaves the update running, because the daemon is the
+/// one running it.
 Future<bool> updateComposeStack(
   BuildContext context, {
+  required WidgetRef ref,
   required MaidCafeStreamSession session,
   required ComposeStack stack,
   String? invokedBy,
 }) async {
-  final messenger = Theme.of(context).colorScheme;
+  final scheme = Theme.of(context).colorScheme;
+  final MaidCafeTask started;
   try {
-    final result = await session.runComposeAction(
+    started = await session.startComposeAction(
       stack.project,
       'update',
       '',
       invokedBy: invokedBy,
     );
-    result.ensureSuccess();
   } catch (error) {
     if (!context.mounted) return false;
     showStyledSnackBar(
       title: 'composeStacksUpdate'.tr(),
       message: error.toString(),
       icon: Symbols.error,
-      accentColor: messenger.error,
+      accentColor: scheme.error,
     );
     return false;
   }
+
+  var finished = started;
+  try {
+    await runWithDeployTerminal(
+      ref: ref,
+      title: 'composeStacksUpdate'.tr(),
+      subtitle: stack.project,
+      command: composeStackUpdateCommand(stack),
+      onCancel: started.id.isEmpty
+          ? null
+          : () => session.cancelTask(started.id),
+      run: (onOutput) async {
+        final task = await session.followTask(
+          started,
+          onOutput: onOutput,
+          onStage: (label) => onOutput('\n==> ${composeStageLabel(label)}\n'),
+        );
+        finished = task;
+        // The terminal reports what the daemon said, so a failed update reads
+        // there the same way it reads in a snackbar.
+        task.result.ensureSuccess();
+      },
+    );
+  } catch (error) {
+    if (!context.mounted) return false;
+    showStyledSnackBar(
+      title: 'composeStacksUpdate'.tr(),
+      message: error.toString(),
+      icon: Symbols.error,
+      accentColor: scheme.error,
+    );
+    return false;
+  }
+  // A cancel is the operator's own answer, and they already saw it happen.
+  if (finished.isCancelled) return false;
   if (!context.mounted) return true;
   showStyledSnackBar(
     title: 'composeStacksUpdateDone'.tr(),
     message: stack.project,
     icon: Symbols.check_circle,
-    accentColor: messenger.primary,
+    accentColor: scheme.primary,
   );
   return true;
 }
@@ -92,12 +156,18 @@ Future<bool> updateComposeStack(
 /// Runs the bulk update behind a dialog that reports each stack as it lands.
 ///
 /// The dialog is the progress and the report: every stack is listed with what
-/// happened to it, and it stays up until it is closed, so a failure on the
-/// fourth stack is still readable after the fifth has finished.
+/// happened to it and, while it runs, the stage its update is on — a pull is
+/// minutes, so a row that only spins says nothing — and it stays up until it is
+/// closed, so a failure on the fourth stack is still readable after the fifth
+/// has finished.
 Future<void> showComposeStackUpdateAllDialog({
   required BuildContext context,
   required List<ComposeStack> stacks,
-  required Future<ComposeStackUpdateOutcome> Function(ComposeStack stack) run,
+  required Future<ComposeStackUpdateOutcome> Function(
+    ComposeStack stack,
+    void Function(String label) onStage,
+  )
+  run,
 }) {
   return showDialog<void>(
     context: context,
@@ -110,7 +180,11 @@ class _ComposeStackUpdateDialog extends StatefulWidget {
   const _ComposeStackUpdateDialog({required this.stacks, required this.run});
 
   final List<ComposeStack> stacks;
-  final Future<ComposeStackUpdateOutcome> Function(ComposeStack stack) run;
+  final Future<ComposeStackUpdateOutcome> Function(
+    ComposeStack stack,
+    void Function(String label) onStage,
+  )
+  run;
 
   @override
   State<_ComposeStackUpdateDialog> createState() =>
@@ -119,6 +193,7 @@ class _ComposeStackUpdateDialog extends StatefulWidget {
 
 class _ComposeStackUpdateDialogState extends State<_ComposeStackUpdateDialog> {
   final _outcomes = <String, ComposeStackUpdateOutcome>{};
+  final _stages = <String, String>{};
   var _running = false;
   var _finished = false;
   var _index = 0;
@@ -136,6 +211,7 @@ class _ComposeStackUpdateDialogState extends State<_ComposeStackUpdateDialog> {
       _finished = false;
       _index = 0;
       _runningProject = null;
+      _stages.clear();
     });
     for (var i = 0; i < widget.stacks.length; i++) {
       if (!mounted) return;
@@ -146,7 +222,10 @@ class _ComposeStackUpdateDialogState extends State<_ComposeStackUpdateDialog> {
       });
       ComposeStackUpdateOutcome outcome;
       try {
-        outcome = await widget.run(stack);
+        outcome = await widget.run(stack, (label) {
+          if (!mounted) return;
+          setState(() => _stages[stack.project] = label);
+        });
       } catch (error) {
         outcome = ComposeStackUpdateOutcome(
           stack: stack,
@@ -240,17 +319,26 @@ class _ComposeStackUpdateDialogState extends State<_ComposeStackUpdateDialog> {
     } else {
       trailing = Icon(Symbols.error, size: 18, color: scheme.error);
     }
+    // A running row says which stage the update is on: a stack pulls its images
+    // before it recreates anything, and that gap is where the minutes go.
+    final stage = _stages[stack.project];
+    final runningStage = outcome == null && stage != null
+        ? composeStageLabel(stage)
+        : null;
+    final error = outcome?.error;
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: Text(stack.project, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: outcome?.error == null
+      subtitle: error == null && runningStage == null
           ? null
           : Text(
-              outcome!.error!,
+              error ?? runningStage!,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: error == null ? scheme.onSurfaceVariant : scheme.error,
+              ),
             ),
       trailing: trailing,
     );

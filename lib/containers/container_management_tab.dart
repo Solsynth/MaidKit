@@ -488,6 +488,7 @@ class _ContainerManagementTabState
     if (!mounted) return;
     await updateComposeStack(
       context,
+      ref: ref,
       session: session,
       stack: stack,
       invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
@@ -513,15 +514,16 @@ class _ContainerManagementTabState
     await showComposeStackUpdateAllDialog(
       context: context,
       stacks: stacks,
-      run: (stack) async {
+      run: (stack, onStage) async {
         try {
-          final result = await session.runComposeAction(
+          final task = await session.startComposeAction(
             stack.project,
             'update',
             '',
             invokedBy: invokedBy,
           );
-          result.ensureSuccess();
+          final finished = await session.followTask(task, onStage: onStage);
+          finished.result.ensureSuccess();
           return ComposeStackUpdateOutcome(stack: stack);
         } catch (error) {
           return ComposeStackUpdateOutcome(
