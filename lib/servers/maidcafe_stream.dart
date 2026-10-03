@@ -1528,10 +1528,16 @@ class MaidCafeStreamSession {
     return MaidCafeOpResult.parse(result);
   }
 
-  /// Runs one native compose project action on the daemon. [verb] is the wire
-  /// verb (`up`, `stop`, `restart`, `pull`, `recreate`); [directory] must
-  /// hold the compose file, which compose resolves from the working
-  /// directory.
+  /// Runs one compose action on the daemon. [verb] is the wire verb (`up`,
+  /// `stop`, `restart`, `pull`, `recreate`, `update`), where `update` is the
+  /// stack upgrade: pull every service's image, then recreate on it.
+  ///
+  /// [directory] is the project's directory on the host. Send one when the
+  /// caller knows it (a linked project, a path the operator chose); send none
+  /// — or an empty string — and the daemon runs the project where its managed
+  /// stack registry says it lives, refusing a project it does not manage.
+  /// A directory sent here is validated strictly, because it comes from
+  /// outside the host.
   Future<MaidCafeOpResult> runComposeAction(
     String project,
     String verb,
@@ -1545,6 +1551,40 @@ class MaidCafeStreamSession {
     );
     return MaidCafeOpResult.parse(result);
   }
+
+  /// The compose projects this daemon manages: what a scan assigned to it,
+  /// with the containers it currently sees for each. Parse with
+  /// [parseComposeStacks].
+  Future<Map<String, dynamic>> composeStacks() =>
+      _get('/api/v1/compose/stacks');
+
+  /// Runs a compose scan and assigns what it finds.
+  ///
+  /// [path] is one starting point, [roots] several — sending both is refused,
+  /// because the two answer different questions. Sending neither scans the
+  /// daemon's configured roots. [depth] overrides the configured scan depth;
+  /// the daemon clamps it. The request is signed: it decides which directories
+  /// the daemon will run compose commands in.
+  Future<Map<String, dynamic>> scanComposeStacks({
+    String? path,
+    List<String>? roots,
+    int? depth,
+  }) {
+    return _postSigned(
+      '/api/v1/compose/stacks/scan',
+      body: {
+        if (path != null && path.trim().isNotEmpty) 'path': path.trim(),
+        if (roots != null && roots.isNotEmpty)
+          'roots': [for (final root in roots) root.trim()],
+        if (depth != null && depth > 0) 'depth': depth,
+      },
+    );
+  }
+
+  /// Unassigns one managed stack. The containers and files on the host are
+  /// left exactly as they are.
+  Future<Map<String, dynamic>> unassignComposeStack(String project) =>
+      _delete('/api/v1/compose/stacks/${Uri.encodeComponent(project)}');
 
   /// Runs one native package operation through the daemon's helper routing.
   /// [verb] is the wire verb (`refresh`, `upgrade`, `install`, `remove`);

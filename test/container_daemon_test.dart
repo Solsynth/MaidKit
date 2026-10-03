@@ -36,6 +36,28 @@ class _FakeDaemon {
     _server!.listen(_handle);
   }
 
+  /// The raw body of every request that carried one, in order.
+  final bodies = <String>[];
+
+  /// The `X-MaidCafe-Signature` header of every request, in order (`''` when
+  /// the request did not carry one).
+  final signatures = <String>[];
+
+  /// The bodies and signatures of the API requests, without the `/health`
+  /// handshake [MaidCafeStreamSession.openAt] performs.
+  List<String> get apiBodies => _withoutHandshake(bodies);
+
+  List<String> get apiSignatures => _withoutHandshake(signatures);
+
+  List<String> _withoutHandshake(List<String> values) {
+    final index = requests.indexOf('GET /health');
+    if (index < 0) return values;
+    return [
+      for (var i = 0; i < values.length; i++)
+        if (i != index) values[i],
+    ];
+  }
+
   Future<void> stop() async => _server?.close(force: true);
 
   Future<void> _handle(HttpRequest request) async {
@@ -44,6 +66,8 @@ class _FakeDaemon {
         '${request.method} ${uri.path}'
         '${uri.hasQuery ? '?${uri.query}' : ''}';
     requests.add(key);
+    bodies.add(await utf8.decodeStream(request));
+    signatures.add(request.headers.value('X-MaidCafe-Signature') ?? '');
     final answer = answers[key];
     final response = request.response;
     if (answer == null) {
@@ -356,4 +380,156 @@ void main() {
       throwsA(isA<MaidCafeRouteMissingException>()),
     );
   });
+
+  test('the stack registry carries its health and scan policy', () async {
+    daemon.answers['GET /api/v1/compose/stacks'] = (
+      200,
+      {
+        'ok': true,
+        'stacks': [
+          {
+            'project': 'storefront',
+            'directory': '/opt/stacks/web',
+            'files': ['/opt/stacks/web/compose.yaml'],
+            'services': ['web', 'worker'],
+            'scanned_at': '2026-10-03T02:00:00Z',
+            'running': 1,
+            'total': 2,
+            'containers': [
+              {
+                'id': 'abcdef123456',
+                'name': 'web',
+                'image': 'nginx:1.25',
+                'state': 'running',
+                'runtime': 'podman',
+              },
+              {
+                'id': '999999999999',
+                'name': 'worker',
+                'image': 'busybox',
+                'state': 'exited',
+                'runtime': 'podman',
+              },
+            ],
+          },
+        ],
+        'scan': {
+          'roots': ['/opt', '/srv'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+    );
+
+    final snapshot = parseComposeStacks(await session.composeStacks());
+
+    expect(daemon.apiRequests, ['GET /api/v1/compose/stacks']);
+    expect(snapshot.scan.roots, ['/opt', '/srv']);
+    expect(snapshot.scan.depth, 3);
+    expect(snapshot.stacks, hasLength(1));
+    final stack = snapshot.stacks.single;
+    expect(stack.project, 'storefront');
+    expect(stack.directory, '/opt/stacks/web');
+    expect(stack.services, ['web', 'worker']);
+    expect(stack.running, 1);
+    expect(stack.total, 2);
+    // One container is down, so the stack is not healthy.
+    expect(stack.isHealthy, isFalse);
+    expect(stack.containers.map((item) => item.name), ['web', 'worker']);
+    expect(stack.containers.first.isRunning, isTrue);
+    expect(stack.containers.last.isRunning, isFalse);
+  });
+
+  test('a scan is a signed request and reports what changed', () async {
+    daemon.answers['POST /api/v1/compose/stacks/scan'] = (
+      200,
+      {
+        'ok': true,
+        'roots': ['/opt/stacks/web'],
+        'found': 1,
+        'added': ['web'],
+        'updated': <String>[],
+        'removed': <String>[],
+        'stacks': [
+          {
+            'project': 'web',
+            'directory': '/opt/stacks/web',
+            'files': ['/opt/stacks/web/compose.yaml'],
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+        ],
+      },
+    );
+
+    final outcome = ComposeScanOutcome.fromDaemonJson(
+      await session.scanComposeStacks(path: '/opt/stacks/web'),
+    );
+
+    expect(daemon.apiRequests, ['POST /api/v1/compose/stacks/scan']);
+    // The body signature is what authorizes the daemon to act in the scanned
+    // directories, so a scan without one is refused.
+    expect(daemon.apiSignatures.single, isNotEmpty);
+    expect(jsonDecode(daemon.apiBodies.single), {'path': '/opt/stacks/web'});
+    expect(outcome.roots, ['/opt/stacks/web']);
+    expect(outcome.added, ['web']);
+    expect(outcome.changed, isTrue);
+    expect(outcome.stacks.stacks.single.isHealthy, isTrue);
+  });
+
+  test('a scan with no starting point sends no path', () async {
+    daemon.answers['POST /api/v1/compose/stacks/scan'] = (
+      200,
+      {
+        'ok': true,
+        'roots': ['/opt'],
+        'found': 0,
+        'added': <String>[],
+        'updated': <String>[],
+        'removed': <String>[],
+        'stacks': <Object?>[],
+      },
+    );
+
+    final outcome = ComposeScanOutcome.fromDaemonJson(
+      await session.scanComposeStacks(),
+    );
+
+    // Removing the key entirely is what makes "the daemon's configured roots"
+    // the answer, rather than an empty path the daemon has to interpret.
+    expect(jsonDecode(daemon.apiBodies.single), <String, Object?>{});
+    expect(outcome.changed, isFalse);
+    expect(outcome.stacks.isEmpty, isTrue);
+  });
+
+  test('unassigning a stack is a delete of its own route', () async {
+    daemon.answers['DELETE /api/v1/compose/stacks/myapp'] = (
+      200,
+      {
+        'ok': true,
+        'stack': {'project': 'myapp', 'directory': '/opt/myapp'},
+      },
+    );
+
+    await session.unassignComposeStack('myapp');
+
+    expect(daemon.apiRequests, ['DELETE /api/v1/compose/stacks/myapp']);
+  });
+
+  test(
+    'a stack upgrade names no directory, so the daemon uses its own',
+    () async {
+      daemon.answers['POST /api/v1/compose/myapp/update'] = (
+        200,
+        {'ok': true, 'exit_code': 0},
+      );
+
+      await session.runComposeAction('myapp', 'update', '');
+
+      expect(daemon.apiRequests, ['POST /api/v1/compose/myapp/update']);
+      expect(daemon.apiSignatures.single, isNotEmpty);
+      expect(jsonDecode(daemon.apiBodies.single), {'directory': ''});
+    },
+  );
 }

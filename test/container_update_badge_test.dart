@@ -80,6 +80,37 @@ void main() {
     expect(find.byType(Tooltip), findsNothing);
   });
 
+  testWidgets('the badge acts on the update it advertises', (tester) async {
+    final verbs = <String>[];
+    await pump(
+      tester,
+      ContainerUpdateBadge(
+        status: _status(outdated: true),
+        onAction: (verb) async => verbs.add(verb),
+      ),
+    );
+
+    // Tap the badge itself, not a menu somewhere else: the label the user
+    // noticed is the affordance.
+    await tester.tap(find.text('containerUpdateAvailable'.tr()));
+    await tester.pumpAndSettle();
+    expect(find.text('containerUpdate'.tr()), findsOneWidget);
+    expect(find.text('containerPull'.tr()), findsOneWidget);
+
+    await tester.tap(find.text('containerUpdate'.tr()));
+    await tester.pumpAndSettle();
+    expect(verbs, ['update']);
+  });
+
+  testWidgets('a badge with no daemon route stays a label', (tester) async {
+    await pump(tester, ContainerUpdateBadge(status: _status(outdated: true)));
+
+    await tester.tap(find.text('containerUpdateAvailable'.tr()));
+    await tester.pumpAndSettle();
+    // Nothing to choose from, and nothing was run.
+    expect(find.text('containerUpdate'.tr()), findsNothing);
+  });
+
   testWidgets('the list row carries the badge next to the image', (
     tester,
   ) async {

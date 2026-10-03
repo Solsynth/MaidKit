@@ -59,6 +59,20 @@ class _FakeSession implements MaidCafeStreamSession {
       throw UnimplementedError();
 
   @override
+  Future<Map<String, dynamic>> composeStacks() => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> scanComposeStacks({
+    String? path,
+    List<String>? roots,
+    int? depth,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> unassignComposeStack(String project) =>
+      throw UnimplementedError();
+
+  @override
   Future<Map<String, dynamic>> processes({int limit = 0}) =>
       throw UnimplementedError();
 

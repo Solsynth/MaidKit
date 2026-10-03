@@ -207,7 +207,13 @@ captured window followed by the `logs` stream.
 configuration for the runtime that holds it and the image it was created from,
 so a local session has no reference to work with. `update` recreates
 compose-managed containers only, and the daemon refuses anything else with the
-reason, which the app shows as the error. What remains SSH-only is the
+reason, which the app shows as the error. A container whose own labels do not
+record where its project lives is updated in the directory a **compose scan**
+assigned to that daemon — the containers tab's Managed stacks section runs one
+from a starting point you pick, lists what the daemon now manages with how many
+of each stack's containers are up, and offers the stack upgrade (pull every
+service, then recreate) and unassign — so no client has to know a path compose
+was never told either. What remains SSH-only is the
 interactive half — exec, attach, and re-creating a container from its inspect
 payload — which the app does not offer without a shell.
 

@@ -10,6 +10,7 @@ import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'container_list_tile.dart';
+import 'compose_stacks_section.dart';
 import 'container_models.dart';
 import 'container_runtime_install.dart';
 import 'project_repository.dart';
@@ -81,6 +82,10 @@ class _ContainerManagementTabState
   /// The daemon's update answers, for the list's badges. Empty without a
   /// daemon route, and on a daemon older than the update feature.
   ContainerUpdates _updates = const ContainerUpdates();
+
+  /// Bumped on a manual refresh so the managed compose stacks section reloads
+  /// alongside the rest of the tab.
+  var _composeStacksRefreshToken = 0;
 
   /// Whether the daemon is the only transport this client can offer — a
   /// browser, which has no SSH at all. A native client keeps its SSH default
@@ -249,6 +254,9 @@ class _ContainerManagementTabState
       _containersUnavailable = false;
       _maidCafeStream = null;
       _sessionRegistry.invalidate(widget.server);
+    }
+    if (mounted) {
+      setState(() => _composeStacksRefreshToken++);
     }
     await _load(force: true);
   }
@@ -601,6 +609,12 @@ class _ContainerManagementTabState
           // Shown only while the list is served by the MaidCafe daemon; the
           // SSH poller is the default and gets no banner.
           if (_containersFromMaidCafe) const _ContainerDataSourceBanner(),
+          if (_maidCafeStream != null)
+            ComposeStacksSection(
+              server: widget.server,
+              ensureSession: _ensureMaidCafeStream,
+              refreshToken: _composeStacksRefreshToken,
+            ),
           Expanded(
             child: _ContainerEnvironments(
               server: widget.server,
@@ -1370,6 +1384,7 @@ class _ContainerActionTile extends StatelessWidget {
       child: ContainerListTile(
         container: container,
         updateStatus: update,
+        onUpdateAction: onUpdateAction,
         contentPadding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
         onOpen: () => context.router.push(
           ContainerDetailRoute(

@@ -396,6 +396,200 @@ List<ContainerLogLine> parseContainerLogLines(Map<String, dynamic> json) {
   ];
 }
 
+/// One compose project the daemon manages.
+///
+/// The daemon only runs compose in a directory it was told about: a container's
+/// own labels, or this registry, which a scan assigned. [running] and [total]
+/// are the health view the daemon joins onto the registry from its own
+/// container snapshot.
+class ComposeStack {
+  const ComposeStack({
+    required this.project,
+    required this.directory,
+    this.files = const [],
+    this.services = const [],
+    this.scannedAt,
+    this.running = 0,
+    this.total = 0,
+    this.containers = const [],
+  });
+
+  final String project;
+
+  /// The project directory on the host: where compose runs.
+  final String directory;
+
+  /// The compose files the scan recorded, in the order compose merges them
+  /// (base files first, overrides last).
+  final List<String> files;
+  final List<String> services;
+  final DateTime? scannedAt;
+
+  /// How many of the stack's containers the daemon sees running, out of the
+  /// containers carrying its project label.
+  final int running;
+  final int total;
+  final List<ComposeStackContainer> containers;
+
+  /// Every container the stack declares is running. A stack with no containers
+  /// at all is not healthy either — it has not been brought up, or its
+  /// containers no longer carry its label.
+  bool get isHealthy => total > 0 && running == total;
+
+  /// The file the daemon passes to compose first, when the scan recorded one.
+  String? get primaryFile => files.isEmpty ? null : files.first;
+
+  static ComposeStack fromDaemonJson(Map<String, dynamic> json) {
+    final scanned = json['scanned_at']?.toString();
+    return ComposeStack(
+      project: json['project']?.toString() ?? '',
+      directory: json['directory']?.toString() ?? '',
+      files: [for (final file in _asList(json['files'])) file.toString()],
+      services: [
+        for (final service in _asList(json['services'])) service.toString(),
+      ],
+      scannedAt: scanned == null || scanned.isEmpty
+          ? null
+          : DateTime.tryParse(scanned)?.toLocal(),
+      running: _intOrNull(json['running']) ?? 0,
+      total: _intOrNull(json['total']) ?? 0,
+      containers: [
+        for (final entry in _asList(json['containers']))
+          if (entry is Map)
+            ComposeStackContainer.fromDaemonJson(
+              entry.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+      ],
+    );
+  }
+}
+
+/// One container a managed stack is running.
+class ComposeStackContainer {
+  const ComposeStackContainer({
+    required this.id,
+    required this.name,
+    this.image = '',
+    this.state = '',
+    this.runtime = '',
+  });
+
+  final String id;
+  final String name;
+  final String image;
+  final String state;
+  final String runtime;
+
+  /// The runtime's own state for a container that is up.
+  bool get isRunning => state == 'running';
+
+  static ComposeStackContainer fromDaemonJson(Map<String, dynamic> json) =>
+      ComposeStackContainer(
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? '',
+        image: json['image']?.toString() ?? '',
+        state: json['state']?.toString() ?? '',
+        runtime: json['runtime']?.toString() ?? '',
+      );
+}
+
+/// Where the daemon looks when a scan names no starting point, so a client can
+/// show the operator what a scan would do before it does it.
+class ComposeScanPolicy {
+  const ComposeScanPolicy({
+    this.roots = const [],
+    this.depth = 0,
+    this.maxFiles = 0,
+  });
+
+  final List<String> roots;
+  final int depth;
+  final int maxFiles;
+
+  static ComposeScanPolicy fromDaemonJson(Map<String, dynamic> json) =>
+      ComposeScanPolicy(
+        roots: [for (final root in _asList(json['roots'])) root.toString()],
+        depth: _intOrNull(json['depth']) ?? 0,
+        maxFiles: _intOrNull(json['max_files']) ?? 0,
+      );
+}
+
+/// The daemon's managed stacks, plus where a scan would look.
+class ComposeStacksSnapshot {
+  const ComposeStacksSnapshot({
+    this.stacks = const [],
+    this.scan = const ComposeScanPolicy(),
+  });
+
+  final List<ComposeStack> stacks;
+  final ComposeScanPolicy scan;
+
+  bool get isEmpty => stacks.isEmpty;
+}
+
+/// Tolerant parse of `GET /api/v1/compose/stacks`.
+ComposeStacksSnapshot parseComposeStacks(Map<String, dynamic> json) {
+  final scan = json['scan'];
+  return ComposeStacksSnapshot(
+    stacks: [
+      for (final entry in _asList(json['stacks']))
+        if (entry is Map)
+          ComposeStack.fromDaemonJson(
+            entry.map((key, value) => MapEntry(key.toString(), value)),
+          ),
+    ],
+    scan: scan is Map
+        ? ComposeScanPolicy.fromDaemonJson(
+            scan.map((key, value) => MapEntry(key.toString(), value)),
+          )
+        : const ComposeScanPolicy(),
+  );
+}
+
+/// What one scan assigned, so a caller can report what changed.
+class ComposeScanOutcome {
+  const ComposeScanOutcome({
+    this.roots = const [],
+    this.found = 0,
+    this.added = const [],
+    this.updated = const [],
+    this.removed = const [],
+    this.stacks = const ComposeStacksSnapshot(),
+  });
+
+  final List<String> roots;
+  final int found;
+  final List<String> added;
+  final List<String> updated;
+  final List<String> removed;
+  final ComposeStacksSnapshot stacks;
+
+  /// Whether the scan changed what the daemon manages.
+  bool get changed =>
+      added.isNotEmpty || updated.isNotEmpty || removed.isNotEmpty;
+
+  static ComposeScanOutcome fromDaemonJson(Map<String, dynamic> json) {
+    return ComposeScanOutcome(
+      roots: [for (final root in _asList(json['roots'])) root.toString()],
+      found: _intOrNull(json['found']) ?? 0,
+      added: [for (final name in _asList(json['added'])) name.toString()],
+      updated: [for (final name in _asList(json['updated'])) name.toString()],
+      removed: [for (final name in _asList(json['removed'])) name.toString()],
+      // A scan answers with the registry itself (a list), where the read
+      // endpoint wraps it next to the scan policy.
+      stacks: ComposeStacksSnapshot(
+        stacks: [
+          for (final entry in _asList(json['stacks']))
+            if (entry is Map)
+              ComposeStack.fromDaemonJson(
+                entry.map((key, value) => MapEntry(key.toString(), value)),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Formats [bytes] the way the container tiles render a runtime's own
 /// numbers; null stays a placeholder rather than becoming `0 B`.
 String formatBytes(int? bytes) {

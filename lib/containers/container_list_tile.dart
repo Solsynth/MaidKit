@@ -36,6 +36,7 @@ class ContainerListTile extends StatelessWidget {
     this.wide = false,
     this.trailing,
     this.updateStatus,
+    this.onUpdateAction,
     this.contentPadding = const EdgeInsets.symmetric(
       horizontal: 16,
       vertical: 12,
@@ -54,6 +55,10 @@ class ContainerListTile extends StatelessWidget {
 
   /// The daemon's update answer for this container, when it has one.
   final ContainerUpdateStatus? updateStatus;
+
+  /// Runs one daemon verb for the update badge (`pull`, `update`). Null leaves
+  /// the badge a label.
+  final Future<void> Function(String verb)? onUpdateAction;
 
   final EdgeInsetsGeometry contentPadding;
 
@@ -105,7 +110,10 @@ class ContainerListTile extends StatelessWidget {
                           const SizedBox(height: 4),
                           Align(
                             alignment: Alignment.centerLeft,
-                            child: ContainerUpdateBadge(status: updateStatus!),
+                            child: ContainerUpdateBadge(
+                              status: updateStatus!,
+                              onAction: onUpdateAction,
+                            ),
                           ),
                         ],
                         if (!wide && stats != null) ...[

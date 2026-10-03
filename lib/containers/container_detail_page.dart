@@ -1081,6 +1081,10 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
                 stats: _stats,
                 statsError: _statsError,
                 updateStatus: _updateStatus,
+                // The badge offers the daemon's verbs where they exist: a tap
+                // on the thing that says "update available" should be able to
+                // act on it, not only the app-bar menu.
+                onUpdateAction: daemonLive ? _runContainerUpdate : null,
                 onConnect: _connect,
                 onRefresh: () => unawaited(_bootstrap()),
               ),
@@ -1225,6 +1229,7 @@ class _OverviewPanel extends StatelessWidget {
     required this.stats,
     required this.statsError,
     this.updateStatus,
+    this.onUpdateAction,
     required this.onConnect,
     required this.onRefresh,
   });
@@ -1243,6 +1248,10 @@ class _OverviewPanel extends StatelessWidget {
 
   /// The daemon's update answer for this container, when it has one.
   final ContainerUpdateStatus? updateStatus;
+
+  /// Runs one daemon verb from the update badge (`pull`, `update`). Null when
+  /// no daemon route is open, which leaves the badge a label.
+  final Future<void> Function(String verb)? onUpdateAction;
   final Future<void> Function() onConnect;
   final VoidCallback onRefresh;
 
@@ -1287,7 +1296,10 @@ class _OverviewPanel extends StatelessWidget {
             const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerLeft,
-              child: ContainerUpdateBadge(status: updateStatus!),
+              child: ContainerUpdateBadge(
+                status: updateStatus!,
+                onAction: onUpdateAction,
+              ),
             ),
           ],
           const SizedBox(height: 16),
