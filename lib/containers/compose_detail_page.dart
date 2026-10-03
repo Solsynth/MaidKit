@@ -352,16 +352,20 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
           .read(maidCafeSessionRegistryProvider)
           .sessionFor(widget.server);
       if (session != null) {
-        // Daemon present: run the native compose op. Output is returned
-        // bounded at completion instead of streamed, so progress bars from
-        // pull/up are not visible on this path.
-        final result = await session.runComposeAction(
-          widget.projectName,
-          action.name,
-          widget.directory,
+        // Daemon present: the daemon runs the action, and the app watches it
+        // in the task terminal. The pulling actions are tasks, so their
+        // progress is live; a quick action finished already and reports itself.
+        await runComposeProjectActionViaDaemon(
+          ref: ref,
+          session: session,
+          serverName: widget.server.name,
+          runtime: widget.runtime,
+          scope: widget.scope,
+          projectName: widget.projectName,
+          directory: widget.directory,
+          action: action,
           invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
         );
-        result.ensureSuccess();
       } else {
         await runComposeProjectActionWithTerminal(
           ref: ref,

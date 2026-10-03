@@ -4,6 +4,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:maid_kit/containers/compose_project_actions.dart';
 import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
@@ -40,14 +41,6 @@ class ComposeStackUpdateOutcome {
 
   bool get ok => error == null;
 }
-
-/// The daemon's stage labels in the app's words. A step the app has not been
-/// taught is shown as the daemon named it, rather than hidden.
-String composeStageLabel(String label) => switch (label) {
-  'pull' => 'composeStacksStagePull'.tr(),
-  'recreate' => 'composeStacksStageRecreate'.tr(),
-  _ => label,
-};
 
 /// The command a stack update runs, as the terminal header shows it: the two
 /// stages the daemon performs, in the project's own directory.

@@ -966,15 +966,19 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
         .read(maidCafeSessionRegistryProvider)
         .sessionFor(host);
     if (session != null) {
-      // Daemon present: run the native compose op (bounded result at
-      // completion, no live pull progress).
-      final result = await session.runComposeAction(
-        _composeName,
-        action.name,
-        _composeDirectory,
+      // Daemon present: the daemon runs the action in the task terminal, live
+      // for the actions that pull and reported at once for the rest.
+      await runComposeProjectActionViaDaemon(
+        ref: ref,
+        session: session,
+        serverName: host.name,
+        runtime: _runtime,
+        scope: _scope,
+        projectName: _composeName,
+        directory: _composeDirectory,
+        action: action,
         invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
       );
-      result.ensureSuccess();
       return;
     }
     await runComposeProjectActionWithTerminal(
