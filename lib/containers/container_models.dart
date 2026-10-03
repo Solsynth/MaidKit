@@ -190,6 +190,234 @@ class ContainerStats {
   final int? blockReadBytes;
   final int? blockWriteBytes;
   final int? pids;
+
+  /// Reads the daemon's normalized stats payload
+  /// (`GET /api/v1/containers/:id/stats`).
+  ///
+  /// The daemon has already reconciled the two runtimes' shapes and answers
+  /// null for a measurement it could not take — a rootless runtime reports
+  /// `--` for what it cannot see. The composite strings the SSH path gets from
+  /// the runtime's own formatting are rebuilt here so both paths feed the same
+  /// widgets.
+  factory ContainerStats.fromDaemonJson(Map<String, dynamic> json) {
+    final name = json['name']?.toString() ?? '';
+    final memoryUsed = _intOrNull(json['memory_usage_bytes']);
+    final memoryLimit = _intOrNull(json['memory_limit_bytes']);
+    final networkIn = _intOrNull(json['network_input_bytes']);
+    final networkOut = _intOrNull(json['network_output_bytes']);
+    final blockIn = _intOrNull(json['block_input_bytes']);
+    final blockOut = _intOrNull(json['block_output_bytes']);
+    return ContainerStats(
+      id: json['container']?.toString() ?? '',
+      name: name.startsWith('/') ? name.substring(1) : name,
+      cpuPercent: _doubleOrNull(json['cpu_percent']),
+      memUsage: memoryUsed == null && memoryLimit == null
+          ? ''
+          : '${formatBytes(memoryUsed)} / ${formatBytes(memoryLimit)}',
+      memPercent: _doubleOrNull(json['memory_percent']),
+      memUsedBytes: memoryUsed,
+      memLimitBytes: memoryLimit,
+      netIO: networkIn == null && networkOut == null
+          ? ''
+          : '${formatBytes(networkIn)} / ${formatBytes(networkOut)}',
+      netRxBytes: networkIn,
+      netTxBytes: networkOut,
+      blockIO: blockIn == null && blockOut == null
+          ? ''
+          : '${formatBytes(blockIn)} / ${formatBytes(blockOut)}',
+      blockReadBytes: blockIn,
+      blockWriteBytes: blockOut,
+      pids: _intOrNull(json['pids']),
+    );
+  }
+}
+
+/// One container's published-image comparison, as reported by
+/// `GET /api/v1/updates` and `GET /api/v1/containers/:id/update-check`.
+class ContainerUpdateStatus {
+  const ContainerUpdateStatus({
+    required this.container,
+    required this.name,
+    required this.runtime,
+    required this.image,
+    this.checkedAt,
+    this.outdated,
+    this.pinned = false,
+    this.restartRequired = false,
+    this.localDigest = '',
+    this.remoteDigest = '',
+    this.error,
+  });
+
+  /// The container id the daemon's list reports.
+  final String container;
+  final String name;
+  final String runtime;
+
+  /// The image reference the container was created from.
+  final String image;
+  final DateTime? checkedAt;
+
+  /// True when the registry publishes an image the container is not running,
+  /// false when it is current, and null when the question could not be
+  /// answered — [error] then says why.
+  final bool? outdated;
+
+  /// The container was created from a digest-pinned reference, which is never
+  /// outdated: the digest is what the operator asked for.
+  final bool pinned;
+
+  /// The local image store already holds a newer image than this container is
+  /// running, so a recreate applies it without downloading anything.
+  final bool restartRequired;
+  final String localDigest;
+  final String remoteDigest;
+  final String? error;
+
+  /// Whether the daemon has an update to act on: the registry has moved on, or
+  /// a newer image is already on the host.
+  bool get hasUpdate => outdated == true || restartRequired;
+
+  static ContainerUpdateStatus fromDaemonJson(Map<String, dynamic> json) {
+    final checked = json['checked_at']?.toString();
+    return ContainerUpdateStatus(
+      container: json['container']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      runtime: json['runtime']?.toString() ?? '',
+      image: json['image']?.toString() ?? '',
+      checkedAt: checked == null || checked.isEmpty
+          ? null
+          : DateTime.tryParse(checked)?.toLocal(),
+      outdated: json['outdated'] is bool ? json['outdated'] as bool : null,
+      pinned: json['pinned'] == true,
+      restartRequired: json['restart_required'] == true,
+      localDigest: json['local_digest']?.toString() ?? '',
+      remoteDigest: json['remote_digest']?.toString() ?? '',
+      error: json['error']?.toString(),
+    );
+  }
+}
+
+/// Every cached update status the daemon holds, plus the cadence it refreshes
+/// them on.
+class ContainerUpdates {
+  const ContainerUpdates({
+    this.intervalSeconds = 0,
+    this.containers = const [],
+  });
+
+  /// How often the daemon re-checks, so a client can tell how old the answers
+  /// are and when they will move.
+  final int intervalSeconds;
+  final List<ContainerUpdateStatus> containers;
+
+  /// The status for one container, matched by the id the daemon's list reports
+  /// (either way may be a prefix of the other, since the two surfaces that
+  /// paint badges hold different identifiers) and then by name.
+  ContainerUpdateStatus? forContainer(String id, {String? name}) {
+    if (id.isNotEmpty) {
+      for (final status in containers) {
+        final key = status.container;
+        if (key.isEmpty) continue;
+        if (key == id || key.startsWith(id) || id.startsWith(key)) {
+          return status;
+        }
+      }
+    }
+    if (name == null) return null;
+    final clean = name.startsWith('/') ? name.substring(1) : name;
+    for (final status in containers) {
+      final statusName = status.name.startsWith('/')
+          ? status.name.substring(1)
+          : status.name;
+      if (statusName == clean) return status;
+    }
+    return null;
+  }
+}
+
+/// Tolerant parse of an update payload, for both the batch and single-container
+/// endpoints (the latter nests the status under `container`).
+ContainerUpdates parseContainerUpdates(
+  Map<String, dynamic> json, {
+  bool single = false,
+}) {
+  if (single) {
+    final nested = json['container'];
+    if (nested is Map) {
+      return ContainerUpdates(
+        containers: [
+          ContainerUpdateStatus.fromDaemonJson(
+            nested.map((key, value) => MapEntry(key.toString(), value)),
+          ),
+        ],
+      );
+    }
+    return ContainerUpdates(
+      containers: [ContainerUpdateStatus.fromDaemonJson(json)],
+    );
+  }
+  final entries = json['containers'];
+  return ContainerUpdates(
+    intervalSeconds: _intOrNull(json['interval_seconds']) ?? 0,
+    containers: [
+      if (entries is List)
+        for (final entry in entries)
+          if (entry is Map)
+            ContainerUpdateStatus.fromDaemonJson(
+              entry.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+    ],
+  );
+}
+
+/// One captured log line from the daemon's tail.
+class ContainerLogLine {
+  const ContainerLogLine({required this.timestamp, required this.line});
+
+  final DateTime? timestamp;
+  final String line;
+}
+
+/// Reads the `lines` array of a daemon log payload, from either the one-shot
+/// `/logs` endpoint or a `logs` SSE frame.
+List<ContainerLogLine> parseContainerLogLines(Map<String, dynamic> json) {
+  final entries = json['lines'];
+  if (entries is! List) return const [];
+  return [
+    for (final entry in entries)
+      if (entry is Map)
+        ContainerLogLine(
+          timestamp: DateTime.tryParse(
+            entry['ts']?.toString() ?? '',
+          )?.toLocal(),
+          line: entry['line']?.toString() ?? '',
+        ),
+  ];
+}
+
+/// Formats [bytes] the way the container tiles render a runtime's own
+/// numbers; null stays a placeholder rather than becoming `0 B`.
+String formatBytes(int? bytes) {
+  if (bytes == null) return '—';
+  if (bytes >= 1 << 30) return '${(bytes / (1 << 30)).toStringAsFixed(1)} GB';
+  if (bytes >= 1 << 20) return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
+  if (bytes >= 1 << 10) return '${(bytes / (1 << 10)).toStringAsFixed(1)} KB';
+  return '$bytes B';
+}
+
+int? _intOrNull(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value.trim());
+  return null;
+}
+
+double? _doubleOrNull(Object? value) {
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value.trim());
+  return null;
 }
 
 class ContainerEnvironment {
@@ -335,6 +563,117 @@ class ContainerInspectDetail {
   final List<String> networks;
   final String rawJson;
 
+  /// Reads a runtime's own inspect object.
+  ///
+  /// Both paths answer with the same document — `docker|podman inspect
+  /// --format '{{json .}}'` over SSH and the daemon's `/containers/:id/inspect`
+  /// pass the runtime's object through unmodified — so one parser serves them.
+  /// [rawJson] is that object as the runtime rendered it, kept for the raw
+  /// payload view.
+  factory ContainerInspectDetail.fromInspectJson(
+    Map<String, dynamic> json, {
+    required String rawJson,
+  }) {
+    final state = _asMap(json['State']);
+    final config = _asMap(json['Config']);
+    final hostConfig = _asMap(json['HostConfig']);
+    final networkSettings = _asMap(json['NetworkSettings']);
+    final restart = _asMap(hostConfig['RestartPolicy']);
+    final nameRaw = json['Name']?.toString() ?? '';
+    final name = nameRaw.startsWith('/') ? nameRaw.substring(1) : nameRaw;
+
+    final env = <String>[
+      for (final item in _asList(config['Env']))
+        if (item.toString().isNotEmpty) item.toString(),
+    ];
+    final entrypoint = <String>[
+      for (final item in _asList(config['Entrypoint'])) item.toString(),
+    ];
+    final command = <String>[
+      for (final item in _asList(config['Cmd'])) item.toString(),
+    ];
+    final binds = <String>[
+      for (final item in _asList(hostConfig['Binds'])) item.toString(),
+    ];
+    final mounts = <String>[];
+    for (final item in _asList(json['Mounts'])) {
+      final mount = _asMap(item);
+      final source = mount['Source']?.toString() ?? '';
+      final destination = mount['Destination']?.toString() ?? '';
+      if (source.isEmpty || destination.isEmpty) continue;
+      final mode = mount['Mode']?.toString() ?? '';
+      mounts.add(
+        mode.isEmpty ? '$source:$destination' : '$source:$destination:$mode',
+      );
+    }
+    final ports = <String>[];
+    final portBindings = _asMap(hostConfig['PortBindings']);
+    for (final entry in portBindings.entries) {
+      final containerPort = entry.key.toString(); // e.g. 80/tcp
+      final bindings = _asList(entry.value);
+      if (bindings.isEmpty) {
+        ports.add(containerPort.replaceAll('/tcp', '').replaceAll('/udp', ''));
+        continue;
+      }
+      for (final binding in bindings) {
+        final map = _asMap(binding);
+        final hostIp = map['HostIp']?.toString() ?? '';
+        final hostPort = map['HostPort']?.toString() ?? '';
+        final containerOnly = containerPort.split('/').first;
+        if (hostPort.isEmpty) {
+          ports.add(containerOnly);
+        } else if (hostIp.isEmpty || hostIp == '0.0.0.0' || hostIp == '::') {
+          ports.add('$hostPort:$containerOnly');
+        } else {
+          ports.add('$hostIp:$hostPort:$containerOnly');
+        }
+      }
+    }
+    final labels = <String, String>{};
+    final labelMap = _asMap(config['Labels']);
+    for (final entry in labelMap.entries) {
+      labels[entry.key.toString()] = entry.value?.toString() ?? '';
+    }
+    final networks = <String>[];
+    final networksMap = _asMap(networkSettings['Networks']);
+    networks.addAll(networksMap.keys.map((key) => key.toString()));
+
+    final stateName =
+        state['Status']?.toString() ?? state['status']?.toString() ?? '';
+    final status = [
+      if (stateName.isNotEmpty) stateName,
+      if (state['Error']?.toString().isNotEmpty == true) state['Error'],
+      if (state['ExitCode'] != null && stateName != 'running')
+        'exit ${state['ExitCode']}',
+    ].join(' · ');
+
+    return ContainerInspectDetail(
+      id: json['Id']?.toString() ?? '',
+      name: name,
+      image: config['Image']?.toString() ?? json['Image']?.toString() ?? '',
+      state: stateName,
+      status: status.isEmpty ? stateName : status,
+      created: json['Created']?.toString(),
+      startedAt: state['StartedAt']?.toString(),
+      finishedAt: state['FinishedAt']?.toString(),
+      exitCode: int.tryParse(state['ExitCode']?.toString() ?? ''),
+      platform: json['Platform']?.toString() ?? config['Platform']?.toString(),
+      restartPolicy: restart['Name']?.toString() ?? 'no',
+      networkMode: hostConfig['NetworkMode']?.toString() ?? 'default',
+      workingDir: config['WorkingDir']?.toString(),
+      user: config['User']?.toString(),
+      entrypoint: entrypoint,
+      command: command,
+      env: env,
+      ports: ports,
+      binds: binds.isNotEmpty ? binds : mounts,
+      mounts: mounts,
+      labels: labels,
+      networks: networks,
+      rawJson: rawJson,
+    );
+  }
+
   bool get isRunning {
     final value = state.toLowerCase();
     return value.contains('running') ||
@@ -399,3 +738,13 @@ class ContainerInspectDetail {
     return "'${value.replaceAll("'", "'\\''")}'";
   }
 }
+
+Map<String, dynamic> _asMap(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) {
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+  return const {};
+}
+
+List<dynamic> _asList(Object? value) => value is List ? value : const [];

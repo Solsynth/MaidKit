@@ -5,6 +5,7 @@ import 'package:styled_widget/styled_widget.dart';
 import 'package:maid_kit/theme.dart';
 
 import 'container_models.dart';
+import 'container_update_badge.dart';
 
 /// Whether [container] reports a running lifecycle state.
 ///
@@ -34,6 +35,7 @@ class ContainerListTile extends StatelessWidget {
     this.stats,
     this.wide = false,
     this.trailing,
+    this.updateStatus,
     this.contentPadding = const EdgeInsets.symmetric(
       horizontal: 16,
       vertical: 12,
@@ -49,6 +51,9 @@ class ContainerListTile extends StatelessWidget {
 
   /// Replaces the default chevron when set (e.g. a popup menu of actions).
   final Widget? trailing;
+
+  /// The daemon's update answer for this container, when it has one.
+  final ContainerUpdateStatus? updateStatus;
 
   final EdgeInsetsGeometry contentPadding;
 
@@ -96,6 +101,13 @@ class ContainerListTile extends StatelessWidget {
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
+                        if (updateStatus?.hasUpdate == true) ...[
+                          const SizedBox(height: 4),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: ContainerUpdateBadge(status: updateStatus!),
+                          ),
+                        ],
                         if (!wide && stats != null) ...[
                           const SizedBox(height: 4),
                           Text(

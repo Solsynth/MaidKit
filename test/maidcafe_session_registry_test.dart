@@ -37,6 +37,28 @@ class _FakeSession implements MaidCafeStreamSession {
   Future<Map<String, dynamic>> images() => throw UnimplementedError();
 
   @override
+  Future<Map<String, dynamic>> containerInspect(String id) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> containerStats(String id) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> containerLogs(
+    String id, {
+    String source = 'captured',
+    int lines = 200,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> containerUpdates() => throw UnimplementedError();
+
+  @override
+  Future<Map<String, dynamic>> containerUpdateCheck(String id) =>
+      throw UnimplementedError();
+
+  @override
   Future<Map<String, dynamic>> processes({int limit = 0}) =>
       throw UnimplementedError();
 

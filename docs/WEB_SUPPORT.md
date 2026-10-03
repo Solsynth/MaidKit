@@ -14,7 +14,8 @@ and what is still open.
 | Servers, settings, snippets, GitHub, projects, cloud sync | Local database + HTTP(S) |
 | SSH, serial, local shells | Unavailable (no raw sockets) |
 | File management, file editor | MaidCafe daemon `/api/v1/files` over HTTP(S) for a remote server; the local pane is absent (no local filesystem in a browser) |
-| Port forwarding, containers, systemd, web servers, packages, firewall | Unavailable (SSH or local filesystem) |
+| Containers | MaidCafe daemon `/api/v1/containers` and its per-container reads, over HTTP(S). Exec, attach and re-create-from-inspect stay SSH-only |
+| Port forwarding, systemd, web servers, packages, firewall | Unavailable (SSH or local filesystem) |
 | Tailscale, network ping | Unavailable (native runtime) |
 | Local MCP server, agent processes | Unavailable (no child processes) |
 | Desktop window control, system notifications, biometric unlock, system fonts | Unavailable (no plugin) |
@@ -173,6 +174,47 @@ than faking:
 
 The local pane is hidden in a browser rather than disabled: there is no local
 filesystem to browse, and downloads go through the browser's own save flow.
+
+## Containers without SSH
+
+The container list has been daemon-first for a while: `GET /api/v1/containers`
+and its `containers` stream, over the session `MaidCafeSessionRegistry` hands
+out, with the SSH poller as the fallback. The per-container surfaces now take
+the same route:
+
+| Surface | Transport |
+| --- | --- |
+| List | Daemon `/api/v1/containers` + `containers` stream; SSH poller as fallback |
+| Inspect | Daemon `/api/v1/containers/:id/inspect`; SSH `inspect --format '{{json .}}'` as fallback |
+| Resources | Daemon `/api/v1/containers/:id/stats`; SSH `stats --no-stream` as fallback |
+| Logs | SSH `logs -f` whenever a session exists, otherwise the daemon's captured tail plus the `logs` stream |
+| Lifecycle | Daemon `POST /api/v1/containers/:id/:action`; SSH `docker\|podman <verb>` as fallback |
+| Update badge | Daemon `/api/v1/updates` (its own cache, no registry traffic) |
+| Pull, Update | Daemon `container.pull` / `container.update`, which read the image reference from the container's own configuration |
+
+Reads fall back to SSH because a read is safe to retry — the daemon may simply
+not see a container (a user-scoped runtime, or one it has no binary for), and a
+daemon older than the detail reads has no such route at all. Actions keep the
+opposite rule they already had: a daemon failure surfaces instead of being
+replayed over SSH, so nothing is performed twice by two different paths.
+
+The log follow prefers SSH because `logs -f` streams the moment the runtime
+writes, where the daemon's deltas arrive on its own capture cadence and only
+for the containers it is tailing. A browser, which has no SSH at all, gets the
+captured window followed by the `logs` stream.
+
+`pull` and `update` are daemon-only: each one reads the container's own
+configuration for the runtime that holds it and the image it was created from,
+so a local session has no reference to work with. `update` recreates
+compose-managed containers only, and the daemon refuses anything else with the
+reason, which the app shows as the error. What remains SSH-only is the
+interactive half — exec, attach, and re-creating a container from its inspect
+payload — which the app does not offer without a shell.
+
+As with the file API, a browser needs a route it can dial on its own: the
+session that carries all of the above cannot open an SSH forward there, so a
+server with no endpoint override (normally the HTTPS front described below)
+shows the containers tab with the route it is missing instead of a list.
 
 ## How the platform split works
 

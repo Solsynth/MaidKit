@@ -78,14 +78,21 @@ class _ContainerManagementTabState
   DateTime _lastContainersEvent = DateTime.fromMillisecondsSinceEpoch(0);
   int _containersSseIntervalSeconds = 5;
 
+  /// The daemon's update answers, for the list's badges. Empty without a
+  /// daemon route, and on a daemon older than the update feature.
+  ContainerUpdates _updates = const ContainerUpdates();
+
+  /// Whether the daemon is the only transport this client can offer — a
+  /// browser, which has no SSH at all. A native client keeps its SSH default
+  /// and the connect prompt with it, the same rule the file surfaces apply.
+  bool get _daemonAllowed => kIsWeb;
+
   @override
   void initState() {
     super.initState();
-    // Container state and actions come from SSH; a browser has neither.
-    if (kIsWeb) return;
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     _sessionRegistry.retain(widget.server);
-    if (widget.connected) {
+    if (widget.connected || _daemonAllowed) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _load());
     }
     _startRefreshTimer();
@@ -95,15 +102,13 @@ class _ContainerManagementTabState
   void dispose() {
     _refreshTimer?.cancel();
     _closeContainersSse();
-    // The web branch never initialized the SSH-backed registry.
-    if (!kIsWeb) _sessionRegistry.release(widget.server);
+    _sessionRegistry.release(widget.server);
     super.dispose();
   }
 
   @override
   void didUpdateWidget(ContainerManagementTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (kIsWeb) return;
     final serverChanged = oldWidget.server.id != widget.server.id;
     if (serverChanged) {
       _closeContainersSse();
@@ -135,7 +140,10 @@ class _ContainerManagementTabState
   }
 
   Future<void> _load({bool force = false}) async {
-    if (!mounted || !widget.connected || _loading) return;
+    if (!mounted || _loading) return;
+    // A browser reaches containers only through the daemon; everywhere else
+    // the SSH session is the gate, exactly as before.
+    if (!widget.connected && !_daemonAllowed) return;
     _loading = true;
     try {
       if (force) {
@@ -186,6 +194,7 @@ class _ContainerManagementTabState
                 _hasLoadedEnvironments = true;
                 _environments = AsyncValue.data(_environmentsFrom(snapshot));
               });
+              unawaited(_loadUpdateStatuses(session));
               return;
             }
             if (!snapshot.hasRuntimes) {
@@ -196,6 +205,18 @@ class _ContainerManagementTabState
             // Old daemon without /api/v1/containers: fall back to SSH.
           }
         }
+      }
+      if (!widget.connected) {
+        // A browser has no SSH to fall back on, and the daemon route did not
+        // answer: leave the list empty rather than showing a connect prompt
+        // that cannot be acted on. [build] explains the missing route.
+        if (mounted) {
+          setState(() {
+            _hasLoadedEnvironments = true;
+            _environments = const AsyncValue.data([]);
+          });
+        }
+        return;
       }
       final environments = await ref
           .read(connectionManagerProvider)
@@ -443,6 +464,76 @@ class _ContainerManagementTabState
     }
   }
 
+  /// Refreshes the daemon's cached update answers, which the list badges paint
+  /// from. This reads the daemon's own cache and never asks a registry, so it
+  /// costs nothing on the refresh cadence. A daemon older than the update
+  /// feature leaves every badge off.
+  Future<void> _loadUpdateStatuses(MaidCafeStreamSession session) async {
+    try {
+      final updates = parseContainerUpdates(await session.containerUpdates());
+      if (!mounted) return;
+      setState(() => _updates = updates);
+    } catch (_) {
+      // No update route on this daemon.
+    }
+  }
+
+  /// Runs the daemon's image pull, or its pull-and-recreate update.
+  ///
+  /// The daemon reads the container's own configuration to find the runtime
+  /// and image reference, so there is no SSH path to fall back to: a local
+  /// session would have to reconstruct the reference from what the container
+  /// records, which is the guess these operations exist to avoid. A container
+  /// that is not compose-managed comes back refused with its reason.
+  Future<void> _runContainerUpdate(
+    ServerContainer container,
+    String verb,
+  ) async {
+    final pullOnly = verb == 'pull';
+    final session = await _ensureMaidCafeStream();
+    if (!mounted) return;
+    if (session == null) {
+      showStyledSnackBar(
+        title: 'containerUpdateNeedsDaemon'.tr(),
+        message: container.name,
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
+    if (!pullOnly) {
+      final approved = await showMaidKitConfirmAlert(
+        'containerUpdateConfirm'.tr(args: [container.name]),
+        'containerUpdate'.tr(),
+      );
+      if (!approved || !mounted) return;
+    }
+    try {
+      final result = await session.runContainerAction(
+        container.id,
+        verb,
+        invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+      );
+      result.ensureSuccess();
+      if (!mounted) return;
+      showStyledSnackBar(
+        title: (pullOnly ? 'containerPullDone' : 'containerUpdateDone').tr(),
+        message: container.name,
+        icon: Symbols.check_circle,
+        accentColor: Theme.of(context).colorScheme.primary,
+      );
+      await _load(force: true);
+    } catch (error) {
+      if (!mounted) return;
+      showStyledSnackBar(
+        title: (pullOnly ? 'containerPull' : 'containerUpdate').tr(),
+        message: error.toString(),
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+  }
+
   Future<void> _installRuntime() async {
     final runtime = await chooseContainerRuntimeToInstall(context);
     if (runtime == null || !mounted) return;
@@ -474,10 +565,7 @@ class _ContainerManagementTabState
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return Center(child: Text('commonUnavailable'.tr()));
-    }
-    if (!widget.connected) {
+    if (!widget.connected && !_daemonAllowed) {
       return _ContainerEmptyPanel(
         icon: Symbols.link_off,
         message: widget.connectionError ?? 'containersConnectToManage'.tr(),
@@ -485,6 +573,18 @@ class _ContainerManagementTabState
         onAction: widget.onConnect,
         filledAction: true,
         actionIcon: Symbols.link,
+      );
+    }
+    if (!widget.connected &&
+        _hasLoadedEnvironments &&
+        _maidCafeStream == null) {
+      // A browser with no route to the server's daemon: there is no second
+      // transport to offer, so the tab names the missing route instead.
+      return _ContainerEmptyPanel(
+        icon: Symbols.link_off,
+        message: 'containersNoDaemonRoute'.tr(),
+        actionLabel: 'commonRetry'.tr(),
+        onAction: _refreshManually,
       );
     }
     return _environments.when(
@@ -505,8 +605,12 @@ class _ContainerManagementTabState
             child: _ContainerEnvironments(
               server: widget.server,
               environments: environments,
+              updates: _updates,
               onRefresh: _refreshManually,
               onAction: _runAction,
+              onUpdateAction: _maidCafeStream == null
+                  ? null
+                  : _runContainerUpdate,
               onInstallRuntime: _installRuntime,
               focusComposeProject: widget.focusComposeProject,
             ),
@@ -670,14 +774,20 @@ class _ContainerEnvironments extends ConsumerWidget {
   const _ContainerEnvironments({
     required this.server,
     required this.environments,
+    required this.updates,
     required this.onRefresh,
     required this.onAction,
+    this.onUpdateAction,
     required this.onInstallRuntime,
     this.focusComposeProject,
   });
 
   final Server server;
   final List<ContainerEnvironment> environments;
+
+  /// The daemon's update answers, for the per-container badges.
+  final ContainerUpdates updates;
+
   final Future<void> Function() onRefresh;
   final Future<void> Function(
     ContainerEnvironment,
@@ -685,6 +795,12 @@ class _ContainerEnvironments extends ConsumerWidget {
     ContainerAction,
   )
   onAction;
+
+  /// Runs the daemon's image pull (verb `pull`) or pull-and-recreate update
+  /// (verb `update`) for one container. Null while no daemon route is open,
+  /// which is also what hides those entries: neither verb exists over SSH,
+  /// since the daemon reads the image reference from the container itself.
+  final Future<void> Function(ServerContainer, String)? onUpdateAction;
   final Future<void> Function() onInstallRuntime;
   final String? focusComposeProject;
 
@@ -781,7 +897,9 @@ class _ContainerEnvironments extends ConsumerWidget {
                   _ProjectCollapsibleTile(
                     server: server,
                     project: projects[i],
+                    updates: updates,
                     onAction: onAction,
+                    onUpdateAction: onUpdateAction,
                   ),
                   if (i != projects.length - 1) const SizedBox(height: 8),
                 ],
@@ -840,7 +958,9 @@ class _ContainerEnvironments extends ConsumerWidget {
         _ContainerEnvironmentSection(
           server: server,
           environment: visible[i],
+          updates: updates,
           onAction: onAction,
+          onUpdateAction: onUpdateAction,
         ),
         if (i != visible.length - 1) const SizedBox(height: 16),
       ],
@@ -852,23 +972,33 @@ class _ProjectCollapsibleTile extends StatelessWidget {
   const _ProjectCollapsibleTile({
     required this.server,
     required this.project,
+    required this.updates,
     required this.onAction,
+    this.onUpdateAction,
   });
 
   final Server server;
   final _ServerProjectGroup project;
+
+  /// The daemon's update answers, for the per-container badges.
+  final ContainerUpdates updates;
+
   final Future<void> Function(
     ContainerEnvironment,
     ServerContainer,
     ContainerAction,
   )
   onAction;
+  final Future<void> Function(ServerContainer, String)? onUpdateAction;
 
   ContainerEnvironment get _environment => ContainerEnvironment(
     runtime: project.runtime,
     scope: project.scope,
     containers: project.containers,
   );
+
+  ContainerUpdateStatus? _updateFor(ServerContainer container) =>
+      updates.forContainer(container.id, name: container.name);
 
   String get _runtimeLabel {
     final name = project.runtime.name;
@@ -969,6 +1099,10 @@ class _ProjectCollapsibleTile extends StatelessWidget {
                   server: server,
                   environment: _environment,
                   container: project.containers[i],
+                  updateStatus: _updateFor(project.containers[i]),
+                  onUpdateAction: onUpdateAction == null
+                      ? null
+                      : (verb) => onUpdateAction!(project.containers[i], verb),
                   onAction: (action) =>
                       onAction(_environment, project.containers[i], action),
                 ),
@@ -991,17 +1125,24 @@ class _ContainerEnvironmentSection extends StatelessWidget {
   const _ContainerEnvironmentSection({
     required this.server,
     required this.environment,
+    required this.updates,
     required this.onAction,
+    this.onUpdateAction,
   });
 
   final Server server;
   final ContainerEnvironment environment;
+
+  /// The daemon's update answers, for the per-container badges.
+  final ContainerUpdates updates;
+
   final Future<void> Function(
     ContainerEnvironment,
     ServerContainer,
     ContainerAction,
   )
   onAction;
+  final Future<void> Function(ServerContainer, String)? onUpdateAction;
 
   String get _runtimeLabel {
     final name = environment.runtime.name;
@@ -1016,6 +1157,9 @@ class _ContainerEnvironmentSection extends StatelessWidget {
     ContainerRuntime.docker => Symbols.deployed_code,
     ContainerRuntime.podman => Symbols.package_2,
   };
+
+  ContainerUpdateStatus? _updateFor(ServerContainer container) =>
+      updates.forContainer(container.id, name: container.name);
 
   @override
   Widget build(BuildContext context) {
@@ -1089,6 +1233,11 @@ class _ContainerEnvironmentSection extends StatelessWidget {
                 server: server,
                 environment: environment,
                 container: environment.containers[i],
+                updateStatus: _updateFor(environment.containers[i]),
+                onUpdateAction: onUpdateAction == null
+                    ? null
+                    : (verb) =>
+                          onUpdateAction!(environment.containers[i], verb),
                 onAction: (action) =>
                     onAction(environment, environment.containers[i], action),
               ),
@@ -1114,12 +1263,22 @@ class _ContainerActionTile extends StatelessWidget {
     required this.environment,
     required this.container,
     required this.onAction,
+    this.updateStatus,
+    this.onUpdateAction,
   });
 
   final Server server;
   final ContainerEnvironment environment;
   final ServerContainer container;
   final Future<void> Function(ContainerAction action) onAction;
+
+  /// The daemon's update answer for this container, when it has one.
+  final ContainerUpdateStatus? updateStatus;
+
+  /// Runs the daemon's `pull` or `update` verb. Null when no daemon route is
+  /// open, which is also what hides those entries: neither verb exists over
+  /// SSH, since the daemon reads the image reference from the container itself.
+  final Future<void> Function(String verb)? onUpdateAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1128,6 +1287,8 @@ class _ContainerActionTile extends StatelessWidget {
     final paused = isContainerPaused(container);
     final canPause = running && !paused;
     final canUnpause = paused;
+    final update = updateStatus;
+    final canUpdate = onUpdateAction != null;
 
     List<Widget> menuRows(ContainerAction action, IconData icon) {
       final destructive =
@@ -1174,6 +1335,19 @@ class _ContainerActionTile extends StatelessWidget {
           callback: () => onAction(ContainerAction.unpause),
         ),
         MenuSeparator(),
+        if (canUpdate) ...[
+          MenuAction(
+            title: 'containerPull'.tr(),
+            image: MenuImage.icon(Symbols.download),
+            callback: () => onUpdateAction!('pull'),
+          ),
+          MenuAction(
+            title: 'containerUpdate'.tr(),
+            image: MenuImage.icon(Symbols.upgrade),
+            callback: () => onUpdateAction!('update'),
+          ),
+          MenuSeparator(),
+        ],
         MenuAction(
           title: ContainerAction.kill.label,
           image: MenuImage.icon(Symbols.dangerous),
@@ -1195,6 +1369,7 @@ class _ContainerActionTile extends StatelessWidget {
       menuBuilder: menu,
       child: ContainerListTile(
         container: container,
+        updateStatus: update,
         contentPadding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
         onOpen: () => context.router.push(
           ContainerDetailRoute(
@@ -1205,25 +1380,31 @@ class _ContainerActionTile extends StatelessWidget {
             containerName: container.name,
           ),
         ),
-        trailing: PopupMenuButton<ContainerAction>(
-          tooltip: 'Container actions',
-          onSelected: onAction,
+        trailing: PopupMenuButton<Object>(
+          tooltip: 'containersActionTooltip'.tr(),
+          onSelected: (value) {
+            if (value is ContainerAction) {
+              onAction(value);
+            } else if (value is String) {
+              onUpdateAction?.call(value);
+            }
+          },
           itemBuilder: (context) => [
-            PopupMenuItem(
+            PopupMenuItem<Object>(
               value: ContainerAction.start,
               enabled: !running,
               child: Row(
                 children: menuRows(ContainerAction.start, Symbols.play_arrow),
               ),
             ),
-            PopupMenuItem(
+            PopupMenuItem<Object>(
               value: ContainerAction.stop,
               enabled: running,
               child: Row(
                 children: menuRows(ContainerAction.stop, Symbols.stop),
               ),
             ),
-            PopupMenuItem(
+            PopupMenuItem<Object>(
               value: ContainerAction.restart,
               child: Row(
                 children: menuRows(
@@ -1232,14 +1413,14 @@ class _ContainerActionTile extends StatelessWidget {
                 ),
               ),
             ),
-            PopupMenuItem(
+            PopupMenuItem<Object>(
               value: ContainerAction.pause,
               enabled: canPause,
               child: Row(
                 children: menuRows(ContainerAction.pause, Symbols.pause),
               ),
             ),
-            PopupMenuItem(
+            PopupMenuItem<Object>(
               value: ContainerAction.unpause,
               enabled: canUnpause,
               child: Row(
@@ -1250,14 +1431,37 @@ class _ContainerActionTile extends StatelessWidget {
               ),
             ),
             const PopupMenuDivider(),
-            PopupMenuItem(
+            if (canUpdate) ...[
+              PopupMenuItem<Object>(
+                value: 'pull',
+                child: Row(
+                  children: [
+                    const Icon(Symbols.download, size: 20),
+                    const SizedBox(width: 12),
+                    Text('containerPull'.tr()),
+                  ],
+                ),
+              ),
+              PopupMenuItem<Object>(
+                value: 'update',
+                child: Row(
+                  children: [
+                    const Icon(Symbols.upgrade, size: 20),
+                    const SizedBox(width: 12),
+                    Text('containerUpdate'.tr()),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+            ],
+            PopupMenuItem<Object>(
               value: ContainerAction.kill,
               enabled: running,
               child: Row(
                 children: menuRows(ContainerAction.kill, Symbols.dangerous),
               ),
             ),
-            PopupMenuItem(
+            PopupMenuItem<Object>(
               value: ContainerAction.remove,
               child: Row(
                 children: menuRows(ContainerAction.remove, Symbols.delete),

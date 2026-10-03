@@ -1109,6 +1109,53 @@ class MaidCafeStreamSession {
   /// SSE event).
   Future<Map<String, dynamic>> images() => _get('/api/v1/images');
 
+  /// One container's inspect payload: what it was created from — image,
+  /// command, environment, mounts, ports, networks, labels, restart policy.
+  ///
+  /// The daemon resolves [id] the same way its list names a container (exact
+  /// id, exact name, or id prefix) and answers with the runtime's own object
+  /// under `inspect`. Parse it with `ContainerInspectDetail.fromInspectJson`.
+  ///
+  /// A daemon older than the detail reads answers with no such route, which
+  /// arrives as [MaidCafeRouteMissingException]; an unknown container is a
+  /// `StateError` carrying the daemon's "no such container".
+  Future<Map<String, dynamic>> containerInspect(String id) =>
+      _get('/api/v1/containers/${Uri.encodeComponent(id)}/inspect');
+
+  /// One container's current resource usage, normalized across runtimes.
+  /// Parse it with `ContainerStats.fromDaemonJson`.
+  Future<Map<String, dynamic>> containerStats(String id) =>
+      _get('/api/v1/containers/${Uri.encodeComponent(id)}/stats');
+
+  /// One container's log tail.
+  ///
+  /// [source] is `captured` (the daemon's own disk-backed tail, which survives
+  /// a container restart) or `runtime` (the runtime's answer, which also
+  /// covers a container the daemon never tailed). [lines] is bounded by the
+  /// daemon's ring; it answers 400 outside that range.
+  Future<Map<String, dynamic>> containerLogs(
+    String id, {
+    String source = 'captured',
+    int lines = 200,
+  }) => _get(
+    Uri(
+      path: '/api/v1/containers/${Uri.encodeComponent(id)}/logs',
+      queryParameters: {'source': source, 'lines': '$lines'},
+    ).toString(),
+  );
+
+  /// Every update status the daemon holds, plus the cadence it refreshes them
+  /// on. This reads the daemon's cache and never touches a registry, so it is
+  /// cheap enough to paint badges from. Parse it with
+  /// `parseContainerUpdates`.
+  Future<Map<String, dynamic>> containerUpdates() => _get('/api/v1/updates');
+
+  /// One container's update status, checked now when the daemon holds no
+  /// recent answer. The daemon floors the refresh, so asking repeatedly cannot
+  /// turn this into registry load. The status is nested under `container`.
+  Future<Map<String, dynamic>> containerUpdateCheck(String id) =>
+      _get('/api/v1/containers/${Uri.encodeComponent(id)}/update-check');
+
   /// One-shot top-processes snapshot (same payload as the `processes` event).
   ///
   /// [limit] caps the returned rows; `0` requests the complete process table.
@@ -1432,9 +1479,15 @@ class MaidCafeStreamSession {
   }
 
   /// Runs one native container operation on the daemon. [verb] is the wire
-  /// verb (`start`, `stop`, `restart`, `pause`, `unpause`, `kill`, `remove`);
-  /// [force] maps to `rm -f` for remove. The daemon resolves the runtime and
-  /// elevates through `sudo -n` when needed.
+  /// verb (`start`, `stop`, `restart`, `pause`, `unpause`, `kill`, `remove`,
+  /// `pull`, `update`); [force] maps to `rm -f` for remove. The daemon resolves
+  /// the runtime and elevates through `sudo -n` when needed.
+  ///
+  /// `pull` fetches the image the container was created from without touching
+  /// what is running. `update` pulls and then recreates the container, and only
+  /// handles compose-managed containers: the daemon refuses any other with a
+  /// `400` naming the reason, because neither runtime can replay a plain
+  /// container's configuration faithfully.
   Future<MaidCafeOpResult> runContainerAction(
     String id,
     String verb, {

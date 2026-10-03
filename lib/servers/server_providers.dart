@@ -1047,6 +1047,9 @@ class FocusedServerNotifier extends Notifier<int?> {
   void focus(int serverId) => state = serverId;
 
   void clear(int serverId) {
+    // Callers clear this from a microtask after their dispose, and the
+    // provider's container may already be gone by then.
+    if (!ref.mounted) return;
     if (state == serverId) state = null;
   }
 }

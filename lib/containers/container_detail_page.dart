@@ -12,6 +12,8 @@ import 'package:styled_widget/styled_widget.dart';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/maidcafe_session_registry.dart';
+import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
@@ -23,6 +25,7 @@ import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
 import 'container_models.dart';
 import 'container_command_preferences.dart';
+import 'container_update_badge.dart';
 
 @RoutePage()
 class ContainerDetailPage extends ConsumerStatefulWidget {
@@ -65,6 +68,21 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
   ContainerStats? _stats;
   Object? _statsError;
 
+  /// The container's update status, when the daemon answered. Null means there
+  /// is nothing to show: no daemon route, or an answer still pending.
+  ContainerUpdateStatus? _updateStatus;
+
+  late final MaidCafeSessionRegistry _sessionRegistry;
+
+  /// The daemon session resolved for this page, or null when the server has no
+  /// route to one. Retained for the page's lifetime, so the reads below do not
+  /// depend on another tab holding a session open.
+  MaidCafeStreamSession? _daemon;
+
+  /// The `logs` SSE subscription that follows this container on the daemon
+  /// path; the SSH path owns its own [LogFollowHandle] instead.
+  StreamSubscription<MaidCafeStreamEvent>? _logSubscription;
+
   Timer? _refreshTimer;
   late final FocusedServerNotifier _focusedServerNotifier;
   var _actionBusy = false;
@@ -72,13 +90,18 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
   @override
   void initState() {
     super.initState();
-    // Every panel here reads container state over SSH; a browser has no such
-    // transport, so [build] shows a notice instead.
-    if (kIsWeb) return;
-    _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
+    // Reads and actions prefer the MaidCafe daemon, which is the only
+    // transport a browser has; SSH is the fallback wherever it is available.
+    // The page retains the shared session so neither depends on the container
+    // list tab happening to be mounted behind it.
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
+    if (!kIsWeb) {
+      _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _focusedServerNotifier.focus(widget.server.id);
+      if (!kIsWeb) _focusedServerNotifier.focus(widget.server.id);
       unawaited(_bootstrap());
     });
     _startRefreshTimer(ref.read(focusedServerRefreshIntervalProvider));
@@ -103,16 +126,49 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     final follow = _logFollow;
     _logFollow = null;
     unawaited(follow?.cancel() ?? Future<void>.value());
-    // The web branch never initialized the SSH-backed collaborators.
-    if (kIsWeb) {
-      super.dispose();
-      return;
+    final subscription = _logSubscription;
+    _logSubscription = null;
+    unawaited(subscription?.cancel() ?? Future<void>.value());
+    _sessionRegistry.release(widget.server);
+    if (!kIsWeb) {
+      // Riverpod forbids mutating providers during dispose / tree finalization.
+      final serverId = widget.server.id;
+      final focused = _focusedServerNotifier;
+      Future.microtask(() => focused.clear(serverId));
     }
-    // Riverpod forbids mutating providers during dispose / tree finalization.
-    final serverId = widget.server.id;
-    final focused = _focusedServerNotifier;
-    Future.microtask(() => focused.clear(serverId));
     super.dispose();
+  }
+
+  /// The live daemon session for this server, or null when it has no route to
+  /// one (no SSH transport to forward through and no stored endpoint, or a
+  /// previous open failed).
+  Future<MaidCafeStreamSession?> _ensureDaemon() async {
+    final live = _daemon;
+    if (live != null && !live.isClosed) return live;
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    _daemon = session;
+    return session;
+  }
+
+  /// Runs a read on the daemon when a session exists, falling back to SSH.
+  ///
+  /// Reads are safe to retry: the daemon may simply not see this container —
+  /// a user-scoped runtime, or one it has no binary for — and a daemon older
+  /// than the detail reads has no such route at all. Actions take the opposite
+  /// rule and surface a daemon failure instead of replaying it over SSH.
+  Future<T> _daemonOrSsh<T>(
+    Future<T> Function(MaidCafeStreamSession session) daemon,
+    Future<T> Function() ssh,
+  ) async {
+    final session = await _ensureDaemon();
+    if (session != null) {
+      try {
+        return await daemon(session);
+      } catch (error) {
+        if (!_connected(ref.read(sessionsProvider).asData?.value)) rethrow;
+      }
+    }
+    return ssh();
   }
 
   bool _connected(List<SshSessionInfo>? sessions) {
@@ -128,10 +184,15 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(interval, (_) {
       if (!mounted) return;
-      if (!_connected(ref.read(sessionsProvider).asData?.value)) return;
+      final live = _daemon;
+      if ((live == null || live.isClosed) &&
+          !_connected(ref.read(sessionsProvider).asData?.value)) {
+        return;
+      }
       unawaited(_loadStats());
       // Keep inspect state reasonably fresh without spamming logs.
       unawaited(_loadInspect(silent: true));
+      unawaited(_loadUpdateStatus());
     });
   }
 
@@ -145,7 +206,17 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
   }
 
   Future<void> _bootstrap() async {
-    await Future.wait([_loadInspect(), _startLogFollow(), _loadStats()]);
+    // Resolve the daemon route first: the panels below prefer it, and the
+    // build decides what to show from whether one exists.
+    await _ensureDaemon();
+    if (!mounted) return;
+    setState(() {});
+    await Future.wait([
+      _loadInspect(),
+      _startLogFollow(),
+      _loadStats(),
+      _loadUpdateStatus(),
+    ]);
   }
 
   Future<void> _loadInspect({bool silent = false}) async {
@@ -156,15 +227,18 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       });
     }
     try {
-      final detail = await ref
-          .read(connectionManagerProvider)
-          .inspectContainer(
-            widget.server.id,
-            runtime: widget.runtime,
-            scope: widget.scope,
-            containerId: widget.containerId,
-            sudoPassword: await _sudoPassword(),
-          );
+      final detail = await _daemonOrSsh(
+        _inspectFromDaemon,
+        () async => ref
+            .read(connectionManagerProvider)
+            .inspectContainer(
+              widget.server.id,
+              runtime: widget.runtime,
+              scope: widget.scope,
+              containerId: widget.containerId,
+              sudoPassword: await _sudoPassword(),
+            ),
+      );
       if (!mounted) return;
       setState(() {
         _inspect = detail;
@@ -180,6 +254,49 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     }
   }
 
+  /// One container's inspect payload from the daemon. The daemon serves the
+  /// runtime's own object unmodified, the same document the SSH path parses.
+  Future<ContainerInspectDetail> _inspectFromDaemon(
+    MaidCafeStreamSession session,
+  ) async {
+    final payload = await session.containerInspect(widget.containerId);
+    final object = payload['inspect'];
+    if (object is! Map) {
+      throw StateError('The daemon returned no inspect payload.');
+    }
+    final json = object.map((key, value) => MapEntry(key.toString(), value));
+    return ContainerInspectDetail.fromInspectJson(
+      json,
+      rawJson: jsonEncode(object),
+    );
+  }
+
+  /// This container's update status from the daemon's cache, without asking a
+  /// registry. A daemon older than the update feature, or one that cannot see
+  /// this container, simply leaves the badge off.
+  Future<void> _loadUpdateStatus({bool check = false}) async {
+    final session = await _ensureDaemon();
+    if (session == null) {
+      if (mounted && _updateStatus != null) {
+        setState(() => _updateStatus = null);
+      }
+      return;
+    }
+    try {
+      final payload = check
+          ? await session.containerUpdateCheck(widget.containerId)
+          : await session.containerUpdates();
+      final status = parseContainerUpdates(
+        payload,
+        single: check,
+      ).forContainer(widget.containerId, name: widget.containerName);
+      if (!mounted) return;
+      setState(() => _updateStatus = status);
+    } catch (_) {
+      // No update route, or an answer the daemon could not give.
+    }
+  }
+
   Future<void> _stopLogFollow() async {
     _logFollowGeneration++;
     _logFlushTimer?.cancel();
@@ -187,8 +304,11 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     _pendingLogChunks.clear();
     final follow = _logFollow;
     _logFollow = null;
+    final subscription = _logSubscription;
+    _logSubscription = null;
     if (mounted) setState(() => _followingLogs = false);
     await follow?.cancel();
+    await subscription?.cancel();
   }
 
   void _appendLogChunk(String chunk, int generation) {
@@ -208,6 +328,14 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     });
   }
 
+  /// Follows this container's logs.
+  ///
+  /// SSH is preferred wherever it is available: `logs -f` streams the moment
+  /// the runtime writes, where the daemon's deltas arrive on its own capture
+  /// cadence and only for the containers it is tailing. The daemon takes over
+  /// when there is no SSH session — a browser above all — and then the window
+  /// is its captured tail (the history that survives a restart), with the
+  /// `logs` stream following it.
   Future<void> _startLogFollow() async {
     await _stopLogFollow();
     if (!mounted) return;
@@ -218,6 +346,24 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       _loadingLogs = true;
       _followingLogs = false;
     });
+    final sshConnected = _connected(ref.read(sessionsProvider).asData?.value);
+    if (!sshConnected) {
+      final session = await _ensureDaemon();
+      if (session != null) {
+        try {
+          await _followLogsFromDaemon(session, generation);
+          return;
+        } catch (error) {
+          if (!mounted || generation != _logFollowGeneration) return;
+          setState(() {
+            _logsError = error;
+            _loadingLogs = false;
+            _followingLogs = false;
+          });
+          return;
+        }
+      }
+    }
     try {
       final handle = await ref
           .read(connectionManagerProvider)
@@ -267,6 +413,84 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     }
   }
 
+  /// Opens this container's logs over the daemon: the captured window first,
+  /// then the `logs` stream the daemon already tails it on.
+  Future<void> _followLogsFromDaemon(
+    MaidCafeStreamSession session,
+    int generation,
+  ) async {
+    var lines = parseContainerLogLines(
+      await session.containerLogs(
+        widget.containerId,
+        source: 'captured',
+        lines: _logTail,
+      ),
+    );
+    if (lines.isEmpty) {
+      // The captured ring is keyed by the id the daemon's own collector saw,
+      // and a container the daemon is not tailing (logs disabled, or started a
+      // moment ago) has no entry at all. The runtime answers for it.
+      lines = parseContainerLogLines(
+        await session.containerLogs(
+          widget.containerId,
+          source: 'runtime',
+          lines: _logTail,
+        ),
+      );
+    }
+    if (!mounted || generation != _logFollowGeneration) return;
+    setState(() {
+      _logs = _renderLogLines(lines);
+      _loadingLogs = false;
+      _logsError = null;
+    });
+    final subscription = session
+        .openStream(events: const {MaidCafeStreamEventType.logs})
+        .listen(
+          (event) {
+            if (event.type != MaidCafeStreamEventType.logs) return;
+            if (!mounted || generation != _logFollowGeneration) return;
+            if (!_logFrameMatches(event.data)) return;
+            final delta = parseContainerLogLines(event.data);
+            if (delta.isEmpty) return;
+            _appendLogChunk(_renderLogLines(delta), generation);
+          },
+          onError: (Object _) {},
+          onDone: () {},
+        );
+    if (!mounted || generation != _logFollowGeneration) {
+      await subscription.cancel();
+      return;
+    }
+    _logSubscription = subscription;
+    setState(() => _followingLogs = true);
+  }
+
+  /// Whether a `logs` frame is about this container. The frame carries the id
+  /// the daemon's collector listed, which is the same id the daemon's list
+  /// hands out — but a container reached over SSH may be a shorter or longer
+  /// prefix of it, so an either-way prefix match is the safe comparison.
+  bool _logFrameMatches(Object? data) {
+    if (data is! Map) return false;
+    final frame = data['container']?.toString() ?? '';
+    final target = widget.containerId;
+    if (frame.isEmpty || target.isEmpty) return false;
+    return frame == target ||
+        frame.startsWith(target) ||
+        target.startsWith(frame);
+  }
+
+  String _renderLogLines(List<ContainerLogLine> lines) {
+    final buffer = StringBuffer();
+    for (final line in lines) {
+      if (_logTimestamps && line.timestamp != null) {
+        buffer.write('${line.timestamp!.toUtc().toIso8601String()} ');
+      }
+      buffer.writeln(line.line);
+    }
+    return buffer.toString();
+  }
+
   Future<void> _loadStats() async {
     final running = _inspect?.isRunning ?? true;
     if (!running) {
@@ -274,18 +498,26 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       return;
     }
     try {
-      final samples = await ref
-          .read(connectionManagerProvider)
-          .listContainerStats(
-            widget.server.id,
-            runtime: widget.runtime,
-            scope: widget.scope,
-            containerIds: [widget.containerId],
-            sudoPassword: await _sudoPassword(),
-          );
+      final stats = await _daemonOrSsh(
+        (session) async => ContainerStats.fromDaemonJson(
+          await session.containerStats(widget.containerId),
+        ),
+        () async {
+          final samples = await ref
+              .read(connectionManagerProvider)
+              .listContainerStats(
+                widget.server.id,
+                runtime: widget.runtime,
+                scope: widget.scope,
+                containerIds: [widget.containerId],
+                sudoPassword: await _sudoPassword(),
+              );
+          return samples.isEmpty ? null : samples.first;
+        },
+      );
       if (!mounted) return;
       setState(() {
-        _stats = samples.isEmpty ? null : samples.first;
+        _stats = stats;
         _statsError = null;
       });
     } catch (error) {
@@ -346,9 +578,7 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     }
     setState(() => _actionBusy = true);
     try {
-      final session = await ref
-          .read(maidCafeSessionRegistryProvider)
-          .sessionFor(widget.server);
+      final session = await _ensureDaemon();
       if (session != null) {
         // Daemon present: run the native op. The daemon validates the
         // target and elevates through sudo -n when needed.
@@ -388,6 +618,67 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       if (!mounted) return;
       showStyledSnackBar(
         title: 'containerActionError'.tr(args: [action.label.toLowerCase()]),
+        message: error.toString(),
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    } finally {
+      if (mounted) setState(() => _actionBusy = false);
+    }
+  }
+
+  /// Runs the daemon's image pull, or its pull-and-recreate update.
+  ///
+  /// Both are daemon-native: each reads the container's own configuration to
+  /// learn which runtime holds it and which image it was created from, so
+  /// there is no SSH equivalent to fall back to — a workstation session would
+  /// have to reconstruct the reference itself, which is the guess the daemon
+  /// refuses to make. A container that is not compose-managed is refused by
+  /// the daemon with the reason, which is what the error snackbar shows.
+  Future<void> _runContainerUpdate(String verb) async {
+    if (_actionBusy) return;
+    final name = _inspect?.name.isNotEmpty == true
+        ? _inspect!.name
+        : widget.containerName;
+    final session = await _ensureDaemon();
+    if (!mounted) return;
+    if (session == null) {
+      showStyledSnackBar(
+        title: 'containerUpdateNeedsDaemon'.tr(),
+        message: widget.containerName,
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+      return;
+    }
+    final pullOnly = verb == 'pull';
+    if (!pullOnly) {
+      final approved = await showMaidKitConfirmAlert(
+        'containerUpdateConfirm'.tr(args: [name]),
+        'containerUpdate'.tr(),
+      );
+      if (!approved || !mounted) return;
+    }
+    setState(() => _actionBusy = true);
+    try {
+      final result = await session.runContainerAction(
+        widget.containerId,
+        verb,
+        invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+      );
+      result.ensureSuccess();
+      if (!mounted) return;
+      showStyledSnackBar(
+        title: (pullOnly ? 'containerPullDone' : 'containerUpdateDone').tr(),
+        message: name,
+        icon: Symbols.check_circle,
+        accentColor: Theme.of(context).colorScheme.primary,
+      );
+      await _bootstrap();
+    } catch (error) {
+      if (!mounted) return;
+      showStyledSnackBar(
+        title: (pullOnly ? 'containerPull' : 'containerUpdate').tr(),
         message: error.toString(),
         icon: Symbols.error,
         accentColor: Theme.of(context).colorScheme.error,
@@ -620,18 +911,16 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Container inspection, actions, and logs all run over SSH.
-    if (kIsWeb) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.containerName)),
-        body: Center(child: Text('commonUnavailable'.tr())),
-      );
-    }
     final sessions = ref.watch(sessionsProvider).asData?.value ?? const [];
     final session = sessions
         .where((item) => item.serverId == widget.server.id)
         .firstOrNull;
-    final connected = session?.status == SessionStatus.connected;
+    final sshConnected = session?.status == SessionStatus.connected;
+    final daemonLive = _daemon != null && !_daemon!.isClosed;
+    // The reads and actions prefer the daemon, so the page is usable whenever
+    // either transport answers. That is what a browser with a daemon route but
+    // no SSH at all needs.
+    final connected = sshConnected || daemonLive;
     final inspect = _inspect;
     final running = inspect?.isRunning ?? false;
     final title = inspect?.name.isNotEmpty == true
@@ -673,20 +962,27 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
                   unawaited(_runContainerCommand(attach: true));
                 case 'recreate':
                   unawaited(_recreateFromInspect());
+                case 'pull':
+                  unawaited(_runContainerUpdate('pull'));
+                case 'update':
+                  unawaited(_runContainerUpdate('update'));
+                case 'check-updates':
+                  unawaited(_loadUpdateStatus(check: true));
               }
             },
             itemBuilder: (context) {
               final scheme = Theme.of(context).colorScheme;
               final paused = inspect?.isPaused ?? false;
+              final update = _updateStatus;
               return [
                 PopupMenuItem(
                   value: 'exec',
-                  enabled: running,
+                  enabled: running && sshConnected,
                   child: Text('containerExec'.tr()),
                 ),
                 PopupMenuItem(
                   value: 'attach',
-                  enabled: running,
+                  enabled: running && sshConnected,
                   child: Text('containerAttach'.tr()),
                 ),
                 const PopupMenuDivider(),
@@ -732,7 +1028,28 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
                 ),
                 const PopupMenuDivider(),
                 PopupMenuItem(
+                  value: 'pull',
+                  enabled: daemonLive && !_actionBusy,
+                  child: Text('containerPull'.tr()),
+                ),
+                PopupMenuItem(
+                  value: 'update',
+                  enabled: daemonLive && !_actionBusy,
+                  child: Text('containerUpdate'.tr()),
+                ),
+                PopupMenuItem(
+                  value: 'check-updates',
+                  enabled: daemonLive && !_actionBusy,
+                  child: Text(
+                    update?.hasUpdate == true
+                        ? 'containerUpdateAvailable'.tr()
+                        : 'containerUpdateCheckNow'.tr(),
+                  ),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem(
                   value: 'recreate',
+                  enabled: sshConnected && !_actionBusy,
                   child: Text('containerReCreateInspect'.tr()),
                 ),
               ];
@@ -744,9 +1061,11 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       body: !connected && inspect == null
           ? _EmptyBody(
               icon: Symbols.link_off,
-              message: session?.error ?? 'containerConnectToInspect'.tr(),
-              actionLabel: 'commonConnect'.tr(),
-              onAction: _connect,
+              message: kIsWeb
+                  ? 'containersNoDaemonRoute'.tr()
+                  : session?.error ?? 'containerConnectToInspect'.tr(),
+              actionLabel: kIsWeb ? null : 'commonConnect'.tr(),
+              onAction: kIsWeb ? null : _connect,
             )
           : _DetailWorkspace(
               overview: _OverviewPanel(
@@ -761,6 +1080,7 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
                 error: _inspectError,
                 stats: _stats,
                 statsError: _statsError,
+                updateStatus: _updateStatus,
                 onConnect: _connect,
                 onRefresh: () => unawaited(_bootstrap()),
               ),
@@ -786,7 +1106,9 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
                   unawaited(_startLogFollow());
                 },
                 onCopy: _copy,
-                onRecreate: inspect == null
+                // Re-creating replays a `run` command over a shell, so the
+                // pane only offers it where that shell exists.
+                onRecreate: inspect == null || !sshConnected
                     ? null
                     : () => unawaited(_recreateFromInspect()),
               ),
@@ -902,6 +1224,7 @@ class _OverviewPanel extends StatelessWidget {
     required this.error,
     required this.stats,
     required this.statsError,
+    this.updateStatus,
     required this.onConnect,
     required this.onRefresh,
   });
@@ -917,6 +1240,9 @@ class _OverviewPanel extends StatelessWidget {
   final Object? error;
   final ContainerStats? stats;
   final Object? statsError;
+
+  /// The daemon's update answer for this container, when it has one.
+  final ContainerUpdateStatus? updateStatus;
   final Future<void> Function() onConnect;
   final VoidCallback onRefresh;
 
@@ -957,6 +1283,13 @@ class _OverviewPanel extends StatelessWidget {
             status: inspect!.status,
             running: inspect!.isRunning,
           ),
+          if (updateStatus?.hasUpdate == true) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: ContainerUpdateBadge(status: updateStatus!),
+            ),
+          ],
           const SizedBox(height: 16),
           _KeyValue(
             label: 'containerFieldId'.tr(),

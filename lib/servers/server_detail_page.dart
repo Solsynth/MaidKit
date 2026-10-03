@@ -884,10 +884,15 @@ class _InspectorTabsState extends State<_InspectorTabs>
   /// reached from a browser (over the cloud relay / WebSocket).
   static const _maidCafeTabIndex = 12;
 
+  /// Index of the containers tab. Its list, detail reads and update actions go
+  /// through the daemon whenever there is no SSH session to use instead, which
+  /// is what a browser has (see `docs/WEB_SUPPORT.md`).
+  static const _containersTabIndex = 6;
+
   /// Tabs visible on this platform, in tab-bar order. Every other tab collects
   /// its data over SSH, which a browser does not have.
   static final List<int> _visibleTabIndices = kIsWeb
-      ? const <int>[_maidCafeTabIndex]
+      ? const <int>[_containersTabIndex, _maidCafeTabIndex]
       : List<int>.generate(_tabCount, (index) => index);
 
   late final TabController _tabController;

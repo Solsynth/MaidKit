@@ -79,6 +79,7 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 
 - Docker and Podman container management
 - Start, stop, restart, pause, kill, and remove containers
+- Inspect, live stats, and log tails per container, and an update badge that pulls the image the container was created from — plus a one-tap recreate for compose-managed containers
 - Compose project grouping with detail view (per-service status, merged logs, lifecycle actions)
 - Container image management
 - Runtime installation assistance
