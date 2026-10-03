@@ -80,7 +80,7 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 - Docker and Podman container management
 - Start, stop, restart, pause, kill, and remove containers
 - Inspect, live stats, and log tails per container, and an update badge that pulls the image the container was created from — plus a one-tap recreate for compose-managed containers
-- Managed compose stacks: a scan assigns the projects on a host to its daemon (from a starting point you choose), and they then appear as projects in the container list, with the directory the daemon runs compose in and how many of their containers are up
+- Managed compose stacks: a scan assigns the projects on a host to its daemon (from a starting point you choose), and they then appear as projects in the container list, with the directory the daemon runs compose in and how many of their containers are up. A project row updates that whole stack — every service's image pulled, its containers recreated — and the tab's header updates every managed stack on the server, one at a time
 - Compose project grouping with detail view (per-service status, merged logs, lifecycle actions)
 - Container image management
 - Runtime installation assistance

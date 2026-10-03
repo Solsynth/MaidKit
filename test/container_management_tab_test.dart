@@ -3,6 +3,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/containers/container_management_tab.dart';
@@ -33,6 +34,13 @@ class _StubSession implements MaidCafeStreamSession {
 
   /// The scan requests this session was asked to make, as `path|depth`.
   final scans = <String>[];
+
+  /// The compose actions this session was asked to run, as
+  /// `project|verb|directory`.
+  final composeActions = <String>[];
+
+  /// Projects whose stack update should fail, with the daemon's message.
+  final failures = <String, String>{};
 
   @override
   bool get isClosed => false;
@@ -91,6 +99,25 @@ class _StubSession implements MaidCafeStreamSession {
   }
 
   @override
+  Future<MaidCafeOpResult> runComposeAction(
+    String project,
+    String verb,
+    String directory, {
+    String? invokedBy,
+  }) async {
+    composeActions.add('$project|$verb|$directory');
+    final failure = failures[project];
+    if (failure != null) {
+      return MaidCafeOpResult.parse({
+        'ok': false,
+        'exit_code': 1,
+        'stderr': failure,
+      });
+    }
+    return MaidCafeOpResult.parse({'ok': true, 'exit_code': 0});
+  }
+
+  @override
   Future<void> close() async {}
 
   @override
@@ -140,6 +167,8 @@ void main() {
     WidgetTester tester, {
     required MaidCafeSessionRegistry registry,
   }) async {
+    final overlayKey = GlobalKey<OverlayState>();
+    IslandUIFoundation.configureOverlay(overlayKey);
     await tester.pumpWidget(
       EasyLocalization(
         supportedLocales: const [Locale('en', 'US')],
@@ -155,24 +184,34 @@ void main() {
             ),
           ],
           child: MaterialApp(
-            home: Scaffold(
-              body: ContainerManagementTab(
-                server: Server(
-                  id: 1,
-                  name: 'Build host',
-                  host: 'build.example',
-                  port: 22,
-                  username: 'builder',
-                  collectStats: true,
-                  collectSystemInfo: true,
-                  connectionType: 'ssh',
-                  maidCafeTerminalViaCloud: false,
+            // The app's confirmations render through IslandUIFoundation's
+            // overlay, so a test that taps one has to install the key the
+            // app installs at startup.
+            home: Overlay(
+              key: overlayKey,
+              initialEntries: [
+                OverlayEntry(
+                  builder: (context) => Scaffold(
+                    body: ContainerManagementTab(
+                      server: Server(
+                        id: 1,
+                        name: 'Build host',
+                        host: 'build.example',
+                        port: 22,
+                        username: 'builder',
+                        collectStats: true,
+                        collectSystemInfo: true,
+                        connectionType: 'ssh',
+                        maidCafeTerminalViaCloud: false,
+                      ),
+                      connected: true,
+                      connectionError: null,
+                      onConnect: () async {},
+                      refreshInterval: const Duration(minutes: 5),
+                    ),
+                  ),
                 ),
-                connected: true,
-                connectionError: null,
-                onConnect: () async {},
-                refreshInterval: const Duration(minutes: 5),
-              ),
+              ],
             ),
           ),
         ),
@@ -318,5 +357,150 @@ void main() {
     // snackbar, which this harness cannot observe.
     expect(find.text('storefront'), findsOneWidget);
     expect(find.text('/opt/stacks/web'), findsOneWidget);
+  });
+
+  testWidgets('one managed stack is updated whole, from its own row', (
+    tester,
+  ) async {
+    final session = _StubSession(
+      stacks: {
+        'stacks': [
+          {
+            'project': 'myapp',
+            'directory': '/opt/myapp',
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+        ],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+      containersPayload: {
+        'runtimes': [
+          {
+            'runtime': 'docker',
+            'available': true,
+            'containers': [
+              {
+                'id': 'abcdef123456',
+                'name': 'web',
+                'image': 'nginx:1.25',
+                'state': 'running',
+                'status': 'Up 3 hours',
+                'compose_project': 'myapp',
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    await pump(tester, registry: _StubRegistry(session));
+
+    await tester.tap(find.byIcon(Symbols.upgrade));
+    await tester.pumpAndSettle();
+    // The confirmation names what the update does before anything runs.
+    expect(
+      find.text('composeStacksUpdateConfirm'.tr(args: ['myapp'])),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    // No directory is sent: the daemon runs the project where its registry
+    // says it lives, which is what makes an unassigned project a refusal
+    // rather than an update somewhere this app guessed.
+    expect(session.composeActions, ['myapp|update|']);
+  });
+
+  testWidgets('every managed stack is updated one at a time', (tester) async {
+    Map<String, dynamic> stack(String project, String directory) => {
+      'project': project,
+      'directory': directory,
+      'services': ['web'],
+      'running': 1,
+      'total': 1,
+    };
+    final session = _StubSession(
+      stacks: {
+        'stacks': [stack('alpha', '/opt/alpha'), stack('beta', '/opt/beta')],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+    );
+
+    await pump(tester, registry: _StubRegistry(session));
+
+    await tester.tap(find.byIcon(Symbols.update));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('composeStacksUpdateAllConfirm'.tr(args: ['2'])),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    // Sequential, in registry order, and each one whole-stack.
+    expect(session.composeActions, ['alpha|update|', 'beta|update|']);
+    // The dialog reports per stack and stays up for reading.
+    expect(find.text('alpha'), findsWidgets);
+    expect(find.text('beta'), findsWidgets);
+    expect(
+      find.text('composeStacksUpdateSummary'.tr(args: ['2', '0'])),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a stack that fails does not stop the rest', (tester) async {
+    final session = _StubSession(
+      stacks: {
+        'stacks': [
+          {
+            'project': 'alpha',
+            'directory': '/opt/alpha',
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+          {
+            'project': 'beta',
+            'directory': '/opt/beta',
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+        ],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+    )..failures['alpha'] = 'project "alpha" is not a stack this daemon manages';
+
+    await pump(tester, registry: _StubRegistry(session));
+
+    await tester.tap(find.byIcon(Symbols.update));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    expect(session.composeActions, ['alpha|update|', 'beta|update|']);
+    // The daemon's own words explain the failure, and the summary counts it.
+    expect(
+      find.textContaining('is not a stack this daemon manages'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('composeStacksUpdateSummary'.tr(args: ['1', '1'])),
+      findsOneWidget,
+    );
   });
 }

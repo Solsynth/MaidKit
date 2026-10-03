@@ -213,7 +213,9 @@ assigned to that daemon: the containers tab's scan action takes a starting point
 you pick, and every project it assigns then appears as a project in the
 container list, with the daemon's directory for it and how many of its
 containers are up — so no client has to know a path compose was never told
-either. What remains SSH-only is the
+either. A project row updates that whole stack (every service pulled, its
+containers recreated), and the header updates every managed stack on the server
+one at a time, reporting each stack's own outcome. What remains SSH-only is the
 interactive half — exec, attach, and re-creating a container from its inspect
 payload — which the app does not offer without a shell.
 

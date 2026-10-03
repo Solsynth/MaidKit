@@ -11,6 +11,7 @@ import 'package:super_context_menu/super_context_menu.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'container_list_tile.dart';
 import 'compose_scan_dialog.dart';
+import 'compose_stack_update.dart';
 import 'container_models.dart';
 import 'container_runtime_install.dart';
 import 'project_repository.dart';
@@ -477,6 +478,64 @@ class _ContainerManagementTabState
     }
   }
 
+  /// Updates one whole stack: the daemon pulls every service's image and
+  /// recreates the project's containers on them, in the directory it manages
+  /// for that project. The app sends no directory, so a project the registry
+  /// does not hold is refused rather than updated somewhere this app picked.
+  Future<void> _updateStack(ComposeStack stack) async {
+    final session = await _ensureMaidCafeStream();
+    if (!mounted || session == null) return;
+    if (!await confirmComposeStackUpdate(context, stack)) return;
+    if (!mounted) return;
+    await updateComposeStack(
+      context,
+      session: session,
+      stack: stack,
+      invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+    );
+    if (!mounted) return;
+    await _load(force: true);
+  }
+
+  /// Updates every stack this daemon manages, one at a time.
+  ///
+  /// Sequential on purpose: each stack is a pull and a recreate on a real host,
+  /// and the daemon already serializes native operations — issuing them
+  /// together would only queue them behind each other while making progress
+  /// unreadable. One stack failing does not stop the rest.
+  Future<void> _updateAllStacks() async {
+    final session = await _ensureMaidCafeStream();
+    if (!mounted || session == null) return;
+    final stacks = _stacks.stacks;
+    if (stacks.isEmpty) return;
+    if (!await confirmComposeStackUpdateAll(context, stacks.length)) return;
+    if (!mounted) return;
+    final invokedBy = ref.read(cloudUserProvider).asData?.value?.handle;
+    await showComposeStackUpdateAllDialog(
+      context: context,
+      stacks: stacks,
+      run: (stack) async {
+        try {
+          final result = await session.runComposeAction(
+            stack.project,
+            'update',
+            '',
+            invokedBy: invokedBy,
+          );
+          result.ensureSuccess();
+          return ComposeStackUpdateOutcome(stack: stack);
+        } catch (error) {
+          return ComposeStackUpdateOutcome(
+            stack: stack,
+            error: error.toString(),
+          );
+        }
+      },
+    );
+    if (!mounted) return;
+    await _load(force: true);
+  }
+
   /// Refreshes the daemon's managed compose stacks, which is what makes a
   /// container's project a project row on this tab — with the directory the
   /// daemon runs compose in, which the containers themselves do not carry. A
@@ -673,6 +732,8 @@ class _ContainerManagementTabState
               stacks: _stacks,
               onRefresh: _refreshManually,
               onScan: _maidCafeStream == null ? null : _scanComposeStacks,
+              onUpdateAll: _maidCafeStream == null ? null : _updateAllStacks,
+              onUpdateStack: _maidCafeStream == null ? null : _updateStack,
               onAction: _runAction,
               onUpdateAction: _maidCafeStream == null
                   ? null
@@ -924,6 +985,8 @@ class _ContainerEnvironments extends ConsumerWidget {
     required this.stacks,
     required this.onRefresh,
     this.onScan,
+    this.onUpdateAll,
+    this.onUpdateStack,
     required this.onAction,
     this.onUpdateAction,
     required this.onInstallRuntime,
@@ -947,6 +1010,14 @@ class _ContainerEnvironments extends ConsumerWidget {
   /// Opens the scan that assigns compose projects to the daemon. Null when no
   /// daemon route is open, which is also when the registry cannot be read.
   final Future<void> Function()? onScan;
+
+  /// Updates every managed stack, one at a time. Null without a daemon route,
+  /// and the control is hidden when no stack is assigned.
+  final Future<void> Function()? onUpdateAll;
+
+  /// Updates one whole stack. Null without a daemon route, which is also when
+  /// the daemon could not resolve the project's directory.
+  final Future<void> Function(ComposeStack stack)? onUpdateStack;
   final Future<void> Function(
     ContainerEnvironment,
     ServerContainer,
@@ -1043,6 +1114,13 @@ class _ContainerEnvironments extends ConsumerWidget {
                   onPressed: onScan,
                   icon: const Icon(Symbols.scan),
                 ),
+              if (onUpdateAll != null && stacks.stacks.isNotEmpty)
+                IconButton(
+                  tooltip: 'composeStacksUpdateAll'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onUpdateAll,
+                  icon: const Icon(Symbols.update),
+                ),
             ],
           ),
         ),
@@ -1066,6 +1144,7 @@ class _ContainerEnvironments extends ConsumerWidget {
                     updates: updates,
                     onAction: onAction,
                     onUpdateAction: onUpdateAction,
+                    onUpdateStack: onUpdateStack,
                   ),
                   if (i != projects.length - 1) const SizedBox(height: 8),
                 ],
@@ -1141,6 +1220,7 @@ class _ProjectCollapsibleTile extends StatelessWidget {
     required this.updates,
     required this.onAction,
     this.onUpdateAction,
+    this.onUpdateStack,
   });
 
   final Server server;
@@ -1148,6 +1228,10 @@ class _ProjectCollapsibleTile extends StatelessWidget {
 
   /// The daemon's update answers, for the per-container badges.
   final ContainerUpdates updates;
+
+  /// Updates this whole stack when the daemon manages it. Null without a daemon
+  /// route, which is also when there is no directory to run compose in.
+  final Future<void> Function(ComposeStack stack)? onUpdateStack;
 
   final Future<void> Function(
     ContainerEnvironment,
@@ -1269,15 +1353,30 @@ class _ProjectCollapsibleTile extends StatelessWidget {
               ],
             ),
           ),
-          trailing: project.link == null
+          trailing:
+              (project.link == null &&
+                  (onUpdateStack == null || project.stack == null))
               ? null
-              : IconButton(
-                  tooltip: 'containersOpenProject'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => context.router.push(
-                    ProjectDetailRoute(linkId: project.link!.id),
-                  ),
-                  icon: const Icon(Symbols.open_in_new, size: 20),
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (onUpdateStack != null && project.stack != null)
+                      IconButton(
+                        tooltip: 'composeStacksUpdate'.tr(),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => onUpdateStack!(project.stack!),
+                        icon: const Icon(Symbols.upgrade, size: 20),
+                      ),
+                    if (project.link != null)
+                      IconButton(
+                        tooltip: 'containersOpenProject'.tr(),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => context.router.push(
+                          ProjectDetailRoute(linkId: project.link!.id),
+                        ),
+                        icon: const Icon(Symbols.open_in_new, size: 20),
+                      ),
+                  ],
                 ),
           children: [
             Divider(height: 1, color: scheme.outlineVariant),
