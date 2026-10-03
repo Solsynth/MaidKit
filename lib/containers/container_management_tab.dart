@@ -10,10 +10,11 @@ import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'container_list_tile.dart';
-import 'compose_stacks_section.dart';
+import 'compose_scan_dialog.dart';
 import 'container_models.dart';
 import 'container_runtime_install.dart';
 import 'project_repository.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
@@ -23,6 +24,7 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 
 /// A reusable container-management surface for a single server. Its data is
 /// scoped by runtime (Docker/Podman) and by user/root environment so it can be
@@ -83,9 +85,11 @@ class _ContainerManagementTabState
   /// daemon route, and on a daemon older than the update feature.
   ContainerUpdates _updates = const ContainerUpdates();
 
-  /// Bumped on a manual refresh so the managed compose stacks section reloads
-  /// alongside the rest of the tab.
-  var _composeStacksRefreshToken = 0;
+  /// The compose projects the daemon manages, as its scan registry reports
+  /// them. They are what turns a container's project into a project row even
+  /// when this app has no link for it, and they carry the directory the daemon
+  /// runs compose in. Empty without a daemon route, or before the first read.
+  ComposeStacksSnapshot _stacks = const ComposeStacksSnapshot();
 
   /// Whether the daemon is the only transport this client can offer — a
   /// browser, which has no SSH at all. A native client keeps its SSH default
@@ -200,6 +204,7 @@ class _ContainerManagementTabState
                 _environments = AsyncValue.data(_environmentsFrom(snapshot));
               });
               unawaited(_loadUpdateStatuses(session));
+              unawaited(_loadManagedStacks(session));
               return;
             }
             if (!snapshot.hasRuntimes) {
@@ -233,6 +238,9 @@ class _ContainerManagementTabState
       if (mounted) {
         setState(() {
           _containersFromMaidCafe = false;
+          // The registry is the daemon's: a list served over SSH has no daemon
+          // behind it, so its projects come from the containers themselves.
+          _stacks = const ComposeStacksSnapshot();
           _hasLoadedEnvironments = true;
           _environments = AsyncValue.data(environments);
         });
@@ -254,9 +262,6 @@ class _ContainerManagementTabState
       _containersUnavailable = false;
       _maidCafeStream = null;
       _sessionRegistry.invalidate(widget.server);
-    }
-    if (mounted) {
-      setState(() => _composeStacksRefreshToken++);
     }
     await _load(force: true);
   }
@@ -472,6 +477,57 @@ class _ContainerManagementTabState
     }
   }
 
+  /// Refreshes the daemon's managed compose stacks, which is what makes a
+  /// container's project a project row on this tab — with the directory the
+  /// daemon runs compose in, which the containers themselves do not carry. A
+  /// daemon older than the registry leaves the list grouped exactly as before.
+  Future<void> _loadManagedStacks(MaidCafeStreamSession session) async {
+    try {
+      final stacks = parseComposeStacks(await session.composeStacks());
+      if (!mounted) return;
+      setState(() => _stacks = stacks);
+    } catch (_) {
+      // No registry on this daemon: the projects come from the containers.
+    }
+  }
+
+  /// Asks where to look for compose projects and scans there. The assignment
+  /// is the daemon's to keep, so the answer comes back as a fresh registry
+  /// rather than as state this tab invents.
+  Future<void> _scanComposeStacks() async {
+    final session = await _ensureMaidCafeStream();
+    if (!mounted) return;
+    if (session == null) return;
+    final outcome = await showComposeStackScanDialog(
+      context: context,
+      policy: _stacks.scan,
+      onScan: (path, depth) =>
+          runComposeStackScan(session, path: path, depth: depth),
+    );
+    if (outcome == null || !mounted) return;
+    setState(() {
+      _stacks = ComposeStacksSnapshot(
+        stacks: outcome.stacks.stacks,
+        scan: _stacks.scan,
+      );
+    });
+    showStyledSnackBar(
+      title: 'composeStacksScan'.tr(),
+      message: outcome.changed
+          ? 'composeStacksScanResult'.tr(
+              args: [
+                '${outcome.found}',
+                '${outcome.added.length}',
+                '${outcome.updated.length}',
+                '${outcome.removed.length}',
+              ],
+            )
+          : 'composeStacksScanNoChange'.tr(args: ['${outcome.found}']),
+      icon: Symbols.check_circle,
+      accentColor: Theme.of(context).colorScheme.primary,
+    );
+  }
+
   /// Refreshes the daemon's cached update answers, which the list badges paint
   /// from. This reads the daemon's own cache and never asks a registry, so it
   /// costs nothing on the refresh cadence. A daemon older than the update
@@ -609,18 +665,14 @@ class _ContainerManagementTabState
           // Shown only while the list is served by the MaidCafe daemon; the
           // SSH poller is the default and gets no banner.
           if (_containersFromMaidCafe) const _ContainerDataSourceBanner(),
-          if (_maidCafeStream != null)
-            ComposeStacksSection(
-              server: widget.server,
-              ensureSession: _ensureMaidCafeStream,
-              refreshToken: _composeStacksRefreshToken,
-            ),
           Expanded(
             child: _ContainerEnvironments(
               server: widget.server,
               environments: environments,
               updates: _updates,
+              stacks: _stacks,
               onRefresh: _refreshManually,
+              onScan: _maidCafeStream == null ? null : _scanComposeStacks,
               onAction: _runAction,
               onUpdateAction: _maidCafeStream == null
                   ? null
@@ -672,21 +724,47 @@ class _ContainerDataSourceBanner extends StatelessWidget {
 class _ServerProjectGroup {
   _ServerProjectGroup({
     this.link,
+    this.stack,
     required this.name,
     this.directory,
     required this.runtime,
     required this.scope,
   });
 
+  /// This app's own deployment project, when the row is a linked one.
   final ComposeProjectLink? link;
+
+  /// The daemon's managed stack, when the row is one a scan assigned. A stack
+  /// is what tells the daemon where to run compose for these containers, so
+  /// its directory is the one the row shows and the one an upgrade uses.
+  final ComposeStack? stack;
+
   final String name;
   final String? directory;
-  final ContainerRuntime runtime;
-  final ContainerScope scope;
+
+  /// The environment the group's containers came from. Null only for a managed
+  /// stack whose containers no runtime lists: the row still names it and its
+  /// directory, without an environment to claim.
+  final ContainerRuntime? runtime;
+  final ContainerScope? scope;
   final containers = <ServerContainer>[];
 
   int get runningCount =>
       containers.where((container) => isContainerRunning(container)).length;
+
+  /// The environment these containers came from, or null for a managed stack
+  /// whose containers the daemon does not currently see: such a stack is still
+  /// assigned, and saying so is the point of showing it.
+  ContainerEnvironment? get environment {
+    final envRuntime = runtime;
+    final envScope = scope;
+    if (envRuntime == null || envScope == null) return null;
+    return ContainerEnvironment(
+      runtime: envRuntime,
+      scope: envScope,
+      containers: containers,
+    );
+  }
 }
 
 /// Composite key for a container inside a runtime/scope environment.
@@ -696,14 +774,24 @@ String _containerEnvKey(
   String containerId,
 ) => '${runtime.name}|${scope.name}|$containerId';
 
+/// The project rows for one server: this app's linked projects, then the
+/// daemon's managed stacks that no link already covers.
+///
+/// A managed stack is grouped by its own project name and, like a link, once
+/// per runtime/scope environment that holds its containers — a project's
+/// containers can live in more than one. A stack whose containers the daemon
+/// cannot see still gets a row: it is assigned, and nothing running is a fact
+/// about it.
 List<_ServerProjectGroup> _projectGroupsForServer({
   required Server server,
   required List<ComposeProjectLink> links,
+  List<ComposeStack> stacks = const [],
   required List<ContainerEnvironment> environments,
   String? focusComposeProject,
 }) {
   final groups = <_ServerProjectGroup>[];
-  for (final link in links.where((item) => item.serverId == server.id)) {
+  final linked = links.where((item) => item.serverId == server.id).toList();
+  for (final link in linked) {
     final runtime = ContainerRuntime.values.byName(link.runtime);
     final scope = ContainerScope.values.byName(link.scope);
     final group = _ServerProjectGroup(
@@ -724,6 +812,47 @@ List<_ServerProjectGroup> _projectGroupsForServer({
     }
     groups.add(group);
   }
+
+  final linkedNames = {for (final link in linked) link.name.toLowerCase()};
+  for (final stack in stacks) {
+    if (stack.project.isEmpty ||
+        linkedNames.contains(stack.project.toLowerCase())) {
+      continue;
+    }
+    var grouped = false;
+    for (final environment in environments.where((env) => env.isAvailable)) {
+      final matching = environment.containers
+          .where(
+            (container) =>
+                container.composeProject?.toLowerCase() ==
+                stack.project.toLowerCase(),
+          )
+          .toList();
+      if (matching.isEmpty) continue;
+      final group = _ServerProjectGroup(
+        stack: stack,
+        name: stack.project,
+        directory: stack.directory,
+        runtime: environment.runtime,
+        scope: environment.scope,
+      );
+      group.containers.addAll(matching);
+      groups.add(group);
+      grouped = true;
+    }
+    if (!grouped) {
+      groups.add(
+        _ServerProjectGroup(
+          stack: stack,
+          name: stack.project,
+          directory: stack.directory,
+          runtime: null,
+          scope: null,
+        ),
+      );
+    }
+  }
+
   if (focusComposeProject != null &&
       !groups.any((group) => group.name == focusComposeProject)) {
     for (final environment in environments.where((env) => env.isAvailable)) {
@@ -747,12 +876,15 @@ List<_ServerProjectGroup> _projectGroupsForServer({
   return groups;
 }
 
-/// Containers that belong to any linked project on this server.
+/// Containers that belong to any linked or managed project on this server.
 Set<String> _projectContainerKeys(List<_ServerProjectGroup> projects) {
   final keys = <String>{};
   for (final project in projects) {
+    final runtime = project.runtime;
+    final scope = project.scope;
+    if (runtime == null || scope == null) continue;
     for (final container in project.containers) {
-      keys.add(_containerEnvKey(project.runtime, project.scope, container.id));
+      keys.add(_containerEnvKey(runtime, scope, container.id));
     }
   }
   return keys;
@@ -789,7 +921,9 @@ class _ContainerEnvironments extends ConsumerWidget {
     required this.server,
     required this.environments,
     required this.updates,
+    required this.stacks,
     required this.onRefresh,
+    this.onScan,
     required this.onAction,
     this.onUpdateAction,
     required this.onInstallRuntime,
@@ -802,7 +936,17 @@ class _ContainerEnvironments extends ConsumerWidget {
   /// The daemon's update answers, for the per-container badges.
   final ContainerUpdates updates;
 
+  /// The daemon's managed compose stacks: what a scan assigned to it. They
+  /// are grouped as projects alongside this app's own project links, and they
+  /// are what the daemon needs to update a container whose own labels do not
+  /// record where its project lives.
+  final ComposeStacksSnapshot stacks;
+
   final Future<void> Function() onRefresh;
+
+  /// Opens the scan that assigns compose projects to the daemon. Null when no
+  /// daemon route is open, which is also when the registry cannot be read.
+  final Future<void> Function()? onScan;
   final Future<void> Function(
     ContainerEnvironment,
     ServerContainer,
@@ -840,6 +984,7 @@ class _ContainerEnvironments extends ConsumerWidget {
     final projects = _projectGroupsForServer(
       server: server,
       links: links,
+      stacks: stacks.stacks,
       environments: environments,
       focusComposeProject: focusComposeProject,
     );
@@ -891,6 +1036,13 @@ class _ContainerEnvironments extends ConsumerWidget {
                 onPressed: onRefresh,
                 icon: const Icon(Symbols.refresh),
               ),
+              if (onScan != null)
+                IconButton(
+                  tooltip: 'composeStacksScan'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onScan,
+                  icon: const Icon(Symbols.scan),
+                ),
             ],
           ),
         ),
@@ -1005,18 +1157,16 @@ class _ProjectCollapsibleTile extends StatelessWidget {
   onAction;
   final Future<void> Function(ServerContainer, String)? onUpdateAction;
 
-  ContainerEnvironment get _environment => ContainerEnvironment(
-    runtime: project.runtime,
-    scope: project.scope,
-    containers: project.containers,
-  );
+  /// The environment this project's containers came from, or null when the
+  /// daemon manages the project but lists none of its containers.
+  ContainerEnvironment? get _environment => project.environment;
 
   ContainerUpdateStatus? _updateFor(ServerContainer container) =>
       updates.forContainer(container.id, name: container.name);
 
   String get _runtimeLabel {
-    final name = project.runtime.name;
-    return '${name[0].toUpperCase()}${name.substring(1)}';
+    final name = project.runtime?.name ?? '';
+    return name.isEmpty ? '' : '${name[0].toUpperCase()}${name.substring(1)}';
   }
 
   String get _scopeLabel => project.scope == ContainerScope.root
@@ -1029,6 +1179,7 @@ class _ProjectCollapsibleTile extends StatelessWidget {
     final scheme = theme.colorScheme;
     final count = project.containers.length;
     final running = project.runningCount;
+    final environment = _environment;
     final statusLabel = count == 0
         ? 'containerNoContainers'.tr()
         : running == count
@@ -1064,21 +1215,54 @@ class _ProjectCollapsibleTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  project.directory ?? 'Detected from running containers',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        project.directory ??
+                            'composeProjectDirectoryUnknown'.tr(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: MaidKitFonts.mono,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    if (project.stack != null && project.directory != null)
+                      IconButton(
+                        tooltip: 'composeStacksCopyDirectory'.tr(),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        iconSize: 16,
+                        onPressed: () async {
+                          await Clipboard.setData(
+                            ClipboardData(text: project.stack!.directory),
+                          );
+                          if (!context.mounted) return;
+                          showStyledSnackBar(
+                            title: 'composeStacksCopyDirectory'.tr(),
+                            message: 'commonCopiedToClipboard'.tr(),
+                            icon: Symbols.content_copy,
+                            accentColor: scheme.primary,
+                          );
+                        },
+                        icon: const Icon(Symbols.content_copy),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 8,
                   runSpacing: 4,
                   children: [
-                    _MetaChip(label: _runtimeLabel),
-                    _MetaChip(label: _scopeLabel),
+                    if (project.stack != null)
+                      _MetaChip(label: 'composeStacksManaged'.tr()),
+                    if (environment != null) ...[
+                      _MetaChip(label: _runtimeLabel),
+                      _MetaChip(label: _scopeLabel),
+                    ],
                     _MetaChip(label: statusLabel),
                   ],
                 ),
@@ -1101,7 +1285,9 @@ class _ProjectCollapsibleTile extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                 child: Text(
-                  'containerNoContainersInProject'.tr(),
+                  project.stack == null
+                      ? 'containerNoContainersInProject'.tr()
+                      : 'composeStacksNoContainers'.tr(),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
@@ -1111,14 +1297,16 @@ class _ProjectCollapsibleTile extends StatelessWidget {
               for (var i = 0; i < project.containers.length; i++) ...[
                 _ContainerActionTile(
                   server: server,
-                  environment: _environment,
+                  // A group holds containers only when it knows the environment
+                  // they came from, so this is set wherever this branch runs.
+                  environment: environment!,
                   container: project.containers[i],
                   updateStatus: _updateFor(project.containers[i]),
                   onUpdateAction: onUpdateAction == null
                       ? null
                       : (verb) => onUpdateAction!(project.containers[i], verb),
                   onAction: (action) =>
-                      onAction(_environment, project.containers[i], action),
+                      onAction(environment, project.containers[i], action),
                 ),
                 if (i != project.containers.length - 1)
                   Divider(
