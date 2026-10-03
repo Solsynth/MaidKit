@@ -5,16 +5,11 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/server_providers.dart';
-import 'container_models.dart';
 import 'deployment_project_models.dart';
 
 final projectRepositoryProvider = Provider<ProjectRepository>((ref) {
   return ProjectRepository(ref.watch(databaseProvider));
 });
-
-final composeProjectLinksProvider = StreamProvider<List<ComposeProjectLink>>(
-  (ref) => ref.watch(projectRepositoryProvider).watchAll(),
-);
 
 final deploymentProjectsProvider = StreamProvider<List<DeploymentProject>>(
   (ref) => ref.watch(projectRepositoryProvider).watchProjects(),
@@ -29,53 +24,11 @@ class ProjectRepository {
 
   final AppDatabase _database;
 
-  Stream<List<ComposeProjectLink>> watchAll() =>
-      _database.watchComposeProjectLinks();
-
   Stream<List<DeploymentProject>> watchProjects() =>
       _database.watchDeploymentProjects();
 
   Stream<List<DeploymentResource>> watchResources() =>
       _database.watchDeploymentResources();
-
-  Future<int> saveLink({
-    int? id,
-    required int serverId,
-    required String name,
-    required String directory,
-    required ContainerRuntime runtime,
-    required ContainerScope scope,
-  }) async {
-    final existing = id == null
-        ? await (_database.select(_database.composeProjectLinks)..where(
-                (table) =>
-                    table.serverId.equals(serverId) &
-                    table.directory.equals(directory) &
-                    table.scope.equals(scope.name),
-              ))
-              .getSingleOrNull()
-        : null;
-    final values = ComposeProjectLinksCompanion(
-      serverId: Value(serverId),
-      name: Value(name),
-      directory: Value(directory),
-      runtime: Value(runtime.name),
-      scope: Value(scope.name),
-      linkedAt: Value(DateTime.now().toUtc()),
-    );
-    if (id == null && existing == null) {
-      return _database.into(_database.composeProjectLinks).insert(values);
-    } else {
-      await (_database.update(
-        _database.composeProjectLinks,
-      )..where((table) => table.id.equals(id ?? existing!.id))).write(values);
-      return id ?? existing!.id;
-    }
-  }
-
-  Future<void> deleteLink(int id) => (_database.delete(
-    _database.composeProjectLinks,
-  )..where((table) => table.id.equals(id))).go();
 
   Future<int> createProject({required String name, String? description}) {
     final now = DateTime.now().toUtc();
@@ -199,29 +152,6 @@ class ProjectRepository {
       DeploymentProjectsCompanion(updatedAt: Value(DateTime.now().toUtc())),
     );
   }
-
-  /// Save a compose link as a resource in a general deployment project.
-  Future<void> addComposeResource({
-    required int projectId,
-    required int linkId,
-    required String name,
-    required int serverId,
-    required ContainerRuntime runtime,
-    required ContainerScope scope,
-    required String directory,
-  }) => addResource(
-    projectId: projectId,
-    kind: DeploymentResourceKind.compose.name,
-    name: name,
-    serverId: serverId,
-    configuration: {
-      'compose_link_id': linkId,
-      'compose_project': name,
-      'directory': directory,
-      'runtime': runtime.name,
-      'scope': scope.name,
-    },
-  );
 
   Future<String> exportToml() async {
     final projects = await _database.select(_database.deploymentProjects).get();

@@ -212,10 +212,11 @@ record where its project lives is updated in the directory a **compose scan**
 assigned to that daemon: the containers tab's scan action takes a starting point
 you pick, and every project it assigns then appears as a project in the
 container list, with the daemon's directory for it and how many of its
-containers are up — so no client has to know a path compose was never told
-either. A project row updates that whole stack (every service pulled, its
-containers recreated), and the header updates every managed stack on the server
-one at a time, reporting each stack's own outcome. What remains SSH-only is the
+containers are up. That registry is the only source of those rows: the app keeps
+no copy of where a project lives, so a project's row cannot disagree with the
+daemon about it. A project row updates that whole stack (every service pulled,
+its containers recreated), and the header updates every managed stack on the
+server one at a time, reporting each stack's own outcome. What remains SSH-only is the
 interactive half — exec, attach, and re-creating a container from its inspect
 payload — which the app does not offer without a shell.
 

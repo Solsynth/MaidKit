@@ -67,9 +67,6 @@ void main() {
             deploymentResourcesProvider.overrideWith(
               (ref) => Stream.value([resource]),
             ),
-            composeProjectLinksProvider.overrideWith(
-              (ref) => Stream.value(<ComposeProjectLink>[]),
-            ),
           ],
           child: MaterialApp.router(
             theme: createMaidKitTheme(Brightness.light),

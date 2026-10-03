@@ -365,7 +365,6 @@
   "containersNoContainersEnv": "此环境中没有容器。",
   "containersNoDaemonRoute": "此客户端无法连接到服务器的 MaidCafe 守护进程。请在 MaidCafe 标签页中设置其端点，或使用桌面客户端。",
   "containersNotInstalled": "此服务器用户未安装 Docker 和 Podman。",
-  "containersOpenProject": "打开项目",
   "containersProjects": "项目",
   "containersRefreshTooltip": "刷新容器",
   "containersStandalone": "独立容器",

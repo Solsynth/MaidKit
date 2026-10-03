@@ -14,7 +14,6 @@ import 'compose_scan_dialog.dart';
 import 'compose_stack_update.dart';
 import 'container_models.dart';
 import 'container_runtime_install.dart';
-import 'project_repository.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.gr.dart';
@@ -784,7 +783,6 @@ class _ContainerDataSourceBanner extends StatelessWidget {
 /// Linked compose project and the live containers that belong to it.
 class _ServerProjectGroup {
   _ServerProjectGroup({
-    this.link,
     this.stack,
     required this.name,
     this.directory,
@@ -792,12 +790,9 @@ class _ServerProjectGroup {
     required this.scope,
   });
 
-  /// This app's own deployment project, when the row is a linked one.
-  final ComposeProjectLink? link;
-
   /// The daemon's managed stack, when the row is one a scan assigned. A stack
   /// is what tells the daemon where to run compose for these containers, so
-  /// its directory is the one the row shows and the one an upgrade uses.
+  /// its directory is the one the row shows and the one an update uses.
   final ComposeStack? stack;
 
   final String name;
@@ -835,51 +830,24 @@ String _containerEnvKey(
   String containerId,
 ) => '${runtime.name}|${scope.name}|$containerId';
 
-/// The project rows for one server: this app's linked projects, then the
-/// daemon's managed stacks that no link already covers.
+/// The project rows for one server.
 ///
-/// A managed stack is grouped by its own project name and, like a link, once
-/// per runtime/scope environment that holds its containers — a project's
-/// containers can live in more than one. A stack whose containers the daemon
-/// cannot see still gets a row: it is assigned, and nothing running is a fact
-/// about it.
+/// Each project is the daemon's, not this app's: a stack is a row because a
+/// scan assigned it, and its containers are the ones carrying its project
+/// label. A stack with containers in more than one runtime/scope environment
+/// gets a row per environment, which is where its containers actually run.
+///
+/// A stack whose containers the daemon cannot see still gets a row: it is
+/// assigned, and nothing running is a fact about it.
 List<_ServerProjectGroup> _projectGroupsForServer({
   required Server server,
-  required List<ComposeProjectLink> links,
   List<ComposeStack> stacks = const [],
   required List<ContainerEnvironment> environments,
   String? focusComposeProject,
 }) {
   final groups = <_ServerProjectGroup>[];
-  final linked = links.where((item) => item.serverId == server.id).toList();
-  for (final link in linked) {
-    final runtime = ContainerRuntime.values.byName(link.runtime);
-    final scope = ContainerScope.values.byName(link.scope);
-    final group = _ServerProjectGroup(
-      link: link,
-      name: link.name,
-      directory: link.directory,
-      runtime: runtime,
-      scope: scope,
-    );
-    for (final environment in environments.where(
-      (env) => env.isAvailable && env.runtime == runtime && env.scope == scope,
-    )) {
-      for (final container in environment.containers) {
-        if (container.composeProject == link.name) {
-          group.containers.add(container);
-        }
-      }
-    }
-    groups.add(group);
-  }
-
-  final linkedNames = {for (final link in linked) link.name.toLowerCase()};
   for (final stack in stacks) {
-    if (stack.project.isEmpty ||
-        linkedNames.contains(stack.project.toLowerCase())) {
-      continue;
-    }
+    if (stack.project.isEmpty) continue;
     var grouped = false;
     for (final environment in environments.where((env) => env.isAvailable)) {
       final matching = environment.containers
@@ -1049,12 +1017,8 @@ class _ContainerEnvironments extends ConsumerWidget {
       );
     }
 
-    final links =
-        ref.watch(composeProjectLinksProvider).asData?.value ??
-        const <ComposeProjectLink>[];
     final projects = _projectGroupsForServer(
       server: server,
-      links: links,
       stacks: stacks.stacks,
       environments: environments,
       focusComposeProject: focusComposeProject,
@@ -1278,7 +1242,10 @@ class _ProjectCollapsibleTile extends StatelessWidget {
       child: Theme(
         data: theme.copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: count > 0 && count <= 6,
+          // An assigned stack with nothing running opens on its own: the row's
+          // content is the fact that it is assigned and idle, and a collapsed
+          // row would hide exactly that.
+          initiallyExpanded: count == 0 ? project.stack != null : count <= 6,
           tilePadding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
           childrenPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
@@ -1353,30 +1320,13 @@ class _ProjectCollapsibleTile extends StatelessWidget {
               ],
             ),
           ),
-          trailing:
-              (project.link == null &&
-                  (onUpdateStack == null || project.stack == null))
+          trailing: onUpdateStack == null || project.stack == null
               ? null
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (onUpdateStack != null && project.stack != null)
-                      IconButton(
-                        tooltip: 'composeStacksUpdate'.tr(),
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () => onUpdateStack!(project.stack!),
-                        icon: const Icon(Symbols.upgrade, size: 20),
-                      ),
-                    if (project.link != null)
-                      IconButton(
-                        tooltip: 'containersOpenProject'.tr(),
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () => context.router.push(
-                          ProjectDetailRoute(linkId: project.link!.id),
-                        ),
-                        icon: const Icon(Symbols.open_in_new, size: 20),
-                      ),
-                  ],
+              : IconButton(
+                  tooltip: 'composeStacksUpdate'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => onUpdateStack!(project.stack!),
+                  icon: const Icon(Symbols.upgrade, size: 20),
                 ),
           children: [
             Divider(height: 1, color: scheme.outlineVariant),

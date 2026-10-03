@@ -365,7 +365,6 @@
   "containersNoContainersEnv": "No containers in this environment.",
   "containersNoDaemonRoute": "This client has no route to the server's MaidCafe daemon. Set its endpoint in the MaidCafe tab, or use a desktop client.",
   "containersNotInstalled": "Docker and Podman are not installed for this server user.",
-  "containersOpenProject": "Open project",
   "containersProjects": "Projects",
   "containersRefreshTooltip": "Refresh containers",
   "containersStandalone": "Standalone containers",

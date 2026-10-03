@@ -727,41 +727,11 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
         ?.value;
   }
 
-  /// Portable JSON plus fields resolved from a linked [ComposeProjectLink]
-  /// (migrated resources often only store `compose_link_id`).
-  Map<String, Object?> get effectiveConfig {
-    final base = Map<String, Object?>.of(config);
-    final link = _composeLink;
-    if (link == null) return base;
-    base.putIfAbsent('directory', () => link.directory);
-    base.putIfAbsent('runtime', () => link.runtime);
-    base.putIfAbsent('scope', () => link.scope);
-    base.putIfAbsent('compose_project', () => link.name);
-    if ('${base['directory'] ?? ''}'.trim().isEmpty) {
-      base['directory'] = link.directory;
-    }
-    if ('${base['runtime'] ?? ''}'.trim().isEmpty) {
-      base['runtime'] = link.runtime;
-    }
-    if ('${base['scope'] ?? ''}'.trim().isEmpty) {
-      base['scope'] = link.scope;
-    }
-    if ('${base['compose_project'] ?? ''}'.trim().isEmpty) {
-      base['compose_project'] = link.name;
-    }
-    return base;
-  }
-
-  ComposeProjectLink? get _composeLink {
-    final raw = config['compose_link_id'];
-    if (raw == null) return null;
-    final linkId = raw is int ? raw : int.tryParse('$raw');
-    if (linkId == null) return null;
-    final links =
-        ref.watch(composeProjectLinksProvider).asData?.value ??
-        const <ComposeProjectLink>[];
-    return links.where((item) => item.id == linkId).firstOrNull;
-  }
+  /// The resource's own configuration. The compose fields are what the
+  /// resource records — this app does not keep a second copy of where a
+  /// project lives any more: the daemon's registry is that answer, and a
+  /// resource that predates it can be filled in from the resource editor.
+  Map<String, Object?> get effectiveConfig => Map<String, Object?>.of(config);
 
   ContainerRuntime get _runtime => _runtimeFrom(effectiveConfig);
   ContainerScope get _scope => _scopeFrom(effectiveConfig);

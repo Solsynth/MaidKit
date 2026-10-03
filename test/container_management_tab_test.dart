@@ -7,7 +7,6 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/containers/container_management_tab.dart';
-import 'package:maid_kit/containers/project_repository.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
@@ -177,11 +176,6 @@ void main() {
         child: ProviderScope(
           overrides: [
             maidCafeSessionRegistryProvider.overrideWithValue(registry),
-            // The project links are a database stream, and drift's isolate
-            // executor deadlocks inside a widget test's fake-async zone.
-            composeProjectLinksProvider.overrideWith(
-              (ref) => Stream.value(const <ComposeProjectLink>[]),
-            ),
           ],
           child: MaterialApp(
             // The app's confirmations render through IslandUIFoundation's
@@ -357,6 +351,49 @@ void main() {
     // snackbar, which this harness cannot observe.
     expect(find.text('storefront'), findsOneWidget);
     expect(find.text('/opt/stacks/web'), findsOneWidget);
+  });
+
+  testWidgets('a scanned stack is the project row, update and all', (
+    tester,
+  ) async {
+    // The row exists because a scan assigned the project — no local record of
+    // it, and no container list to derive it from: this is also the regression
+    // guard for a project that used to lose its update control once the app
+    // had a local copy of the same project.
+    final session = _StubSession(
+      stacks: {
+        'stacks': [
+          {
+            'project': 'myapp',
+            'directory': '/opt/myapp',
+            'files': ['/opt/myapp/compose.yaml'],
+            'services': ['web', 'worker'],
+            'running': 0,
+            'total': 0,
+          },
+        ],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+      containersPayload: {
+        'runtimes': [
+          {'runtime': 'docker', 'available': true, 'containers': <Object?>[]},
+        ],
+      },
+    );
+
+    await pump(tester, registry: _StubRegistry(session));
+
+    // Assigned, nothing running: still a project, still updatable, and it says
+    // which directory the daemon will run compose in.
+    expect(find.text('myapp'), findsOneWidget);
+    expect(find.text('/opt/myapp'), findsOneWidget);
+    expect(find.text('composeStacksManaged'.tr()), findsOneWidget);
+    expect(find.text('composeStacksNoContainers'.tr()), findsOneWidget);
+    expect(find.byIcon(Symbols.upgrade), findsOneWidget);
   });
 
   testWidgets('one managed stack is updated whole, from its own row', (
