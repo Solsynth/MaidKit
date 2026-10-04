@@ -242,7 +242,7 @@ class ContainerGroup extends StatelessWidget {
           data: theme.copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
             initiallyExpanded: initiallyExpanded,
-            tilePadding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+            tilePadding: const EdgeInsets.fromLTRB(12, 4, 10, 4),
             childrenPadding: EdgeInsets.zero,
             controlAffinity: ListTileControlAffinity.leading,
             shape: const Border(),
