@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
@@ -12,21 +11,24 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/github/github_models.dart';
 import 'package:maid_kit/github/github_providers.dart';
+import 'package:maid_kit/github/github_run_detail_page.dart';
 import 'package:maid_kit/github/github_ui.dart';
-import 'package:maid_kit/routing/app_router.dart';
-import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
+import 'package:maid_kit/servers/server_detail_page.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/systemd_models.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/cloud_file_picker.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'container_models.dart';
-import 'container_list_tile.dart';
+import 'compose_detail_page.dart';
 import 'compose_project_actions.dart';
+import 'container_detail_page.dart';
+import 'container_list_tile.dart';
+import 'container_models.dart';
 import 'container_sudo_guide.dart';
 import 'deployment_project_models.dart';
 import 'image_actions.dart';
@@ -34,7 +36,6 @@ import 'project_repository.dart';
 
 /// Detail view for a stored deployment project — a collection of resources.
 /// [linkId] remains for links opened from the server container view.
-@RoutePage()
 class ProjectDetailPage extends ConsumerWidget {
   const ProjectDetailPage({super.key, this.projectId, this.linkId});
 
@@ -187,7 +188,7 @@ class _ProjectDetailState extends ConsumerState<_ProjectDetail> {
     );
     if (confirmed != true) return;
     await ref.read(projectRepositoryProvider).deleteProject(widget.project.id);
-    if (mounted) context.router.maybePop();
+    if (mounted) TabNavigator.of(context).maybePop();
   }
 
   Future<void> _deleteResource(DeploymentResource resource) async {
@@ -950,8 +951,8 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
   Future<void> _openGithubRun() async {
     final run = _githubRun;
     if (run == null) return;
-    await context.router.push(
-      GitHubRunDetailRoute(
+    TabNavigator.of(context).push(
+      GitHubRunDetailPage(
         owner: _githubOwner,
         name: _githubName,
         runId: run.id,
@@ -1121,8 +1122,8 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
 
   Future<void> _showContainerLogs() async {
     final host = server!;
-    await context.router.push(
-      ContainerDetailRoute(
+    TabNavigator.of(context).push(
+      ContainerDetailPage(
         server: host,
         runtime: _runtime,
         scope: _scope,
@@ -1234,24 +1235,23 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
       }
       if (!mounted) return;
       final path = '${effectiveConfig['path'] ?? ''}'.trim();
-      // Land on the Servers workspace tab with a file-management tab opened
-      // at the linked folder instead of a transient picker.
+      // Open the linked folder as a file-management tab; it becomes the
+      // selected tab, so the workspace already shows it.
       ref
           .read(terminalTabsProvider.notifier)
           .openFileManagement(host, initialPath: path.isEmpty ? null : path);
-      context.router.root.navigate(
-        ServerWorkspaceRoute(children: [ServersTab()]),
-      );
       return;
     }
     if (kind == DeploymentResourceKind.compose) {
       if (!_composeReady) {
         // Missing identity — fall back to the server's container tab.
-        context.router.push(ServerDetailRoute(server: host, initialTab: 6));
+        TabNavigator.of(
+          context,
+        ).push(ServerDetailPage(server: host, initialTab: 6));
         return;
       }
-      context.router.push(
-        ComposeDetailRoute(
+      TabNavigator.of(context).push(
+        ComposeDetailPage(
           server: host,
           runtime: _runtime,
           scope: _scope,
@@ -1261,9 +1261,9 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
       );
       return;
     }
-    context.router.push(
-      ServerDetailRoute(server: host, initialTab: _serverTabFor(kind)),
-    );
+    TabNavigator.of(
+      context,
+    ).push(ServerDetailPage(server: host, initialTab: _serverTabFor(kind)));
   }
 
   @override
@@ -1765,8 +1765,8 @@ class _ComposeLivePanelState extends ConsumerState<_ComposeLivePanel> {
   }
 
   Future<void> _containerLogs(ServerContainer container) async {
-    await context.router.push(
-      ContainerDetailRoute(
+    TabNavigator.of(context).push(
+      ContainerDetailPage(
         server: widget.server,
         runtime: _runtime,
         scope: _scope,
@@ -1812,8 +1812,8 @@ class _ComposeLivePanelState extends ConsumerState<_ComposeLivePanel> {
               return ContainerListTile(
                 container: item,
                 contentPadding: EdgeInsets.zero,
-                onOpen: () => context.router.push(
-                  ContainerDetailRoute(
+                onOpen: () => TabNavigator.of(context).push(
+                  ContainerDetailPage(
                     server: widget.server,
                     runtime: _runtime,
                     scope: _scope,

@@ -1,13 +1,13 @@
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
-import 'package:maid_kit/routing/app_router.gr.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 
 import 'github_models.dart';
 import 'github_providers.dart';
+import 'github_run_detail_page.dart';
 import 'github_ui.dart';
 
 /// Pinned-repo workflow status card for the Servers dashboard: a header plus
@@ -126,8 +126,8 @@ class _WorkflowStatusTile extends StatelessWidget {
       type: MaterialType.transparency,
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () => context.router.push(
-          GitHubRunDetailRoute(
+        onTap: () => TabNavigator.of(context).push(
+          GitHubRunDetailPage(
             owner: owner,
             name: name,
             runId: run.id,

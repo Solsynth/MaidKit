@@ -15,9 +15,10 @@ Read `docs/architecture.md` before making structural changes.
 
 - Keep the app wrapped in `MaidKitWindowScaffold`, which uses Island's `DesktopWindowFrame` for desktop-native chrome.
 - Preserve desktop window initialization in `main.dart` when changing startup code.
-- The main workspace uses the Island-inspired `AutoTabsRouter` shell: `NavigationRail` on wide layouts and Material `NavigationBar` on narrow layouts.
-- Put tab content in its own route page. Do not replace nested tab routing with local selected-index state.
-- Reference `../SolarNetwork/Island/lib/misc/tabs_screen.dart` and `../SolarNetwork/Island/lib/shared/widgets/app_scaffold.dart` when extending navigation or window behavior.
+- The main workspace is one pane-tab shell: `SessionsWorkspace` renders `terminalTabsProvider`'s panes and per-pane tab strips. Every destination — the servers dashboard, terminals, file management, file editors, agent chats, assets, projects, MaidCafe cloud, settings — is a `SessionTab` in that strip. Do not reintroduce a navigation rail, bottom bar, or `AutoTabsRouter`.
+- `AppRouter` owns a single route (`ServerWorkspacePage`). Detail pages opened from a tab are pushed with `TabNavigator.of(context).push(...)` so they stay inside that tab's own stack; never call `context.router.push` from inside the workspace.
+- App-level shortcuts live in the window shell, not in the workspace: the pane tab strip and the terminal are not always the focus owner. Cmd/Ctrl+W closes the focused pane tab — route it through `TerminalTabsNotifier.close` so the close guard can ask before abandoning a running terminal task, a replying agent chat, or a dirty file editor.
+- Reference `../SolarNetwork/Island/lib/shared/widgets/app_scaffold.dart` when extending window behaviour.
 
 ## UI guidelines
 
@@ -26,7 +27,7 @@ Read `docs/architecture.md` before making structural changes.
 - Avoid oversized rounded corners, pill-heavy navigation, large shadows, and unnecessary cards.
 - Keep spacing on a simple 4/8/12/16/24/32 scale. Use borders and contrast for hierarchy rather than effects.
 - Do not add a page-level app bar to the tab workspace unless there is a clear product requirement. The window title bar and tab navigation provide the surrounding chrome.
-- Keep responsive behavior intentional: rail for widths above 768 logical pixels; bottom navigation below that breakpoint.
+- Keep responsive behavior intentional. The workspace has no rail or bottom bar any more; its breakpoint is the pane tab strip: below 768 logical pixels of pane width only the focused tab keeps its title and the others collapse to their icon, animated rather than snapped.
 
 ## Checks
 

@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart' show kMiddleMouseButton;
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -26,7 +24,6 @@ import 'package:maid_kit/agent/mcp_config_parser.dart';
 import 'package:maid_kit/agent/mcp_repository.dart';
 import 'package:maid_kit/agent/skill_repository.dart';
 import 'package:maid_kit/agent/skill_registry.dart';
-import 'agent_input_focus.dart';
 import 'conversation_store.dart';
 import 'personality_service.dart';
 import 'agent_repository.dart';
@@ -70,348 +67,33 @@ List<String> _presetModelsFor(AgentProvider provider) {
   return const [];
 }
 
-@RoutePage()
-class AgentPage extends ConsumerStatefulWidget {
-  const AgentPage({super.key});
-  @override
-  ConsumerState<AgentPage> createState() => _AgentPageState();
-}
-
-/// One open chat in the agent workspace. The chat state itself lives in each
-/// tab's [_AgentChatTabState]; the shell only tracks identity for the tab
-/// strip (title and in-flight activity).
-class _AgentTabHandle {
-  _AgentTabHandle(this.id, this.title);
-
-  final String id;
-  String title;
-
-  /// Whether a request is currently streaming in this tab.
-  bool working = false;
-}
-
-class _AgentPageState extends ConsumerState<AgentPage> {
-  final _tabs = <_AgentTabHandle>[];
-  final _viewKeys = <String, GlobalKey<_AgentChatTabState>>{};
-  String? _activeTabId;
-
-  @override
-  void initState() {
-    super.initState();
-    // Seed the first chat so the page opens directly into a conversation, the
-    // same as before tabs existed. The empty workspace only appears after the
-    // user closes every tab.
-    final id = 'agent-tab-${DateTime.now().microsecondsSinceEpoch}';
-    _tabs.add(_AgentTabHandle(id, 'agentNewConversation'.tr()));
-    _viewKeys[id] = GlobalKey<_AgentChatTabState>(debugLabel: 'agent-tab-$id');
-    _activeTabId = id;
-  }
-
-  void _newChat() {
-    final id = 'agent-tab-${DateTime.now().microsecondsSinceEpoch}';
-    setState(() {
-      _tabs.add(_AgentTabHandle(id, 'agentNewConversation'.tr()));
-      _viewKeys[id] = GlobalKey<_AgentChatTabState>(
-        debugLabel: 'agent-tab-$id',
-      );
-      _activeTabId = id;
-    });
-    _focusActivePrompt();
-  }
-
-  void _selectTab(String id) {
-    if (id == _activeTabId || !_tabs.any((tab) => tab.id == id)) return;
-    setState(() => _activeTabId = id);
-    _focusActivePrompt();
-  }
-
-  void _closeTab(String id) {
-    final index = _tabs.indexWhere((tab) => tab.id == id);
-    if (index < 0) return;
-    setState(() {
-      _tabs.removeAt(index);
-      _viewKeys.remove(id);
-      if (_activeTabId == id) {
-        _activeTabId = _tabs.isEmpty
-            ? null
-            : _tabs[(index - 1).clamp(0, _tabs.length - 1)].id;
-      }
-    });
-    _focusActivePrompt();
-  }
-
-  void _onTitleChanged(String tabId, String title) {
-    final tab = _tabs.where((candidate) => candidate.id == tabId).firstOrNull;
-    if (tab == null || tab.title == title) return;
-    setState(() => tab.title = title);
-  }
-
-  void _onWorkingChanged(String tabId, bool working) {
-    final tab = _tabs.where((candidate) => candidate.id == tabId).firstOrNull;
-    if (tab == null || tab.working == working) return;
-    setState(() => tab.working = working);
-  }
-
-  void _focusActivePrompt() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final activeId = _activeTabId;
-      if (activeId == null || !mounted) return;
-      _viewKeys[activeId]?.currentState?.focusPrompt();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    if (_tabs.isEmpty) {
-      return MaidKitAppScaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Symbols.forum, size: 48, color: scheme.onSurfaceVariant),
-              const SizedBox(height: 12),
-              Text(
-                'agentNoChatTabs'.tr(),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: _newChat,
-                icon: const Icon(Symbols.add),
-                label: Text('agentNewConversation'.tr()),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    final activeIndex = _tabs.indexWhere((tab) => tab.id == _activeTabId);
-    return MaidKitAppScaffold(
-      // The tab strip paints the top safe area; each chat tab below is its own
-      // page scaffold, so keep the shell flat like the sessions workspace.
-      topSafeArea: false,
-      body: Column(
-        children: [
-          _AgentTabBar(
-            tabs: _tabs,
-            activeId: _activeTabId,
-            onSelect: _selectTab,
-            onClose: _closeTab,
-            onNew: _newChat,
-          ),
-          Expanded(
-            // The strip already filled the top inset, so the nested page
-            // scaffolds must not add it again.
-            child: MediaQuery.removePadding(
-              context: context,
-              removeTop: true,
-              child: IndexedStack(
-                index: activeIndex < 0 ? 0 : activeIndex,
-                children: [
-                  for (final tab in _tabs)
-                    _AgentChatView(
-                      key: _viewKeys[tab.id],
-                      tabId: tab.id,
-                      onTitleChanged: (title) => _onTitleChanged(tab.id, title),
-                      onWorkingChanged: (working) =>
-                          _onWorkingChanged(tab.id, working),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Shared height of the agent tab strip and its tab chips.
-const _agentTabBarHeight = 40.0;
-
-class _AgentTabBar extends StatelessWidget {
-  const _AgentTabBar({
-    required this.tabs,
-    required this.activeId,
-    required this.onSelect,
-    required this.onClose,
-    required this.onNew,
-  });
-
-  final List<_AgentTabHandle> tabs;
-  final String? activeId;
-  final ValueChanged<String> onSelect;
-  final ValueChanged<String> onClose;
-  final VoidCallback onNew;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final topInset = MediaQuery.paddingOf(context).top;
-    return Material(
-      color: scheme.surfaceContainerHigh,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (topInset > 0) SizedBox(height: topInset),
-          SizedBox(
-            height: _agentTabBarHeight,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: EdgeInsets.zero,
-                    itemCount: tabs.length,
-                    itemBuilder: (context, index) {
-                      final tab = tabs[index];
-                      return _AgentTabChip(
-                        key: ValueKey(tab.id),
-                        title: tab.title,
-                        working: tab.working,
-                        selected: tab.id == activeId,
-                        onSelect: () => onSelect(tab.id),
-                        onClose: () => onClose(tab.id),
-                      );
-                    },
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'agentNewConversation'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: _agentTabBarHeight,
-                    minHeight: _agentTabBarHeight,
-                  ),
-                  onPressed: onNew,
-                  icon: const Icon(Symbols.add, size: 20),
-                ),
-                const SizedBox(width: 4),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AgentTabChip extends StatelessWidget {
-  const _AgentTabChip({
-    super.key,
-    required this.title,
-    required this.working,
-    required this.selected,
-    required this.onSelect,
-    required this.onClose,
-  });
-
-  final String title;
-  final bool working;
-  final bool selected;
-  final VoidCallback onSelect;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: _agentTabBarHeight,
-      child: Listener(
-        onPointerDown: (event) {
-          if (event.buttons & kMiddleMouseButton != 0) onClose();
-        },
-        child: InkWell(
-          onTap: onSelect,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: selected ? scheme.primary : Colors.transparent,
-                  width: 2,
-                ),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (working && !selected)
-                    SizedBox.square(
-                      dimension: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: scheme.primary,
-                      ),
-                    )
-                  else
-                    Icon(
-                      Symbols.forum,
-                      size: 16,
-                      color: selected
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant,
-                    ),
-                  const SizedBox(width: 8),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 220),
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: selected ? scheme.primary : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                  IconButton(
-                    tooltip: 'agentCloseTab'.tr(),
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 28,
-                      minHeight: 28,
-                    ),
-                    onPressed: onClose,
-                    icon: const Icon(Symbols.close, size: 16),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A single agent chat: provider/model selectors, conversation history
-/// sidebar, message list, and prompt. Kept mounted by the [AgentPage] tab
-/// stack so streaming and queued work survive tab switches.
-class _AgentChatView extends ConsumerStatefulWidget {
-  const _AgentChatView({
+/// One agent chat, hosted as a pane tab: provider/model selectors, conversation
+/// history sidebar, message list, and prompt.
+///
+/// The pane tab stack keeps the chat mounted while another tab is selected, so
+/// streaming and queued work survive tab switches.
+class AgentChatView extends ConsumerStatefulWidget {
+  const AgentChatView({
     super.key,
     required this.tabId,
+    required this.autofocus,
     required this.onTitleChanged,
     required this.onWorkingChanged,
   });
 
   final String tabId;
+
+  /// Whether this chat is the selected tab, so its prompt can take focus.
+  final bool autofocus;
+
   final ValueChanged<String> onTitleChanged;
   final ValueChanged<bool> onWorkingChanged;
 
   @override
-  ConsumerState<_AgentChatView> createState() => _AgentChatTabState();
+  ConsumerState<AgentChatView> createState() => _AgentChatViewState();
 }
 
-class _AgentChatTabState extends ConsumerState<_AgentChatView> {
+class _AgentChatViewState extends ConsumerState<AgentChatView> {
   final _prompt = TextEditingController();
   final _promptFocus = FocusNode();
   final _showSidebar = ValueNotifier<bool>(false);
@@ -447,11 +129,7 @@ class _AgentChatTabState extends ConsumerState<_AgentChatView> {
     super.initState();
     _restoreSelection();
     _messagesScroll.addListener(_updateScrollToBottomVisibility);
-    _promptFocus.addListener(
-      () => ref
-          .read(agentInputFocusedProvider.notifier)
-          .setFocused(_promptFocus.hasFocus),
-    );
+    if (widget.autofocus) _focusPromptAfterFrame();
     _promptFocus.onKeyEvent = (node, event) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
       if (event.logicalKey != LogicalKeyboardKey.enter) {
@@ -464,6 +142,12 @@ class _AgentChatTabState extends ConsumerState<_AgentChatView> {
       }
       return KeyEventResult.handled;
     };
+  }
+
+  @override
+  void didUpdateWidget(AgentChatView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.autofocus && !oldWidget.autofocus) _focusPromptAfterFrame();
   }
 
   void _insertNewLine() {
@@ -495,11 +179,6 @@ class _AgentChatTabState extends ConsumerState<_AgentChatView> {
 
   @override
   void dispose() {
-    // Keep the workspace chrome from staying collapsed if a tab that owns the
-    // prompt focus is closed.
-    if (_promptFocus.hasFocus) {
-      ref.read(agentInputFocusedProvider.notifier).setFocused(false);
-    }
     _showSidebar.dispose();
     _messagesScroll.removeListener(_updateScrollToBottomVisibility);
     _messagesScroll.dispose();
@@ -510,11 +189,12 @@ class _AgentChatTabState extends ConsumerState<_AgentChatView> {
 
   void _interrupt() => _activeToken?.cancel();
 
-  /// Called by the tab shell after this tab becomes active so typing can
-  /// start immediately.
-  void focusPrompt() {
-    if (!mounted) return;
-    _promptFocus.requestFocus();
+  /// Focuses the prompt once the tab that owns this chat is on screen, so
+  /// typing can start immediately after the tab is opened or selected.
+  void _focusPromptAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _promptFocus.requestFocus();
+    });
   }
 
   /// Keeps the tab chip label in sync with the conversation title.

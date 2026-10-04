@@ -1,5 +1,3 @@
-// Shell route consts follow the generated-route naming style.
-// ignore_for_file: constant_identifier_names
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -12,75 +10,19 @@ final appRouterProvider = Provider<AppRouter>(
   (ref) => AppRouter(navigatorKey: maidKitNavigatorKey),
 );
 
-/// Tab shells that host nested detail routes. Each renders an [AutoRouter]
-/// outlet, so pushed detail pages (project, compose, container, server, GitHub
-/// run) stay inside their tab's stack and the tab chrome (rail / bottom
-const MaidCafeTab = EmptyShellRoute('MaidCafeTab');
-const ServersTab = EmptyShellRoute('ServersTab');
-const AssetsTab = EmptyShellRoute('AssetsTab');
-const ProjectsTab = EmptyShellRoute('ProjectsTab');
-
-/// Detail pages opened from within a tab. Declared under every shell tab so
-/// cross-links (e.g. opening a server detail from a project detail) resolve
-/// against the tab the user is currently inspecting.
-List<AutoRoute> _detailRoutes() => [
-  AutoRoute(page: ProjectDetailRoute.page, path: 'project-detail'),
-  AutoRoute(page: ComposeDetailRoute.page, path: 'compose-detail'),
-  AutoRoute(page: ContainerDetailRoute.page, path: 'container-detail'),
-  AutoRoute(page: GitHubRunDetailRoute.page, path: 'github-run-detail'),
-  AutoRoute(page: ServerDetailRoute.page, path: 'server-detail'),
-];
-
+/// The app has a single route: the pane tab workspace.
+///
+/// Destinations are tabs inside that workspace rather than separate routes, so
+/// there is no tab router and no per-destination route stack. A detail page
+/// opened from a tab is pushed onto that tab's own stack (see
+/// `shared/presentation/tab_navigator.dart`), which keeps it inside the tab it
+/// was opened from.
 @AutoRouterConfig(replaceInRouteName: 'Page,Route')
 class AppRouter extends RootStackRouter {
   AppRouter({super.navigatorKey});
 
   @override
   List<AutoRoute> get routes => [
-    AutoRoute(
-      page: ServerWorkspaceRoute.page,
-      initial: true,
-      children: [
-        AutoRoute(
-          page: ServersTab.page,
-          path: '',
-          initial: true,
-          children: [
-            AutoRoute(page: ServersRoute.page, path: '', initial: true),
-            ..._detailRoutes(),
-          ],
-        ),
-        AutoRoute(
-          page: AssetsTab.page,
-          path: 'assets',
-          children: [
-            AutoRoute(page: AssetsRoute.page, path: '', initial: true),
-            ..._detailRoutes(),
-          ],
-        ),
-        AutoRoute(
-          page: ProjectsTab.page,
-          path: 'projects',
-          children: [
-            AutoRoute(page: ProjectsRoute.page, path: '', initial: true),
-            ..._detailRoutes(),
-          ],
-        ),
-        AutoRoute(page: AgentRoute.page, path: 'agent'),
-        AutoRoute(
-          page: MaidCafeTab.page,
-          path: 'maidcafe',
-          children: [
-            AutoRoute(page: MaidCafeCloudRoute.page, path: '', initial: true),
-            AutoRoute(
-              page: MaidCafeDaemonDetailRoute.page,
-              path: 'daemon-detail',
-            ),
-          ],
-        ),
-        AutoRoute(page: SettingsRoute.page, path: 'settings'),
-      ],
-    ),
-    AutoRoute(page: AboutRoute.page, path: '/about'),
+    AutoRoute(page: ServerWorkspaceRoute.page, initial: true),
   ];
 }

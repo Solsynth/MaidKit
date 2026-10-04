@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
@@ -35,7 +34,6 @@ import 'server_providers.dart';
 import 'systemd_tab.dart';
 import 'web_server_tab.dart';
 
-@RoutePage()
 class ServerDetailPage extends ConsumerStatefulWidget {
   const ServerDetailPage({
     super.key,

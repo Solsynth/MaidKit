@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -22,13 +21,13 @@ import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
 import 'container_models.dart';
 import 'container_command_preferences.dart';
 import 'container_sudo_guide.dart';
 import 'container_update_badge.dart';
 
-@RoutePage()
 class ContainerDetailPage extends ConsumerStatefulWidget {
   const ContainerDetailPage({
     super.key,
@@ -611,7 +610,7 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
         accentColor: Theme.of(context).colorScheme.primary,
       );
       if (action == ContainerAction.remove) {
-        if (mounted) context.router.maybePop();
+        if (mounted) TabNavigator.of(context).maybePop();
         return;
       }
       await _bootstrap();
@@ -856,7 +855,7 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
         accentColor: Theme.of(context).colorScheme.primary,
       );
       // The old id is gone; pop so the caller can refresh its list.
-      if (mounted) context.router.maybePop();
+      if (mounted) TabNavigator.of(context).maybePop();
     } catch (error) {
       if (!mounted) return;
       showStyledSnackBar(

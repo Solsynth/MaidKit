@@ -6,22 +6,18 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:easy_localization/src/localization.dart' as ez;
 // ignore: implementation_imports
 import 'package:easy_localization/src/translations.dart' as ez_tr;
-import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/routing/app_router.dart';
-import 'package:maid_kit/servers/cloud_sync_service.dart';
-import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
-import 'package:maid_kit/servers/maidcafe_metoer.dart';
-import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/sessions_page.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
@@ -36,8 +32,8 @@ class _RecordingConnectionManager extends SshConnectionManager {
   Future<void> stopPortForward(String id) async => stoppedIds.add(id);
 }
 
-/// Navigation rail button state: settings icon fill on selection and
-/// port-forward indicator sizing.
+/// The workspace-wide surfaces the pane tab shell hosts where the navigation
+/// rail used to: the active port-forwards button on the servers dashboard.
 void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -50,9 +46,7 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
           return Directory.systemTemp.path;
         });
-    // The EasyLocalization widget's asset load never completes under
-    // FakeAsync, so prime the singleton with real en-US translations.
-    // Otherwise `.plural()` throws on `_locale`.
+    // Prime the singleton with real en-US translations so `.plural()` works.
     final enMap =
         jsonDecode(File('assets/translations/en-US.json').readAsStringSync())
             as Map<String, dynamic>;
@@ -63,7 +57,7 @@ void main() {
     );
   });
 
-  Future<void> pumpApp(
+  Future<void> pumpWorkspace(
     WidgetTester tester, {
     SshConnectionManager? connectionManager,
     List<ActivePortForward> forwards = const [
@@ -80,8 +74,6 @@ void main() {
       ),
     ],
   }) async {
-    final router = AppRouter();
-    addTearDown(router.dispose);
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -100,19 +92,6 @@ void main() {
             scriptSnippetsProvider.overrideWith(
               (ref) => Stream.value(<ScriptSnippet>[]),
             ),
-            cloudUserProvider.overrideWith((ref) => Future.value(null)),
-            cloudWorkspacesProvider.overrideWith(
-              (ref) => Future.value(const <CloudWorkspace>[]),
-            ),
-            maidCafeMetoerNotificationsProvider.overrideWith(
-              (ref) => Future.value(const <MaidCafeMetoerNotification>[]),
-            ),
-            maidCafeMetoerUnreadCountProvider.overrideWith(
-              (ref) => Future.value(0),
-            ),
-            maidCafeCredentialsProvider.overrideWith(
-              (ref) => Future.value(const <MaidCafeCredential>[]),
-            ),
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),
             ),
@@ -121,16 +100,9 @@ void main() {
             ),
             portForwardsProvider.overrideWith((ref) => Stream.value(forwards)),
           ],
-          child: MaterialApp.router(
+          child: MaterialApp(
             theme: createMaidKitTheme(Brightness.light),
-            locale: const Locale('en', 'US'),
-            supportedLocales: const [Locale('en', 'US'), Locale('zh', 'CN')],
-            localizationsDelegates: const [
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            routerConfig: router.config(),
+            home: const SessionsWorkspace(),
           ),
         ),
       ),
@@ -138,70 +110,13 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Finder settingsIcon() => find.descendant(
-    of: find.byTooltip('tabSettings'.tr()),
-    matching: find.byType(Icon),
-  );
-
-  testWidgets('rail settings icon fills only while the settings tab is open', (
-    tester,
-  ) async {
-    await pumpApp(tester);
-
-    expect(tester.widget<Icon>(settingsIcon()).fill, 0);
-
-    await tester.tap(find.byTooltip('tabSettings'.tr()));
-    await tester.pumpAndSettle();
-    expect(tester.widget<Icon>(settingsIcon()).fill, 1);
-
-    await tester.tap(find.byIcon(Symbols.dns));
-    await tester.pumpAndSettle();
-    expect(tester.widget<Icon>(settingsIcon()).fill, 0);
-  });
-
-  testWidgets('rail avatar opens the MaidCafe Cloud page', (tester) async {
-    await pumpApp(tester);
-
-    await tester.tap(find.byTooltip('maidCafeCloudTitle'.tr()));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(MaidCafeCloudPage), findsOneWidget);
-  });
-
-  testWidgets('rail gear opens the settings tab directly', (tester) async {
-    await pumpApp(tester);
-
-    await tester.tap(find.byTooltip('tabSettings'.tr()));
-    await tester.pumpAndSettle();
-
-    // No intermediate sheet: the gear lands straight on the settings tab.
-    expect(find.byType(SheetScaffold), findsNothing);
-    expect(tester.widget<Icon>(settingsIcon()).fill, 1);
-  });
-
-  testWidgets('port-forward rail button matches the settings button size', (
-    tester,
-  ) async {
-    await pumpApp(tester);
-
-    final settingsBox = tester.getSize(find.byTooltip('tabSettings'.tr()));
-    final forwardBox = tester.getSize(
-      find.byTooltip('activePortForwards'.plural(1)),
-    );
-    expect(forwardBox, settingsBox);
-    expect(forwardBox, const Size(40, 40));
-
-    // Badge shows the active count next to the button.
-    expect(find.text('1'), findsOneWidget);
-  });
-
   testWidgets(
-    'port-forward rail button opens a status sheet that stops a forward',
+    'the dashboard surfaces button opens a status sheet that stops a forward',
     (tester) async {
       final manager = _RecordingConnectionManager();
-      await pumpApp(tester, connectionManager: manager);
+      await pumpWorkspace(tester, connectionManager: manager);
 
-      await tester.tap(find.byTooltip('activePortForwards'.plural(1)));
+      await tester.tap(find.text('activePortForwards'.plural(1)));
       await tester.pumpAndSettle();
 
       expect(find.byType(SheetScaffold), findsOneWidget);
@@ -217,7 +132,7 @@ void main() {
   );
 
   testWidgets('managed port forwards show locked in the sheet', (tester) async {
-    await pumpApp(
+    await pumpWorkspace(
       tester,
       forwards: const [
         ActivePortForward(
@@ -233,7 +148,7 @@ void main() {
       ],
     );
 
-    await tester.tap(find.byTooltip('activePortForwards'.plural(1)));
+    await tester.tap(find.text('activePortForwards'.plural(1)));
     await tester.pumpAndSettle();
 
     expect(find.byType(SheetScaffold), findsOneWidget);

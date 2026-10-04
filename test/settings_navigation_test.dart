@@ -3,7 +3,6 @@ import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.dart';
@@ -12,6 +11,7 @@ import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_metoer.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/servers/maidcafe_server_tab.dart';
@@ -24,6 +24,11 @@ void main() {
     await EasyLocalization.ensureInitialized();
     EasyLocalization.logger.enableBuildModes = [];
   });
+
+  /// The workspace is a single pane-tab shell now, so destinations are opened
+  /// as tabs rather than by tapping a navigation rail.
+  ProviderContainer containerOf(WidgetTester tester) =>
+      ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
 
   Future<void> pumpApp(
     WidgetTester tester, {
@@ -137,7 +142,7 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    containerOf(tester).read(terminalTabsProvider.notifier).openSettings();
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('settingsTerminal'.tr()).first);
@@ -154,7 +159,7 @@ void main() {
   ) async {
     await pumpApp(tester, size: const Size(390, 844));
 
-    await tester.tap(find.byIcon(Symbols.settings).last);
+    containerOf(tester).read(terminalTabsProvider.notifier).openSettings();
     await tester.pumpAndSettle();
 
     expect(find.byType(TabBar), findsOneWidget);
@@ -170,7 +175,7 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    await tester.tap(find.byIcon(Symbols.inventory_2));
+    containerOf(tester).read(terminalTabsProvider.notifier).openAssets();
     await tester.pumpAndSettle();
 
     expect(find.byType(TabBar), findsOneWidget);
@@ -195,7 +200,7 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    await tester.tap(find.byTooltip('maidCafeCloudTitle'.tr()));
+    containerOf(tester).read(terminalTabsProvider.notifier).openMaidCafeCloud();
     await tester.pumpAndSettle();
 
     expect(find.byType(MaidCafeCloudPage), findsOneWidget);
@@ -205,7 +210,7 @@ void main() {
   ) async {
     await pumpApp(tester, size: const Size(390, 844));
 
-    await tester.tap(find.byIcon(Symbols.cloud));
+    containerOf(tester).read(terminalTabsProvider.notifier).openMaidCafeCloud();
     await tester.pumpAndSettle();
 
     expect(find.byType(MaidCafeCloudPage), findsOneWidget);
@@ -216,7 +221,7 @@ void main() {
     (tester) async {
       await pumpApp(tester);
 
-      await tester.tap(find.byTooltip('tabSettings'.tr()));
+      containerOf(tester).read(terminalTabsProvider.notifier).openSettings();
       await tester.pumpAndSettle();
 
       final solarCategory = find.text('settingsSolarNetwork'.tr());
@@ -243,7 +248,7 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    containerOf(tester).read(terminalTabsProvider.notifier).openSettings();
     await tester.pumpAndSettle();
     await tester.tap(find.text('settingsSolarNetwork'.tr()).first);
     await tester.pumpAndSettle();
@@ -260,7 +265,7 @@ void main() {
   ) async {
     await pumpApp(tester, withMaidCafeWorkspace: true);
 
-    await tester.tap(find.byTooltip('tabSettings'.tr()));
+    containerOf(tester).read(terminalTabsProvider.notifier).openSettings();
     await tester.pumpAndSettle();
     await tester.tap(find.text('settingsSolarNetwork'.tr()).first);
     await tester.pumpAndSettle();
@@ -296,7 +301,7 @@ void main() {
   ) async {
     await pumpApp(tester, size: const Size(500, 800), settle: false);
 
-    await tester.tap(find.byIcon(Symbols.inventory_2));
+    containerOf(tester).read(terminalTabsProvider.notifier).openAssets();
     await tester.pumpAndSettle();
 
     expect(find.text('assetsConnections'.tr()), findsOneWidget);

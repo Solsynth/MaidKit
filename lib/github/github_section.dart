@@ -1,4 +1,3 @@
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
@@ -8,10 +7,11 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/routing/app_router.gr.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 
 import 'github_models.dart';
 import 'github_providers.dart';
+import 'github_run_detail_page.dart';
 import 'github_ui.dart';
 
 /// GitHub account, pinned repositories, workflow runs, pull requests, and
@@ -567,8 +567,8 @@ class _RunTile extends StatelessWidget {
             const Icon(Symbols.chevron_right, size: 20),
           ],
         ),
-        onTap: () => context.router.push(
-          GitHubRunDetailRoute(
+        onTap: () => TabNavigator.of(context).push(
+          GitHubRunDetailPage(
             owner: owner,
             name: name,
             runId: run.id,

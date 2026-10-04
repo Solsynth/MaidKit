@@ -1,5 +1,7 @@
 import 'package:window_manager/window_manager.dart';
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' as flutter;
 import 'package:maid_kit/theme.dart';
@@ -13,6 +15,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:maid_kit/servers/app_theme_preferences.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
+import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/servers/window_state_preferences.dart';
 import 'task_progress.dart';
 
@@ -103,10 +106,22 @@ class MaidKitWindowScaffold extends ConsumerWidget {
 
     return Focus(
       onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.tab &&
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey == LogicalKeyboardKey.tab &&
             HardwareKeyboard.instance.isShiftPressed) {
           showTerminalCommandPalette(context, ref);
+          return KeyEventResult.handled;
+        }
+        // Cmd/Ctrl+W closes the tab the workspace is showing. The window owns
+        // the shortcut because focus can sit outside the workspace — or
+        // nowhere — when it is pressed.
+        if (event.logicalKey == LogicalKeyboardKey.keyW &&
+            (HardwareKeyboard.instance.isMetaPressed ||
+                HardwareKeyboard.instance.isControlPressed)) {
+          final tabId = ref.read(terminalTabsProvider).selectedId;
+          if (tabId == null) return KeyEventResult.ignored;
+          // Closing may have to ask about work in progress, so it is async.
+          unawaited(ref.read(terminalTabsProvider.notifier).close(tabId));
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;

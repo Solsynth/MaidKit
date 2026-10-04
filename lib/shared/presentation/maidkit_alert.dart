@@ -116,12 +116,19 @@ Future<T?> showMaidKitOverlayDialog<T>({
   final overlay = IslandUIFoundation.overlayKey?.currentState;
   if (overlay == null) return Future.value(null);
 
+  // The prompt owns the keyboard while it is up. Handing focus back on close
+  // keeps window-level shortcuts working after a prompt is dismissed.
+  final previousFocus = FocusManager.instance.primaryFocus;
+
   final completer = Completer<T?>();
   late final OverlayEntry entry;
 
   void close(T? result) {
     if (completer.isCompleted) return;
     entry.remove();
+    if (previousFocus != null && previousFocus.context != null) {
+      previousFocus.requestFocus();
+    }
     completer.complete(result);
   }
 
@@ -435,12 +442,19 @@ Future<T?> showMaidKitCommandPalette<T>({
   final overlay = IslandUIFoundation.overlayKey?.currentState;
   if (overlay == null) return Future.value(null);
 
+  // The palette owns the keyboard while it is up, so focus goes back to
+  // whatever had it — otherwise the shortcut that opened it stops working.
+  final previousFocus = FocusManager.instance.primaryFocus;
+
   final completer = Completer<T?>();
   late final OverlayEntry entry;
 
   void close(T? result) {
     if (completer.isCompleted) return;
     entry.remove();
+    if (previousFocus != null && previousFocus.context != null) {
+      previousFocus.requestFocus();
+    }
     completer.complete(result);
   }
 

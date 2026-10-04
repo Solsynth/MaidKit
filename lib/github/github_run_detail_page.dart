@@ -1,4 +1,3 @@
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -13,7 +12,6 @@ import 'github_ui.dart';
 
 /// Detail view of one workflow run: header, actions, and per-job step
 /// results.
-@RoutePage()
 class GitHubRunDetailPage extends ConsumerWidget {
   const GitHubRunDetailPage({
     super.key,

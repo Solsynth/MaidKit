@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -9,6 +8,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:easy_localization/easy_localization.dart';
+import 'container_detail_page.dart';
 import 'container_list_tile.dart';
 import 'compose_scan_dialog.dart';
 import 'compose_stack_update.dart';
@@ -18,7 +18,6 @@ import 'container_sudo_guide.dart';
 import 'container_ui.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
@@ -26,6 +25,7 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 
 /// A reusable container-management surface for a single server. Its data is
 /// scoped by runtime (Docker/Podman) and by user/root environment so it can be
@@ -1373,8 +1373,8 @@ class _ContainerActionTile extends StatelessWidget {
         updateStatus: update,
         onUpdateAction: onUpdateAction,
         contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-        onOpen: () => context.router.push(
-          ContainerDetailRoute(
+        onOpen: () => TabNavigator.of(context).push(
+          ContainerDetailPage(
             server: server,
             runtime: environment.runtime,
             scope: environment.scope,

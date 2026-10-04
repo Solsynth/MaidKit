@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kMiddleMouseButton;
@@ -10,9 +9,14 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/agent/agent_page.dart';
+import 'package:maid_kit/containers/projects_page.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'assets_page.dart';
+import 'maidcafe_cloud_page.dart';
 import 'server_connection_actions.dart';
 import 'server_detail_page.dart';
 import 'session_lookup.dart';
@@ -23,6 +27,7 @@ import 'file_management_tab.dart';
 import 'privacy_preferences.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'settings_page.dart';
 import 'terminal_command_palette.dart';
 import 'terminal_find_host.dart';
 import 'terminal_session_adapter.dart';
@@ -377,6 +382,18 @@ class _SessionPaneView extends ConsumerWidget {
 /// Shared height for each pane tab strip and its tab chips.
 const _paneTabBarHeight = 40.0;
 
+/// Pane width below which a strip keeps the title of the focused tab only.
+///
+/// On a narrow pane every title would crowd out the tabs themselves, but icons
+/// alone make it hard to tell what is open, so the focused tab keeps its title.
+const _paneTabTitleBreakpoint = 768.0;
+
+/// Widest a tab title may draw before it is ellipsized.
+const _paneTabTitleMaxWidth = 240.0;
+
+/// How long a tab title takes to expand out of its icon, and collapse back.
+const _paneTabTitleDuration = Duration(milliseconds: 160);
+
 class _TabDragData {
   const _TabDragData({required this.tabId, required this.fromPaneId});
 
@@ -417,159 +434,179 @@ class _PaneTabBar extends ConsumerWidget {
 
     return Material(
       color: focused ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (fillTopSafeArea && topInset > 0) SizedBox(height: topInset),
-          SizedBox(
-            height: _paneTabBarHeight,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: DragTarget<_TabDragData>(
-                    onWillAcceptWithDetails: (details) =>
-                        details.data.tabId.isNotEmpty,
-                    onAcceptWithDetails: (details) =>
-                        _acceptTab(ref, details.data),
-                    builder: (context, candidate, rejected) {
-                      final hovering = candidate.isNotEmpty;
-                      return DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: hovering
-                              ? scheme.primary.withValues(alpha: 0.08)
-                              : null,
-                        ),
-                        child: paneTabs.isEmpty
-                            ? Align(
-                                alignment: Alignment.centerLeft,
-                                child: Padding(
-                                  padding: const EdgeInsets.only(left: 12),
-                                  child: Text(
-                                    hovering
-                                        ? 'sessionsDropTabHere'.tr()
-                                        : 'sessionsNewPane'.tr(),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelMedium
-                                        ?.copyWith(
-                                          color: scheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                                ),
-                              )
-                            : ListView.builder(
-                                scrollDirection: Axis.horizontal,
-                                padding: EdgeInsets.zero,
-                                // Trailing slot so tabs can be dropped after the last item.
-                                itemCount: paneTabs.length + 1,
-                                itemBuilder: (context, index) {
-                                  if (index == paneTabs.length) {
-                                    return _TabDropTail(
-                                      hovering: hovering,
-                                      onAccept: (data) => _acceptTab(
-                                        ref,
-                                        data,
-                                        toIndex: paneTabs.length,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // A narrow pane keeps one title — the tab the user is on — and lets
+          // the others shrink to their icon, so the strip stays scannable
+          // instead of hiding tabs behind a scroll.
+          final compact = constraints.maxWidth < _paneTabTitleBreakpoint;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (fillTopSafeArea && topInset > 0) SizedBox(height: topInset),
+              SizedBox(
+                height: _paneTabBarHeight,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: DragTarget<_TabDragData>(
+                        onWillAcceptWithDetails: (details) =>
+                            details.data.tabId.isNotEmpty,
+                        onAcceptWithDetails: (details) =>
+                            _acceptTab(ref, details.data),
+                        builder: (context, candidate, rejected) {
+                          final hovering = candidate.isNotEmpty;
+                          return DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: hovering
+                                  ? scheme.primary.withValues(alpha: 0.08)
+                                  : null,
+                            ),
+                            child: paneTabs.isEmpty
+                                ? Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(left: 12),
+                                      child: Text(
+                                        hovering
+                                            ? 'sessionsDropTabHere'.tr()
+                                            : 'sessionsNewPane'.tr(),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelMedium
+                                            ?.copyWith(
+                                              color: scheme.onSurfaceVariant,
+                                            ),
                                       ),
-                                    );
-                                  }
-                                  final tab = paneTabs[index];
-                                  final selected = tab.id == selectedTabId;
-                                  return _DraggablePaneTab(
-                                    key: ValueKey(tab.id),
-                                    tab: tab,
-                                    paneId: paneId,
-                                    selected: selected,
-                                    index: index,
-                                    onSelect: () {
-                                      ref
-                                          .read(terminalTabsProvider.notifier)
-                                          .focusPane(paneId);
-                                      ref
-                                          .read(terminalTabsProvider.notifier)
-                                          .select(tab.id);
-                                    },
-                                    onClose: () => ref
-                                        .read(terminalTabsProvider.notifier)
-                                        .close(tab.id),
-                                    onAccept: (data, insertIndex) => _acceptTab(
-                                      ref,
-                                      data,
-                                      toIndex: insertIndex,
                                     ),
-                                  );
-                                },
-                              ),
-                      );
-                    },
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'sessionsSplitRight'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: _paneTabBarHeight,
-                    minHeight: _paneTabBarHeight,
-                  ),
-                  onPressed: () {
-                    ref.read(terminalTabsProvider.notifier).focusPane(paneId);
-                    ref
-                        .read(terminalTabsProvider.notifier)
-                        .splitEmpty(SessionSplitAxis.horizontal);
-                  },
-                  icon: const Icon(Symbols.vertical_split, size: 20),
-                ),
-                IconButton(
-                  tooltip: 'sessionsSplitDown'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: _paneTabBarHeight,
-                    minHeight: _paneTabBarHeight,
-                  ),
-                  onPressed: () {
-                    ref.read(terminalTabsProvider.notifier).focusPane(paneId);
-                    ref
-                        .read(terminalTabsProvider.notifier)
-                        .splitEmpty(SessionSplitAxis.vertical);
-                  },
-                  icon: const Icon(Symbols.horizontal_split, size: 20),
-                ),
-                IconButton(
-                  tooltip: 'sessionsSessionActions'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: _paneTabBarHeight,
-                    minHeight: _paneTabBarHeight,
-                  ),
-                  onPressed: () {
-                    ref.read(terminalTabsProvider.notifier).focusPane(paneId);
-                    showTerminalCommandPalette(context, ref);
-                  },
-                  icon: const Icon(Symbols.add, size: 20),
-                ),
-                if (showClosePane)
-                  IconButton(
-                    tooltip: 'sessionsClosePane'.tr(),
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: _paneTabBarHeight,
-                      minHeight: _paneTabBarHeight,
+                                  )
+                                : ListView.builder(
+                                    scrollDirection: Axis.horizontal,
+                                    padding: EdgeInsets.zero,
+                                    // Trailing slot so tabs can be dropped after the last item.
+                                    itemCount: paneTabs.length + 1,
+                                    itemBuilder: (context, index) {
+                                      if (index == paneTabs.length) {
+                                        return _TabDropTail(
+                                          hovering: hovering,
+                                          onAccept: (data) => _acceptTab(
+                                            ref,
+                                            data,
+                                            toIndex: paneTabs.length,
+                                          ),
+                                        );
+                                      }
+                                      final tab = paneTabs[index];
+                                      final selected = tab.id == selectedTabId;
+                                      return _DraggablePaneTab(
+                                        key: ValueKey(tab.id),
+                                        tab: tab,
+                                        paneId: paneId,
+                                        selected: selected,
+                                        showTitle: !compact || selected,
+                                        index: index,
+                                        onSelect: () {
+                                          ref
+                                              .read(
+                                                terminalTabsProvider.notifier,
+                                              )
+                                              .focusPane(paneId);
+                                          ref
+                                              .read(
+                                                terminalTabsProvider.notifier,
+                                              )
+                                              .select(tab.id);
+                                        },
+                                        onClose: () => ref
+                                            .read(terminalTabsProvider.notifier)
+                                            .close(tab.id),
+                                        onAccept: (data, insertIndex) =>
+                                            _acceptTab(
+                                              ref,
+                                              data,
+                                              toIndex: insertIndex,
+                                            ),
+                                      );
+                                    },
+                                  ),
+                          );
+                        },
+                      ),
                     ),
-                    onPressed: () => ref
-                        .read(terminalTabsProvider.notifier)
-                        .closePane(paneId),
-                    icon: const Icon(Symbols.close, size: 18),
-                  ),
-                const SizedBox(width: 4),
-              ],
-            ),
-          ),
-        ],
+                    IconButton(
+                      tooltip: 'sessionsSplitRight'.tr(),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: _paneTabBarHeight,
+                        minHeight: _paneTabBarHeight,
+                      ),
+                      onPressed: () {
+                        ref
+                            .read(terminalTabsProvider.notifier)
+                            .focusPane(paneId);
+                        ref
+                            .read(terminalTabsProvider.notifier)
+                            .splitEmpty(SessionSplitAxis.horizontal);
+                      },
+                      icon: const Icon(Symbols.vertical_split, size: 20),
+                    ),
+                    IconButton(
+                      tooltip: 'sessionsSplitDown'.tr(),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: _paneTabBarHeight,
+                        minHeight: _paneTabBarHeight,
+                      ),
+                      onPressed: () {
+                        ref
+                            .read(terminalTabsProvider.notifier)
+                            .focusPane(paneId);
+                        ref
+                            .read(terminalTabsProvider.notifier)
+                            .splitEmpty(SessionSplitAxis.vertical);
+                      },
+                      icon: const Icon(Symbols.horizontal_split, size: 20),
+                    ),
+                    IconButton(
+                      tooltip: 'sessionsSessionActions'.tr(),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: _paneTabBarHeight,
+                        minHeight: _paneTabBarHeight,
+                      ),
+                      onPressed: () {
+                        ref
+                            .read(terminalTabsProvider.notifier)
+                            .focusPane(paneId);
+                        showTerminalCommandPalette(context, ref);
+                      },
+                      icon: const Icon(Symbols.add, size: 20),
+                    ),
+                    if (showClosePane)
+                      IconButton(
+                        tooltip: 'sessionsClosePane'.tr(),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: _paneTabBarHeight,
+                          minHeight: _paneTabBarHeight,
+                        ),
+                        onPressed: () => ref
+                            .read(terminalTabsProvider.notifier)
+                            .closePane(paneId),
+                        icon: const Icon(Symbols.close, size: 18),
+                      ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -609,6 +646,7 @@ class _DraggablePaneTab extends StatelessWidget {
     required this.tab,
     required this.paneId,
     required this.selected,
+    required this.showTitle,
     required this.index,
     required this.onSelect,
     required this.onClose,
@@ -618,6 +656,11 @@ class _DraggablePaneTab extends StatelessWidget {
   final SessionTab tab;
   final String paneId;
   final bool selected;
+
+  /// Whether this chip draws its title. Narrow panes only expand the focused
+  /// tab, so the rest stay icon-sized.
+  final bool showTitle;
+
   final int index;
   final VoidCallback onSelect;
   final VoidCallback onClose;
@@ -629,6 +672,7 @@ class _DraggablePaneTab extends StatelessWidget {
     final chip = _PaneTabChip(
       tab: tab,
       selected: selected,
+      showTitle: showTitle,
       onSelect: onSelect,
       onClose: onClose,
     );
@@ -707,12 +751,14 @@ class _PaneTabChip extends StatelessWidget {
   const _PaneTabChip({
     required this.tab,
     required this.selected,
+    required this.showTitle,
     required this.onSelect,
     required this.onClose,
   });
 
   final SessionTab tab;
   final bool selected;
+  final bool showTitle;
   final VoidCallback onSelect;
   final VoidCallback onClose;
 
@@ -747,11 +793,35 @@ class _PaneTabChip extends StatelessWidget {
                     tab: tab,
                     color: selected ? scheme.primary : null,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _tabLabel(tab),
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: selected ? scheme.primary : null,
+                  // Growing the label's width out of the icon is what reads as
+                  // the title expanding; the clip keeps the text hidden while
+                  // the width is still on its way to zero.
+                  ClipRect(
+                    child: AnimatedAlign(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: showTitle ? 1 : 0,
+                      duration: _paneTabTitleDuration,
+                      curve: Curves.easeOutCubic,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(width: 6),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: _paneTabTitleMaxWidth,
+                            ),
+                            child: Text(
+                              _tabLabel(tab),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(
+                                    color: selected ? scheme.primary : null,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(width: 2),
@@ -804,6 +874,13 @@ class _TabActivityIcon extends StatelessWidget {
           }
           return Icon(Symbols.terminal, size: 16, color: color);
         },
+      );
+    }
+    if (tab case AgentChatSessionTab(working: true)) {
+      return SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2, color: color),
       );
     }
     return Icon(_tabIcon(tab), size: 16, color: color);
@@ -890,16 +967,68 @@ class _SessionTabBody extends ConsumerWidget {
     // (split creation, drag between panes, etc.).
     final key = sessionTabViewKey(tab.id);
     if (tab is DashboardTab) {
-      return ServerDashboardTab(key: key);
+      return TabNavigator(
+        key: key,
+        tabId: tab.id,
+        builder: (_) => const ServerDashboardTab(),
+      );
+    }
+    if (tab is AssetsSessionTab) {
+      final assetsTab = tab as AssetsSessionTab;
+      final notifier = ref.read(terminalTabsProvider.notifier);
+      return TabNavigator(
+        key: key,
+        tabId: tab.id,
+        builder: (_) => AssetsPage(
+          initialSection: assetsTab.section,
+          onSectionChanged: (section) =>
+              notifier.setAssetsSection(tab.id, section),
+        ),
+      );
+    }
+    if (tab is ProjectsSessionTab) {
+      return TabNavigator(
+        key: key,
+        tabId: tab.id,
+        builder: (_) => const ProjectsPage(),
+      );
+    }
+    if (tab is MaidCafeCloudSessionTab) {
+      return TabNavigator(
+        key: key,
+        tabId: tab.id,
+        builder: (_) => const MaidCafeCloudPage(),
+      );
+    }
+    if (tab is SettingsSessionTab) {
+      return TabNavigator(
+        key: key,
+        tabId: tab.id,
+        builder: (_) => const SettingsPage(),
+      );
+    }
+    if (tab is AgentChatSessionTab) {
+      final notifier = ref.read(terminalTabsProvider.notifier);
+      return AgentChatView(
+        key: key,
+        tabId: tab.id,
+        autofocus: autofocus,
+        onTitleChanged: (title) => notifier.renameAgentChat(tab.id, title),
+        onWorkingChanged: (working) =>
+            notifier.setAgentChatWorking(tab.id, working),
+      );
     }
     if (tab is ServerDetailTab) {
       final detailTab = tab as ServerDetailTab;
-      return ServerDetailPage(
+      return TabNavigator(
         key: key,
-        server: detailTab.server,
-        initialTab: detailTab.initialTab,
-        initialComposeProject: detailTab.initialComposeProject,
-        embedded: true,
+        tabId: tab.id,
+        builder: (_) => ServerDetailPage(
+          server: detailTab.server,
+          initialTab: detailTab.initialTab,
+          initialComposeProject: detailTab.initialComposeProject,
+          embedded: true,
+        ),
       );
     }
     if (tab is FileManagementTab) {
@@ -1098,6 +1227,11 @@ IconData _tabIcon(SessionTab tab) => switch (tab.type) {
   SessionTabType.terminal => Symbols.terminal,
   SessionTabType.fileManagement => Symbols.folder,
   SessionTabType.fileEditor => Symbols.edit_document,
+  SessionTabType.assets => Symbols.inventory_2,
+  SessionTabType.projects => Symbols.deployed_code,
+  SessionTabType.maidCafeCloud => Symbols.cloud,
+  SessionTabType.settings => Symbols.settings,
+  SessionTabType.agentChat => Symbols.smart_toy,
 };
 String _tabLabel(SessionTab tab) {
   if (tab is DashboardTab) return 'tabDashboard'.tr();
@@ -1110,6 +1244,13 @@ String _tabLabel(SessionTab tab) {
   if (tab is MaidCafePayloadSessionTab) {
     return '${'maidCafePayloadTab'.tr()} · ${tab.serverName}';
   }
+  if (tab is AgentChatSessionTab) {
+    return tab.title.isEmpty ? 'agentNewConversation'.tr() : tab.title;
+  }
+  if (tab is AssetsSessionTab) return 'tabAssets'.tr();
+  if (tab is ProjectsSessionTab) return 'tabProjects'.tr();
+  if (tab is MaidCafeCloudSessionTab) return 'maidCafeCloudTitle'.tr();
+  if (tab is SettingsSessionTab) return 'tabSettings'.tr();
   return tab.serverName;
 }
 
@@ -1598,7 +1739,7 @@ String _formatUptime(Duration uptime) {
 }
 
 /// Empty-state server picker used for the full workspace and for empty panes.
-class _SessionIntro extends StatelessWidget {
+class _SessionIntro extends ConsumerWidget {
   const _SessionIntro({
     required this.servers,
     required this.tabs,
@@ -1614,14 +1755,17 @@ class _SessionIntro extends StatelessWidget {
   final bool compact;
 
   @override
-  Widget build(BuildContext context) => servers.when(
+  Widget build(BuildContext context, WidgetRef ref) => servers.when(
     loading: () => const Center(child: CircularProgressIndicator()),
     error: (error, _) =>
         Center(child: Text('serversLoadError'.tr(args: [error.toString()]))),
     data: (servers) => servers.isEmpty
         ? Center(
             child: FilledButton.icon(
-              onPressed: () => AutoTabsRouter.of(context).setActiveIndex(0),
+              // The dashboard owns the add-server action; bring it back so the
+              // user can create the first server from an empty workspace.
+              onPressed: () =>
+                  ref.read(terminalTabsProvider.notifier).openDashboard(),
               icon: const Icon(Symbols.add),
               label: Text('serversAddServer'.tr()),
             ),

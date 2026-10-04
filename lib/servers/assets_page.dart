@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -19,14 +18,26 @@ import 'credentials_page.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'servers_page.dart';
+import 'terminal_tabs_provider.dart';
 
 /// A home for saved, reusable connection resources: server connections,
 /// GitHub, credentials and snippets, each in its own tab. The primary
 /// create action lives on a floating action button that adapts to the
 /// active tab.
-@RoutePage()
 class AssetsPage extends ConsumerStatefulWidget {
-  const AssetsPage({super.key});
+  const AssetsPage({
+    super.key,
+    this.initialSection = AssetsSection.connections,
+    this.onSectionChanged,
+  });
+
+  /// The page to show. Changing it switches the tab bar to that page, which is
+  /// how the launcher opens ["GitHub"] or ["Snippets"] directly.
+  final AssetsSection initialSection;
+
+  /// Reports the page the user switched to, so the workspace tab can remember
+  /// it.
+  final ValueChanged<AssetsSection>? onSectionChanged;
 
   @override
   ConsumerState<AssetsPage> createState() => _AssetsPageState();
@@ -35,9 +46,20 @@ class AssetsPage extends ConsumerStatefulWidget {
 class _AssetsPageState extends ConsumerState<AssetsPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController = TabController(
-    length: 4,
+    length: AssetsSection.values.length,
     vsync: this,
+    initialIndex: widget.initialSection.index,
   )..addListener(_onTabChanged);
+
+  @override
+  void didUpdateWidget(AssetsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final section = widget.initialSection;
+    if (section != oldWidget.initialSection &&
+        _tabController.index != section.index) {
+      _tabController.animateTo(section.index);
+    }
+  }
 
   @override
   void dispose() {
@@ -46,14 +68,18 @@ class _AssetsPageState extends ConsumerState<AssetsPage>
   }
 
   void _onTabChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // Report only a settled index; the listener also fires mid-animation.
+    if (_tabController.indexIsChanging) return;
+    widget.onSectionChanged?.call(AssetsSection.values[_tabController.index]);
   }
 
   @override
   Widget build(BuildContext context) {
     return MaidKitAppScaffold(
       body: DefaultTabController(
-        length: 4,
+        length: AssetsSection.values.length,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

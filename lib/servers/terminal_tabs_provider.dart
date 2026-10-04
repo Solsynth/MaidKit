@@ -1,11 +1,14 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
+import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -37,7 +40,19 @@ enum SessionTabType {
   terminal,
   fileManagement,
   fileEditor,
+  assets,
+  projects,
+  maidCafeCloud,
+  settings,
+  agentChat,
 }
+
+/// The inner pages of the assets tab, in the order its own tab bar shows them.
+///
+/// A caller can open the assets tab straight on one of them (a palette entry
+/// per page, a deep link), so the section is part of the tab rather than page
+/// local state.
+enum AssetsSection { connections, github, credentials, snippets }
 
 /// Optional close confirmation for dirty file-editor tabs.
 final Map<String, Future<bool> Function()> fileEditorCloseGuards = {};
@@ -169,6 +184,81 @@ class MaidCafePayloadSessionTab extends SessionTab {
 
   @override
   SessionTabType get type => SessionTabType.maidCafePayload;
+}
+
+/// A non-server destination hosted in the pane tab system.
+///
+/// These used to be navigation-rail destinations; each one is a singleton tab
+/// (there is never a second Projects or Settings tab), so opening an already
+/// open destination simply selects it.
+sealed class DestinationTab extends SessionTab {
+  const DestinationTab({required super.id, required super.serverName})
+    : super(serverId: -1);
+}
+
+/// Saved connection resources: servers, GitHub, credentials and snippets.
+class AssetsSessionTab extends DestinationTab {
+  const AssetsSessionTab({this.section = AssetsSection.connections})
+    : super(id: 'assets', serverName: 'Assets');
+
+  /// The assets page to show. Re-opening the tab on another section switches
+  /// to it instead of opening a second assets tab.
+  final AssetsSection section;
+
+  AssetsSessionTab copyWith({AssetsSection? section}) =>
+      AssetsSessionTab(section: section ?? this.section);
+
+  @override
+  SessionTabType get type => SessionTabType.assets;
+}
+
+/// Managed deployment projects.
+class ProjectsSessionTab extends DestinationTab {
+  const ProjectsSessionTab() : super(id: 'projects', serverName: 'Projects');
+
+  @override
+  SessionTabType get type => SessionTabType.projects;
+}
+
+/// Solarpass account, workspaces and registered MaidCafe daemons.
+class MaidCafeCloudSessionTab extends DestinationTab {
+  const MaidCafeCloudSessionTab()
+    : super(id: 'maidcafe-cloud', serverName: 'MaidCafe');
+
+  @override
+  SessionTabType get type => SessionTabType.maidCafeCloud;
+}
+
+/// App settings.
+class SettingsSessionTab extends DestinationTab {
+  const SettingsSessionTab() : super(id: 'settings', serverName: 'Settings');
+
+  @override
+  SessionTabType get type => SessionTabType.settings;
+}
+
+/// One agent chat. The chat itself lives in the tab body; the tab carries the
+/// title and in-flight flag so the tab strip can show them without rebuilding
+/// the conversation.
+class AgentChatSessionTab extends SessionTab {
+  const AgentChatSessionTab({
+    required super.id,
+    required this.title,
+    this.working = false,
+  }) : super(serverId: -1, serverName: 'Agent');
+
+  final String title;
+  final bool working;
+
+  AgentChatSessionTab copyWith({String? title, bool? working}) =>
+      AgentChatSessionTab(
+        id: id,
+        title: title ?? this.title,
+        working: working ?? this.working,
+      );
+
+  @override
+  SessionTabType get type => SessionTabType.agentChat;
 }
 
 /// A pane owns a tab strip and shows one selected tab at a time.
@@ -722,6 +812,104 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     );
   }
 
+  /// Opens [tab] unless that singleton destination is already open, in which
+  /// case its tab is selected instead.
+  void _openDestination(DestinationTab tab) {
+    final existing = state.tabs
+        .whereType<DestinationTab>()
+        .where((candidate) => candidate.id == tab.id)
+        .firstOrNull;
+    if (existing != null) {
+      select(existing.id);
+      return;
+    }
+    _insertTab(tab);
+  }
+
+  void openAssets({AssetsSection section = AssetsSection.connections}) {
+    final existing = state.tabs.whereType<AssetsSessionTab>().firstOrNull;
+    if (existing == null) {
+      _insertTab(AssetsSessionTab(section: section));
+      return;
+    }
+    if (existing.section != section) {
+      _replaceTab(existing.copyWith(section: section));
+    }
+    select(existing.id);
+  }
+
+  /// Records the assets page the user switched to, so re-opening the tab from
+  /// the launcher can land back on it.
+  void setAssetsSection(String tabId, AssetsSection section) {
+    final tab = state.tabs
+        .whereType<AssetsSessionTab>()
+        .where((candidate) => candidate.id == tabId)
+        .firstOrNull;
+    if (tab == null || tab.section == section) return;
+    _replaceTab(tab.copyWith(section: section));
+  }
+
+  void openProjects() => _openDestination(const ProjectsSessionTab());
+
+  void openMaidCafeCloud() => _openDestination(const MaidCafeCloudSessionTab());
+
+  void openSettings() => _openDestination(const SettingsSessionTab());
+
+  /// Shows the servers dashboard, opening it again when the workspace was
+  /// emptied by closing every other tab. The dashboard is the workspace's home
+  /// tab and cannot be closed, so this only ever selects it.
+  void openDashboard() {
+    final dashboard = state.tabs.whereType<DashboardTab>().firstOrNull;
+    if (dashboard != null) {
+      select(dashboard.id);
+      return;
+    }
+    _insertTab(const DashboardTab());
+  }
+
+  /// Opens a new agent chat tab and returns it.
+  AgentChatSessionTab openAgentChat({String title = ''}) {
+    final tab = AgentChatSessionTab(
+      id: 'agent-${DateTime.now().microsecondsSinceEpoch}',
+      title: title,
+    );
+    _insertTab(tab);
+    return tab;
+  }
+
+  /// Updates the tab-strip label of an agent chat without touching the live
+  /// chat state, which the tab body owns.
+  void renameAgentChat(String tabId, String title) {
+    final tab = _agentChat(tabId);
+    if (tab == null || tab.title == title) return;
+    _replaceTab(tab.copyWith(title: title));
+  }
+
+  /// Marks an agent chat as streaming so its tab chip can show activity.
+  void setAgentChatWorking(String tabId, bool working) {
+    final tab = _agentChat(tabId);
+    if (tab == null || tab.working == working) return;
+    _replaceTab(tab.copyWith(working: working));
+  }
+
+  AgentChatSessionTab? _agentChat(String tabId) => state.tabs
+      .whereType<AgentChatSessionTab>()
+      .where((tab) => tab.id == tabId)
+      .firstOrNull;
+
+  /// Swaps [tab] for an updated instance with the same id.
+  void _replaceTab(SessionTab tab) {
+    final index = state.tabs.indexWhere((candidate) => candidate.id == tab.id);
+    if (index < 0) return;
+    final tabs = [...state.tabs]..[index] = tab;
+    state = TerminalTabsState(
+      tabs: tabs,
+      panes: state.panes,
+      layout: state.layout,
+      focusedPaneId: state.focusedPaneId,
+    );
+  }
+
   /// Splits the focused pane and opens an empty sibling for the user to fill.
   void splitEmpty(SessionSplitAxis axis) {
     final focusId = state.focusedPaneId;
@@ -858,9 +1046,33 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     );
   }
 
+  /// Asks before a close throws away work that is still in flight.
+  ///
+  /// A terminal dies with its shell and an agent chat dies with the reply it
+  /// is still writing, so both ask first. Every close path — the tab's close
+  /// button, Cmd/Ctrl+W, closing a pane — goes through [close], so they all
+  /// ask the same question.
+  Future<bool> _confirmCloseWhileWorking(SessionTab? tab) async {
+    final message = switch (tab) {
+      TerminalTab(serverName: final name, :final terminal)
+          when terminal.currentTaskActivity.running =>
+        'sessionsCloseRunningTerminalMessage'.tr(args: [name]),
+      AgentChatSessionTab(working: true) =>
+        'sessionsCloseWorkingChatMessage'.tr(),
+      _ => null,
+    };
+    if (message == null) return true;
+    return showMaidKitConfirmAlert(
+      message,
+      'sessionsCloseWorkingTabTitle'.tr(),
+      isDanger: true,
+    );
+  }
+
   Future<void> close(String tabId) async {
     final tab = state.tabs.where((tab) => tab.id == tabId).firstOrNull;
     if (tab is DashboardTab) return;
+    if (!await _confirmCloseWhileWorking(tab)) return;
     if (tab is FileEditorTab) {
       final guard = fileEditorCloseGuards[tabId];
       if (guard != null && !await guard()) return;
@@ -1008,6 +1220,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     final cleanup = _tabCleanups.remove(tabId);
     if (cleanup != null) unawaited(cleanup());
     _releaseSessionTabViewKey(tabId);
+    releaseTabNavigator(tabId);
     _lastBufferRows.remove(tabId);
     _cachedHistory.remove(tabId);
 
@@ -1066,6 +1279,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   void _removePane(String paneId, {required List<String> alsoRemoveTabs}) {
     for (final tabId in alsoRemoveTabs) {
       _releaseSessionTabViewKey(tabId);
+      releaseTabNavigator(tabId);
     }
     final tabs = state.tabs
         .where((tab) => !alsoRemoveTabs.contains(tab.id))

@@ -11,7 +11,27 @@ enum WorkspaceTabKind {
   maidCafePayload,
   terminal,
   fileManagement,
-  fileEditor;
+  fileEditor,
+  assets,
+  projects,
+  maidCafeCloud,
+  settings;
+
+  /// Whether this tab is bound to a saved server. A global destination tab
+  /// restores even when the server catalog changed; a server-scoped tab is
+  /// dropped when its server is gone.
+  bool get isServerScoped => switch (this) {
+    WorkspaceTabKind.dashboard ||
+    WorkspaceTabKind.assets ||
+    WorkspaceTabKind.projects ||
+    WorkspaceTabKind.maidCafeCloud ||
+    WorkspaceTabKind.settings => false,
+    WorkspaceTabKind.serverDetail ||
+    WorkspaceTabKind.maidCafePayload ||
+    WorkspaceTabKind.terminal ||
+    WorkspaceTabKind.fileManagement ||
+    WorkspaceTabKind.fileEditor => true,
+  };
 
   static WorkspaceTabKind? tryParse(String? raw) {
     for (final kind in WorkspaceTabKind.values) {
@@ -60,7 +80,7 @@ class WorkspaceTabSnapshot {
   /// File-editor side.
   final bool isRemote;
 
-  /// Server-detail initial tab index.
+  /// Server-detail initial tab index, or the assets page for an assets tab.
   final int initialTab;
 
   /// Server-detail initial compose project.
@@ -149,49 +169,75 @@ class WorkspaceSnapshot {
     TerminalTabsState state, {
     required String Function(TerminalTab tab) historyFor,
   }) {
-    final tabs = <WorkspaceTabSnapshot>[
-      for (final tab in state.tabs)
-        switch (tab) {
-          DashboardTab() => WorkspaceTabSnapshot(
-            id: tab.id,
-            kind: WorkspaceTabKind.dashboard,
-            serverId: tab.serverId,
-          ),
-          ServerDetailTab() => WorkspaceTabSnapshot(
-            id: tab.id,
-            kind: WorkspaceTabKind.serverDetail,
-            serverId: tab.serverId,
-            initialTab: tab.initialTab,
-            initialComposeProject: tab.initialComposeProject,
-          ),
-          MaidCafePayloadSessionTab() => WorkspaceTabSnapshot(
-            id: tab.id,
-            kind: WorkspaceTabKind.maidCafePayload,
-            serverId: tab.serverId,
-          ),
-          TerminalTab() => WorkspaceTabSnapshot(
-            id: tab.id,
-            kind: WorkspaceTabKind.terminal,
-            serverId: tab.serverId,
-            cwd: tab.terminal.currentDirectory,
-            history: historyFor(tab),
-          ),
-          FileManagementTab() => WorkspaceTabSnapshot(
-            id: tab.id,
-            kind: WorkspaceTabKind.fileManagement,
-            serverId: tab.serverId,
-            path: tab.initialPath,
-          ),
-          FileEditorTab() => WorkspaceTabSnapshot(
-            id: tab.id,
-            kind: WorkspaceTabKind.fileEditor,
-            serverId: tab.serverId,
-            fileName: tab.fileName,
-            path: tab.path,
-            isRemote: tab.isRemote,
-          ),
-        },
-    ];
+    final tabs = <WorkspaceTabSnapshot>[];
+    for (final tab in state.tabs) {
+      final captured = switch (tab) {
+        // An agent chat tab only means something together with its
+        // conversation, which the workspace snapshot does not carry, so it is
+        // not restored.
+        AgentChatSessionTab() => null,
+        DashboardTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.dashboard,
+          serverId: tab.serverId,
+        ),
+        AssetsSessionTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.assets,
+          serverId: tab.serverId,
+          initialTab: tab.section.index,
+        ),
+        ProjectsSessionTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.projects,
+          serverId: tab.serverId,
+        ),
+        MaidCafeCloudSessionTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.maidCafeCloud,
+          serverId: tab.serverId,
+        ),
+        SettingsSessionTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.settings,
+          serverId: tab.serverId,
+        ),
+        ServerDetailTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.serverDetail,
+          serverId: tab.serverId,
+          initialTab: tab.initialTab,
+          initialComposeProject: tab.initialComposeProject,
+        ),
+        MaidCafePayloadSessionTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.maidCafePayload,
+          serverId: tab.serverId,
+        ),
+        TerminalTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.terminal,
+          serverId: tab.serverId,
+          cwd: tab.terminal.currentDirectory,
+          history: historyFor(tab),
+        ),
+        FileManagementTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.fileManagement,
+          serverId: tab.serverId,
+          path: tab.initialPath,
+        ),
+        FileEditorTab() => WorkspaceTabSnapshot(
+          id: tab.id,
+          kind: WorkspaceTabKind.fileEditor,
+          serverId: tab.serverId,
+          fileName: tab.fileName,
+          path: tab.path,
+          isRemote: tab.isRemote,
+        ),
+      };
+      if (captured != null) tabs.add(captured);
+    }
     return WorkspaceSnapshot(
       layout: state.layout,
       panes: state.panes,
@@ -385,7 +431,7 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
       final spec = snapshot.tabById(tabId);
       if (spec == null) continue;
       final server = serversById[spec.serverId];
-      if (spec.kind != WorkspaceTabKind.dashboard && server == null) continue;
+      if (spec.kind.isServerScoped && server == null) continue;
       // Full desired order, including deferred terminals: the restore flow
       // moves terminals into these slots once they connect.
       desiredIds.add(tabId);
@@ -394,6 +440,26 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
         case WorkspaceTabKind.dashboard:
           initialTabs.add(DashboardTab());
           resolvedIds.add(DashboardTab().id);
+        case WorkspaceTabKind.assets:
+          initialTabs.add(
+            AssetsSessionTab(
+              section:
+                  AssetsSection.values[spec.initialTab.clamp(
+                    0,
+                    AssetsSection.values.length - 1,
+                  )],
+            ),
+          );
+          resolvedIds.add(const AssetsSessionTab().id);
+        case WorkspaceTabKind.projects:
+          initialTabs.add(const ProjectsSessionTab());
+          resolvedIds.add(const ProjectsSessionTab().id);
+        case WorkspaceTabKind.maidCafeCloud:
+          initialTabs.add(const MaidCafeCloudSessionTab());
+          resolvedIds.add(const MaidCafeCloudSessionTab().id);
+        case WorkspaceTabKind.settings:
+          initialTabs.add(const SettingsSessionTab());
+          resolvedIds.add(const SettingsSessionTab().id);
         case WorkspaceTabKind.serverDetail:
           initialTabs.add(
             ServerDetailTab(

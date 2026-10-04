@@ -23,11 +23,12 @@ import 'package:maid_kit/agent/mcp_review_mode.dart';
 import 'package:maid_kit/agent/agent_run_policy.dart';
 import 'package:maid_kit/agent/billing_service.dart';
 import 'package:maid_kit/agent/personality_service.dart';
-import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/presentation/update_settings_section.dart';
 import 'package:maid_kit/shared/services/app_icon_service.dart';
 
+import 'about_page.dart';
 import 'database_backup_service.dart';
 import 'cloud_sync_service.dart';
 import 'connection_export_service.dart';
@@ -92,7 +93,6 @@ class _SettingsCategory {
   final IconData icon;
 }
 
-@RoutePage()
 class SettingsPage extends HookConsumerWidget {
   const SettingsPage({super.key});
 
@@ -775,7 +775,8 @@ class SettingsPage extends HookConsumerWidget {
                         title: Text('aboutTitle'.tr()),
                         subtitle: Text('settingsAboutHint'.tr()),
                         trailing: const Icon(Symbols.chevron_right),
-                        onTap: () => context.router.push(const AboutRoute()),
+                        onTap: () =>
+                            TabNavigator.of(context).push(const AboutPage()),
                       ),
                     ),
                     const SizedBox(height: 24),

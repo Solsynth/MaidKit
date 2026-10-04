@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
@@ -11,22 +10,22 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
 import 'compose_project_actions.dart';
+import 'container_detail_page.dart';
 import 'container_list_tile.dart';
 import 'container_models.dart';
 import 'container_sudo_guide.dart';
 
 /// Detail view for a linked Compose project: stack identity, lifecycle
 /// actions, live per-service status, merged logs, and the compose file itself.
-@RoutePage()
 class ComposeDetailPage extends ConsumerStatefulWidget {
   const ComposeDetailPage({
     super.key,
@@ -452,8 +451,8 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
   }
 
   Future<void> _openContainer(ServerContainer container) async {
-    await context.router.push(
-      ContainerDetailRoute(
+    TabNavigator.of(context).push(
+      ContainerDetailPage(
         server: widget.server,
         runtime: widget.runtime,
         scope: widget.scope,

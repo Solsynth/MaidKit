@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/services.dart';
@@ -11,14 +10,15 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
-import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/services/analytics_service.dart';
 import 'package:styled_widget/styled_widget.dart';
 
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
+import 'maidcafe_daemon_detail_page.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_notifications_tab.dart';
 import 'maidcafe_service.dart';
@@ -35,7 +35,6 @@ import 'solarpass_device_code_dialog.dart';
 /// history), credentials and notifications — with the account and workspace
 /// selection in a terminal-style bottom status bar that also carries a
 /// manual refresh and a last-refreshed readout.
-@RoutePage()
 class MaidCafeCloudPage extends ConsumerStatefulWidget {
   const MaidCafeCloudPage({super.key});
 
@@ -1013,9 +1012,9 @@ class _DaemonFleetCard extends ConsumerWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => context.router.push(
-                      MaidCafeDaemonDetailRoute(daemon: daemon),
-                    ),
+                    onTap: () => TabNavigator.of(
+                      context,
+                    ).push(MaidCafeDaemonDetailPage(daemon: daemon)),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

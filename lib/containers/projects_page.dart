@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -12,17 +11,17 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/routing/app_router.gr.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 
 import 'deployment_project_models.dart';
+import 'project_detail_page.dart';
 import 'project_repository.dart';
 
 /// Catalog of managed deployment projects. Each project is a portable
 /// collection of resources (servers, stacks, services, etc.).
-@RoutePage()
 class ProjectsPage extends ConsumerStatefulWidget {
   const ProjectsPage({super.key});
 
@@ -55,7 +54,7 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
         .read(projectRepositoryProvider)
         .createProject(name: draft.name, description: draft.description);
     if (!mounted) return;
-    context.router.push(ProjectDetailRoute(projectId: id));
+    TabNavigator.of(context).push(ProjectDetailPage(projectId: id));
   }
 
   Future<void> _edit(DeploymentProject project) async {
@@ -490,8 +489,8 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
                               children: [
                                 MenuAction(
                                   title: 'deploymentContextMenuOpen'.tr(),
-                                  callback: () => context.router.push(
-                                    ProjectDetailRoute(projectId: project.id),
+                                  callback: () => TabNavigator.of(context).push(
+                                    ProjectDetailPage(projectId: project.id),
                                   ),
                                 ),
                                 MenuAction(
@@ -513,9 +512,9 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
                               project: project,
                               resources: projectResources,
                               serverNames: serverNames,
-                              onOpen: () => context.router.push(
-                                ProjectDetailRoute(projectId: project.id),
-                              ),
+                              onOpen: () => TabNavigator.of(
+                                context,
+                              ).push(ProjectDetailPage(projectId: project.id)),
                               onEdit: () => _edit(project),
                               onDelete: () =>
                                   _delete(project, projectResources.length),
@@ -776,17 +775,21 @@ class _ProjectCard extends StatelessWidget {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  Text(
-                    resources.isEmpty
-                        ? 'deploymentResourceCountZero'.tr()
-                        : 'deploymentResourceCount'.tr(
-                            namedArgs: {
-                              'count': '${resources.length}',
-                              'plural': resources.length == 1 ? '' : 's',
-                            },
-                          ),
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                  Flexible(
+                    child: Text(
+                      resources.isEmpty
+                          ? 'deploymentResourceCountZero'.tr()
+                          : 'deploymentResourceCount'.tr(
+                              namedArgs: {
+                                'count': '${resources.length}',
+                                'plural': resources.length == 1 ? '' : 's',
+                              },
+                            ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   if (serverLabel != null) ...[
@@ -843,7 +846,14 @@ class _KindChip extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: scheme.primary),
           const SizedBox(width: 4),
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ),
         ],
       ),
     );

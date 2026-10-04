@@ -6,13 +6,20 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'port_forward_sheet.dart';
+import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
 
 Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
+  // The palette renders in an overlay entry that is removed when it closes, so
+  // anything that must outlive it (a status sheet, a deploy terminal) opens on
+  // this context instead of the palette's own.
+  final hostContext = context;
   final tabs = ref.read(terminalTabsProvider);
   // Only the MaidCafe daemon transport opens a terminal in a browser; listing
   // SSH and serial servers there would offer actions that cannot run.
@@ -28,10 +35,24 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
       ? null
       : servers.where((server) => server.id == activeTab.serverId).firstOrNull;
   final canSplit = tabs.isNotEmpty;
+  final portForwards = ref.read(portForwardsProvider).asData?.value ?? const [];
+  final hiddenDeploys = ref
+      .read(deploySessionsProvider)
+      .where((session) => !session.modalVisible)
+      .toList();
+  final deploySessionId = hiddenDeploys.isEmpty ? null : hiddenDeploys.last.id;
+
   return showMaidKitCommandPalette<void>(
     builder: (context, close) => _TerminalCommandPalette(
       activeTab: activeTab,
       servers: servers,
+      destinationActions: _destinationActions(
+        hostContext: hostContext,
+        ref: ref,
+        close: close,
+        portForwards: portForwards,
+        deploySessionId: deploySessionId,
+      ),
       onDismiss: () => close(null),
       onOpen: (server) async {
         await openTerminalFor(context, ref, server);
@@ -88,6 +109,7 @@ class _TerminalCommandPalette extends StatefulWidget {
   const _TerminalCommandPalette({
     required this.activeTab,
     required this.servers,
+    required this.destinationActions,
     required this.onDismiss,
     required this.onOpen,
     required this.onOpenFiles,
@@ -99,6 +121,10 @@ class _TerminalCommandPalette extends StatefulWidget {
 
   final SessionTab? activeTab;
   final List<Server> servers;
+
+  /// Destination tabs and workspace-wide surfaces, offered alongside the
+  /// terminal actions.
+  final List<_TerminalAction> destinationActions;
   final VoidCallback onDismiss;
   final Future<void> Function(Server server) onOpen;
   final Future<void> Function()? onOpenFiles;
@@ -184,6 +210,7 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             icon: Symbols.terminal,
             onSelect: () => widget.onOpen(server),
           ),
+      ...widget.destinationActions,
     ].where((action) => action.label.toLowerCase().contains(query)).toList();
 
     return Shortcuts(
@@ -253,4 +280,90 @@ class _TerminalAction {
   final String label;
   final IconData icon;
   final Future<void> Function() onSelect;
+}
+
+/// Destination tabs plus the port-forward and deploy surfaces that used to sit
+/// on the navigation rail. Every action closes the palette first.
+List<_TerminalAction> _destinationActions({
+  required BuildContext hostContext,
+  required WidgetRef ref,
+  required void Function(void) close,
+  required List<ActivePortForward> portForwards,
+  required String? deploySessionId,
+}) {
+  final notifier = ref.read(terminalTabsProvider.notifier);
+
+  void open(void Function() action) {
+    action();
+    close(null);
+  }
+
+  return [
+    _TerminalAction(
+      label: 'tabDashboard'.tr(),
+      icon: Symbols.dashboard,
+      onSelect: () async => open(notifier.openDashboard),
+    ),
+    _TerminalAction(
+      label: 'assetsConnections'.tr(),
+      icon: Symbols.dns,
+      onSelect: () async => open(notifier.openAssets),
+    ),
+    _TerminalAction(
+      label: 'tabGithub'.tr(),
+      icon: Symbols.rocket_launch,
+      onSelect: () async =>
+          open(() => notifier.openAssets(section: AssetsSection.github)),
+    ),
+    _TerminalAction(
+      label: 'assetsCredentialsTitle'.tr(),
+      icon: Symbols.key,
+      onSelect: () async =>
+          open(() => notifier.openAssets(section: AssetsSection.credentials)),
+    ),
+    _TerminalAction(
+      label: 'tabSnippets'.tr(),
+      icon: Symbols.code,
+      onSelect: () async =>
+          open(() => notifier.openAssets(section: AssetsSection.snippets)),
+    ),
+    _TerminalAction(
+      label: 'tabProjects'.tr(),
+      icon: Symbols.deployed_code,
+      onSelect: () async => open(notifier.openProjects),
+    ),
+    _TerminalAction(
+      label: 'agentNewConversation'.tr(),
+      icon: Symbols.smart_toy,
+      onSelect: () async => open(notifier.openAgentChat),
+    ),
+    _TerminalAction(
+      label: 'maidCafeCloudTitle'.tr(),
+      icon: Symbols.cloud,
+      onSelect: () async => open(notifier.openMaidCafeCloud),
+    ),
+    _TerminalAction(
+      label: 'tabSettings'.tr(),
+      icon: Symbols.settings,
+      onSelect: () async => open(notifier.openSettings),
+    ),
+    if (portForwards.isNotEmpty)
+      _TerminalAction(
+        label: 'activePortForwards'.plural(portForwards.length),
+        icon: Symbols.swap_horiz,
+        onSelect: () async {
+          close(null);
+          await showPortForwardSheet(hostContext, portForwards);
+        },
+      ),
+    if (deploySessionId != null)
+      _TerminalAction(
+        label: 'deployLogLabel'.tr(),
+        icon: Symbols.terminal,
+        onSelect: () async {
+          close(null);
+          showDeployTerminal(ref, deploySessionId);
+        },
+      ),
+  ];
 }

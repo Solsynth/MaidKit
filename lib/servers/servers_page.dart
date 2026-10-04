@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -17,8 +17,11 @@ import 'package:maid_kit/github/github_workflow_strip.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/collapsible_section.dart';
+import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'maidcafe_service.dart';
+import 'port_forward_sheet.dart';
+import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
 import 'dashboard_runtimes_section.dart';
 import 'server_health_chip.dart';
@@ -26,7 +29,6 @@ import 'server_models.dart';
 import 'server_providers.dart';
 import 'serial_port_client.dart';
 import 'privacy_preferences.dart';
-import 'sessions_page.dart';
 import 'tailscale_service.dart';
 import 'tailscale_settings_section.dart';
 import 'tailscale_ssh_socket.dart';
@@ -211,14 +213,6 @@ class ServerDashboardTab extends ConsumerWidget {
   }
 }
 
-@RoutePage()
-class ServersPage extends StatelessWidget {
-  const ServersPage({super.key});
-
-  @override
-  Widget build(BuildContext context) => const SessionsWorkspace();
-}
-
 class _ServersCatalog extends StatelessWidget {
   const _ServersCatalog({
     required this.servers,
@@ -251,26 +245,34 @@ class _ServersCatalog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaidKitAppScaffold(
-      body: servers.when(
-        data: (items) => items.isEmpty
-            ? _EmptyServers(onAdd: onAdd)
-            : _ServerGrid(
-                servers: items,
-                sessions: sessions,
-                onConnect: onConnect,
-                onReconnectAll: onReconnectAll,
-                onEdit: onEdit,
-                onDelete: onDelete,
-                onReorder: onReorder,
-                onOpenDetail: onOpenDetail,
-                onOpenTerminal: onOpenTerminal,
-                onOpenFiles: onOpenFiles,
-                onRefresh: onRefresh,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _WorkspaceSurfacesRow(),
+          Expanded(
+            child: servers.when(
+              data: (items) => items.isEmpty
+                  ? _EmptyServers(onAdd: onAdd)
+                  : _ServerGrid(
+                      servers: items,
+                      sessions: sessions,
+                      onConnect: onConnect,
+                      onReconnectAll: onReconnectAll,
+                      onEdit: onEdit,
+                      onDelete: onDelete,
+                      onReorder: onReorder,
+                      onOpenDetail: onOpenDetail,
+                      onOpenTerminal: onOpenTerminal,
+                      onOpenFiles: onOpenFiles,
+                      onRefresh: onRefresh,
+                    ),
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, _) => Center(
+                child: Text('serversLoadError'.tr(args: [error.toString()])),
               ),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(
-          child: Text('serversLoadError'.tr(args: [error.toString()])),
-        ),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'servers-create-fab',
@@ -747,6 +749,54 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The workspace-wide surfaces the navigation rail used to host: live port
+/// forwards and deploy sessions nobody is looking at. Both hide themselves
+/// when there is nothing to show.
+class _WorkspaceSurfacesRow extends ConsumerWidget {
+  const _WorkspaceSurfacesRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // A browser has no SSH transport, so no port can be forwarded there.
+    final forwards = kIsWeb
+        ? const <ActivePortForward>[]
+        : ref.watch(portForwardsProvider).asData?.value ??
+              const <ActivePortForward>[];
+    final hiddenDeploys = ref
+        .watch(deploySessionsProvider)
+        .where((session) => !session.modalVisible)
+        .toList();
+    if (forwards.isEmpty && hiddenDeploys.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final running = hiddenDeploys.any((session) => session.isRunning);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (forwards.isNotEmpty)
+            OutlinedButton.icon(
+              onPressed: () => showPortForwardSheet(context, forwards),
+              icon: const Icon(Symbols.swap_horiz, size: 18),
+              label: Text('activePortForwards'.plural(forwards.length)),
+            ),
+          if (hiddenDeploys.isNotEmpty)
+            OutlinedButton.icon(
+              onPressed: () => showDeployTerminal(ref, hiddenDeploys.last.id),
+              icon: Icon(
+                running ? Symbols.progress_activity : Symbols.terminal,
+                size: 18,
+              ),
+              label: Text('deployLogLabel'.tr()),
+            ),
         ],
       ),
     );

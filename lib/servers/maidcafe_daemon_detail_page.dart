@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -18,7 +17,6 @@ import 'server_providers.dart';
 ///
 /// All views are read from workspace-member cloud endpoints; daemon management
 /// stays on the fleet card.
-@RoutePage()
 class MaidCafeDaemonDetailPage extends ConsumerWidget {
   const MaidCafeDaemonDetailPage({super.key, required this.daemon});
 

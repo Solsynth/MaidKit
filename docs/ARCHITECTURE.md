@@ -33,16 +33,39 @@ lib/
 
 ## Navigation
 
-`AppRouter` owns top-level routes. `ServerWorkspacePage` is a nested
-`AutoTabsRouter` shell with servers, projects, and settings routes.
-`ServersPage` contains the server dashboard and terminal/file-management
-workspace as in-page tabs.
+`AppRouter` owns a single route: `ServerWorkspacePage`, the pane-tab workspace
+(`SessionsWorkspace`). There is no tab router and no navigation rail — every
+destination is a `SessionTab` in the pane tab strip
+(`servers/terminal_tabs_provider.dart`): the servers dashboard, terminals, file
+management, file editors, agent chats, assets, deployment projects, the MaidCafe
+cloud console and settings.
 
-When changing routes:
+A tab that can open a detail page (dashboard, server detail, assets, projects,
+MaidCafe cloud, settings) wraps its content in a `TabNavigator`
+(`shared/presentation/tab_navigator.dart`). Push details with
+`TabNavigator.of(context).push(SomeDetailPage(...))` so the page lands inside the
+tab that opened it and survives switching tabs and panes; pop them with
+`TabNavigator.of(context).pop()`. `context.router` is only the root navigator and
+must not be used for detail pages.
 
-1. Add `@RoutePage()` to the page.
-2. Update `lib/routing/app_router.dart`.
-3. Run `dart run build_runner build`.
+The pane tab strip is the workspace's title bar. On a pane narrower than 768
+logical pixels only the focused tab draws its title, and that title expands out
+of its icon and collapses back instead of snapping the strip's layout, so
+background tabs stay icon-sized. The window shell
+(`shared/presentation/maidkit_window_scaffold.dart`) owns the app-level
+shortcuts — Shift+Tab opens the session-actions palette and Cmd/Ctrl+W closes
+the focused pane tab — because focus may sit outside the workspace when they are
+pressed. Closing routes through `TerminalTabsNotifier.close`, which asks first
+when the tab is still working: a terminal running a task, an agent chat still
+replying, or a dirty file editor.
+
+When changing pages:
+
+1. Add the destination or detail widget; only `ServerWorkspacePage` is a
+   `@RoutePage()`.
+2. Add a `SessionTab` subclass plus an `open*` method on `TerminalTabsNotifier`
+   for a new destination, and render it in `_SessionTabBody`.
+3. Run `dart run build_runner build` if routes changed.
 4. Never hand-edit `*.g.dart` or `*.gr.dart` files.
 
 ## Persistence
