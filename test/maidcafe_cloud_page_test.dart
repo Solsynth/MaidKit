@@ -15,7 +15,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/cloud_sync_service.dart';
 import 'package:maid_kit/servers/maidcafe_daemon_detail_page.dart';
-import 'package:maid_kit/servers/maidcafe_notifications_tab.dart';
 import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_connect.dart';
 import 'package:maid_kit/servers/maidcafe_preferences.dart';
@@ -37,18 +36,6 @@ MaidCafeDaemon _daemon({
   hostId: 'host-42',
   disconnectedAt: disconnectedAt,
 );
-MaidCafeNotification _notification() => MaidCafeNotification(
-  id: 'n1',
-  accountId: 'account-1',
-  daemonId: 'daemon-1',
-  kind: 'maidcafe.daemon.alert',
-  title: 'Webhook backup failed',
-  body: 'exit code 1',
-  metadata: const {},
-  readAt: null,
-  createdAt: DateTime.utc(2026, 8, 13),
-);
-
 MaidCafeCloudAction _cloudAction() => const MaidCafeCloudAction(
   name: 'backup',
   displayName: 'Backup data',
@@ -223,8 +210,6 @@ void main() {
     List<MaidCafeMetric> metrics = const [],
     Future<List<MaidCafeMetric>> Function(Ref ref, String daemonId)?
     metricsLoader,
-    Future<List<MaidCafeNotification>> Function(Ref ref, String workspaceId)?
-    notificationsLoader,
   }) async {
     tester.view.physicalSize = const Size(1200, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -261,14 +246,6 @@ void main() {
       ),
       maidCafeServiceProvider.overrideWithValue(
         service ?? _FakeMaidCafeService(),
-      ),
-      maidCafeNotificationsProvider.overrideWith(
-        notificationsLoader ??
-            ((ref, workspaceId) async =>
-                signedIn ? [_notification()] : const <MaidCafeNotification>[]),
-      ),
-      maidCafeUnreadNotificationCountProvider.overrideWith(
-        (ref, workspaceId) async => signedIn ? 1 : 0,
       ),
       maidCafeNotificationTopicsProvider.overrideWith(
         (ref, workspaceId) async => const [
@@ -345,55 +322,13 @@ void main() {
     expect(find.text('maidCafeNoWorkspaces'.tr()), findsOneWidget);
   });
 
-  testWidgets('signed in renders daemon and unread badge', (tester) async {
+  testWidgets('signed in renders the fleet', (tester) async {
     await pumpPage(tester);
 
     expect(find.text('host-1'), findsOneWidget);
     // Reported actions no longer occupy fleet cards; they live in the detail
     // page's Actions tab.
     expect(find.text('Backup data'), findsNothing);
-
-    // The feed lives on the notifications tab.
-    await tester.tap(find.text('maidCafeNotifications'.tr()));
-    await tester.pumpAndSettle();
-    expect(find.text('maidCafeUnreadCount'.tr(args: ['1'])), findsOneWidget);
-    expect(find.text('Webhook backup failed'), findsOneWidget);
-    expect(find.text('exit code 1'), findsOneWidget);
-  });
-
-  testWidgets('notifications refresh from pull and the toolbar button', (
-    tester,
-  ) async {
-    var fetches = 0;
-    await pumpPage(
-      tester,
-      notificationsLoader: (ref, workspaceId) async {
-        fetches++;
-        return [_notification()];
-      },
-    );
-
-    await tester.tap(find.text('maidCafeNotifications'.tr()));
-    await tester.pumpAndSettle();
-    expect(fetches, 1);
-
-    final feed = find.descendant(
-      of: find.byType(MaidCafeNotificationsTab),
-      matching: find.byType(RefreshIndicator),
-    );
-    await tester.dragFrom(
-      tester.getTopLeft(feed) + const Offset(300, 120),
-      const Offset(0, 420),
-    );
-    await tester.pumpAndSettle();
-    final afterPull = fetches;
-    expect(afterPull, greaterThan(1));
-
-    await tester.tap(
-      find.byKey(const ValueKey('maidcafe-notifications-refresh')),
-    );
-    await tester.pumpAndSettle();
-    expect(fetches, greaterThan(afterPull));
   });
 
   testWidgets('fleet card surfaces a cloud heartbeat disconnect', (
@@ -678,12 +613,6 @@ void main() {
               ),
             ),
             maidCafeServerConnectorProvider.overrideWithValue(connector),
-            maidCafeNotificationsProvider.overrideWith(
-              (ref, workspaceId) async => [_notification()],
-            ),
-            maidCafeUnreadNotificationCountProvider.overrideWith(
-              (ref, workspaceId) async => 1,
-            ),
             maidCafeNotificationTopicsProvider.overrideWith(
               (ref, workspaceId) async => const [
                 MaidCafeNotificationTopic(

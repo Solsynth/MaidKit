@@ -1794,6 +1794,8 @@
   "settingsCredentialEdit": "编辑凭据",
   "settingsCredentialName": "凭据名称",
   "settingsCredentials": "凭据",
+  "settingsDashboardDensity": "仪表盘密度",
+  "settingsDashboardDensityHint": "选择每张服务器卡片显示的信息量。",
   "settingsData": "数据",
   "settingsDescription": "自定义 MaidKit。",
   "settingsDisplayLanguage": "显示语言",

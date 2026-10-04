@@ -1795,6 +1795,8 @@
   "settingsCredentialEdit": "Edit credential",
   "settingsCredentialName": "Credential name",
   "settingsCredentials": "Credentials",
+  "settingsDashboardDensity": "Dashboard density",
+  "settingsDashboardDensityHint": "Choose how much detail each server card shows.",
   "settingsData": "Data",
   "settingsDescription": "Customize MaidKit.",
   "settingsDisplayLanguage": "Display Language",

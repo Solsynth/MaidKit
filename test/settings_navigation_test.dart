@@ -154,6 +154,29 @@ void main() {
     expect(find.text('settingsAbout'.tr()), findsWidgets);
   });
 
+  testWidgets('appearance settings own the dashboard density', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1200, 2400));
+
+    final container = containerOf(tester);
+    container.read(terminalTabsProvider.notifier).openSettings();
+    await tester.pumpAndSettle();
+
+    expect(find.text('settingsDashboardDensity'.tr()), findsOneWidget);
+    expect(container.read(dashboardCompactViewProvider), isFalse);
+
+    await tester.tap(find.text('serversCompactView'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(container.read(dashboardCompactViewProvider), isTrue);
+    expect(
+      container.read(appThemeSettingsProvider).compactDashboard,
+      isTrue,
+      reason: 'the choice has to outlive the session',
+    );
+  });
+
   testWidgets('uses category tabs on mobile settings', (
     WidgetTester tester,
   ) async {

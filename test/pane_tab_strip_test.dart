@@ -9,10 +9,14 @@ import 'package:easy_localization/src/translations.dart' as ez_tr;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/routing/app_router.dart';
+import 'package:maid_kit/servers/maidcafe_metoer.dart';
+import 'package:maid_kit/servers/notifications_modal.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/sessions_page.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
@@ -48,6 +52,10 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    // The notification bell opens through IslandUIFoundation's navigator, the
+    // same one the app hands it at startup.
+    IslandUIFoundation.configureNavigator(maidKitNavigatorKey);
+
     await tester.pumpWidget(
       EasyLocalization(
         supportedLocales: const [Locale('en', 'US')],
@@ -65,8 +73,20 @@ void main() {
             biometricUnlockEnabledProvider.overrideWith(
               (ref) => Future.value(false),
             ),
+            maidCafeMetoerUnreadCountProvider.overrideWith((ref) async => 0),
+            maidCafeMetoerNotificationsProvider.overrideWith(
+              (ref) async => [
+                MaidCafeMetoerNotification(
+                  id: 'n1',
+                  topic: 'daemon.alarm.disk_used_percent',
+                  title: 'Disk almost full',
+                  createdAt: DateTime.now(),
+                ),
+              ],
+            ),
           ],
           child: MaterialApp(
+            navigatorKey: maidKitNavigatorKey,
             theme: createMaidKitTheme(Brightness.light),
             home: const Scaffold(body: SessionsWorkspace()),
           ),
@@ -157,5 +177,33 @@ void main() {
     // Focus reveals the title over time rather than all at once.
     expect(midFlight, greaterThan(collapsed));
     expect(midFlight, lessThan(expanded));
+  });
+
+  testWidgets('the strip offers notifications and no split buttons', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester, const Size(900, 800));
+
+    expect(find.byType(NotificationsBellButton), findsOneWidget);
+    expect(find.byTooltip('maidCafeNotifications'.tr()), findsOneWidget);
+
+    // Splitting is the command palette's job now, so the strip no longer
+    // carries the two split buttons beside the actions button.
+    expect(find.byTooltip('sessionsSplitRight'.tr()), findsNothing);
+    expect(find.byTooltip('sessionsSplitDown'.tr()), findsNothing);
+    expect(find.byTooltip('sessionsSessionActions'.tr()), findsOneWidget);
+  });
+
+  testWidgets('the bell opens the notification feed as an attention modal', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester, const Size(900, 800));
+    expect(find.byType(NotificationModal), findsNothing);
+
+    await tester.tap(find.byType(NotificationsBellButton));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NotificationModal), findsOneWidget);
+    expect(find.text('Disk almost full'), findsOneWidget);
   });
 }

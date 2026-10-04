@@ -20,7 +20,6 @@ import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
 import 'maidcafe_daemon_detail_page.dart';
 import 'maidcafe_metoer.dart';
-import 'maidcafe_notifications_tab.dart';
 import 'maidcafe_service.dart';
 import 'server_health_chip.dart';
 import 'server_providers.dart';
@@ -48,7 +47,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   static const _credentialsOp = 'credentials';
 
   late final TabController _tabController = TabController(
-    length: 3,
+    length: 2,
     vsync: this,
   )..addListener(_onTabChanged);
 
@@ -140,7 +139,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
 
   // ----------------------------------------------------------------- layout
 
-  /// Tabbed main region: the fleet, credentials, and the notification feed.
+  /// Tabbed main region: the fleet and its credentials.
   Widget _cloudTabs(BuildContext context, String? workspaceId) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -156,10 +155,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
               icon: const Icon(Symbols.key, size: 18),
               label: 'maidCafeCredentials'.tr(),
             ),
-            IconLabelTab(
-              icon: const Icon(Symbols.notifications, size: 18),
-              label: 'maidCafeNotifications'.tr(),
-            ),
           ],
         ),
         Expanded(
@@ -168,7 +163,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
             children: [
               _fleetTab(context, workspaceId),
               _credentialsTab(context),
-              MaidCafeNotificationsTab(workspaceId: workspaceId),
             ],
           ),
         ),
@@ -177,7 +171,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
   }
 
   /// The unified create action: one floating button that follows the active
-  /// tab. The notifications tab has no create action, so no FAB there.
+  /// tab.
   Widget? _fabForTab(String? workspaceId) {
     if (workspaceId == null) return null;
     return switch (_tabController.index) {
@@ -189,7 +183,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         icon: const Icon(Symbols.add),
         label: Text('maidCafeRegister'.tr()),
       ).padding(bottom: 40),
-      1 => FloatingActionButton.extended(
+      _ => FloatingActionButton.extended(
         heroTag: 'maidcafe-create-fab',
         onPressed: _isBusy(_credentialsOp)
             ? null
@@ -197,7 +191,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
         icon: const Icon(Symbols.add),
         label: Text('maidCafeCredentialCreate'.tr()),
       ).padding(bottom: 40),
-      _ => null,
     };
   }
 

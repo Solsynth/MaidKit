@@ -102,6 +102,7 @@ class SettingsPage extends HookConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
     final appSeedColor = ref.watch(appSeedColorProvider);
     final appUiScale = ref.watch(appUiScaleProvider);
+    final compactDashboard = ref.watch(dashboardCompactViewProvider);
     final biometricEnabled = ref.watch(biometricUnlockEnabledProvider);
     final cursorAnimationEnabled = ref.watch(cursorAnimationEnabledProvider);
     final brandingEnvironmentEnabled = ref.watch(
@@ -239,6 +240,44 @@ class SettingsPage extends HookConsumerWidget {
                                   onChanged: (value) => ref
                                       .read(appUiScaleProvider.notifier)
                                       .setScale(value),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'settingsDashboardDensity',
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ).tr(),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'settingsDashboardDensityHint',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ).tr(),
+                                const SizedBox(height: 12),
+                                SegmentedButton<bool>(
+                                  showSelectedIcon: false,
+                                  segments: [
+                                    ButtonSegment(
+                                      value: true,
+                                      icon: const Icon(
+                                        Symbols.view_compact,
+                                        size: 18,
+                                      ),
+                                      label: Text('serversCompactView'.tr()),
+                                    ),
+                                    ButtonSegment(
+                                      value: false,
+                                      icon: const Icon(
+                                        Symbols.view_agenda,
+                                        size: 18,
+                                      ),
+                                      label: Text('serversDetailedView'.tr()),
+                                    ),
+                                  ],
+                                  selected: {compactDashboard},
+                                  onSelectionChanged: (selection) => ref
+                                      .read(
+                                        dashboardCompactViewProvider.notifier,
+                                      )
+                                      .setCompact(selection.first),
                                 ),
                               ],
                             ),

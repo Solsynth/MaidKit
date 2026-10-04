@@ -23,6 +23,7 @@ import 'maidcafe_service.dart';
 import 'port_forward_sheet.dart';
 import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
+import 'dashboard_actions_bar.dart';
 import 'dashboard_runtimes_section.dart';
 import 'server_health_chip.dart';
 import 'server_models.dart';
@@ -684,58 +685,27 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                 ),
               ),
             ],
-            SliverToBoxAdapter(child: _arrangeServersFooter(context)),
+            SliverToBoxAdapter(child: _dashboardActions(context)),
           ],
         ),
       ),
     );
   }
 
-  Widget _arrangeServersFooter(BuildContext context) {
-    final isCompactView = ref.watch(dashboardCompactViewProvider);
+  Widget _dashboardActions(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => ref
-                    .read(dashboardCompactViewProvider.notifier)
-                    .setCompact(!isCompactView),
-                icon: Icon(
-                  isCompactView ? Symbols.view_agenda : Symbols.view_compact,
-                ),
-                label: Text(
-                  isCompactView
-                      ? 'serversDetailedView'.tr()
-                      : 'serversCompactView'.tr(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              _ArrangeServersControl(
-                isArranging: _isArranging,
-                canArrange: widget.servers.length > 1,
-                onPressed: _isArranging
-                    ? () => setState(() => _isArranging = false)
-                    : _startArranging,
-              ),
-              const SizedBox(width: 8),
-              if (_showSearch)
-                FilledButton.icon(
-                  onPressed: _toggleSearch,
-                  icon: const Icon(Symbols.search, size: 18),
-                  label: Text('serversHideSearch'.tr()),
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: _toggleSearch,
-                  icon: const Icon(Symbols.search, size: 18),
-                  label: Text('serversSearch'.tr()),
-                ),
-            ],
+          DashboardActionsBar(
+            isArranging: _isArranging,
+            canArrange: widget.servers.length > 1,
+            onToggleArrange: _isArranging
+                ? () => setState(() => _isArranging = false)
+                : _startArranging,
+            isSearching: _showSearch,
+            onToggleSearch: _toggleSearch,
           ),
           if (_isArranging) ...[
             const SizedBox(height: 8),
@@ -832,35 +802,6 @@ class _AnimatedHeaderSliver extends StatelessWidget {
         ),
         child: visible ? child : const SizedBox.shrink(),
       ),
-    );
-  }
-}
-
-class _ArrangeServersControl extends StatelessWidget {
-  const _ArrangeServersControl({
-    required this.isArranging,
-    required this.canArrange,
-    required this.onPressed,
-  });
-
-  final bool isArranging;
-  final bool canArrange;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isArranging) {
-      return FilledButton.icon(
-        onPressed: onPressed,
-        icon: const Icon(Symbols.check),
-        label: Text('serversDoneArranging'.tr()),
-      );
-    }
-
-    return OutlinedButton.icon(
-      onPressed: canArrange ? onPressed : null,
-      icon: const Icon(Symbols.drag_indicator),
-      label: Text('serversArrange'.tr()),
     );
   }
 }

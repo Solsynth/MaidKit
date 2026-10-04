@@ -156,34 +156,23 @@ final maidCafeMetoerClientProvider = Provider<MaidCafeMetoerClient>((ref) {
 
 final maidCafeMetoerNotificationsProvider =
     FutureProvider<List<MaidCafeMetoerNotification>>((ref) async {
+      // The bell is reachable before an account is linked; an empty feed is a
+      // truer answer there than an authorization error.
+      final token = await ref.watch(cloudSyncServiceProvider).accessToken();
+      if (token == null || token.trim().isEmpty) return const [];
       return (await ref.watch(maidCafeMetoerClientProvider).list()).items;
     });
 
-final maidCafeMetoerUnreadCountProvider = FutureProvider<int>(
-  (ref) => ref.watch(maidCafeMetoerClientProvider).unreadCount(),
-);
+final maidCafeMetoerUnreadCountProvider = FutureProvider<int>((ref) async {
+  final token = await ref.watch(cloudSyncServiceProvider).accessToken();
+  if (token == null || token.trim().isEmpty) return 0;
+  return ref.watch(maidCafeMetoerClientProvider).unreadCount();
+});
 
 final maidCafeMetoerSubscriptionsProvider =
     FutureProvider<List<MaidCafeMetoerPushSubscription>>((ref) {
       return ref.watch(maidCafeMetoerClientProvider).listPushSubscriptions();
     });
-final maidCafeNotificationsProvider =
-    FutureProvider.family<List<MaidCafeNotification>, String>((
-      ref,
-      workspaceId,
-    ) {
-      return ref
-          .watch(maidCafeServiceProvider)
-          .listNotifications(workspaceId: workspaceId);
-    });
-
-final maidCafeUnreadNotificationCountProvider =
-    FutureProvider.family<int, String>(
-      (ref, workspaceId) => ref
-          .watch(maidCafeServiceProvider)
-          .unreadNotificationCount(workspaceId: workspaceId),
-    );
-
 final maidCafeNotificationTopicsProvider =
     FutureProvider.family<List<MaidCafeNotificationTopic>, String>((
       ref,
@@ -250,8 +239,8 @@ final maidCafePushProvider = Provider<MaidCafePushService>((ref) {
         maidCafeCloudSupportsPush(ref.read(maidCafeCloudUrlProvider)),
     onStatusChanged: status.set,
     onNotification: () {
-      ref.invalidate(maidCafeNotificationsProvider);
-      ref.invalidate(maidCafeUnreadNotificationCountProvider);
+      ref.invalidate(maidCafeMetoerNotificationsProvider);
+      ref.invalidate(maidCafeMetoerUnreadCountProvider);
     },
   );
   ref.listen(cloudUserProvider, (previous, next) {

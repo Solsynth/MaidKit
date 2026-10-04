@@ -170,4 +170,18 @@ void main() {
     expect(find.byType(AssetsPage), findsOneWidget);
     expect(assetsSection(tester), AssetsSection.snippets.index);
   });
+
+  testWidgets('the command palette splits the focused pane', (tester) async {
+    await pumpWorkspace(tester);
+    expect(find.text('sessionsNewPane'.tr()), findsNothing);
+
+    await openPalette(tester, query: 'split');
+    final splitDown = find.widgetWithText(ListTile, 'sessionsSplitDown'.tr());
+    expect(splitDown, findsOneWidget);
+    await tester.tap(splitDown);
+    await tester.pumpAndSettle();
+
+    // The pane the split added has no tabs yet, so its strip says so.
+    expect(find.text('sessionsNewPane'.tr()), findsOneWidget);
+  });
 }

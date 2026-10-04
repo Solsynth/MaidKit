@@ -24,6 +24,7 @@ import 'maidcafe_server_tab.dart';
 import 'servers_page.dart';
 import 'file_editor_tab.dart';
 import 'file_management_tab.dart';
+import 'notifications_modal.dart';
 import 'privacy_preferences.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -534,42 +535,11 @@ class _PaneTabBar extends ConsumerWidget {
                         },
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'sessionsSplitRight'.tr(),
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: _paneTabBarHeight,
-                        minHeight: _paneTabBarHeight,
-                      ),
-                      onPressed: () {
-                        ref
-                            .read(terminalTabsProvider.notifier)
-                            .focusPane(paneId);
-                        ref
-                            .read(terminalTabsProvider.notifier)
-                            .splitEmpty(SessionSplitAxis.horizontal);
-                      },
-                      icon: const Icon(Symbols.vertical_split, size: 20),
-                    ),
-                    IconButton(
-                      tooltip: 'sessionsSplitDown'.tr(),
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: _paneTabBarHeight,
-                        minHeight: _paneTabBarHeight,
-                      ),
-                      onPressed: () {
-                        ref
-                            .read(terminalTabsProvider.notifier)
-                            .focusPane(paneId);
-                        ref
-                            .read(terminalTabsProvider.notifier)
-                            .splitEmpty(SessionSplitAxis.vertical);
-                      },
-                      icon: const Icon(Symbols.horizontal_split, size: 20),
-                    ),
+                    // Pane splitting lives in the command palette (Shift+Tab,
+                    // or the actions button beside this one) so the strip keeps
+                    // one scanning row of tabs and the workspace's own
+                    // notifications.
+                    const NotificationsBellButton(),
                     IconButton(
                       tooltip: 'sessionsSessionActions'.tr(),
                       visualDensity: VisualDensity.compact,
