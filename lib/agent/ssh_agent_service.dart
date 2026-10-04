@@ -11,6 +11,7 @@ import 'package:maid_kit/agent/mcp_client.dart' show withSafeToRunProperty;
 
 import 'agent_cancel_token.dart';
 import 'agent_repository.dart';
+import 'token_counter.dart';
 
 export 'agent_cancel_token.dart';
 
@@ -131,11 +132,22 @@ class AgentTurn {
     this.proposal,
     this.assistantMessage,
     this.reasoningContent,
+    this.usage,
+    this.estimatedPromptTokens = 0,
   });
   final String? text;
   final AgentProposal? proposal;
   final OpenAIChatCompletionChoiceMessageModel? assistantMessage;
   final String? reasoningContent;
+
+  /// What the provider said this call cost, when it said anything at all.
+  final AgentTurnUsage? usage;
+
+  /// What the request this call sent was counted at, by the same estimate the
+  /// chat's meter uses. It stands in for [usage] on providers that report
+  /// nothing, and it is counted from the request itself rather than from the
+  /// pieces the caller believes went into it.
+  final int estimatedPromptTokens;
 }
 
 class _ToolCallAccumulator {
@@ -162,9 +174,16 @@ class _ToolCallAccumulator {
 }
 
 class _AgentChatResult {
-  const _AgentChatResult({required this.message, this.reasoningContent});
+  const _AgentChatResult({
+    required this.message,
+    this.reasoningContent,
+    this.usage,
+    this.estimatedPromptTokens = 0,
+  });
   final OpenAIChatCompletionChoiceMessageModel message;
   final String? reasoningContent;
+  final AgentTurnUsage? usage;
+  final int estimatedPromptTokens;
 }
 
 /// A tool exposed by a connected MCP server, projected for the OpenAI request.
@@ -313,6 +332,19 @@ class SshAgentService {
     ),
   );
 
+  /// The schemas a request advertises: the built-in tools, the enabled MCP
+  /// servers' tools, and the skill reader when skills are in play. One place
+  /// builds them so a request and its token estimate can never disagree.
+  List<Map<String, dynamic>> _toolSchemas(
+    List<AgentMcpToolTarget> mcpTools,
+    List<AgentSkillTarget> skills,
+  ) => [
+    for (final tool in _tools) tool.toMap(),
+    if (mcpTools.isNotEmpty)
+      for (final tool in mcpTools) tool.toOpenAiToolMap(),
+    if (skills.isNotEmpty) _getSkillTool.toMap(),
+  ];
+
   static final _getSkillTool = OpenAIToolModel(
     type: 'function',
     function: OpenAIFunctionModel.withParameters(
@@ -326,6 +358,21 @@ class SshAgentService {
       ],
     ),
   );
+
+  /// Estimated tokens in the parts of a request that do not move while the
+  /// prompt is being written: the system prompt and every tool schema. Callers
+  /// count this once per turn and add the history and the draft themselves.
+  int estimateStaticTokens({
+    required List<AgentServerTarget> servers,
+    List<AgentSnippetTarget> snippets = const [],
+    List<AgentMcpToolTarget> mcpTools = const [],
+    List<AgentSkillTarget> skills = const [],
+    String? mcpUnavailable,
+  }) =>
+      AgentTokenCounter.estimate(
+        _systemPrompt(servers, snippets, mcpTools, skills, mcpUnavailable),
+      ) +
+      AgentTokenCounter.estimateTools(_toolSchemas(mcpTools, skills));
 
   Future<AgentTurn> request({
     required List<AgentServerTarget> servers,
@@ -412,6 +459,8 @@ class SshAgentService {
         text: text,
         assistantMessage: message,
         reasoningContent: result.reasoningContent,
+        usage: result.usage,
+        estimatedPromptTokens: result.estimatedPromptTokens,
       );
     }
     final call = calls.first;
@@ -435,6 +484,8 @@ class SshAgentService {
       text: text,
       assistantMessage: message,
       reasoningContent: result.reasoningContent,
+      usage: result.usage,
+      estimatedPromptTokens: result.estimatedPromptTokens,
       proposal: AgentProposal(
         kind: kind,
         arguments: Map<String, dynamic>.from(
@@ -651,6 +702,10 @@ Use tools to inspect or make the requested remote change. You can save reusable 
     List<AgentSkillTarget> skills = const [],
     AgentCancelToken? cancelToken,
   }) async {
+    final toolSchemas = _toolSchemas(mcpTools, skills);
+    final estimatedPromptTokens =
+        AgentTokenCounter.estimateMessages(messages) +
+        AgentTokenCounter.estimateTools(toolSchemas);
     final client = http.Client();
     cancelToken?.register(client.close);
     try {
@@ -666,12 +721,7 @@ Use tools to inspect or make the requested remote change. You can save reusable 
           // Sent only when a level was chosen: a model that does not know the
           // field refuses the turn, so the untouched state leaves it out.
           if (reasoningEffort != null) 'reasoning_effort': reasoningEffort,
-          'tools': [
-            for (final tool in _tools) tool.toMap(),
-            if (mcpTools.isNotEmpty)
-              for (final tool in mcpTools) tool.toOpenAiToolMap(),
-            if (skills.isNotEmpty) _getSkillTool.toMap(),
-          ],
+          'tools': toolSchemas,
           'messages': messages,
         });
       final response = await client.send(request);
@@ -685,6 +735,7 @@ Use tools to inspect or make the requested remote change. You can save reusable 
       final text = StringBuffer();
       final reasoning = StringBuffer();
       final calls = <int, _ToolCallAccumulator>{};
+      AgentTurnUsage? reportedUsage;
       await for (final line
           in response.stream
               .transform(utf8.decoder)
@@ -707,6 +758,11 @@ Use tools to inspect or make the requested remote change. You can save reusable 
             response.statusCode,
           );
         }
+        // A provider that reports usage does it on the last frame, which
+        // carries an empty `choices` list, so this is read before the frame is
+        // discarded as a keep-alive.
+        reportedUsage =
+            AgentTurnUsage.fromJson(decoded['usage']) ?? reportedUsage;
         final choices = decoded['choices'];
         if (choices is! List || choices.isEmpty) continue;
         final choice = choices.first;
@@ -746,6 +802,8 @@ Use tools to inspect or make the requested remote change. You can save reusable 
           toolCalls: calls.values.map((call) => call.build()).toList(),
         ),
         reasoningContent: reasoning.isEmpty ? null : reasoning.toString(),
+        usage: reportedUsage,
+        estimatedPromptTokens: estimatedPromptTokens,
       );
     } catch (error) {
       if (cancelToken?.isCancelled ?? false) {

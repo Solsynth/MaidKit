@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
@@ -32,6 +33,7 @@ import 'agent_repository.dart';
 import 'agent_run_policy.dart';
 import 'conversation_store.dart';
 import 'personality_service.dart';
+import 'token_counter.dart';
 import 'ssh_agent_service.dart';
 
 class _AgentProviderPreset {
@@ -133,12 +135,23 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   List<AgentMcpToolTarget> _activeMcpTools = const [];
   List<AgentSkillTarget> _activeSkills = const [];
   String? _activeMcpUnavailable;
+  // Token accounting for this chat. It lives on a notifier so typing re-counts
+  // the meter without rebuilding the message list, and the numbers are what the
+  // next request will carry rather than what the model has already answered.
+  final _meter = ValueNotifier<AgentContextMeter>(const AgentContextMeter());
+  // Tokens in the system prompt and the tool schemas of the current turn. They
+  // do not move while the prompt is written, so they are counted once per turn.
+  int _staticTokens = 0;
+  // Tokens in the history the next request will replay, counted whenever the
+  // conversation context changes.
+  int _historyTokens = 0;
 
   @override
   void initState() {
     super.initState();
     _restoreSelection();
     _messagesScroll.addListener(_updateScrollToBottomVisibility);
+    _prompt.addListener(_publishMeter);
     if (widget.autofocus) _focusPromptAfterFrame();
   }
 
@@ -202,12 +215,14 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     }
     if (queued.isEmpty || !mounted) return;
     setState(() => _attachments.addAll(queued));
+    _publishMeter();
   }
 
   Future<void> _addAttachments(List<Future<AgentAttachment>> pending) async {
     final resolved = await Future.wait(pending);
     if (!mounted || resolved.isEmpty) return;
     setState(() => _attachments.addAll(resolved));
+    _publishMeter();
   }
 
   /// A block pasted into the field becomes a text attachment instead: the
@@ -219,6 +234,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         AgentAttachment.text(text, name: 'agentPastedText'.tr()),
       );
     });
+    _publishMeter();
   }
 
   Future<void> _editAttachment(int index) async {
@@ -234,11 +250,13 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     setState(() {
       _attachments[index] = attachment.copyWith(content: edited);
     });
+    _publishMeter();
   }
 
   void _removeAttachment(int index) {
     if (index < 0 || index >= _attachments.length) return;
     setState(() => _attachments.removeAt(index));
+    _publishMeter();
   }
 
   Future<void> _restoreSelection() async {
@@ -270,6 +288,8 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   @override
   void dispose() {
     _showSidebar.dispose();
+    _meter.dispose();
+    _prompt.removeListener(_publishMeter);
     _messagesScroll.removeListener(_updateScrollToBottomVisibility);
     _messagesScroll.dispose();
     _promptFocus.dispose();
@@ -462,39 +482,49 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       var streamedMessageIndex = -1;
       final cancelToken = AgentCancelToken();
       _activeToken = cancelToken;
-      final turn =
-          await SshAgentService(
-            config,
-            personality: personality,
-            uiLanguage: context.locale.toLanguageTag(),
-            hideServerAddresses: ref.read(hideServerAddressesProvider),
-            reasoningEffort: _reasoning.effort,
-          ).request(
-            servers: targets,
-            snippets: _snippetTargets(snippets),
-            mcpTools: mcpTools,
-            skills: skillTargets,
-            mcpUnavailable: mcpUnavailable,
-            prompt: promptContent,
-            history: conversationContext,
-            onText: (streamedText) {
-              if (!mounted) return;
-              setState(() {
-                final message = _AgentMessage.assistant(streamedText);
-                if (streamedMessageIndex < 0) {
-                  _messages.add(message);
-                  streamedMessageIndex = _messages.length - 1;
-                } else {
-                  _messages[streamedMessageIndex] = message;
-                }
-              });
-              _scrollToBottom();
-            },
-            cancelToken: cancelToken,
-          );
+      final agent = SshAgentService(
+        config,
+        personality: personality,
+        uiLanguage: context.locale.toLanguageTag(),
+        hideServerAddresses: ref.read(hideServerAddressesProvider),
+        reasoningEffort: _reasoning.effort,
+      );
+      _measureLiveContext(
+        agent: agent,
+        servers: targets,
+        snippets: _snippetTargets(snippets),
+        mcpTools: mcpTools,
+        skills: skillTargets,
+        mcpUnavailable: mcpUnavailable,
+        history: conversationContext,
+      );
+      final turn = await agent.request(
+        servers: targets,
+        snippets: _snippetTargets(snippets),
+        mcpTools: mcpTools,
+        skills: skillTargets,
+        mcpUnavailable: mcpUnavailable,
+        prompt: promptContent,
+        history: conversationContext,
+        onText: (streamedText) {
+          if (!mounted) return;
+          setState(() {
+            final message = _AgentMessage.assistant(streamedText);
+            if (streamedMessageIndex < 0) {
+              _messages.add(message);
+              streamedMessageIndex = _messages.length - 1;
+            } else {
+              _messages[streamedMessageIndex] = message;
+            }
+          });
+          _scrollToBottom();
+        },
+        cancelToken: cancelToken,
+      );
       if (!mounted) {
         return;
       }
+      _recordCall(turn);
       setState(() {
         if (streamedMessageIndex < 0 &&
             turn.text != null &&
@@ -526,6 +556,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         setState(() => _working = false);
         widget.onWorkingChanged(false);
         await _persistConversation();
+        _refreshHistoryTokens();
         await _drainQueuedPrompts();
       }
     }
@@ -603,12 +634,23 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         _reconnectRequired = false;
       });
       _scrollToBottom();
+      final targets = _serverTargets(servers);
+      final snippets = _snippetTargets(
+        await ref.read(snippetRepositoryProvider).all(),
+      );
+      _measureLiveContext(
+        agent: agent,
+        servers: targets,
+        snippets: snippets,
+        mcpTools: _activeMcpTools,
+        skills: _activeSkills,
+        mcpUnavailable: _activeMcpUnavailable,
+        history: _pendingContext,
+      );
       var streamedMessageIndex = -1;
       final turn = await agent.continueAfterExecution(
-        servers: _serverTargets(servers),
-        snippets: _snippetTargets(
-          await ref.read(snippetRepositoryProvider).all(),
-        ),
+        servers: targets,
+        snippets: snippets,
         mcpTools: _activeMcpTools,
         skills: _activeSkills,
         mcpUnavailable: _activeMcpUnavailable,
@@ -643,6 +685,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           'content': result,
         });
       _pendingContext = List<Map<String, dynamic>>.from(_agentContext);
+      _recordCall(turn);
       setState(() {
         if (streamedMessageIndex < 0 &&
             turn.text != null &&
@@ -678,6 +721,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         setState(() => _working = false);
         widget.onWorkingChanged(false);
         await _persistConversation();
+        _refreshHistoryTokens();
         await _drainQueuedPrompts();
       }
     }
@@ -888,6 +932,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       ..addAll(_pendingContext)
       ..add(_rawContextMessage('assistant', 'agentActionDeclined'.tr()));
     _pendingContext = List<Map<String, dynamic>>.from(_agentContext);
+    _refreshHistoryTokens();
     await _persistConversation();
     await _drainQueuedPrompts();
   }
@@ -935,8 +980,18 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       _reconnectRequired = false;
       _pendingPrompt = null;
     });
+    _resetUsage();
     _reportTitle();
     _showSidebar.value = false;
+    _promptFocus.requestFocus();
+  }
+
+  /// Fills the composer from a suggested prompt on the empty state. The text
+  /// is only offered, never sent, so it stays editable before it goes out.
+  void _useExample(String text) {
+    _prompt
+      ..text = text
+      ..selection = TextSelection.collapsed(offset: text.length);
     _promptFocus.requestFocus();
   }
 
@@ -986,6 +1041,8 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       _reconnectRequired = false;
       _pendingPrompt = null;
     });
+    _resetUsage();
+    _refreshHistoryTokens();
     _persistSelection();
     _reportTitle();
     _showSidebar.value = false;
@@ -1015,6 +1072,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         _reconnectRequired = false;
         _pendingPrompt = null;
       });
+      _resetUsage();
       _reportTitle();
     }
   }
@@ -1162,6 +1220,14 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
               const <AgentProviderModel>[];
     final selectedModelId =
         _activeModelId ?? (models.isEmpty ? null : models.first.id);
+    final windowTokens = AgentTokenCounter.contextWindow(
+      selectedModelId == null
+          ? null
+          : models
+                .where((model) => model.id == selectedModelId)
+                .firstOrNull
+                ?.model,
+    );
     if (providers.isNotEmpty &&
         _activeProviderId != null &&
         !providers.any((provider) => provider.id == _activeProviderId)) {
@@ -1232,6 +1298,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                   mcpServers: mcpServers,
                   scheme: scheme,
                   compact: compact,
+                  windowTokens: windowTokens,
                 ),
               ),
             ),
@@ -1409,9 +1476,12 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     required List<McpServer> mcpServers,
     required ColorScheme scheme,
     required bool compact,
+    required int? windowTokens,
   }) {
     final chat = Padding(
-      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 0, compact ? 16 : 24, 24),
+      // The dock below owns the bottom margin, so its surface reaches the
+      // bottom edge of the pane.
+      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 0, compact ? 16 : 24, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1425,41 +1495,38 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                     scheme: scheme,
                   ),
                 ),
-                if (_showScrollToBottom)
-                  Positioned(
-                    right: 12,
-                    bottom: 12,
-                    child: FloatingActionButton.small(
-                      heroTag: 'agent-scroll-to-bottom-${widget.tabId}',
-                      tooltip: 'agentScrollToLatest'.tr(),
-                      onPressed: _scrollToLatest,
-                      child: const Icon(Symbols.arrow_downward),
+                // Scroll-to-bottom affordance fades and scales in, as
+                // Solian's back-to-bottom button does, instead of popping.
+                Positioned(
+                  right: 12,
+                  bottom: 12,
+                  child: IgnorePointer(
+                    ignoring: !_showScrollToBottom,
+                    child: AnimatedOpacity(
+                      opacity: _showScrollToBottom ? 1 : 0,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      child: AnimatedScale(
+                        scale: _showScrollToBottom ? 1 : 0.8,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        child: FloatingActionButton.small(
+                          heroTag: 'agent-scroll-to-bottom-${widget.tabId}',
+                          tooltip: 'agentScrollToLatest'.tr(),
+                          onPressed: _scrollToLatest,
+                          child: const Icon(Symbols.arrow_downward),
+                        ),
+                      ),
                     ),
                   ),
+                ),
               ],
             ),
           ),
-          if (_queuedPrompts.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _buildQueuedPrompts(scheme),
-          ],
-          const SizedBox(height: 12),
-          AgentComposer(
-            controller: _prompt,
-            focusNode: _promptFocus,
-            attachments: _attachments,
-            working: _working,
-            // A pending proposal owns the turn: its answer has to be run or
-            // declined before anything else can be sent.
-            enabled: _proposal == null,
-            onAttach: _attachFromPicker,
-            onAttachText: _attachText,
-            onEditAttachment: _editAttachment,
-            onRemoveAttachment: _removeAttachment,
-            onSubmit: _submitPrompt,
-            onStop: _interrupt,
-            reasoning: _reasoning,
-            onReasoningChanged: _selectReasoning,
+          _buildComposerDock(
+            compact: compact,
+            scheme: scheme,
+            windowTokens: windowTokens,
           ),
         ],
       ),
@@ -1509,6 +1576,102 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     );
   }
 
+  /// The input end of the chat: the queued prompts and the composer, sitting
+  /// on a surface that only exists while the history is being read.
+  ///
+  /// At the latest message the backdrop is transparent, so the conversation
+  /// runs straight into the composer; once the list is scrolled back the same
+  /// area turns solid and lifts off the messages, which is what tells a reader
+  /// the composer is not part of the log. Solian's chat input does the same,
+  /// and the 300ms ease keeps the change from reading as a blink.
+  Widget _buildComposerDock({
+    required bool compact,
+    required ColorScheme scheme,
+    required int? windowTokens,
+  }) {
+    final readingHistory = _showScrollToBottom;
+    return Stack(
+      // The lifted surface's shadow is painted above this box, onto the
+      // messages it is separating the composer from.
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+              decoration: BoxDecoration(
+                color: readingHistory
+                    ? scheme.surfaceContainer
+                    : Colors.transparent,
+                boxShadow: [
+                  if (readingHistory)
+                    BoxShadow(
+                      color: scheme.shadow.withValues(alpha: 0.2),
+                      blurRadius: 12,
+                      spreadRadius: 2,
+                      offset: const Offset(0, -4),
+                    ),
+                ],
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(0, 0, 0, compact ? 16 : 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // The panel keeps its slot while empty so its height animates
+              // in and out instead of the composer jumping.
+              AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                alignment: Alignment.topCenter,
+                child: _queuedPrompts.isEmpty
+                    ? const SizedBox(width: double.infinity)
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 12),
+                          _buildQueuedPrompts(scheme),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 12),
+              AgentComposer(
+                controller: _prompt,
+                focusNode: _promptFocus,
+                attachments: _attachments,
+                working: _working,
+                // A pending proposal owns the turn: its answer has to be run or
+                // declined before anything else can be sent.
+                enabled: _proposal == null,
+                onAttach: _attachFromPicker,
+                onAttachText: _attachText,
+                onEditAttachment: _editAttachment,
+                onRemoveAttachment: _removeAttachment,
+                onSubmit: _submitPrompt,
+                onStop: _interrupt,
+                status: _AgentContextStatus(
+                  meter: _meter,
+                  windowTokens: windowTokens,
+                ),
+                reasoning: _reasoning,
+                onReasoningChanged: _selectReasoning,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildQueuedPrompts(ColorScheme scheme) {
     return Material(
       color: scheme.surfaceContainerHighest,
@@ -1526,45 +1689,83 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           itemBuilder: (context, index) {
             final queued = _queuedPrompts[index];
             final attached = queued.attachments.length;
-            return ListTile(
-              dense: true,
-              leading: const Icon(Symbols.schedule, size: 20),
-              title: Text(
-                queued.text.isEmpty
-                    ? queued.attachments.firstOrNull?.name ??
-                          'agentPastedText'.tr()
-                    : queued.text,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                attached == 0
-                    ? 'agentQueuedMessage'.tr()
-                    : '${'agentQueuedMessage'.tr()} · '
-                          '${attached == 1 ? 'agentAttachmentOne'.tr() : 'agentAttachmentCount'.tr(args: ['$attached'])}',
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: 'agentSteerMessage'.tr(),
-                    onPressed: () => _steerQueuedPrompt(index),
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Symbols.arrow_upward, size: 18),
-                  ),
-                  IconButton(
-                    tooltip: 'agentRemoveQueuedMessage'.tr(),
-                    onPressed: () => _removeQueuedPrompt(index),
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Symbols.close, size: 18),
-                  ),
-                ],
-              ),
+            return _QueuedPromptTile(
+              text: queued.text.isEmpty
+                  ? queued.attachments.firstOrNull?.name ??
+                        'agentPastedText'.tr()
+                  : queued.text,
+              detail: attached == 0
+                  ? 'agentQueuedMessage'.tr()
+                  : '${'agentQueuedMessage'.tr()} · '
+                        '${attached == 1 ? 'agentAttachmentOne'.tr() : 'agentAttachmentCount'.tr(args: ['$attached'])}',
+              onSteer: () => _steerQueuedPrompt(index),
+              onRemove: () => _removeQueuedPrompt(index),
             );
           },
         ),
       ),
     );
+  }
+
+  /// Re-counts what the prompt adds to the next request.
+  ///
+  /// Only the draft moves while typing, so the system prompt, the tool schemas
+  /// and the history are counted once per turn and reused here; the meter is
+  /// published on a notifier so the message list is never rebuilt for a count.
+  void _publishMeter() {
+    if (!mounted) return;
+    final tokens =
+        _staticTokens +
+        _historyTokens +
+        AgentTokenCounter.estimateMessage({
+          'role': 'user',
+          'content': agentUserContent(_prompt.text, _attachments),
+        });
+    if (tokens == _meter.value.tokens) return;
+    _meter.value = _meter.value.copyWith(tokens: tokens);
+  }
+
+  /// Forgets the counts that the conversation context made stale.
+  void _refreshHistoryTokens() {
+    _historyTokens = AgentTokenCounter.estimateMessages(_agentContext);
+    _publishMeter();
+  }
+
+  /// Counts the parts of a request that do not move while the prompt is
+  /// written: the system prompt and tool schemas the call will send, and the
+  /// history it will replay.
+  void _measureLiveContext({
+    required SshAgentService agent,
+    required List<AgentServerTarget> servers,
+    required List<AgentSnippetTarget> snippets,
+    required List<AgentMcpToolTarget> mcpTools,
+    required List<AgentSkillTarget> skills,
+    required String? mcpUnavailable,
+    required List<Map<String, dynamic>> history,
+  }) {
+    _staticTokens = agent.estimateStaticTokens(
+      servers: servers,
+      snippets: snippets,
+      mcpTools: mcpTools,
+      skills: skills,
+      mcpUnavailable: mcpUnavailable,
+    );
+    _historyTokens = AgentTokenCounter.estimateMessages(history);
+    _publishMeter();
+  }
+
+  /// Folds a finished call into the chat's totals. A provider's own numbers
+  /// replace the estimate of the same call, so the meter goes back to being
+  /// exact whenever one is reported.
+  void _recordCall(AgentTurn turn) {
+    _meter.value = _meter.value.record(turn.usage, turn.estimatedPromptTokens);
+  }
+
+  /// Drops the accounting with the conversation it described.
+  void _resetUsage() {
+    _staticTokens = 0;
+    _historyTokens = 0;
+    _meter.value = const AgentContextMeter();
   }
 
   Widget _buildMessageList({
@@ -1590,11 +1791,22 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                   .firstOrNull ??
               'agentUnavailableServer'.tr();
     if (_messages.isEmpty && pendingProposal == null) {
-      return Center(
-        child: Text(
-          _ghost ? 'agentGhostHint'.tr() : 'agentEmptyHint'.tr(),
-          style: TextStyle(color: scheme.onSurfaceVariant),
-        ),
+      return _AgentEmptyState(
+        ghost: _ghost,
+        title: _ghost ? 'agentGhostTitle'.tr() : 'agentEmptyTitle'.tr(),
+        hint: _ghost ? 'agentGhostHint'.tr() : 'agentEmptyHint'.tr(),
+        // With nothing saved to run on, the opening prompt has to say what is
+        // missing instead of letting the composer swallow the first message.
+        notice: !_ghost && servers.isEmpty ? 'agentEmptyNoServers'.tr() : null,
+        examples: _ghost
+            ? const []
+            : [
+                'agentExampleDiagnose'.tr(),
+                'agentExampleDisk'.tr(),
+                'agentExampleSummarize'.tr(),
+                'agentExampleFiles'.tr(),
+              ],
+        onExample: _useExample,
       );
     }
     return NotificationListener<ScrollNotification>(
@@ -2559,6 +2771,396 @@ class _AgentThinkingIndicator extends StatelessWidget {
       ),
     );
   }
+}
+
+/// What a chat shows before its first message: what the agent can do, and
+/// prompts that are close enough to a real task to edit rather than replace.
+class _AgentEmptyState extends StatelessWidget {
+  const _AgentEmptyState({
+    required this.ghost,
+    required this.title,
+    required this.hint,
+    required this.examples,
+    required this.onExample,
+    this.notice,
+  });
+
+  /// Ghost chats are never saved, so they cannot offer the same examples.
+  final bool ghost;
+  final String title;
+  final String hint;
+
+  /// A blocking prerequisite (no servers yet) rendered below the hint.
+  final String? notice;
+
+  final List<String> examples;
+  final ValueChanged<String> onExample;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                ghost ? Symbols.visibility_off : Symbols.smart_toy,
+                size: 40,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 16),
+              Text(title, style: theme.textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text(
+                hint,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              if (notice case final notice?) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest,
+                    border: Border.all(color: scheme.outlineVariant),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Symbols.info, size: 16, color: scheme.tertiary),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          notice,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (examples.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    for (final example in examples)
+                      ActionChip(
+                        label: Text(example),
+                        onPressed: () => onExample(example),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One queued prompt. It fades and rises into place as it is queued; taking it
+/// out again is left to the panel's own size animation, which closes the gap.
+class _QueuedPromptTile extends StatefulWidget {
+  const _QueuedPromptTile({
+    required this.text,
+    required this.detail,
+    required this.onSteer,
+    required this.onRemove,
+  });
+
+  final String text;
+
+  /// The line under the prompt: that it is queued, and what rides with it.
+  final String detail;
+
+  final VoidCallback onSteer;
+  final VoidCallback onRemove;
+
+  @override
+  State<_QueuedPromptTile> createState() => _QueuedPromptTileState();
+}
+
+class _QueuedPromptTileState extends State<_QueuedPromptTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  );
+  late final Animation<double> _entrance = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutCubic,
+  );
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = 1;
+    } else {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _entrance,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.12),
+          end: Offset.zero,
+        ).animate(_entrance),
+        child: ListTile(
+          dense: true,
+          leading: const Icon(Symbols.schedule, size: 20),
+          title: Text(
+            widget.text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(widget.detail),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'agentSteerMessage'.tr(),
+                onPressed: widget.onSteer,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Symbols.arrow_upward, size: 18),
+              ),
+              IconButton(
+                tooltip: 'agentRemoveQueuedMessage'.tr(),
+                onPressed: widget.onRemove,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Symbols.close, size: 18),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The chat's memory gauge, after Persynth's: a ring for the share of the
+/// model's window the next request fills, then the numbers behind it. Quiet at
+/// rest; the ring warms to the accent as the window fills and to the error tone
+/// at its end. An unknown ceiling leaves the ring out rather than inventing a
+/// window to divide by, and the count wears a `~` because no provider hands the
+/// chat an exact count before a turn runs.
+class _AgentContextStatus extends StatelessWidget {
+  const _AgentContextStatus({required this.meter, required this.windowTokens});
+
+  final ValueListenable<AgentContextMeter> meter;
+
+  /// The selected model's ceiling in tokens, or null when it is not known.
+  final int? windowTokens;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    return ValueListenableBuilder<AgentContextMeter>(
+      valueListenable: meter,
+      builder: (context, usage, _) {
+        if (usage.isEmpty) return const SizedBox.shrink();
+        final window = windowTokens ?? 0;
+        return Tooltip(
+          message: _tooltip(usage, window),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (window > 0) ...[
+                _ContextRing(ratio: usage.tokens / window),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: Text(
+                  _label(usage, window),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// `~12.4k / 128k · 34.2k tok · 5 runs`.
+  String _label(AgentContextMeter usage, int window) {
+    final count = _count(usage.tokens);
+    final parts = <String>[
+      if (window > 0)
+        '$count / ${AgentTokenCounter.format(window)}'
+      else
+        'agentContextShort'.tr(args: [count]),
+      if (usage.totalTokens > 0)
+        'agentTokensShort'.tr(
+          args: [AgentTokenCounter.format(usage.totalTokens)],
+        ),
+      if (usage.runs > 0) _runs(usage.runs),
+    ];
+    return parts.join(' · ');
+  }
+
+  /// The full sentence behind the meter, for the pointer that hovers it.
+  String _tooltip(AgentContextMeter usage, int window) {
+    final count = _count(usage.tokens);
+    final parts = <String>[
+      if (window > 0)
+        'agentContextTooltipWindow'.tr(
+          args: [
+            count,
+            AgentTokenCounter.format(window),
+            AgentTokenCounter.formatPercent(usage.tokens / window),
+          ],
+        )
+      else
+        'agentContextTooltipUsed'.tr(args: [count]),
+      if (usage.totalTokens > 0)
+        'agentContextTooltipTotal'.tr(
+          args: [AgentTokenCounter.format(usage.totalTokens)],
+        ),
+      if (usage.peakTokens > usage.tokens)
+        'agentContextTooltipPeak'.tr(
+          args: [AgentTokenCounter.format(usage.peakTokens)],
+        ),
+      if (usage.runs > 0) _runs(usage.runs),
+      'agentContextTooltipCounted'.tr(),
+      if (usage.estimatedTotals) 'agentContextTooltipEstimatedTotals'.tr(),
+    ];
+    return parts.join('\n');
+  }
+
+  String _count(int tokens) => '~${AgentTokenCounter.format(tokens)}';
+
+  String _runs(int runs) => runs == 1
+      ? 'agentRunsShortOne'.tr()
+      : 'agentRunsShort'.tr(args: ['$runs']);
+}
+
+/// The meter's ring: a full track with the filled share swept from the top
+/// clockwise, so a nearly empty window still reads as a ring rather than a dot.
+class _ContextRing extends StatelessWidget {
+  const _ContextRing({required this.ratio});
+
+  final double ratio;
+
+  /// Big enough to read a share off, small enough to sit on a one-line footer.
+  static const _diameter = 20.0;
+  static const _stroke = 2.4;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fill = switch (ratio.clamp(0.0, 1.0)) {
+      >= 0.95 => scheme.error,
+      >= 0.8 => scheme.primary,
+      _ => scheme.onSurfaceVariant,
+    };
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return SizedBox.square(
+      dimension: _diameter,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0, end: ratio.clamp(0.0, 1.0)),
+        duration: reduceMotion
+            ? Duration.zero
+            : const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        builder: (context, value, _) => CustomPaint(
+          painter: _ContextRingPainter(
+            value: value,
+            // The composer's surface is a hairline tone away from
+            // `outlineVariant`, so the track is the fill's colour thinned until
+            // it reads as a ring rather than a hole.
+            track: scheme.onSurfaceVariant.withValues(alpha: 0.28),
+            fill: fill,
+            stroke: _stroke,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContextRingPainter extends CustomPainter {
+  const _ContextRingPainter({
+    required this.value,
+    required this.track,
+    required this.fill,
+    required this.stroke,
+  });
+
+  /// The share of the window to sweep, 0…1.
+  final double value;
+  final Color track;
+  final Color fill;
+  final double stroke;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = (size.shortestSide - stroke) / 2;
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..color = track,
+    );
+    if (value <= 0) return;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      2 * math.pi * value,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.round
+        ..color = fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ContextRingPainter oldDelegate) =>
+      oldDelegate.value != value ||
+      oldDelegate.track != track ||
+      oldDelegate.fill != fill ||
+      oldDelegate.stroke != stroke;
 }
 
 class _AgentCapabilitiesSheet extends ConsumerStatefulWidget {

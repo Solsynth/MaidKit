@@ -33,6 +33,7 @@ class AgentComposer extends StatefulWidget {
     required this.onStop,
     required this.reasoning,
     required this.onReasoningChanged,
+    this.status,
   });
 
   final TextEditingController controller;
@@ -70,6 +71,11 @@ class AgentComposer extends StatefulWidget {
   final AgentReasoning reasoning;
 
   final ValueChanged<AgentReasoning> onReasoningChanged;
+
+  /// The chat's own read-out for the footer strip, beside the reasoning pill:
+  /// what the next request costs, in the meter Persynth's composer carries.
+  /// Null when there is nothing to report yet.
+  final Widget? status;
 
   @override
   State<AgentComposer> createState() => _AgentComposerState();
@@ -252,12 +258,22 @@ class _AgentComposerState extends State<AgentComposer> {
               ],
             ),
             const SizedBox(height: 2),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: _ReasoningPill(
-                reasoning: widget.reasoning,
-                onChanged: widget.onReasoningChanged,
-              ),
+            Row(
+              children: [
+                _ReasoningPill(
+                  reasoning: widget.reasoning,
+                  onChanged: widget.onReasoningChanged,
+                ),
+                if (widget.status case final status?) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: status,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
         ),
