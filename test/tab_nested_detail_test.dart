@@ -63,6 +63,7 @@ void main() {
         deploymentResourcesProvider.overrideWith(
           (ref) => Stream.value([resource]),
         ),
+        cloudUserProvider.overrideWith((ref) async => null),
       ],
     );
     addTearDown(container.dispose);

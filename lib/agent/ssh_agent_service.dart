@@ -238,6 +238,7 @@ class SshAgentService {
     String personality = '',
     String uiLanguage = 'en',
     this.hideServerAddresses = false,
+    this.reasoningEffort,
   }) : _personality = personality.trim(),
        _uiLanguage = uiLanguage.trim().isEmpty ? 'en' : uiLanguage.trim();
   final AgentConfiguration _configuration;
@@ -248,6 +249,10 @@ class SshAgentService {
   /// model to never repeat addresses in its replies (tool calls may still
   /// reference real servers).
   final bool hideServerAddresses;
+
+  /// The `reasoning_effort` every request of this service carries, or null to
+  /// send none and leave the choice to the model.
+  final String? reasoningEffort;
 
   static final _safeToRunProperty = OpenAIFunctionProperty.boolean(
     name: 'safe_to_run',
@@ -328,7 +333,10 @@ class SshAgentService {
     List<AgentMcpToolTarget> mcpTools = const [],
     List<AgentSkillTarget> skills = const [],
     String? mcpUnavailable,
-    required String prompt,
+
+    /// The user message content: a plain string, or the OpenAI multimodal part
+    /// list when the turn carries attachments.
+    required Object prompt,
     List<Map<String, dynamic>> history = const [],
     void Function(String text)? onText,
     AgentCancelToken? cancelToken,
@@ -583,9 +591,11 @@ class SshAgentService {
       ? value
       : '${value.substring(0, 12000)}\n[output truncated]';
 
-  Map<String, dynamic> _rawMessage(String role, String text) => {
+  /// [content] is what the OpenAI-compatible endpoint accepts under `content`:
+  /// a string, or a multimodal part list.
+  Map<String, dynamic> _rawMessage(String role, Object content) => {
     'role': role,
-    'content': text,
+    'content': content,
   };
 
   String _systemPrompt(
@@ -653,6 +663,9 @@ Use tools to inspect or make the requested remote change. You can save reusable 
           'model': _configuration.model,
           'stream': true,
           'temperature': 0.2,
+          // Sent only when a level was chosen: a model that does not know the
+          // field refuses the turn, so the untouched state leaves it out.
+          if (reasoningEffort != null) 'reasoning_effort': reasoningEffort,
           'tools': [
             for (final tool in _tools) tool.toMap(),
             if (mcpTools.isNotEmpty)

@@ -362,6 +362,34 @@ class WorkspaceSnapshot {
   }
 }
 
+/// A saved [WorkspaceSnapshot] together with the moment it was written.
+///
+/// The save time is the snapshot's identity for the dashboard: it is what
+/// tells the workspace a user dismissed apart from a later one they have not
+/// been asked about yet.
+class StoredWorkspaceSnapshot {
+  const StoredWorkspaceSnapshot(this.snapshot, this.updatedAt);
+
+  final WorkspaceSnapshot snapshot;
+  final DateTime updatedAt;
+}
+
+/// Whether the dashboard should offer to reopen [stored].
+///
+/// The offer only makes sense on a pristine workspace — restoring over live
+/// tabs would clobber them — and a saved workspace the user dismissed stays
+/// dismissed until a later save replaces it.
+bool shouldOfferWorkspaceRestore({
+  required TerminalTabsState tabs,
+  required StoredWorkspaceSnapshot? stored,
+  required DateTime? dismissedSnapshotAt,
+}) {
+  if (!tabs.isPristineDefault) return false;
+  if (stored == null || stored.snapshot.isEmpty) return false;
+  return dismissedSnapshotAt == null ||
+      !dismissedSnapshotAt.isAtSameMomentAs(stored.updatedAt);
+}
+
 /// A terminal tab that needs a live session before it can be opened.
 class PendingTerminalRestore {
   const PendingTerminalRestore({

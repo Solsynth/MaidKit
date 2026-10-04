@@ -115,14 +115,9 @@ class NotificationModal extends HookConsumerWidget {
                           maidCafeMetoerNotificationsProvider.future,
                         );
                       },
-                      child: ListView.separated(
+                      child: ListView.builder(
                         padding: EdgeInsets.zero,
                         itemCount: items.length,
-                        separatorBuilder: (_, _) => Divider(
-                          height: 1,
-                          indent: 68,
-                          color: scheme.outlineVariant,
-                        ),
                         itemBuilder: (context, index) {
                           final notification = items[index];
                           return NotificationTile(

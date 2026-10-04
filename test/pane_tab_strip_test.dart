@@ -15,6 +15,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.dart';
+import 'package:maid_kit/servers/cloud_account_button.dart';
+import 'package:maid_kit/servers/cloud_sync_service.dart';
+import 'package:maid_kit/servers/maidcafe_cloud_page.dart';
 import 'package:maid_kit/servers/maidcafe_metoer.dart';
 import 'package:maid_kit/servers/notifications_modal.dart';
 import 'package:maid_kit/servers/server_providers.dart';
@@ -46,7 +49,11 @@ void main() {
     );
   });
 
-  Future<void> pumpWorkspace(WidgetTester tester, Size windowSize) async {
+  Future<void> pumpWorkspace(
+    WidgetTester tester,
+    Size windowSize, {
+    CloudUser? user,
+  }) async {
     tester.view.physicalSize = windowSize;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -83,6 +90,10 @@ void main() {
                   createdAt: DateTime.now(),
                 ),
               ],
+            ),
+            cloudUserProvider.overrideWith((ref) async => user),
+            cloudWorkspacesProvider.overrideWith(
+              (ref) async => const <CloudWorkspace>[],
             ),
           ],
           child: MaterialApp(
@@ -205,5 +216,35 @@ void main() {
 
     expect(find.byType(NotificationModal), findsOneWidget);
     expect(find.text('Disk almost full'), findsOneWidget);
+  });
+
+  testWidgets('the account button names the user and opens the cloud console', (
+    tester,
+  ) async {
+    await pumpWorkspace(
+      tester,
+      const Size(900, 800),
+      user: const CloudUser(name: 'Ada Lovelace', handle: 'ada'),
+    );
+
+    expect(find.text('A'), findsOneWidget);
+    expect(
+      find.byTooltip(
+        'settingsCloudSignedInAs'.tr(args: ['Ada Lovelace (@ada)']),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byType(CloudAccountButton));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MaidCafeCloudPage), findsOneWidget);
+  });
+
+  testWidgets('the account button stands in while signed out', (tester) async {
+    await pumpWorkspace(tester, const Size(900, 800));
+
+    expect(find.byType(CloudAccountButton), findsOneWidget);
+    expect(find.byTooltip('settingsCloudSignIn'.tr()), findsOneWidget);
   });
 }

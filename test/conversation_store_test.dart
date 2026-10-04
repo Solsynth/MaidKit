@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:maid_kit/agent/agent_attachment.dart';
 import 'package:maid_kit/agent/conversation_store.dart';
 
 void main() {
@@ -130,6 +131,40 @@ void main() {
     final conversations = await reopened.list();
     expect(conversations.single.id, id);
     expect((await reopened.conversation(id))!.messages.single.text, 'hi');
+  });
+
+  test('attachments ride a message through a save and a reload', () async {
+    final id = await store.saveConversation(
+      draft('With files', const [
+        AgentConversationMessage(
+          role: 'user',
+          text: 'why is this failing',
+          attachments: [
+            AgentAttachment(name: 'app.log', content: 'line one\nline two'),
+            AgentAttachment(
+              name: 'shot.png',
+              content: 'data:image/png;base64,cG5n',
+              byteSize: 4,
+              isImage: true,
+            ),
+          ],
+        ),
+        AgentConversationMessage(role: 'assistant', text: 'Because of X.'),
+      ]),
+    );
+    final loaded = await store.conversation(id);
+    expect(loaded, isNotNull);
+    final attachments = loaded!.messages.first.attachments;
+    expect(attachments, hasLength(2));
+    expect(attachments.first.name, 'app.log');
+    expect(attachments.first.content, 'line one\nline two');
+    expect(attachments.first.isImage, isFalse);
+    expect(attachments.last.name, 'shot.png');
+    expect(attachments.last.content, 'data:image/png;base64,cG5n');
+    expect(attachments.last.isImage, isTrue);
+    expect(attachments.last.byteSize, 4);
+    // A message without attachments stays written without the key.
+    expect(loaded.messages.last.attachments, isEmpty);
   });
 
   test('corrupt and foreign files are ignored', () async {

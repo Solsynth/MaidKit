@@ -22,6 +22,7 @@ import 'server_detail_page.dart';
 import 'session_lookup.dart';
 import 'maidcafe_server_tab.dart';
 import 'servers_page.dart';
+import 'cloud_account_button.dart';
 import 'file_editor_tab.dart';
 import 'file_management_tab.dart';
 import 'notifications_modal.dart';
@@ -536,10 +537,11 @@ class _PaneTabBar extends ConsumerWidget {
                       ),
                     ),
                     // Pane splitting lives in the command palette (Shift+Tab,
-                    // or the actions button beside this one) so the strip keeps
-                    // one scanning row of tabs and the workspace's own
-                    // notifications.
+                    // or the actions button beside this one), which leaves the
+                    // strip one scanning row of tabs plus the workspace's own
+                    // notifications and account.
                     const NotificationsBellButton(),
+                    const CloudAccountButton(),
                     IconButton(
                       tooltip: 'sessionsSessionActions'.tr(),
                       visualDensity: VisualDensity.compact,

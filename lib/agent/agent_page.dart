@@ -3,10 +3,11 @@ import 'dart:convert';
 
 import 'package:dart_openai/dart_openai.dart';
 import 'package:dartssh2/dartssh2.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -24,10 +25,13 @@ import 'package:maid_kit/agent/mcp_config_parser.dart';
 import 'package:maid_kit/agent/mcp_repository.dart';
 import 'package:maid_kit/agent/skill_repository.dart';
 import 'package:maid_kit/agent/skill_registry.dart';
-import 'conversation_store.dart';
-import 'personality_service.dart';
+import 'agent_attachment.dart';
+import 'agent_composer.dart';
+import 'agent_reasoning.dart';
 import 'agent_repository.dart';
 import 'agent_run_policy.dart';
+import 'conversation_store.dart';
+import 'personality_service.dart';
 import 'ssh_agent_service.dart';
 
 class _AgentProviderPreset {
@@ -98,6 +102,11 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   final _promptFocus = FocusNode();
   final _showSidebar = ValueNotifier<bool>(false);
   final _messages = <_AgentMessage>[];
+  // Files queued for the next prompt. They belong to the page rather than the
+  // composer because a turn, a queued prompt and a saved conversation all have
+  // to carry them.
+  final _attachments = <AgentAttachment>[];
+  bool _draggingFiles = false;
   // OpenAI tool calls need their complete protocol history (assistant call and
   // matching tool result) to be meaningful on the next request. The rendered
   // chat messages alone cannot provide that because tool-call IDs are omitted.
@@ -112,6 +121,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   String? _pendingPrompt;
   int? _activeProviderId;
   int? _activeModelId;
+  AgentReasoning _reasoning = AgentReasoning.modelDefault;
   int? _conversationId;
   bool _ghost = false;
   bool _working = false;
@@ -130,18 +140,6 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     _restoreSelection();
     _messagesScroll.addListener(_updateScrollToBottomVisibility);
     if (widget.autofocus) _focusPromptAfterFrame();
-    _promptFocus.onKeyEvent = (node, event) {
-      if (event is! KeyDownEvent) return KeyEventResult.ignored;
-      if (event.logicalKey != LogicalKeyboardKey.enter) {
-        return KeyEventResult.ignored;
-      }
-      if (HardwareKeyboard.instance.isShiftPressed) {
-        _insertNewLine();
-      } else {
-        _submitPrompt();
-      }
-      return KeyEventResult.handled;
-    };
   }
 
   @override
@@ -150,24 +148,108 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     if (widget.autofocus && !oldWidget.autofocus) _focusPromptAfterFrame();
   }
 
-  void _insertNewLine() {
-    final text = _prompt.text;
-    final selection = _prompt.selection;
-    final start = selection.start >= 0 ? selection.start : text.length;
-    final end = selection.end >= 0 ? selection.end : text.length;
-    final newText = text.replaceRange(start, end, '\n');
-    _prompt.value = TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(offset: start + 1),
+  /// Opens the picker and queues what it returns. Each file is read on its
+  /// own, so one that turns out not to be text shows its problem on the strip
+  /// instead of failing the whole pick.
+  Future<void> _attachFromPicker() async {
+    final result = await FilePicker.pickFiles(
+      allowMultiple: true,
+      // A browser has no filesystem path to read back, so ask the picker for
+      // the bytes; native keeps reading the file from disk.
+      withData: kIsWeb,
     );
+    final files = result?.files ?? const <PlatformFile>[];
+    if (files.isEmpty) return;
+    await _addAttachments([
+      for (final file in files)
+        readAgentAttachment(
+          name: file.name,
+          path: file.path,
+          bytes: file.bytes,
+        ),
+    ]);
+  }
+
+  /// Queues files dropped on the chat: the same path a picked file takes, with
+  /// the macOS sandbox access a drag out of Finder needs.
+  Future<void> _attachDropped(List<DropItem> items) async {
+    if (_proposal != null) return;
+    final queued = <AgentAttachment>[];
+    for (final item in items.whereType<DropItemFile>()) {
+      final bookmark = item.extraAppleBookmark;
+      final scoped =
+          bookmark != null &&
+          await DesktopDrop.instance.startAccessingSecurityScopedResource(
+            bookmark: bookmark,
+          );
+      try {
+        queued.add(
+          await readAgentAttachment(
+            name: item.name,
+            // A browser drop carries the file's bytes and a blob URL rather
+            // than a path; a desktop drop is the other way round.
+            path: kIsWeb ? null : item.path,
+            bytes: kIsWeb ? await item.readAsBytes() : null,
+          ),
+        );
+      } finally {
+        if (scoped) {
+          await DesktopDrop.instance.stopAccessingSecurityScopedResource(
+            bookmark: bookmark,
+          );
+        }
+      }
+    }
+    if (queued.isEmpty || !mounted) return;
+    setState(() => _attachments.addAll(queued));
+  }
+
+  Future<void> _addAttachments(List<Future<AgentAttachment>> pending) async {
+    final resolved = await Future.wait(pending);
+    if (!mounted || resolved.isEmpty) return;
+    setState(() => _attachments.addAll(resolved));
+  }
+
+  /// A block pasted into the field becomes a text attachment instead: the
+  /// composer keeps the message, the document keeps the document, and the
+  /// block stays editable until it is sent.
+  void _attachText(String text) {
+    setState(() {
+      _attachments.add(
+        AgentAttachment.text(text, name: 'agentPastedText'.tr()),
+      );
+    });
+  }
+
+  Future<void> _editAttachment(int index) async {
+    if (index < 0 || index >= _attachments.length) return;
+    final attachment = _attachments[index];
+    if (attachment.isImage) return;
+    final edited = await showTextAttachmentEditor(
+      context,
+      name: attachment.name,
+      text: attachment.content ?? '',
+    );
+    if (edited == null || !mounted) return;
+    setState(() {
+      _attachments[index] = attachment.copyWith(content: edited);
+    });
+  }
+
+  void _removeAttachment(int index) {
+    if (index < 0 || index >= _attachments.length) return;
+    setState(() => _attachments.removeAt(index));
   }
 
   Future<void> _restoreSelection() async {
     final selection = await ref.read(agentSelectionProvider.future);
-    if (!mounted || selection.providerId == null) return;
+    if (!mounted) return;
     setState(() {
-      _activeProviderId = selection.providerId;
-      _activeModelId = selection.modelId;
+      _reasoning = selection.reasoning;
+      if (selection.providerId != null) {
+        _activeProviderId = selection.providerId;
+        _activeModelId = selection.modelId;
+      }
     });
   }
 
@@ -175,6 +257,14 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     ref
         .read(agentSelectionProvider.notifier)
         .select(providerId: _activeProviderId, modelId: _activeModelId);
+  }
+
+  /// Remembers how hard the model should think. Like the provider and model,
+  /// it is a standing choice rather than a property of one message, so it is
+  /// saved and carried by every request of this chat.
+  void _selectReasoning(AgentReasoning reasoning) {
+    setState(() => _reasoning = reasoning);
+    ref.read(agentSelectionProvider.notifier).selectReasoning(reasoning);
   }
 
   @override
@@ -265,11 +355,17 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
 
   void _queuePrompt() {
     final text = _prompt.text.trim();
+    final attachments = List<AgentAttachment>.of(_attachments);
     final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
-    if (text.isEmpty || servers.isEmpty || _proposal != null) return;
+    if ((text.isEmpty && attachments.isEmpty) ||
+        servers.isEmpty ||
+        _proposal != null) {
+      return;
+    }
     setState(() {
-      _queuedPrompts.add(_QueuedPrompt(text));
+      _queuedPrompts.add(_QueuedPrompt(text, attachments));
       _prompt.clear();
+      _attachments.clear();
     });
     _promptFocus.requestFocus();
   }
@@ -286,7 +382,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       return;
     }
     if (mounted) setState(() {});
-    await _runPrompt(queued.text);
+    await _runPrompt(queued.text, queued.attachments);
   }
 
   void _removeQueuedPrompt(int index) {
@@ -305,36 +401,46 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     }
     final queued = _queuedPrompts.removeAt(0);
     setState(() {});
-    await _runPrompt(queued.text);
+    await _runPrompt(queued.text, queued.attachments);
   }
 
   Future<void> _send() async {
     final text = _prompt.text.trim();
+    final attachments = List<AgentAttachment>.of(_attachments);
     final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
-    if (text.isEmpty || servers.isEmpty || _working || _proposal != null) {
+    if ((text.isEmpty && attachments.isEmpty) ||
+        servers.isEmpty ||
+        _working ||
+        _proposal != null) {
       return;
     }
-    await _runPrompt(text);
+    await _runPrompt(text, attachments);
   }
 
-  Future<void> _runPrompt(String text) async {
+  Future<void> _runPrompt(
+    String text,
+    List<AgentAttachment> attachments,
+  ) async {
     final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
-    if (text.isEmpty || servers.isEmpty || _working || _proposal != null) {
+    if ((text.isEmpty && attachments.isEmpty) ||
+        servers.isEmpty ||
+        _working ||
+        _proposal != null) {
       return;
     }
     final targets = _serverTargets(servers);
     final snippets = await ref.read(snippetRepositoryProvider).all();
     if (!mounted) return;
+    final promptContent = agentUserContent(text, attachments);
+    final userMessage = {'role': 'user', 'content': promptContent};
     final conversationContext = List<Map<String, dynamic>>.from(_agentContext);
     setState(() {
       _working = true;
       _pendingPrompt = text;
-      _pendingContext = [
-        ...conversationContext,
-        _rawContextMessage('user', text),
-      ];
-      _messages.add(_AgentMessage.user(text));
+      _pendingContext = [...conversationContext, userMessage];
+      _messages.add(_AgentMessage.user(text, attachments: attachments));
       _prompt.clear();
+      _attachments.clear();
     });
     widget.onWorkingChanged(true);
     _reportTitle();
@@ -362,13 +468,14 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
             personality: personality,
             uiLanguage: context.locale.toLanguageTag(),
             hideServerAddresses: ref.read(hideServerAddressesProvider),
+            reasoningEffort: _reasoning.effort,
           ).request(
             servers: targets,
             snippets: _snippetTargets(snippets),
             mcpTools: mcpTools,
             skills: skillTargets,
             mcpUnavailable: mcpUnavailable,
-            prompt: text,
+            prompt: promptContent,
             history: conversationContext,
             onText: (streamedText) {
               if (!mounted) return;
@@ -472,6 +579,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         personality: personality,
         uiLanguage: context.locale.toLanguageTag(),
         hideServerAddresses: ref.read(hideServerAddressesProvider),
+        reasoningEffort: _reasoning.effort,
       );
       final cancelToken = AgentCancelToken();
       _activeToken = cancelToken;
@@ -803,6 +911,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                 AgentConversationMessage(
                   role: _roleName(message.kind),
                   text: message.text,
+                  attachments: message.attachments,
                 ),
             ],
           ),
@@ -818,6 +927,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     setState(() {
       _queuedPrompts.clear();
       _messages.clear();
+      _attachments.clear();
       _agentContext.clear();
       _pendingContext = const [];
       _conversationId = null;
@@ -852,6 +962,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     if (!mounted || conversation == null) return;
     setState(() {
       _queuedPrompts.clear();
+      _attachments.clear();
       _messages
         ..clear()
         ..addAll([
@@ -860,6 +971,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
               message.text,
               _roleKind(message.role),
               autoApproved: false,
+              attachments: message.attachments,
             ),
         ]);
       _agentContext
@@ -895,6 +1007,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       setState(() {
         _queuedPrompts.clear();
         _messages.clear();
+        _attachments.clear();
         _agentContext.clear();
         _pendingContext = const [];
         _conversationId = null;
@@ -1297,7 +1410,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     required ColorScheme scheme,
     required bool compact,
   }) {
-    return Padding(
+    final chat = Padding(
       padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 0, compact ? 16 : 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1331,59 +1444,66 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
             _buildQueuedPrompts(scheme),
           ],
           const SizedBox(height: 12),
-          Material(
-            elevation: 2,
-            color: scheme.surfaceContainerHighest,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide.none,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _prompt,
-                      focusNode: _promptFocus,
-                      enabled: _proposal == null,
-                      keyboardType: TextInputType.multiline,
-                      maxLines: 5,
-                      minLines: 1,
-                      onTapOutside: (_) =>
-                          FocusManager.instance.primaryFocus?.unfocus(),
-                      onSubmitted: (_) => _submitPrompt(),
-                      decoration: InputDecoration(
-                        hintText: 'agentPromptHint'.tr(),
-                        hintMaxLines: 1,
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
+          AgentComposer(
+            controller: _prompt,
+            focusNode: _promptFocus,
+            attachments: _attachments,
+            working: _working,
+            // A pending proposal owns the turn: its answer has to be run or
+            // declined before anything else can be sent.
+            enabled: _proposal == null,
+            onAttach: _attachFromPicker,
+            onAttachText: _attachText,
+            onEditAttachment: _editAttachment,
+            onRemoveAttachment: _removeAttachment,
+            onSubmit: _submitPrompt,
+            onStop: _interrupt,
+            reasoning: _reasoning,
+            onReasoningChanged: _selectReasoning,
+          ),
+        ],
+      ),
+    );
+    // Files dropped anywhere on the chat attach to the next message; the
+    // picker behind the composer's attach button is the other way in.
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _draggingFiles = true),
+      onDragExited: (_) => setState(() => _draggingFiles = false),
+      onDragDone: (details) async {
+        setState(() => _draggingFiles = false);
+        await _attachDropped(details.files);
+      },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          chat,
+          if (_draggingFiles)
+            IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.08),
+                  border: Border.all(color: scheme.primary, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Symbols.attach_file,
+                        size: 32,
+                        color: scheme.primary,
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'agentDropFilesToAttach'.tr(),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ],
                   ),
-                  if (_working)
-                    IconButton(
-                      tooltip: 'commonStop'.tr(),
-                      onPressed: _interrupt,
-                      icon: const Icon(Symbols.stop),
-                    ),
-                  IconButton(
-                    tooltip: _working
-                        ? 'agentQueueMessage'.tr()
-                        : 'agentSendMessage'.tr(),
-                    color: scheme.primary,
-                    onPressed: _proposal != null ? null : _submitPrompt,
-                    icon: Icon(_working ? Symbols.schedule : Symbols.send),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -1405,15 +1525,24 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           separatorBuilder: (_, _) => const Divider(height: 1),
           itemBuilder: (context, index) {
             final queued = _queuedPrompts[index];
+            final attached = queued.attachments.length;
             return ListTile(
               dense: true,
               leading: const Icon(Symbols.schedule, size: 20),
               title: Text(
-                queued.text,
+                queued.text.isEmpty
+                    ? queued.attachments.firstOrNull?.name ??
+                          'agentPastedText'.tr()
+                    : queued.text,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
-              subtitle: Text('agentQueuedMessage'.tr()),
+              subtitle: Text(
+                attached == 0
+                    ? 'agentQueuedMessage'.tr()
+                    : '${'agentQueuedMessage'.tr()} · '
+                          '${attached == 1 ? 'agentAttachmentOne'.tr() : 'agentAttachmentCount'.tr(args: ['$attached'])}',
+              ),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1547,33 +1676,63 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     return result;
   }
 
+  /// The user message as a request and the saved history carry it: the typed
+  /// text plus whatever was attached to it, in the same shape the turn was
+  /// sent with.
+  static Map<String, dynamic> _userContextMessage(
+    String text,
+    List<AgentAttachment> attachments,
+  ) => {'role': 'user', 'content': agentUserContent(text, attachments)};
+
   static List<Map<String, dynamic>> _contextFromMessages(
     List<_AgentMessage> messages,
   ) => [
     for (final message in messages)
-      _rawContextMessage(
-        message.kind == _MessageKind.user ? 'user' : 'assistant',
-        message.kind == _MessageKind.tool
-            ? 'Tool result from an earlier action:\n${message.text}'
-            : message.text,
-      ),
+      if (message.kind == _MessageKind.user)
+        _userContextMessage(message.text, message.attachments)
+      else
+        _rawContextMessage(
+          'assistant',
+          message.kind == _MessageKind.tool
+              ? 'Tool result from an earlier action:\n${message.text}'
+              : message.text,
+        ),
   ];
 
   static String _conversationTitle(List<_AgentMessage> messages) {
     final firstUser = messages
         .where((message) => message.kind == _MessageKind.user)
         .firstOrNull;
-    final text = (firstUser?.text ?? 'agentDefaultConversationTitle'.tr())
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    final typed = firstUser?.text ?? '';
+    // A turn that was nothing but an attachment is titled by the file it sent,
+    // which is the only thing about it worth reading in a list.
+    final text =
+        (typed.trim().isEmpty
+                ? firstUser?.attachments.firstOrNull?.name ??
+                      'agentDefaultConversationTitle'.tr()
+                : typed)
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
     return text.length <= 48 ? text : '${text.substring(0, 48)}…';
   }
 }
 
 class _AgentMessage {
-  const _AgentMessage(this.text, this.kind, {required this.autoApproved});
-  const _AgentMessage.user(String text)
-    : this(text, _MessageKind.user, autoApproved: false);
+  const _AgentMessage(
+    this.text,
+    this.kind, {
+    required this.autoApproved,
+    this.attachments = const [],
+  });
+  const _AgentMessage.user(
+    String text, {
+    List<AgentAttachment> attachments = const [],
+  }) : this(
+         text,
+         _MessageKind.user,
+         autoApproved: false,
+         attachments: attachments,
+       );
   const _AgentMessage.assistant(String text)
     : this(text, _MessageKind.assistant, autoApproved: false);
   const _AgentMessage.tool(String text, {bool autoApproved = false})
@@ -1581,12 +1740,16 @@ class _AgentMessage {
   final String text;
   final _MessageKind kind;
   final bool autoApproved;
+
+  /// What the turn was sent with. Only a user turn has any.
+  final List<AgentAttachment> attachments;
 }
 
 class _QueuedPrompt {
-  const _QueuedPrompt(this.text);
+  const _QueuedPrompt(this.text, this.attachments);
 
   final String text;
+  final List<AgentAttachment> attachments;
 }
 
 class _DropdownAction {
@@ -2122,7 +2285,17 @@ class _MessageCard extends StatelessWidget {
             // This follows Island's MarkdownTextContent implementation while
             // keeping MaidKit independent of Island's app-level package.
             ? _buildMarkdown(context)
-            : SelectableText(message.text),
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (message.attachments.isNotEmpty) ...[
+                    AgentAttachmentChips(attachments: message.attachments),
+                    if (message.text.isNotEmpty) const SizedBox(height: 6),
+                  ],
+                  if (message.text.isNotEmpty) SelectableText(message.text),
+                ],
+              ),
       ),
     );
   }

@@ -122,7 +122,6 @@ void main() {
     // The topic icons, including the title fallback, key off the topic.
     expect(find.byIcon(Symbols.notification_important), findsOneWidget);
     expect(find.byIcon(Symbols.cloud_done), findsOneWidget);
-    expect(find.byType(Divider), findsOneWidget);
     // No untranslated placeholder survives into the rows.
     expect(find.textContaining('{'), findsNothing);
   });

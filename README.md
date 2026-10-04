@@ -104,6 +104,8 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 - MCP servers and reusable skills extend the agent's toolset
 - Auto-discover models from your AI providers
 - Proposed actions require approval (review mode) before they run
+- Choose the model's reasoning effort from the composer
+- Attach files, screenshots and pasted logs to a message
 - Conversation history is stored on-device, outside the vault
 
 ### GitHub

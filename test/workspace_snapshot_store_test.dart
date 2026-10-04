@@ -58,22 +58,26 @@ void main() {
       focusedPaneId: 'main',
     );
 
-    final emitted = <WorkspaceSnapshot?>[];
+    final emitted = <StoredWorkspaceSnapshot?>[];
     final sub = store.watch().listen(emitted.add);
     addTearDown(sub.cancel);
 
+    final beforeSave = DateTime.now().subtract(const Duration(seconds: 1));
     await store.save(snapshot);
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     expect(emitted.last, isNotNull);
-    expect(emitted.last!.tabs, hasLength(2));
-    expect(emitted.last!.tabById('term-1')!.cwd, '/srv/app');
-    expect(emitted.last!.tabById('term-1')!.history, 'history line\n');
+    expect(emitted.last!.snapshot.tabs, hasLength(2));
+    expect(emitted.last!.snapshot.tabById('term-1')!.cwd, '/srv/app');
+    expect(emitted.last!.snapshot.tabById('term-1')!.history, 'history line\n');
+    // The dashboard identifies a snapshot by its save time, so the row's
+    // timestamp must reach consumers.
+    expect(emitted.last!.updatedAt.isAfter(beforeSave), isTrue);
 
     final loaded = await store.load();
     expect(loaded, isNotNull);
-    expect(loaded!.focusedPaneId, 'main');
-    expect(loaded.panes['main']!.selectedTabId, 'term-1');
+    expect(loaded!.snapshot.focusedPaneId, 'main');
+    expect(loaded.snapshot.panes['main']!.selectedTabId, 'term-1');
   });
 
   test('overwrites the previous snapshot on save', () async {
@@ -99,8 +103,8 @@ void main() {
 
     final loaded = await store.load();
     expect(loaded, isNotNull);
-    expect(loaded!.tabs, hasLength(1));
-    expect(loaded.tabs.single.kind, WorkspaceTabKind.dashboard);
+    expect(loaded!.snapshot.tabs, hasLength(1));
+    expect(loaded.snapshot.tabs.single.kind, WorkspaceTabKind.dashboard);
   });
 
   test('returns null before any save and after clear', () async {

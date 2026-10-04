@@ -34,6 +34,7 @@ import 'tailscale_service.dart';
 import 'tailscale_settings_section.dart';
 import 'tailscale_ssh_socket.dart';
 import 'terminal_tabs_provider.dart';
+import 'workspace_snapshot.dart';
 
 class ServerDashboardTab extends ConsumerWidget {
   const ServerDashboardTab({super.key});
@@ -427,16 +428,29 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
     }
   }
 
+  /// Hides the restore offer for the saved workspace it is currently showing.
+  void _dismissRestoreWorkspace() {
+    final stored = ref.read(workspaceSnapshotProvider).value;
+    if (stored == null) return;
+    unawaited(
+      ref
+          .read(workspaceRestoreDismissalProvider.notifier)
+          .dismiss(stored.updatedAt),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isCompactView = ref.watch(dashboardCompactViewProvider);
     final savedSnapshot = ref.watch(workspaceSnapshotProvider).value;
+    final dismissedSnapshotAt = ref.watch(workspaceRestoreDismissalProvider);
     final showRestoreCard = ref.watch(
       terminalTabsProvider.select(
-        (tabs) =>
-            tabs.isPristineDefault &&
-            savedSnapshot != null &&
-            !savedSnapshot.isEmpty,
+        (tabs) => shouldOfferWorkspaceRestore(
+          tabs: tabs,
+          stored: savedSnapshot,
+          dismissedSnapshotAt: dismissedSnapshotAt,
+        ),
       ),
     );
     final sessionsByServerId = {
@@ -494,6 +508,7 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                 child: _RestoreWorkspaceCard(
                   isRestoring: _isRestoringWorkspace,
                   onPressed: () => unawaited(_restoreWorkspace()),
+                  onDismiss: _dismissRestoreWorkspace,
                 ),
               ),
             ),
@@ -994,10 +1009,12 @@ class _RestoreWorkspaceCard extends StatelessWidget {
   const _RestoreWorkspaceCard({
     required this.isRestoring,
     required this.onPressed,
+    required this.onDismiss,
   });
 
   final bool isRestoring;
   final VoidCallback onPressed;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -1008,7 +1025,7 @@ class _RestoreWorkspaceCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
         child: Row(
           children: [
             Icon(
@@ -1039,6 +1056,13 @@ class _RestoreWorkspaceCard extends StatelessWidget {
                     )
                   : const Icon(Symbols.history, size: 18),
               label: Text('dashboardRestoreWorkspace'.tr()),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'commonDismiss'.tr(),
+              visualDensity: VisualDensity.compact,
+              onPressed: onDismiss,
+              icon: const Icon(Symbols.close, size: 18),
             ),
           ],
         ),

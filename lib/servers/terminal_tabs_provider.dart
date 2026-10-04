@@ -493,9 +493,9 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
 
   /// Restores the workspace saved by the previous session.
   Future<void> restoreLastWorkspace() async {
-    final snapshot = await ref.read(workspaceSnapshotStoreProvider).load();
-    if (snapshot == null) return;
-    await restoreWorkspace(snapshot);
+    final stored = await ref.read(workspaceSnapshotStoreProvider).load();
+    if (stored == null) return;
+    await restoreWorkspace(stored.snapshot);
   }
 
   /// Rebuilds [snapshot] into the live workspace: panes and every

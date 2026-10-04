@@ -82,6 +82,7 @@ void main() {
             connectionManagerProvider.overrideWithValue(
               _RecordingConnectionManager(),
             ),
+            cloudUserProvider.overrideWith((ref) async => null),
           ],
           child: MaterialApp(
             theme: createMaidKitTheme(Brightness.light),

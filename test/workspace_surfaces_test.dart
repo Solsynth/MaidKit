@@ -99,6 +99,7 @@ void main() {
               connectionManager ?? _RecordingConnectionManager(),
             ),
             portForwardsProvider.overrideWith((ref) => Stream.value(forwards)),
+            cloudUserProvider.overrideWith((ref) async => null),
           ],
           child: MaterialApp(
             theme: createMaidKitTheme(Brightness.light),

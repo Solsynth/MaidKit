@@ -21,6 +21,7 @@ import 'package:maid_kit/agent/agent_model_catalog.dart';
 import 'package:maid_kit/agent/conversation_store.dart';
 import 'package:maid_kit/agent/agent_personality.dart';
 import 'package:maid_kit/agent/agent_run_policy.dart';
+import 'package:maid_kit/agent/agent_reasoning.dart';
 import 'package:maid_kit/agent/agent_selection.dart';
 import 'package:maid_kit/agent/billing_service.dart';
 import 'package:maid_kit/agent/personality_service.dart';
@@ -746,6 +747,12 @@ class AgentSelectionNotifier extends AsyncNotifier<AgentSelectionSettings> {
     await settings.saveSelection(providerId: providerId, modelId: modelId);
     state = AsyncData(settings);
   }
+
+  Future<void> selectReasoning(AgentReasoning reasoning) async {
+    final settings = state.value ?? await build();
+    await settings.saveReasoning(reasoning);
+    state = AsyncData(settings);
+  }
 }
 
 final agentRunPolicyProvider =
@@ -1066,8 +1073,10 @@ final workspaceSnapshotStoreProvider = Provider<WorkspaceSnapshotStore>((ref) {
 });
 
 /// Live view of the persisted snapshot, so the dashboard can show the
-/// "restore last workspace" affordance and hide it once restored.
-final workspaceSnapshotProvider = StreamProvider<WorkspaceSnapshot?>((ref) {
+/// "restore last workspace" affordance and hide it once restored or dismissed.
+final workspaceSnapshotProvider = StreamProvider<StoredWorkspaceSnapshot?>((
+  ref,
+) {
   return ref.watch(workspaceSnapshotStoreProvider).watch();
 });
 
@@ -1090,6 +1099,28 @@ class WorkspaceRestoreOnStartupNotifier extends Notifier<bool> {
         .read(workspaceRestoreSettingsProvider)
         .saveRestoreWorkspaceOnStartup(value);
     state = value;
+  }
+}
+
+/// The saved workspace the user dismissed from the dashboard, identified by
+/// its save time; null while the restore offer is still open.
+final workspaceRestoreDismissalProvider =
+    NotifierProvider<WorkspaceRestoreDismissalNotifier, DateTime?>(
+      WorkspaceRestoreDismissalNotifier.new,
+    );
+
+class WorkspaceRestoreDismissalNotifier extends Notifier<DateTime?> {
+  @override
+  DateTime? build() =>
+      ref.read(workspaceRestoreSettingsProvider).dismissedSnapshotAt;
+
+  /// Hides the restore offer for [snapshotUpdatedAt]. A later save of the
+  /// workspace carries a new save time, so it offers itself again.
+  Future<void> dismiss(DateTime snapshotUpdatedAt) async {
+    await ref
+        .read(workspaceRestoreSettingsProvider)
+        .saveDismissedSnapshotAt(snapshotUpdatedAt);
+    state = snapshotUpdatedAt;
   }
 }
 

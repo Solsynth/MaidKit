@@ -25,12 +25,14 @@ class WorkspaceSnapshotStore {
         );
   }
 
-  Future<WorkspaceSnapshot?> load() async {
+  Future<StoredWorkspaceSnapshot?> load() async {
     final row = await (_db.select(
       _db.workspaceSnapshots,
     )..where((table) => table.id.equals(lastId))).getSingleOrNull();
     if (row == null) return null;
-    return WorkspaceSnapshot.decode(row.payload);
+    final snapshot = WorkspaceSnapshot.decode(row.payload);
+    if (snapshot == null) return null;
+    return StoredWorkspaceSnapshot(snapshot, row.updatedAt);
   }
 
   Future<void> clear() async {
@@ -39,11 +41,16 @@ class WorkspaceSnapshotStore {
     )..where((table) => table.id.equals(lastId))).go();
   }
 
-  Stream<WorkspaceSnapshot?> watch() async* {
-    yield* (_db.select(
-      _db.workspaceSnapshots,
-    )..where((table) => table.id.equals(lastId))).watchSingleOrNull().map(
-      (row) => row == null ? null : WorkspaceSnapshot.decode(row.payload),
-    );
+  Stream<StoredWorkspaceSnapshot?> watch() async* {
+    yield* (_db.select(_db.workspaceSnapshots)
+          ..where((table) => table.id.equals(lastId)))
+        .watchSingleOrNull()
+        .map((row) {
+          if (row == null) return null;
+          final snapshot = WorkspaceSnapshot.decode(row.payload);
+          return snapshot == null
+              ? null
+              : StoredWorkspaceSnapshot(snapshot, row.updatedAt);
+        });
   }
 }

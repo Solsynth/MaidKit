@@ -5,19 +5,42 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// One message stored in a saved conversation. Only the rendered text is kept;
-/// pending tool proposals are intentionally not restored.
+import 'agent_attachment.dart';
+
+/// One message stored in a saved conversation. The rendered text and whatever
+/// rode with a user turn are kept; pending tool proposals are intentionally not
+/// restored.
 class AgentConversationMessage {
-  const AgentConversationMessage({required this.role, required this.text});
+  const AgentConversationMessage({
+    required this.role,
+    required this.text,
+    this.attachments = const [],
+  });
   final String role;
   final String text;
 
-  Map<String, dynamic> toJson() => {'role': role, 'text': text};
+  /// What the turn was sent with, attachments included, so reopening a
+  /// conversation rebuilds the same request the model answered.
+  final List<AgentAttachment> attachments;
+
+  Map<String, dynamic> toJson() => {
+    'role': role,
+    'text': text,
+    if (attachments.isNotEmpty)
+      'attachments': [
+        for (final attachment in attachments) attachment.toJson(),
+      ],
+  };
 
   factory AgentConversationMessage.fromJson(Map<String, dynamic> json) =>
       AgentConversationMessage(
         role: json['role'] as String? ?? 'assistant',
         text: json['text'] as String? ?? '',
+        attachments: [
+          for (final attachment in json['attachments'] as List? ?? const [])
+            if (attachment is Map<String, dynamic>)
+              AgentAttachment.fromJson(attachment),
+        ],
       );
 }
 
@@ -60,9 +83,10 @@ class AgentConversation {
 ///
 /// Each conversation is a `.jsonl` file named `<id>.jsonl`: the first line is
 /// the conversation metadata, every following line is one message as
-/// `{role, text}`. Embedded newlines stay inside a single line because
-/// `jsonEncode` escapes them. Writes are atomic (temp file + rename) and the
-/// folder is capped at [maxConversations] entries, oldest evicted first.
+/// `{role, text, attachments?}`. Embedded newlines stay inside a single line
+/// because `jsonEncode` escapes them. Writes are atomic (temp file + rename)
+/// and the folder is capped at [maxConversations] entries, oldest evicted
+/// first.
 ///
 /// A browser has no filesystem, so there the same JSON Lines text is kept in
 /// memory instead: history works for the session but is gone after a reload.

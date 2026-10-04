@@ -550,23 +550,26 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                               labelText: 'vaultPasswordLabel'
                                                   .tr(),
                                               suffix: showBiometricUnlock
-                                                  ? IconButton(
-                                                      icon: const Icon(
-                                                        Symbols.fingerprint,
-                                                      ),
-                                                      onPressed: _busy
-                                                          ? null
-                                                          : _unlockWithBiometrics,
-                                                      tooltip:
-                                                          'vaultBiometricAction'
-                                                              .tr(),
-                                                      constraints:
-                                                          const BoxConstraints(),
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                            4,
+                                                  ? SizedBox(
+                                                      height: 26,
+                                                      width: 26,
+                                                      child: Center(
+                                                        child: IconButton(
+                                                          icon: const Icon(
+                                                            Symbols.fingerprint,
                                                           ),
-                                                      iconSize: 20,
+                                                          onPressed: _busy
+                                                              ? null
+                                                              : _unlockWithBiometrics,
+                                                          tooltip:
+                                                              'vaultBiometricAction'
+                                                                  .tr(),
+                                                          constraints:
+                                                              const BoxConstraints(),
+                                                          padding: .zero,
+                                                          iconSize: 20,
+                                                        ),
+                                                      ),
                                                     )
                                                   : null,
                                             ),
