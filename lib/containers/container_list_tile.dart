@@ -1,10 +1,9 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:styled_widget/styled_widget.dart';
-
-import 'package:maid_kit/theme.dart';
 
 import 'container_models.dart';
+import 'container_ui.dart';
 import 'container_update_badge.dart';
 
 /// Whether [container] reports a running lifecycle state.
@@ -67,10 +66,7 @@ class ContainerListTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final running = isContainerRunning(container);
-    final mono = theme.textTheme.bodySmall?.copyWith(
-      fontFamily: MaidKitFonts.mono,
-      fontSize: 12,
-    );
+    final mono = containerMono(theme);
     return InkWell(
       onTap: onOpen,
       child: Padding(
@@ -102,9 +98,7 @@ class ContainerListTile extends StatelessWidget {
                           container.image,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
+                          style: mono.copyWith(color: scheme.onSurfaceVariant),
                         ),
                         if (updateStatus?.hasUpdate == true) ...[
                           const SizedBox(height: 4),
@@ -117,19 +111,22 @@ class ContainerListTile extends StatelessWidget {
                           ),
                         ],
                         if (!wide && stats != null) ...[
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 2),
                           Text(
                             [
                               if (stats!.cpuPercent != null)
-                                'CPU ${stats!.cpuPercent!.toStringAsFixed(1)}%',
+                                '${'containersMetricCpu'.tr()} '
+                                    '${stats!.cpuPercent!.toStringAsFixed(1)}%',
                               if (stats!.memUsage.isNotEmpty)
-                                'Mem ${stats!.memUsage.split('/').first.trim()}',
+                                '${'containersMetricMemory'.tr()} '
+                                    '${stats!.memUsage.split('/').first.trim()}',
                             ].join(' · '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
+                            style: containerMono(
+                              theme,
+                              size: 11,
+                            ).copyWith(color: scheme.onSurfaceVariant),
                           ),
                         ],
                       ],
@@ -165,12 +162,26 @@ class ContainerListTile extends StatelessWidget {
               const SizedBox(width: 12),
               SizedBox(
                 width: 120,
-                child: _IoPairColumn(raw: stats?.netIO ?? '', style: mono),
+                child: _IoPairColumn(
+                  raw: stats?.netIO ?? '',
+                  style: mono,
+                  mutedStyle: containerMono(
+                    theme,
+                    size: 10,
+                  ).copyWith(color: scheme.onSurfaceVariant),
+                ),
               ),
               const SizedBox(width: 12),
               SizedBox(
                 width: 120,
-                child: _IoPairColumn(raw: stats?.blockIO ?? '', style: mono),
+                child: _IoPairColumn(
+                  raw: stats?.blockIO ?? '',
+                  style: mono,
+                  mutedStyle: containerMono(
+                    theme,
+                    size: 10,
+                  ).copyWith(color: scheme.onSurfaceVariant),
+                ),
               ),
               const SizedBox(width: 12),
             ],
@@ -181,9 +192,10 @@ class ContainerListTile extends StatelessWidget {
                 textAlign: TextAlign.end,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: containerMono(
+                  theme,
+                  size: 11,
+                ).copyWith(color: scheme.onSurfaceVariant),
               ),
             ),
             const SizedBox(width: 4),
@@ -219,10 +231,18 @@ String formatContainerBytes(int bytes) {
 }
 
 class _IoPairColumn extends StatelessWidget {
-  const _IoPairColumn({required this.raw, required this.style});
+  const _IoPairColumn({
+    required this.raw,
+    required this.style,
+    required this.mutedStyle,
+  });
 
   final String raw;
   final TextStyle? style;
+
+  /// The subdued style for the total (`/ 4.2 MB`): a colour, not an opacity
+  /// layer, so a table of these costs nothing extra to composite.
+  final TextStyle? mutedStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -243,8 +263,8 @@ class _IoPairColumn extends StatelessWidget {
             textAlign: TextAlign.end,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: style?.copyWith(fontSize: 10),
-          ).opacity(0.75),
+            style: mutedStyle,
+          ),
       ],
     );
   }

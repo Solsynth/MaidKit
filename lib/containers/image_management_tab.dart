@@ -10,6 +10,7 @@ import 'package:super_context_menu/super_context_menu.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'container_image_list_tile.dart';
 import 'container_models.dart';
+import 'container_ui.dart';
 import 'container_runtime_install.dart';
 import 'image_actions.dart';
 import 'package:maid_kit/data/local/app_database.dart';
@@ -53,7 +54,8 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
   late final MaidCafeSessionRegistry _sessionRegistry;
   MaidCafeStreamSession? _maidCafeStream;
 
-  /// Whether the visible list came from the MaidCafe daemon (banner).
+  /// Whether the visible list came from the MaidCafe daemon. The toolbar's
+  /// stamp names the transport this says.
   var _imagesFromMaidCafe = false;
 
   /// The daemon reported no container runtime; stop asking until a manual
@@ -347,7 +349,7 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
       return Center(child: Text('commonUnavailable'.tr()));
     }
     if (!widget.connected) {
-      return _ImageEmptyPanel(
+      return ContainerEmptyPanel(
         icon: Symbols.link_off,
         message: widget.connectionError ?? 'imagesConnectToManage'.tr(),
         actionLabel: 'commonConnect'.tr(),
@@ -358,61 +360,22 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
     }
     return _environments.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => _ImageEmptyPanel(
+      error: (error, _) => ContainerEmptyPanel(
         icon: Symbols.error_outline,
         message: 'imagesLoadError'.tr(args: [error.toString()]),
         actionLabel: 'imagesTryAgain'.tr(),
         onAction: _load,
       ),
-      data: (environments) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Shown only while the list is served by the MaidCafe daemon; the
-          // SSH poller is the default and gets no banner.
-          if (_imagesFromMaidCafe) const _ImageDataSourceBanner(),
-          Expanded(
-            child: _ImageEnvironments(
-              environments: environments,
-              onRefresh: _refreshManually,
-              onAction: _runAction,
-              onPrune: _prune,
-              onInstallRuntime: _installRuntime,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Quiet indicator that the image list is served by the MaidCafe daemon.
-/// Hidden entirely when the SSH poller is the data source.
-class _ImageDataSourceBanner extends StatelessWidget {
-  const _ImageDataSourceBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(color: scheme.secondaryContainer),
-      child: Row(
-        children: [
-          Icon(
-            Symbols.local_cafe,
-            size: 18,
-            color: scheme.onSecondaryContainer,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'imagesDataSourceMaidCafe'.tr(),
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: scheme.onSecondaryContainer,
-              ),
-            ),
-          ),
-        ],
+      data: (environments) => _ImageEnvironments(
+        environments: environments,
+        source: _imagesFromMaidCafe
+            ? ContainerListSource.daemon
+            : ContainerListSource.ssh,
+        pollInterval: widget.refreshInterval,
+        onRefresh: _refreshManually,
+        onAction: _runAction,
+        onPrune: _prune,
+        onInstallRuntime: _installRuntime,
       ),
     );
   }
@@ -601,6 +564,8 @@ class _CountChip extends StatelessWidget {
 class _ImageEnvironments extends StatelessWidget {
   const _ImageEnvironments({
     required this.environments,
+    required this.source,
+    this.pollInterval,
     required this.onRefresh,
     required this.onAction,
     required this.onPrune,
@@ -608,6 +573,13 @@ class _ImageEnvironments extends StatelessWidget {
   });
 
   final List<ImageEnvironment> environments;
+
+  /// Which transport answered this list, for the toolbar's stamp.
+  final ContainerListSource source;
+
+  /// The cadence the SSH poller refreshes on.
+  final Duration? pollInterval;
+
   final Future<void> Function() onRefresh;
   final Future<void> Function(
     ImageEnvironment,
@@ -620,11 +592,8 @@ class _ImageEnvironments extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
     if (environments.isEmpty) {
-      return _ImageEmptyPanel(
+      return ContainerEmptyPanel(
         icon: Symbols.image,
         message: 'containersNotInstalled'.tr(),
         actionLabel: 'containersInstallRuntimeShort'.tr(),
@@ -644,90 +613,78 @@ class _ImageEnvironments extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-          child: Row(
-            children: [
-              Flexible(
-                child: Text(
-                  [
-                    totalImages == 1
-                        ? 'imagesCountOne'.tr()
-                        : 'imagesCountOther'.tr(args: [totalImages.toString()]),
-                    if (totalUnused > 0)
-                      totalUnused == 1
-                          ? 'imagesUnusedOne'.tr()
-                          : 'imagesUnusedOther'.tr(
-                              args: [totalUnused.toString()],
-                            ),
-                  ].join(' · '),
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'imagesRefreshTooltip'.tr(),
-                visualDensity: VisualDensity.compact,
-                onPressed: onRefresh,
-                icon: const Icon(Symbols.refresh),
-              ),
-            ],
-          ),
-        ),
-        Divider(height: 1, color: scheme.outlineVariant),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            itemCount: environments.length,
-            itemBuilder: (context, index) => Padding(
-              padding: EdgeInsets.only(
-                bottom: index == environments.length - 1 ? 0 : 16,
-              ),
-              child: _ImageEnvironmentSection(
-                environment: environments[index],
-                onAction: onAction,
-                onPrune: () => onPrune(environments[index]),
-              ),
+        ContainerListToolbar(
+          summary: [
+            totalImages == 1
+                ? 'imagesCountOne'.tr()
+                : 'imagesCountOther'.tr(args: ['$totalImages']),
+            if (totalUnused > 0)
+              totalUnused == 1
+                  ? 'imagesUnusedOne'.tr()
+                  : 'imagesUnusedOther'.tr(args: ['$totalUnused']),
+          ],
+          source: source,
+          pollInterval: pollInterval,
+          actions: [
+            IconButton(
+              tooltip: 'imagesRefreshTooltip'.tr(),
+              visualDensity: VisualDensity.compact,
+              onPressed: onRefresh,
+              icon: const Icon(Symbols.refresh),
             ),
+          ],
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            children: spacedContainerGroups([
+              for (final environment in environments)
+                _environmentGroup(environment),
+            ]),
           ),
         ),
       ],
     );
   }
-}
 
-class _ImageEnvironmentSection extends StatelessWidget {
-  const _ImageEnvironmentSection({
-    required this.environment,
-    required this.onAction,
-    required this.onPrune,
-  });
-
-  final ImageEnvironment environment;
-  final Future<void> Function(
-    ImageEnvironment,
-    ServerContainerImage,
-    ImageAction,
-  )
-  onAction;
-  final Future<void> Function() onPrune;
-
-  String get _runtimeLabel {
-    final name = environment.runtime.name;
-    return '${name[0].toUpperCase()}${name.substring(1)}';
+  /// One runtime and store: the images it holds, or why it could not be read.
+  Widget _environmentGroup(ImageEnvironment environment) {
+    final available = environment.isAvailable;
+    final count = environment.images.length;
+    final unused = environment.unusedCount;
+    return ContainerGroup(
+      title: environment.runtime == ContainerRuntime.podman
+          ? 'runtimePodman'.tr()
+          : 'runtimeDocker'.tr(),
+      spec: [
+        containerStoreLabel(environment.scope),
+        if (available)
+          count == 1
+              ? 'imagesCountOne'.tr()
+              : 'imagesCountOther'.tr(args: ['$count']),
+        if (available && unused > 0) 'imagesUnusedCount'.tr(args: ['$unused']),
+      ],
+      actions: [
+        if (available)
+          IconButton(
+            tooltip: 'imagesPruneDanglingLabel'.tr(),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => onPrune(environment),
+            icon: const Icon(Symbols.cleaning_services, size: 20),
+          ),
+      ],
+      children: !available
+          ? [ContainerGroupNote(environment.error ?? 'imagesUnavailable'.tr())]
+          : count == 0
+          ? [ContainerGroupNote('imagesNoImagesEnv'.tr())]
+          : [
+              for (final image in environment.images)
+                _imageTile(environment, image),
+            ],
+    );
   }
 
-  String get _scopeLabel => environment.scope == ContainerScope.root
-      ? 'commonRoot'.tr()
-      : 'commonUser'.tr();
-
-  IconData get _runtimeIcon => switch (environment.runtime) {
-    ContainerRuntime.docker => Symbols.deployed_code,
-    ContainerRuntime.podman => Symbols.package_2,
-  };
-
-  Widget _imageTile({required ServerContainerImage image}) {
+  Widget _imageTile(ImageEnvironment environment, ServerContainerImage image) {
     Menu menu() => Menu(
       children: [
         MenuAction(
@@ -742,7 +699,7 @@ class _ImageEnvironmentSection extends StatelessWidget {
       menuBuilder: menu,
       child: ContainerImageListTile(
         image: image,
-        contentPadding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
         trailing: PopupMenuButton<ImageAction>(
           tooltip: 'imagesActionsTooltip'.tr(),
           onSelected: (action) => onAction(environment, image, action),
@@ -759,183 +716,6 @@ class _ImageEnvironmentSection extends StatelessWidget {
             ),
           ],
           icon: const Icon(Symbols.more_vert),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final unused = environment.unusedCount;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-            child: Row(
-              children: [
-                Icon(_runtimeIcon, size: 18, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(_runtimeLabel, style: theme.textTheme.titleSmall),
-                ),
-                _MetaChip(label: _scopeLabel),
-                if (environment.isAvailable) ...[
-                  const SizedBox(width: 8),
-                  _MetaChip(
-                    label: environment.images.isEmpty
-                        ? 'imagesEmptyMeta'.tr()
-                        : 'imagesCountOther'.tr(
-                            args: [environment.images.length.toString()],
-                          ),
-                  ),
-                  if (unused > 0) ...[
-                    const SizedBox(width: 8),
-                    _MetaChip(
-                      label: 'imagesUnusedCount'.tr(args: [unused.toString()]),
-                    ),
-                  ],
-                ],
-                if (environment.isAvailable)
-                  IconButton(
-                    tooltip: 'imagesPruneDanglingLabel'.tr(),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onPrune,
-                    icon: const Icon(Symbols.cleaning_services, size: 20),
-                  ),
-              ],
-            ),
-          ),
-          if (!environment.isAvailable)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Symbols.info, size: 16, color: scheme.onSurfaceVariant),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      environment.error ?? 'imagesUnavailable'.tr(),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else if (environment.images.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Text(
-                'containersNoContainersEnv'.tr(),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            )
-          else ...[
-            Divider(height: 1, color: scheme.outlineVariant),
-            for (var i = 0; i < environment.images.length; i++) ...[
-              _imageTile(image: environment.images[i]),
-              if (i != environment.images.length - 1)
-                Divider(
-                  height: 1,
-                  indent: 12,
-                  endIndent: 12,
-                  color: scheme.outlineVariant.withValues(alpha: 0.5),
-                ),
-            ],
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _MetaChip extends StatelessWidget {
-  const _MetaChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-}
-
-class _ImageEmptyPanel extends StatelessWidget {
-  const _ImageEmptyPanel({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.actionIcon,
-    this.filledAction = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final IconData? actionIcon;
-  final bool filledAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 32, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
-              if (filledAction)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: Icon(actionIcon ?? Symbols.refresh),
-                  label: Text(actionLabel!),
-                )
-              else
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-            ],
-          ],
         ),
       ),
     );

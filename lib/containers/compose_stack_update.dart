@@ -6,6 +6,8 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/containers/compose_project_actions.dart';
 import 'package:maid_kit/containers/container_models.dart';
+import 'package:maid_kit/containers/container_sudo_guide.dart';
+import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
@@ -79,6 +81,7 @@ Future<bool> updateComposeStack(
   BuildContext context, {
   required WidgetRef ref,
   required MaidCafeStreamSession session,
+  required Server server,
   required ComposeStack stack,
   String? invokedBy,
 }) async {
@@ -93,11 +96,20 @@ Future<bool> updateComposeStack(
     );
   } catch (error) {
     if (!context.mounted) return false;
-    showStyledSnackBar(
-      title: 'composeStacksUpdate'.tr(),
-      message: error.toString(),
-      icon: Symbols.error,
-      accentColor: scheme.error,
+    await reportContainerSudoFailure(
+      context: context,
+      ref: ref,
+      server: server,
+      error: error,
+      snackBarTitle: 'composeStacksUpdate'.tr(),
+      onRetry: () => updateComposeStack(
+        context,
+        ref: ref,
+        session: session,
+        server: server,
+        stack: stack,
+        invokedBy: invokedBy,
+      ),
     );
     return false;
   }
@@ -126,11 +138,20 @@ Future<bool> updateComposeStack(
     );
   } catch (error) {
     if (!context.mounted) return false;
-    showStyledSnackBar(
-      title: 'composeStacksUpdate'.tr(),
-      message: error.toString(),
-      icon: Symbols.error,
-      accentColor: scheme.error,
+    await reportContainerSudoFailure(
+      context: context,
+      ref: ref,
+      server: server,
+      error: error,
+      snackBarTitle: 'composeStacksUpdate'.tr(),
+      onRetry: () => updateComposeStack(
+        context,
+        ref: ref,
+        session: session,
+        server: server,
+        stack: stack,
+        invokedBy: invokedBy,
+      ),
     );
     return false;
   }
@@ -161,16 +182,28 @@ Future<void> showComposeStackUpdateAllDialog({
     void Function(String label) onStage,
   )
   run,
+
+  /// Opens the sudo guide for a failed stack. A failure that names a missing
+  /// grant is a paragraph, and this dialog only has two truncated lines for it.
+  void Function(ComposeStack stack, String error)? onOpenGuide,
 }) {
   return showDialog<void>(
     context: context,
     barrierDismissible: false,
-    builder: (context) => _ComposeStackUpdateDialog(stacks: stacks, run: run),
+    builder: (context) => _ComposeStackUpdateDialog(
+      stacks: stacks,
+      run: run,
+      onOpenGuide: onOpenGuide,
+    ),
   );
 }
 
 class _ComposeStackUpdateDialog extends StatefulWidget {
-  const _ComposeStackUpdateDialog({required this.stacks, required this.run});
+  const _ComposeStackUpdateDialog({
+    required this.stacks,
+    required this.run,
+    this.onOpenGuide,
+  });
 
   final List<ComposeStack> stacks;
   final Future<ComposeStackUpdateOutcome> Function(
@@ -178,6 +211,7 @@ class _ComposeStackUpdateDialog extends StatefulWidget {
     void Function(String label) onStage,
   )
   run;
+  final void Function(ComposeStack stack, String error)? onOpenGuide;
 
   @override
   State<_ComposeStackUpdateDialog> createState() =>
@@ -319,9 +353,11 @@ class _ComposeStackUpdateDialogState extends State<_ComposeStackUpdateDialog> {
         ? composeStageLabel(stage)
         : null;
     final error = outcome?.error;
+    final openGuide = error == null ? null : widget.onOpenGuide;
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
+      onTap: openGuide == null ? null : () => openGuide(stack, error!),
       title: Text(stack.project, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: error == null && runningStage == null
           ? null

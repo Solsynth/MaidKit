@@ -5,6 +5,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/theme.dart';
 
 import 'container_models.dart';
+import 'container_ui.dart';
 
 /// Compact / table-style list row for a [ServerContainerImage].
 ///
@@ -34,13 +35,14 @@ class ContainerImageListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final mono = theme.textTheme.bodySmall?.copyWith(
-      fontFamily: MaidKitFonts.mono,
-      fontSize: 12,
-    );
     final title = image.reference;
     final subtitle = image.id;
     final mutedIcon = image.unused || image.isDangling;
+    final factStyle = containerMono(
+      theme,
+      size: 11,
+    ).copyWith(color: scheme.onSurfaceVariant);
+    final mono = containerMono(theme);
 
     final row = Padding(
       padding: contentPadding,
@@ -72,7 +74,7 @@ class ContainerImageListTile extends StatelessWidget {
                           ),
                           if (image.unused) ...[
                             const SizedBox(width: 8),
-                            _UnusedLabel(dangling: image.isDangling),
+                            _UnusedToken(dangling: image.isDangling),
                           ],
                         ],
                       ),
@@ -81,20 +83,15 @@ class ContainerImageListTile extends StatelessWidget {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          fontFamily: MaidKitFonts.mono,
-                        ),
+                        style: factStyle,
                       ),
                       if (!wide && image.created.isNotEmpty) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Text(
                           image.created,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
+                          style: factStyle,
                         ),
                       ],
                     ],
@@ -160,30 +157,25 @@ class ContainerImageListTile extends StatelessWidget {
   }
 }
 
-class _UnusedLabel extends StatelessWidget {
-  const _UnusedLabel({required this.dangling});
+class _UnusedToken extends StatelessWidget {
+  const _UnusedToken({required this.dangling});
 
   final bool dangling;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final label = dangling
         ? 'imagesPruneDanglingLabel'.tr()
         : 'imagesPruneUnusedLabel'.tr();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.tertiaryContainer.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: scheme.onTertiaryContainer,
-        ),
-      ),
+    // The runtime's own word for it, in the machine face and the attention
+    // colour: a fact about the image, not a control.
+    return Text(
+      label,
+      style: containerMono(
+        theme,
+        size: 11,
+      ).copyWith(color: theme.colorScheme.tertiary),
     );
   }
 }

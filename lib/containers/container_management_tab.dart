@@ -14,6 +14,8 @@ import 'compose_scan_dialog.dart';
 import 'compose_stack_update.dart';
 import 'container_models.dart';
 import 'container_runtime_install.dart';
+import 'container_sudo_guide.dart';
+import 'container_ui.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/routing/app_router.gr.dart';
@@ -24,7 +26,6 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
-import 'package:maid_kit/theme.dart';
 
 /// A reusable container-management surface for a single server. Its data is
 /// scoped by runtime (Docker/Podman) and by user/root environment so it can be
@@ -73,7 +74,8 @@ class _ContainerManagementTabState
   /// Cleared by a manual refresh, an explicit action, or a fresh session.
   var _containersSseAttempted = false;
 
-  /// Whether the visible list came from the MaidCafe daemon (banner).
+  /// Whether the visible list came from the MaidCafe daemon. The toolbar's
+  /// stamp names the transport this says.
   var _containersFromMaidCafe = false;
 
   /// Last `containers` event timestamp and the daemon's announced cadence,
@@ -468,11 +470,15 @@ class _ContainerManagementTabState
       await _load(force: true);
     } catch (error) {
       if (!mounted) return;
-      showStyledSnackBar(
-        title: 'containerActionError'.tr(args: [action.label.toLowerCase()]),
-        message: error.toString(),
-        icon: Symbols.error,
-        accentColor: Theme.of(context).colorScheme.error,
+      await reportContainerSudoFailure(
+        context: context,
+        ref: ref,
+        server: widget.server,
+        error: error,
+        snackBarTitle: 'containerActionError'.tr(
+          args: [action.label.toLowerCase()],
+        ),
+        onRetry: () => _runAction(environment, container, action),
       );
     }
   }
@@ -490,6 +496,7 @@ class _ContainerManagementTabState
       context,
       ref: ref,
       session: session,
+      server: widget.server,
       stack: stack,
       invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
     );
@@ -531,6 +538,17 @@ class _ContainerManagementTabState
             error: error.toString(),
           );
         }
+      },
+      onOpenGuide: (stack, error) {
+        unawaited(
+          reportContainerSudoFailure(
+            context: context,
+            ref: ref,
+            server: widget.server,
+            error: error,
+            snackBarTitle: 'composeStacksUpdateAll'.tr(),
+          ),
+        );
       },
     );
     if (!mounted) return;
@@ -649,11 +667,13 @@ class _ContainerManagementTabState
       await _load(force: true);
     } catch (error) {
       if (!mounted) return;
-      showStyledSnackBar(
-        title: (pullOnly ? 'containerPull' : 'containerUpdate').tr(),
-        message: error.toString(),
-        icon: Symbols.error,
-        accentColor: Theme.of(context).colorScheme.error,
+      await reportContainerSudoFailure(
+        context: context,
+        ref: ref,
+        server: widget.server,
+        error: error,
+        snackBarTitle: (pullOnly ? 'containerPull' : 'containerUpdate').tr(),
+        onRetry: () => _runContainerUpdate(container, verb),
       );
     }
   }
@@ -690,7 +710,7 @@ class _ContainerManagementTabState
   @override
   Widget build(BuildContext context) {
     if (!widget.connected && !_daemonAllowed) {
-      return _ContainerEmptyPanel(
+      return ContainerEmptyPanel(
         icon: Symbols.link_off,
         message: widget.connectionError ?? 'containersConnectToManage'.tr(),
         actionLabel: 'commonConnect'.tr(),
@@ -704,7 +724,7 @@ class _ContainerManagementTabState
         _maidCafeStream == null) {
       // A browser with no route to the server's daemon: there is no second
       // transport to offer, so the tab names the missing route instead.
-      return _ContainerEmptyPanel(
+      return ContainerEmptyPanel(
         icon: Symbols.link_off,
         message: 'containersNoDaemonRoute'.tr(),
         actionLabel: 'commonRetry'.tr(),
@@ -713,70 +733,29 @@ class _ContainerManagementTabState
     }
     return _environments.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => _ContainerEmptyPanel(
+      error: (error, _) => ContainerEmptyPanel(
         icon: Symbols.error_outline,
         message: 'containersLoadError'.tr(args: [error.toString()]),
         actionLabel: 'commonRetry'.tr(),
         onAction: _load,
       ),
-      data: (environments) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Shown only while the list is served by the MaidCafe daemon; the
-          // SSH poller is the default and gets no banner.
-          if (_containersFromMaidCafe) const _ContainerDataSourceBanner(),
-          Expanded(
-            child: _ContainerEnvironments(
-              server: widget.server,
-              environments: environments,
-              updates: _updates,
-              stacks: _stacks,
-              onRefresh: _refreshManually,
-              onScan: _maidCafeStream == null ? null : _scanComposeStacks,
-              onUpdateAll: _maidCafeStream == null ? null : _updateAllStacks,
-              onUpdateStack: _maidCafeStream == null ? null : _updateStack,
-              onAction: _runAction,
-              onUpdateAction: _maidCafeStream == null
-                  ? null
-                  : _runContainerUpdate,
-              onInstallRuntime: _installRuntime,
-              focusComposeProject: widget.focusComposeProject,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Quiet indicator that the container list is served live by the MaidCafe
-/// daemon. Hidden entirely when the SSH poller is the data source.
-class _ContainerDataSourceBanner extends StatelessWidget {
-  const _ContainerDataSourceBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(color: scheme.secondaryContainer),
-      child: Row(
-        children: [
-          Icon(
-            Symbols.local_cafe,
-            size: 18,
-            color: scheme.onSecondaryContainer,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'containerDataSourceMaidCafe'.tr(),
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: scheme.onSecondaryContainer,
-              ),
-            ),
-          ),
-        ],
+      data: (environments) => _ContainerEnvironments(
+        server: widget.server,
+        environments: environments,
+        updates: _updates,
+        stacks: _stacks,
+        source: _containersFromMaidCafe
+            ? ContainerListSource.daemon
+            : ContainerListSource.ssh,
+        pollInterval: widget.refreshInterval,
+        onRefresh: _refreshManually,
+        onScan: _maidCafeStream == null ? null : _scanComposeStacks,
+        onUpdateAll: _maidCafeStream == null ? null : _updateAllStacks,
+        onUpdateStack: _maidCafeStream == null ? null : _updateStack,
+        onAction: _runAction,
+        onUpdateAction: _maidCafeStream == null ? null : _runContainerUpdate,
+        onInstallRuntime: _installRuntime,
+        focusComposeProject: widget.focusComposeProject,
       ),
     );
   }
@@ -953,6 +932,8 @@ class _ContainerEnvironments extends ConsumerWidget {
     required this.environments,
     required this.updates,
     required this.stacks,
+    required this.source,
+    this.pollInterval,
     required this.onRefresh,
     this.onScan,
     this.onUpdateAll,
@@ -968,6 +949,12 @@ class _ContainerEnvironments extends ConsumerWidget {
 
   /// The daemon's update answers, for the per-container badges.
   final ContainerUpdates updates;
+
+  /// Which transport answered this list, for the toolbar's stamp.
+  final ContainerListSource source;
+
+  /// The cadence the SSH poller refreshes on.
+  final Duration? pollInterval;
 
   /// The daemon's managed compose stacks: what a scan assigned to it. They
   /// are grouped as projects alongside this app's own project links, and they
@@ -1005,11 +992,8 @@ class _ContainerEnvironments extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
     if (environments.isEmpty) {
-      return _ContainerEmptyPanel(
+      return ContainerEmptyPanel(
         icon: Symbols.deployed_code,
         message: 'containersNotInstalled'.tr(),
         actionLabel: 'containersInstallRuntimeShort'.tr(),
@@ -1038,6 +1022,9 @@ class _ContainerEnvironments extends ConsumerWidget {
         .where((env) => env.isAvailable)
         .fold<int>(0, (sum, env) => sum + env.containers.length);
 
+    // The two sections partition the list — what a project owns, and what
+    // nothing claims — so the counts a reader adds up are the ones they see.
+    final projectContainerCount = totalContainers - standaloneCount;
     final summaryParts = <String>[
       totalContainers == 1
           ? 'containersSummaryContainer'.tr()
@@ -1046,468 +1033,229 @@ class _ContainerEnvironments extends ConsumerWidget {
         projects.length == 1
             ? 'containersSummaryProject'.tr()
             : 'containersSummaryProjects'.tr(args: ['${projects.length}']),
-      if (projects.isNotEmpty && standaloneCount > 0)
-        standaloneCount == 1
-            ? 'containersSummaryStandalone'.tr()
-            : 'containersSummaryStandalones'.tr(args: ['$standaloneCount']),
     ];
+
+    final standaloneGroups = _standaloneGroups(
+      projects: projects,
+      environments: environments,
+      standaloneEnvironments: standaloneEnvironments,
+    );
+
+    final sections = <Widget>[];
+    if (projects.isNotEmpty) {
+      sections
+        ..add(
+          ContainerSectionLabel(
+            label: 'containersProjects'.tr(),
+            count: projectContainerCount,
+          ),
+        )
+        ..addAll(
+          spacedContainerGroups([
+            for (final p in projects) _projectGroup(context, p),
+          ]),
+        );
+    }
+    if (standaloneGroups.isNotEmpty) {
+      if (sections.isNotEmpty) sections.add(const SizedBox(height: 16));
+      sections
+        ..add(
+          ContainerSectionLabel(
+            label: 'containersStandalone'.tr(),
+            count: standaloneCount,
+          ),
+        )
+        ..addAll(
+          spacedContainerGroups([
+            for (final e in standaloneGroups) _environmentGroup(e),
+          ]),
+        );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  summaryParts.join(' · '),
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
+        ContainerListToolbar(
+          summary: summaryParts,
+          source: source,
+          pollInterval: pollInterval,
+          actions: [
+            IconButton(
+              tooltip: 'containersRefreshTooltip'.tr(),
+              visualDensity: VisualDensity.compact,
+              onPressed: onRefresh,
+              icon: const Icon(Symbols.refresh),
+            ),
+            if (onScan != null)
               IconButton(
-                tooltip: 'containersRefreshTooltip'.tr(),
+                tooltip: 'composeStacksScan'.tr(),
                 visualDensity: VisualDensity.compact,
-                onPressed: onRefresh,
-                icon: const Icon(Symbols.refresh),
+                onPressed: onScan,
+                icon: const Icon(Symbols.scan),
               ),
-              if (onScan != null)
-                IconButton(
-                  tooltip: 'composeStacksScan'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onScan,
-                  icon: const Icon(Symbols.scan),
-                ),
-              if (onUpdateAll != null && stacks.stacks.isNotEmpty)
-                IconButton(
-                  tooltip: 'composeStacksUpdateAll'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onUpdateAll,
-                  icon: const Icon(Symbols.update),
-                ),
-            ],
-          ),
+            if (onUpdateAll != null && stacks.stacks.isNotEmpty)
+              IconButton(
+                tooltip: 'composeStacksUpdateAll'.tr(),
+                visualDensity: VisualDensity.compact,
+                onPressed: onUpdateAll,
+                icon: const Icon(Symbols.update),
+              ),
+          ],
         ),
-        Divider(height: 1, color: scheme.outlineVariant),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            children: [
-              if (projects.isNotEmpty) ...[
-                Text(
-                  'containersProjects'.tr(),
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                for (var i = 0; i < projects.length; i++) ...[
-                  _ProjectCollapsibleTile(
-                    server: server,
-                    project: projects[i],
-                    updates: updates,
-                    onAction: onAction,
-                    onUpdateAction: onUpdateAction,
-                    onUpdateStack: onUpdateStack,
-                  ),
-                  if (i != projects.length - 1) const SizedBox(height: 8),
-                ],
-              ],
-              ..._standaloneSections(
-                projects: projects,
-                environments: environments,
-                standaloneEnvironments: standaloneEnvironments,
-                theme: theme,
-                scheme: scheme,
-              ),
-            ],
+            children: sections,
           ),
         ),
       ],
     );
   }
 
-  /// Environment sections with project-owned containers removed. Empty
-  /// environments are hidden only when projects already cover that runtime.
-  List<Widget> _standaloneSections({
-    required List<_ServerProjectGroup> projects,
-    required List<ContainerEnvironment> environments,
-    required List<ContainerEnvironment> standaloneEnvironments,
-    required ThemeData theme,
-    required ColorScheme scheme,
-  }) {
-    final visible = <ContainerEnvironment>[
-      for (final environment in standaloneEnvironments)
-        if (projects.isEmpty ||
-            !environment.isAvailable ||
-            environment.containers.isNotEmpty ||
-            environments
-                .where(
-                  (env) =>
-                      env.runtime == environment.runtime &&
-                      env.scope == environment.scope,
-                )
-                .every((env) => !env.isAvailable || env.containers.isEmpty))
-          environment,
-    ];
-    if (visible.isEmpty) return const [];
-
-    return [
-      if (projects.isNotEmpty) ...[
-        const SizedBox(height: 16),
-        Text(
-          'containersStandalone'.tr(),
-          style: theme.textTheme.labelLarge?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 8),
-      ],
-      for (var i = 0; i < visible.length; i++) ...[
-        _ContainerEnvironmentSection(
-          server: server,
-          environment: visible[i],
-          updates: updates,
-          onAction: onAction,
-          onUpdateAction: onUpdateAction,
-        ),
-        if (i != visible.length - 1) const SizedBox(height: 16),
-      ],
-    ];
-  }
-}
-
-class _ProjectCollapsibleTile extends StatelessWidget {
-  const _ProjectCollapsibleTile({
-    required this.server,
-    required this.project,
-    required this.updates,
-    required this.onAction,
-    this.onUpdateAction,
-    this.onUpdateStack,
-  });
-
-  final Server server;
-  final _ServerProjectGroup project;
-
-  /// The daemon's update answers, for the per-container badges.
-  final ContainerUpdates updates;
-
-  /// Updates this whole stack when the daemon manages it. Null without a daemon
-  /// route, which is also when there is no directory to run compose in.
-  final Future<void> Function(ComposeStack stack)? onUpdateStack;
-
-  final Future<void> Function(
-    ContainerEnvironment,
-    ServerContainer,
-    ContainerAction,
-  )
-  onAction;
-  final Future<void> Function(ServerContainer, String)? onUpdateAction;
-
-  /// The environment this project's containers came from, or null when the
-  /// daemon manages the project but lists none of its containers.
-  ContainerEnvironment? get _environment => project.environment;
-
-  ContainerUpdateStatus? _updateFor(ServerContainer container) =>
-      updates.forContainer(container.id, name: container.name);
-
-  String get _runtimeLabel {
-    final name = project.runtime?.name ?? '';
-    return name.isEmpty ? '' : '${name[0].toUpperCase()}${name.substring(1)}';
-  }
-
-  String get _scopeLabel => project.scope == ContainerScope.root
-      ? 'commonRoot'.tr()
-      : 'commonUser'.tr();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+  /// One compose project: its directory, the store its containers live in, and
+  /// how much of it is up.
+  Widget _projectGroup(BuildContext context, _ServerProjectGroup project) {
+    final stack = project.stack;
+    final environment = project.environment;
     final count = project.containers.length;
-    final running = project.runningCount;
-    final environment = _environment;
-    final statusLabel = count == 0
-        ? 'containerNoContainers'.tr()
-        : running == count
-        ? 'containerRunningCount'.tr(args: ['$running'])
-        : 'containerRunningFraction'.tr(args: ['$running', '$count']);
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Theme(
-        data: theme.copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          // An assigned stack with nothing running opens on its own: the row's
-          // content is the fact that it is assigned and idle, and a collapsed
-          // row would hide exactly that.
-          initiallyExpanded: count == 0 ? project.stack != null : count <= 6,
-          tilePadding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
-          childrenPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.leading,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(8)),
+    return ContainerGroup(
+      title: project.name,
+      titleTrailing: project.directory,
+      spec: [
+        if (environment != null) project.runtime!.name,
+        if (environment != null) containerStoreLabel(environment.scope),
+        count == 0
+            ? 'containersSummaryContainers'.tr(args: ['0'])
+            : 'containerRunningFraction'.tr(
+                args: ['${project.runningCount}', '$count'],
+              ),
+        if (stack != null) 'composeStacksManaged'.tr(),
+      ],
+      actions: [
+        if (stack != null && project.directory != null)
+          IconButton(
+            tooltip: 'composeStacksCopyDirectory'.tr(),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _copyDirectory(context, project.directory!),
+            icon: const Icon(Symbols.content_copy, size: 16),
           ),
-          collapsedShape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(8)),
+        if (onUpdateStack != null && stack != null)
+          IconButton(
+            tooltip: 'composeStacksUpdate'.tr(),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => onUpdateStack!(stack),
+            icon: const Icon(Symbols.upgrade, size: 20),
           ),
-          title: Text(
-            project.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleSmall,
-          ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        project.directory ??
-                            'composeProjectDirectoryUnknown'.tr(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontFamily: MaidKitFonts.mono,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    if (project.stack != null && project.directory != null)
-                      IconButton(
-                        tooltip: 'composeStacksCopyDirectory'.tr(),
-                        visualDensity: VisualDensity.compact,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                        iconSize: 16,
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: project.stack!.directory),
-                          );
-                          if (!context.mounted) return;
-                          showStyledSnackBar(
-                            title: 'composeStacksCopyDirectory'.tr(),
-                            message: 'commonCopiedToClipboard'.tr(),
-                            icon: Symbols.content_copy,
-                            accentColor: scheme.primary,
-                          );
-                        },
-                        icon: const Icon(Symbols.content_copy),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    if (project.stack != null)
-                      _MetaChip(label: 'composeStacksManaged'.tr()),
-                    if (environment != null) ...[
-                      _MetaChip(label: _runtimeLabel),
-                      _MetaChip(label: _scopeLabel),
-                    ],
-                    _MetaChip(label: statusLabel),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          trailing: onUpdateStack == null || project.stack == null
-              ? null
-              : IconButton(
-                  tooltip: 'composeStacksUpdate'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => onUpdateStack!(project.stack!),
-                  icon: const Icon(Symbols.upgrade, size: 20),
-                ),
-          children: [
-            Divider(height: 1, color: scheme.outlineVariant),
-            if (project.containers.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                child: Text(
-                  project.stack == null
-                      ? 'containerNoContainersInProject'.tr()
-                      : 'composeStacksNoContainers'.tr(),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              )
-            else
-              for (var i = 0; i < project.containers.length; i++) ...[
+      ],
+      // An assigned stack with nothing running opens on its own: the row's
+      // content is the fact that it is assigned and idle, and a collapsed row
+      // would hide exactly that. A project with many containers stays closed.
+      initiallyExpanded: count == 0 ? stack != null : count <= 6,
+      children: project.containers.isEmpty
+          ? [
+              ContainerGroupNote(
+                project.stack == null
+                    ? 'containerNoContainersInProject'.tr()
+                    : 'composeStacksNoContainers'.tr(),
+              ),
+            ]
+          : [
+              for (final container in project.containers)
                 _ContainerActionTile(
                   server: server,
                   // A group holds containers only when it knows the environment
                   // they came from, so this is set wherever this branch runs.
                   environment: environment!,
-                  container: project.containers[i],
-                  updateStatus: _updateFor(project.containers[i]),
+                  container: container,
+                  updateStatus: _updateFor(container),
                   onUpdateAction: onUpdateAction == null
                       ? null
-                      : (verb) => onUpdateAction!(project.containers[i], verb),
+                      : (verb) => onUpdateAction!(container, verb),
                   onAction: (action) =>
-                      onAction(environment, project.containers[i], action),
+                      onAction(environment, container, action),
                 ),
-                if (i != project.containers.length - 1)
-                  Divider(
-                    height: 1,
-                    indent: 12,
-                    endIndent: 12,
-                    color: scheme.outlineVariant.withValues(alpha: 0.5),
-                  ),
-              ],
-          ],
-        ),
-      ),
+            ],
     );
   }
-}
 
-class _ContainerEnvironmentSection extends StatelessWidget {
-  const _ContainerEnvironmentSection({
-    required this.server,
-    required this.environment,
-    required this.updates,
-    required this.onAction,
-    this.onUpdateAction,
-  });
-
-  final Server server;
-  final ContainerEnvironment environment;
-
-  /// The daemon's update answers, for the per-container badges.
-  final ContainerUpdates updates;
-
-  final Future<void> Function(
-    ContainerEnvironment,
-    ServerContainer,
-    ContainerAction,
-  )
-  onAction;
-  final Future<void> Function(ServerContainer, String)? onUpdateAction;
-
-  String get _runtimeLabel {
-    final name = environment.runtime.name;
-    return '${name[0].toUpperCase()}${name.substring(1)}';
+  /// One runtime and store: the containers it holds, or why it could not be
+  /// read.
+  Widget _environmentGroup(ContainerEnvironment environment) {
+    final available = environment.isAvailable;
+    final count = environment.containers.length;
+    final running = environment.containers.where(isContainerRunning).length;
+    return ContainerGroup(
+      title: environment.runtime == ContainerRuntime.podman
+          ? 'runtimePodman'.tr()
+          : 'runtimeDocker'.tr(),
+      spec: [
+        containerStoreLabel(environment.scope),
+        if (available)
+          count == 1
+              ? 'containersSummaryContainer'.tr()
+              : 'containersSummaryContainers'.tr(args: ['$count']),
+        if (available && count > 0)
+          'containerRunningCount'.tr(args: ['$running']),
+      ],
+      children: !available
+          ? [ContainerGroupNote(environment.error ?? 'commonUnavailable'.tr())]
+          : count == 0
+          ? [ContainerGroupNote('containersNoContainersEnv'.tr())]
+          : [
+              for (final container in environment.containers)
+                _ContainerActionTile(
+                  server: server,
+                  environment: environment,
+                  container: container,
+                  updateStatus: _updateFor(container),
+                  onUpdateAction: onUpdateAction == null
+                      ? null
+                      : (verb) => onUpdateAction!(container, verb),
+                  onAction: (action) =>
+                      onAction(environment, container, action),
+                ),
+            ],
+    );
   }
 
-  String get _scopeLabel => environment.scope == ContainerScope.root
-      ? 'commonRoot'.tr()
-      : 'commonUser'.tr();
-
-  IconData get _runtimeIcon => switch (environment.runtime) {
-    ContainerRuntime.docker => Symbols.deployed_code,
-    ContainerRuntime.podman => Symbols.package_2,
-  };
+  /// Environment sections with project-owned containers removed. Empty
+  /// environments are hidden only when projects already cover that runtime.
+  List<ContainerEnvironment> _standaloneGroups({
+    required List<_ServerProjectGroup> projects,
+    required List<ContainerEnvironment> environments,
+    required List<ContainerEnvironment> standaloneEnvironments,
+  }) => [
+    for (final environment in standaloneEnvironments)
+      if (projects.isEmpty ||
+          !environment.isAvailable ||
+          environment.containers.isNotEmpty ||
+          environments
+              .where(
+                (env) =>
+                    env.runtime == environment.runtime &&
+                    env.scope == environment.scope,
+              )
+              .every((env) => !env.isAvailable || env.containers.isEmpty))
+        environment,
+  ];
 
   ContainerUpdateStatus? _updateFor(ServerContainer container) =>
       updates.forContainer(container.id, name: container.name);
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-            child: Row(
-              children: [
-                Icon(_runtimeIcon, size: 18, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(_runtimeLabel, style: theme.textTheme.titleSmall),
-                ),
-                _MetaChip(label: _scopeLabel),
-                if (environment.isAvailable) ...[
-                  const SizedBox(width: 8),
-                  _MetaChip(
-                    label: environment.containers.isEmpty
-                        ? 'containersEmpty'.tr()
-                        : 'containerEnvCount'.tr(
-                            args: ['${environment.containers.length}'],
-                          ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (!environment.isAvailable)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Symbols.info, size: 16, color: scheme.onSurfaceVariant),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      environment.error ?? 'commonUnavailable'.tr(),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            )
-          else if (environment.containers.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Text(
-                'No containers in this environment.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            )
-          else ...[
-            Divider(height: 1, color: scheme.outlineVariant),
-            for (var i = 0; i < environment.containers.length; i++) ...[
-              _ContainerActionTile(
-                server: server,
-                environment: environment,
-                container: environment.containers[i],
-                updateStatus: _updateFor(environment.containers[i]),
-                onUpdateAction: onUpdateAction == null
-                    ? null
-                    : (verb) =>
-                          onUpdateAction!(environment.containers[i], verb),
-                onAction: (action) =>
-                    onAction(environment, environment.containers[i], action),
-              ),
-              if (i != environment.containers.length - 1)
-                Divider(
-                  height: 1,
-                  indent: 12,
-                  endIndent: 12,
-                  color: scheme.outlineVariant.withValues(alpha: 0.5),
-                ),
-            ],
-          ],
-        ],
-      ),
+  Future<void> _copyDirectory(BuildContext context, String directory) async {
+    await Clipboard.setData(ClipboardData(text: directory));
+    if (!context.mounted) return;
+    showStyledSnackBar(
+      title: 'composeStacksCopyDirectory'.tr(),
+      message: 'commonCopiedToClipboard'.tr(),
+      icon: Symbols.content_copy,
+      accentColor: Theme.of(context).colorScheme.primary,
     );
   }
 }
+
+/// A group with no rows: what is true instead — nothing running, or nothing
+/// readable.
 
 /// Shared container row with context menu and action overflow.
 class _ContainerActionTile extends StatelessWidget {
@@ -1624,7 +1372,7 @@ class _ContainerActionTile extends StatelessWidget {
         container: container,
         updateStatus: update,
         onUpdateAction: onUpdateAction,
-        contentPadding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
         onOpen: () => context.router.push(
           ContainerDetailRoute(
             server: server,
@@ -1723,86 +1471,6 @@ class _ContainerActionTile extends StatelessWidget {
             ),
           ],
           icon: const Icon(Symbols.more_vert),
-        ),
-      ),
-    );
-  }
-}
-
-class _MetaChip extends StatelessWidget {
-  const _MetaChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-}
-
-class _ContainerEmptyPanel extends StatelessWidget {
-  const _ContainerEmptyPanel({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.actionIcon,
-    this.filledAction = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final IconData? actionIcon;
-  final bool filledAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 32, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
-              if (filledAction)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: Icon(actionIcon ?? Symbols.refresh),
-                  label: Text(actionLabel!),
-                )
-              else
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-            ],
-          ],
         ),
       ),
     );

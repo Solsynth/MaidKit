@@ -473,7 +473,7 @@ class SshConnectionManager {
   }
 
   /// POSIX-safe single-quoted string for remote shell commands.
-  String _shellSingleQuote(String value) =>
+  static String _shellSingleQuote(String value) =>
       "'${value.replaceAll("'", "'\\''")}'";
 
   Future<void> closeTerminal(String terminalId) async {
@@ -854,6 +854,46 @@ fi
       );
       if (result.exitCode != 0) throw StateError(_commandError(result));
     });
+  }
+
+  /// The account a process named [processName] runs as on the host, or null
+  /// when no such process is running or the question cannot be answered.
+  ///
+  /// Read by the container sudo guide, whose rule has to name the account a
+  /// daemon actually runs under. A standard install runs the daemon as
+  /// `maidcafe` under systemd, but a daemon carrying its own stdio transport
+  /// runs as the SSH user, and the daemon's own refusal can only print the
+  /// example name from its documentation.
+  Future<String?> processAccount(int serverId, String processName) async {
+    final command = processAccountCommand(processName);
+    return withClient(serverId, (client) async {
+      final result = await _execute(client, command);
+      if (result.exitCode != 0) return null;
+      final account = result.stdout.trim();
+      return account.isEmpty ? null : account;
+    });
+  }
+
+  /// The shell fragment [processAccount] runs on the host: it prints the
+  /// account the named process runs as, and exits 3 when there is no such
+  /// process to answer for.
+  ///
+  /// Public because it is the part of the probe worth running on its own — a
+  /// `ps` that this host's implementation does not share would otherwise only
+  /// show up as a fallback to the daemon's example account.
+  static String processAccountCommand(String processName) {
+    if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]*$').hasMatch(processName)) {
+      throw ArgumentError.value(processName, 'processName', 'Invalid name.');
+    }
+    return '''
+name=${_shellSingleQuote(processName)}
+pid=\$(ps -eo pid=,comm= 2>/dev/null | awk -v n="\$name" '\$2 == n { print \$1; exit }')
+[ -n "\$pid" ] || pid=\$(ps -eo pid=,args= 2>/dev/null | awk -v n="\$name" '\$0 ~ ("/" n "( |\$)") { print \$1; exit }')
+[ -n "\$pid" ] || exit 3
+uid=\$(ps -o uid= -p "\$pid" 2>/dev/null | tr -d '[:space:]')
+[ -n "\$uid" ] || exit 3
+id -nu "\$uid" 2>/dev/null || printf '%s\\n' "\$uid"
+''';
   }
 
   /// Collects raw host counters for the Activity tab in a single SSH

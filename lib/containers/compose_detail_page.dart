@@ -22,6 +22,7 @@ import 'package:maid_kit/theme.dart';
 import 'compose_project_actions.dart';
 import 'container_list_tile.dart';
 import 'container_models.dart';
+import 'container_sudo_guide.dart';
 
 /// Detail view for a linked Compose project: stack identity, lifecycle
 /// actions, live per-service status, merged logs, and the compose file itself.
@@ -389,11 +390,13 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
       await _loadContainers();
     } catch (error) {
       if (!mounted) return;
-      showStyledSnackBar(
-        title: 'composeDetailActionError'.tr(args: [action.label]),
-        message: error.toString(),
-        icon: Symbols.error,
-        accentColor: Theme.of(context).colorScheme.error,
+      await reportContainerSudoFailure(
+        context: context,
+        ref: ref,
+        server: widget.server,
+        error: error,
+        snackBarTitle: 'composeDetailActionError'.tr(args: [action.label]),
+        onRetry: () => _runAction(action),
       );
     } finally {
       if (mounted) setState(() => _actionBusy = false);
@@ -437,11 +440,13 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
       await _loadContainers();
     } catch (error) {
       if (!mounted) return;
-      showStyledSnackBar(
-        title: 'deploymentActionFailed'.tr(),
-        message: error.toString(),
-        icon: Symbols.error,
-        accentColor: Theme.of(context).colorScheme.error,
+      await reportContainerSudoFailure(
+        context: context,
+        ref: ref,
+        server: widget.server,
+        error: error,
+        snackBarTitle: 'deploymentActionFailed'.tr(),
+        onRetry: () => _runContainerAction(container, action),
       );
     }
   }

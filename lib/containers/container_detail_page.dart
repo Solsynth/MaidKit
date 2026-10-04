@@ -25,6 +25,7 @@ import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
 import 'container_models.dart';
 import 'container_command_preferences.dart';
+import 'container_sudo_guide.dart';
 import 'container_update_badge.dart';
 
 @RoutePage()
@@ -616,11 +617,15 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       await _bootstrap();
     } catch (error) {
       if (!mounted) return;
-      showStyledSnackBar(
-        title: 'containerActionError'.tr(args: [action.label.toLowerCase()]),
-        message: error.toString(),
-        icon: Symbols.error,
-        accentColor: Theme.of(context).colorScheme.error,
+      await reportContainerSudoFailure(
+        context: context,
+        ref: ref,
+        server: widget.server,
+        error: error,
+        snackBarTitle: 'containerActionError'.tr(
+          args: [action.label.toLowerCase()],
+        ),
+        onRetry: () => _runAction(action),
       );
     } finally {
       if (mounted) setState(() => _actionBusy = false);
@@ -677,11 +682,13 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       await _bootstrap();
     } catch (error) {
       if (!mounted) return;
-      showStyledSnackBar(
-        title: (pullOnly ? 'containerPull' : 'containerUpdate').tr(),
-        message: error.toString(),
-        icon: Symbols.error,
-        accentColor: Theme.of(context).colorScheme.error,
+      await reportContainerSudoFailure(
+        context: context,
+        ref: ref,
+        server: widget.server,
+        error: error,
+        snackBarTitle: (pullOnly ? 'containerPull' : 'containerUpdate').tr(),
+        onRetry: () => _runContainerUpdate(verb),
       );
     } finally {
       if (mounted) setState(() => _actionBusy = false);

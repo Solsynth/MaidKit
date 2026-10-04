@@ -27,6 +27,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'container_models.dart';
 import 'container_list_tile.dart';
 import 'compose_project_actions.dart';
+import 'container_sudo_guide.dart';
 import 'deployment_project_models.dart';
 import 'image_actions.dart';
 import 'project_repository.dart';
@@ -932,11 +933,13 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
       }
     } catch (error) {
       if (mounted) {
-        showStyledSnackBar(
-          message: '$error',
-          title: 'deploymentActionFailed'.tr(),
-          icon: Symbols.error,
-          accentColor: Theme.of(context).colorScheme.error,
+        await reportContainerSudoFailure(
+          context: context,
+          ref: ref,
+          server: host,
+          error: error,
+          snackBarTitle: 'deploymentActionFailed'.tr(),
+          onRetry: () => _runQuickAction(id),
         );
       }
     } finally {

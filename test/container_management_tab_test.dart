@@ -7,11 +7,13 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/containers/container_management_tab.dart';
+import 'package:maid_kit/containers/container_ui.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/theme.dart';
 
 /// A daemon session that answers the two calls the container list makes, with
 /// the payloads the Go daemon serves. Everything else stays unimplemented, so a
@@ -234,6 +236,7 @@ void main() {
   Future<void> pump(
     WidgetTester tester, {
     required MaidCafeSessionRegistry registry,
+    ThemeData? theme,
   }) async {
     final overlayKey = GlobalKey<OverlayState>();
     IslandUIFoundation.configureOverlay(overlayKey);
@@ -247,6 +250,7 @@ void main() {
             maidCafeSessionRegistryProvider.overrideWithValue(registry),
           ],
           child: MaterialApp(
+            theme: theme,
             // The app's confirmations render through IslandUIFoundation's
             // overlay, so a test that taps one has to install the key the
             // app installs at startup.
@@ -310,8 +314,9 @@ void main() {
     expect(find.text('nginx:1.25'), findsOneWidget);
     // The daemon's update answer paints a badge on that row.
     expect(find.text('containerUpdateAvailable'.tr()), findsOneWidget);
-    // The banner names the source, since this list did not come from SSH.
-    expect(find.text('containerDataSourceMaidCafe'.tr()), findsOneWidget);
+    // The toolbar's stamp names the source, since this list did not come from
+    // the SSH poller.
+    expect(find.text('containerListSourceDaemon'.tr()), findsOneWidget);
     // The tab retained the shared session while it was mounted.
     expect(registry.retains, 1);
   });
@@ -373,7 +378,8 @@ void main() {
     // Its directory is the one the daemon runs compose in — the fact the
     // containers themselves do not carry.
     expect(find.text('/opt/myapp'), findsOneWidget);
-    expect(find.text('composeStacksManaged'.tr()), findsOneWidget);
+    // The group's mono line carries the assignment along with where it runs.
+    expect(find.textContaining('composeStacksManaged'.tr()), findsOneWidget);
     // The container row is inside the project, with its daemon actions.
     expect(find.text('web'), findsOneWidget);
     expect(find.text('containersStandalone'.tr()), findsNothing);
@@ -460,7 +466,7 @@ void main() {
     // which directory the daemon will run compose in.
     expect(find.text('myapp'), findsOneWidget);
     expect(find.text('/opt/myapp'), findsOneWidget);
-    expect(find.text('composeStacksManaged'.tr()), findsOneWidget);
+    expect(find.textContaining('composeStacksManaged'.tr()), findsOneWidget);
     expect(find.text('composeStacksNoContainers'.tr()), findsOneWidget);
     expect(find.byIcon(Symbols.upgrade), findsOneWidget);
   });
@@ -526,6 +532,74 @@ void main() {
     await tester.tap(find.text('commonDone'.tr()));
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+    'a refusal that names a sudo grant opens the guide, not a snackbar',
+    (tester) async {
+      const refusal =
+          'project "myapp" lives in podman in root\'s store, and the compose '
+          'tool that runs there — /usr/local/bin/podman-compose — may not be run '
+          'through `sudo -n` on this host; grant it (for example `maidcafe '
+          'ALL=(root) NOPASSWD: /usr/local/bin/podman-compose` in a file under '
+          '/etc/sudoers.d/) or run the step yourself as root';
+      final session = _StubSession(
+        stacks: {
+          'stacks': [
+            {
+              'project': 'myapp',
+              'directory': '/opt/myapp',
+              'services': ['web'],
+              'running': 1,
+              'total': 1,
+            },
+          ],
+          'scan': {
+            'roots': ['/opt'],
+            'depth': 3,
+            'max_files': 400,
+          },
+        },
+      )..failures['myapp'] = refusal;
+
+      await pump(tester, registry: _StubRegistry(session));
+
+      await tester.tap(find.byIcon(Symbols.upgrade));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+
+      // The refusal is a paragraph and the rule it asks for is a line; both are
+      // readable and copyable in the guide, which is what a snackbar cannot be.
+      expect(find.text('containerSudoGuideTitle'.tr()), findsOneWidget);
+      expect(
+        find.text(
+          'maidcafe ALL=(root) NOPASSWD: /usr/local/bin/podman-compose',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('may not be run through `sudo -n` on this host'),
+        findsOneWidget,
+      );
+      // Nothing is connected here, so the guide offers the command and says why
+      // it cannot install it.
+      expect(find.text('containerSudoGuideNoSsh'.tr()), findsOneWidget);
+      final install = tester.widget<FilledButton>(
+        find.widgetWithText(
+          FilledButton,
+          'containerSudoGuideInstall'.tr(args: ['Build host']),
+        ),
+      );
+      expect(install.onPressed, isNull);
+
+      // Close the guide and the task terminal so the next test starts from a
+      // clean navigator.
+      await tester.tap(find.text('commonClose'.tr()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('commonDone'.tr()));
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('a stack update is a task the terminal follows', (tester) async {
     final session = _StubSession(
@@ -661,5 +735,150 @@ void main() {
       find.text('composeStacksUpdateSummary'.tr(args: ['1', '1'])),
       findsOneWidget,
     );
+  });
+
+  testWidgets('the toolbar carries the counts, the transport and the actions', (
+    tester,
+  ) async {
+    await pump(tester, registry: _StubRegistry(_StubSession()));
+
+    // One toolbar instead of a full-bleed banner plus a row of icons: what the
+    // list holds, who answered it, and what can be done to all of it.
+    final toolbar = tester.widget<ContainerListToolbar>(
+      find.byType(ContainerListToolbar),
+    );
+    expect(toolbar.summary, hasLength(1));
+    expect(toolbar.source, ContainerListSource.daemon);
+    expect(find.text('containerListSourceDaemon'.tr()), findsOneWidget);
+  });
+
+  testWidgets('a project and an environment are built from the same group', (
+    tester,
+  ) async {
+    final session = _StubSession(
+      stacks: {
+        'stacks': [
+          {
+            'project': 'myapp',
+            'directory': '/opt/myapp',
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+        ],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+      containersPayload: {
+        'runtimes': [
+          {
+            'runtime': 'docker',
+            'available': true,
+            'containers': [
+              {
+                'id': 'abcdef123456',
+                'name': 'web',
+                'image': 'nginx:1.25',
+                'state': 'running',
+                'status': 'Up 3 hours',
+                'compose_project': 'myapp',
+              },
+              {
+                'id': 'fedcba654321',
+                'name': 'caddy',
+                'image': 'caddy:2.8',
+                'state': 'running',
+                'status': 'Up 6 days',
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    await pump(tester, registry: _StubRegistry(session));
+
+    // A project and a runtime store read as the same object: identity, one
+    // line of machine facts, rows — no second anatomy to learn.
+    final groups = tester
+        .widgetList<ContainerGroup>(find.byType(ContainerGroup))
+        .toList();
+    expect(groups.map((group) => group.title), ['myapp', 'runtimeDocker']);
+    for (final group in groups) {
+      expect(group.spec, isNotEmpty);
+      expect(group.children, isNotEmpty);
+    }
+    // The project's line says where its containers run and that the daemon
+    // owns the stack; the environment's line says which store it is.
+    expect(groups.first.spec, containsAll(['docker', 'containersStoreRoot']));
+    expect(groups.first.spec, contains('composeStacksManaged'.tr()));
+    expect(groups.last.spec, contains('containersStoreRoot'.tr()));
+
+    // Each section heading carries how many containers are under it, and the
+    // two add up to the toolbar's total.
+    final labels = tester
+        .widgetList<ContainerSectionLabel>(find.byType(ContainerSectionLabel))
+        .toList();
+    expect(labels.map((label) => label.count), [1, 1]);
+  });
+
+  testWidgets('the list holds together narrow, in the light theme', (
+    tester,
+  ) async {
+    // A narrow pane is where the toolbar, a monospace fact line and a long
+    // directory have to give way in a defined order; an overflow fails here.
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(560, 720);
+    addTearDown(tester.view.reset);
+
+    final session = _StubSession(
+      stacks: {
+        'stacks': [
+          {
+            'project': 'myapp',
+            'directory': '/opt/stacks/myapp/some/deep/directory',
+            'services': ['web'],
+            'running': 1,
+            'total': 1,
+          },
+        ],
+        'scan': {
+          'roots': ['/opt'],
+          'depth': 3,
+          'max_files': 400,
+        },
+      },
+      containersPayload: {
+        'runtimes': [
+          {
+            'runtime': 'docker',
+            'available': true,
+            'containers': [
+              {
+                'id': 'abcdef123456',
+                'name': 'web',
+                'image': 'nginx:1.25',
+                'state': 'running',
+                'status': 'Up 3 hours',
+                'compose_project': 'myapp',
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    await pump(
+      tester,
+      registry: _StubRegistry(session),
+      theme: createMaidKitTheme(Brightness.light),
+    );
+
+    expect(find.byType(ContainerListToolbar), findsOneWidget);
+    expect(find.byType(ContainerGroup), findsOneWidget);
+    expect(find.text('web'), findsOneWidget);
   });
 }
