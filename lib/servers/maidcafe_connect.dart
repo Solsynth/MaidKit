@@ -154,7 +154,10 @@ Future<void> _configureDetectedDaemon(
           server.maidCafeTerminalEnabled == terminalEnabled) &&
       (daemonId == null ||
           daemonId.isEmpty ||
-          server.maidCafeDaemonId == daemonId);
+          server.maidCafeDaemonId == daemonId) &&
+      // The stored allowlist is the same encoding the writer uses, so equal
+      // JSON means the list the daemon reports is already the one on the row.
+      server.maidCafeTerminalUsers == encodeStringList(access.terminalUsers);
   if (routeKnown) return;
   try {
     await ref
@@ -166,6 +169,7 @@ Future<void> _configureDetectedDaemon(
           apiSecret: access.apiSecret,
           daemonId: daemonId,
           terminalEnabled: terminalEnabled,
+          terminalUsers: access.terminalUsers,
         );
   } catch (_) {
     // Best-effort; the probe result is what the caller asked for.

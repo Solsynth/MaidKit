@@ -47,6 +47,9 @@ users = ["you@solsynth.dev"]
 ''');
     expect(config.enabled, isFalse);
     expect(config.relayEnabled, isTrue);
+    // The relay's list names cloud identities that may open a session, not the
+    // accounts a shell may run as.
+    expect(config.users, isEmpty);
   });
 
   test('the relay opt-in is also read as a nested or dotted key', () {
@@ -86,6 +89,38 @@ shells = [
     // an enabled terminal an invalid configuration.
     expect(
       parseMaidCafeTerminalConfig('[daemon.terminal]\nenabled = true\n').shells,
+      isEmpty,
+    );
+  });
+
+  test('the run-as allowlist is read, however it is written', () {
+    expect(
+      parseMaidCafeTerminalConfig('''
+[daemon.terminal]
+enabled = true
+users = ["deploy", "nginx"]
+''').users,
+      ['deploy', 'nginx'],
+    );
+    expect(
+      parseMaidCafeTerminalConfig('daemon.terminal.users = ["deploy"]\n').users,
+      ['deploy'],
+    );
+    expect(
+      parseMaidCafeTerminalConfig('''
+[daemon.terminal]
+enabled = true
+users = [
+  "deploy",
+  "nginx",
+]
+''').users,
+      ['deploy', 'nginx'],
+    );
+    // Absent means the daemon names no account, so its own account is the only
+    // one a session can be.
+    expect(
+      parseMaidCafeTerminalConfig('[daemon.terminal]\nenabled = true\n').users,
       isEmpty,
     );
   });

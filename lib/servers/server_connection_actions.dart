@@ -436,6 +436,114 @@ Future<String?> _maidCafeTerminalSecret(
     await repository.maidCafeTerminalSecretFor(server) ??
     await repository.maidCafeMetricsSecretFor(server);
 
+/// Asks which account a daemon terminal should open as, from the accounts the
+/// daemon's own `daemon.terminal.users` allowlist names.
+///
+/// The daemon is the authority on what may run, so only accounts it lists are
+/// offered, plus its own account — the value an empty selection means. The
+/// stored account opens the sheet preselected, and a choice is written back, so
+/// the next session starts there. Returns the chosen account (`''` for the
+/// daemon's own account), or null when the sheet was dismissed.
+Future<String?> chooseMaidCafeTerminalUser(
+  BuildContext context, {
+  required List<String> accounts,
+  required String? current,
+}) => showModalBottomSheet<String>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  useRootNavigator: true,
+  builder: (_) =>
+      _MaidCafeTerminalUserSheet(accounts: accounts, current: current),
+);
+
+/// The picker's body, holding its own selection so confirming is always one tap
+/// away: a radio group reports only *changes*, which would leave the account it
+/// opened on unchoosable.
+class _MaidCafeTerminalUserSheet extends StatefulWidget {
+  const _MaidCafeTerminalUserSheet({
+    required this.accounts,
+    required this.current,
+  });
+
+  final List<String> accounts;
+  final String? current;
+
+  @override
+  State<_MaidCafeTerminalUserSheet> createState() =>
+      _MaidCafeTerminalUserSheetState();
+}
+
+class _MaidCafeTerminalUserSheetState
+    extends State<_MaidCafeTerminalUserSheet> {
+  late String _selected = _initialSelection();
+
+  String _initialSelection() {
+    final current = widget.current?.trim() ?? '';
+    // An account the daemon no longer lists is not a choice any more, so start
+    // at the daemon's own account instead of proposing one it would refuse.
+    return current.isEmpty || widget.accounts.contains(current) ? current : '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SheetScaffold(
+      titleText: 'serverMaidCafeTerminalUserPickTitle'.tr(),
+      heightFactor: widget.accounts.length > 4 ? 0.7 : 0.5,
+      // The account list scrolls; the actions do not, so a long allowlist can
+      // never scroll the way out of the sheet.
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+              children: [
+                RadioGroup<String>(
+                  groupValue: _selected,
+                  onChanged: (value) => setState(() => _selected = value ?? ''),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      RadioListTile<String>(
+                        value: '',
+                        title: Text(
+                          'serverMaidCafeTerminalUserDaemonAccount'.tr(),
+                        ),
+                      ),
+                      for (final account in widget.accounts)
+                        RadioListTile<String>(
+                          value: account,
+                          title: Text(account),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Row(
+              children: [
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('commonCancel').tr(),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(_selected),
+                  child: const Text('commonOpen').tr(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Opens a terminal on [server]'s MaidCafe daemon WebSocket endpoint. Returns
 /// whether the terminal tab was opened.
 ///
@@ -455,6 +563,38 @@ Future<bool> openMaidCafeTerminalSession(
     'open requested for "${server.name}": '
     'route=${route?.name ?? 'the server setting'}',
   );
+  if (!context.mounted) return false;
+  // The daemon's allowlist decides what a session may open as, and the row is
+  // where this client keeps what the daemon declared. Asking before the spinner
+  // goes up keeps the sheet reachable: the loading overlay would cover it.
+  final repository = ref.read(serverRepositoryProvider);
+  var row = await repository.currentServer(server);
+  if (row.maidCafeTerminalUsers == null && !kIsWeb) {
+    // Never read on this row: one configuration read over the SSH session, if
+    // there is one, is what makes the picker appear at all. It is skipped from
+    // then on, because the read stores its answer.
+    await _maidCafeLearnConfig(ref, server);
+    if (!context.mounted) return false;
+    row = await repository.currentServer(server);
+  }
+  final accounts = row.maidCafeTerminalUserChoices;
+  if (accounts.isNotEmpty) {
+    if (!context.mounted) return false;
+    final chosen = await chooseMaidCafeTerminalUser(
+      context,
+      accounts: accounts,
+      current: row.maidCafeTerminalUser,
+    );
+    if (!context.mounted) return false;
+    if (chosen == null) {
+      maidCafeLog('no account was chosen to open "${server.name}" as');
+      return false;
+    }
+    // A choice is remembered, so the next session starts where this one did.
+    if (chosen != (row.maidCafeTerminalUser ?? '')) {
+      await repository.setMaidCafeTerminalUser(server, chosen);
+    }
+  }
   if (!context.mounted) return false;
   // The spinner goes up before anything slow. Resolving the route can open an
   // SSH session to read the daemon's configuration and start a port forward,
@@ -817,6 +957,7 @@ Future<bool?> _maidCafeLearnConfig(WidgetRef ref, Server server) async {
     );
     final secrets = ref.read(serverRepositoryProvider);
     await secrets.setMaidCafeTerminalEnabled(server, access.terminalEnabled);
+    await secrets.setMaidCafeTerminalUsers(server, access.terminalUsers);
     final reported = access.apiSecret?.trim();
     final stored = await secrets.maidCafeMetricsSecretFor(server);
     if (reported != null && reported.isNotEmpty && reported != stored) {

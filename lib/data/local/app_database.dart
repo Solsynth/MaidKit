@@ -87,6 +87,12 @@ class Servers extends Table {
   // own account, which is the daemon's own default. The daemon refuses an
   // account its allowlist does not list, so this is a request, not a grant.
   TextColumn get maidCafeTerminalUser => text().nullable()();
+  // The accounts the daemon's `daemon.terminal.users` allowlist names, as last
+  // read from its configuration over SSH (JSON list). Learned over SSH and
+  // stored, like the port and the terminal switch, so a browser build — which
+  // cannot read the daemon's configuration — can still offer the accounts a
+  // session may open as. Empty means the allowlist names none.
+  TextColumn get maidCafeTerminalUsers => text().nullable()();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -414,7 +420,7 @@ class AppDatabase extends _$AppDatabase {
   static const String webDatabaseName = 'maid_kit';
 
   @override
-  int get schemaVersion => 40;
+  int get schemaVersion => 41;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -882,6 +888,18 @@ class AppDatabase extends _$AppDatabase {
         ).get();
         if (userColumn.isEmpty) {
           await m.addColumn(servers, servers.maidCafeTerminalUser);
+        }
+      }
+      if (from < 41) {
+        // The accounts the daemon's terminal policy allows, as last read from
+        // its configuration; unknown (null) for every row written before a
+        // client read it.
+        final usersColumn = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name = 'maid_cafe_terminal_users'",
+        ).get();
+        if (usersColumn.isEmpty) {
+          await m.addColumn(servers, servers.maidCafeTerminalUsers);
         }
       }
     },

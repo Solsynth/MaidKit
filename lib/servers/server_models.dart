@@ -284,6 +284,13 @@ extension ServerMaidCafeRoute on Server {
     return stored;
   }
 
+  /// The accounts a daemon terminal may open as: the daemon's
+  /// `daemon.terminal.users` allowlist as last read from its configuration.
+  /// Empty means the daemon names none, so its own account is the only account
+  /// a session can be.
+  List<String> get maidCafeTerminalUserChoices =>
+      decodeStringList(maidCafeTerminalUsers);
+
   String? get maidCafeBrowserTerminalUrl {
     final stored = maidCafeTerminalUrl?.trim();
     final storedUrl = (stored == null || stored.isEmpty)
@@ -435,6 +442,16 @@ class MaidCafeTerminalTarget {
   /// the session id and the ticket ([sessionId] is a uuid, so it holds none).
   String sessionToken(String sessionId, String ticket) =>
       maidCafeTerminalToken('$sessionId.$ticket');
+
+  /// The same target with a different run-as account, for a session that
+  /// picked one after the route was resolved.
+  MaidCafeTerminalTarget withUser(String? user) => MaidCafeTerminalTarget(
+    baseUrl: baseUrl,
+    secret: secret,
+    user: user,
+    relayDaemonId: relayDaemonId,
+    ticketProvider: ticketProvider,
+  );
 
   /// The handshake URL for one session: [endpoint] with the PTY geometry and
   /// the run-as account the daemon should apply.

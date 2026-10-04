@@ -352,6 +352,7 @@ class ServerRepository {
     String? apiSecret,
     String? daemonId,
     bool? terminalEnabled,
+    List<String>? terminalUsers,
   }) async {
     final dialAddress = _maidCafeDialAddressFor(server, listenHost, port);
     final encryptedMetricsSecret = apiSecret == null || apiSecret.trim().isEmpty
@@ -369,6 +370,9 @@ class ServerRepository {
         maidCafeTerminalEnabled: terminalEnabled == null
             ? const Value.absent()
             : Value(terminalEnabled),
+        maidCafeTerminalUsers: terminalUsers == null
+            ? const Value.absent()
+            : Value(encodeStringList(terminalUsers)),
         encryptedMaidCafeMetricsSecret: encryptedMetricsSecret == null
             ? const Value.absent()
             : Value(encryptedMetricsSecret.bytes),
@@ -407,6 +411,40 @@ class ServerRepository {
     )..where((table) => table.id.equals(server.id))).write(
       ServersCompanion(
         maidCafeTerminalEnabled: Value(enabled),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  /// Records the accounts the daemon's `daemon.terminal.users` allowlist names,
+  /// as read from its configuration. An empty list stores nothing, which is the
+  /// same state as never having read it — the daemon names no account.
+  Future<void> setMaidCafeTerminalUsers(
+    Server server,
+    List<String> users,
+  ) async {
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeTerminalUsers: Value(encodeStringList(users)),
+        updatedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
+  /// Records the account daemon terminals open as, or clears it (null/blank)
+  /// so they open as the daemon's own account. Written by the server editor and
+  /// by the account chosen when a terminal is opened.
+  Future<void> setMaidCafeTerminalUser(Server server, String? user) async {
+    final trimmed = user?.trim();
+    await (_database.update(
+      _database.servers,
+    )..where((table) => table.id.equals(server.id))).write(
+      ServersCompanion(
+        maidCafeTerminalUser: Value(
+          trimmed == null || trimmed.isEmpty ? null : trimmed,
+        ),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -467,6 +505,7 @@ class ServerRepository {
         // row no longer has.
         maidCafeTerminalPort: const Value(null),
         maidCafeTerminalEnabled: const Value(null),
+        maidCafeTerminalUsers: const Value(null),
         encryptedMaidCafeWebhookSecret: const Value(null),
         maidCafeWebhookSecretNonce: const Value(null),
         encryptedMaidCafeMetricsSecret: const Value(null),

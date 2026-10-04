@@ -542,6 +542,42 @@ void main() {
     );
 
     test(
+      'the daemon allowlist is stored as the accounts a terminal may open as',
+      () async {
+        final vault = VaultService(database, secureStorage: _MemoryStorage());
+        await vault.create('password');
+        final vaultRepository = ServerRepository(database, vault);
+        final credentialId = await insertCredential();
+        final created = await vaultRepository.create(
+          ServerDraft(
+            name: 'daemon-host',
+            host: '10.0.0.9',
+            port: 22,
+            username: 'root',
+            credentialId: credentialId,
+            maidCafeTerminalUrl: 'https://daemon.example',
+          ),
+        );
+        // Nothing learned yet: no account to offer beyond the daemon's own.
+        expect(created.maidCafeTerminalUserChoices, isEmpty);
+
+        await vaultRepository.setMaidCafeTerminalUsers(created, [
+          'deploy',
+          'nginx',
+        ]);
+        final learned = (await vaultRepository.all()).single;
+        expect(learned.maidCafeTerminalUserChoices, ['deploy', 'nginx']);
+
+        // A daemon that names none stores nothing, the same state as never
+        // having read the list.
+        await vaultRepository.setMaidCafeTerminalUsers(learned, const []);
+        final unset = (await vaultRepository.all()).single;
+        expect(unset.maidCafeTerminalUsers, isNull);
+        expect(unset.maidCafeTerminalUserChoices, isEmpty);
+      },
+    );
+
+    test(
       'a learned daemon port is saved and dialed on the browser host',
       () async {
         // An unlocked vault with an in-memory keychain, so the metrics secret

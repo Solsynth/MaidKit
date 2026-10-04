@@ -416,6 +416,7 @@ class MaidCafeDaemonAccess {
     this.terminalRelayEnabled,
     this.terminalSecret,
     this.terminalAllowedOrigins = const [],
+    this.terminalUsers = const [],
     this.metricsInterval,
     this.logsInterval,
     this.requestTimeout,
@@ -452,6 +453,11 @@ class MaidCafeDaemonAccess {
   /// `daemon.terminal.allowedOrigins`: the browser origins the daemon accepts
   /// a terminal handshake from.
   final List<String> terminalAllowedOrigins;
+
+  /// `daemon.terminal.users`: the accounts a terminal session may open as.
+  /// Empty means the allowlist names none — the daemon's own account is the
+  /// only account a session can be.
+  final List<String> terminalUsers;
   final String? metricsInterval;
   final String? logsInterval;
   final String? requestTimeout;
@@ -673,6 +679,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     'terminal.relay.enabled=${terminal.relayEnabled}, '
     'terminal.shells=${terminal.shells}, '
     'terminal.allowedOrigins=${terminal.allowedOrigins}, '
+    'terminal.users=${terminal.users}, '
     'terminal.secret=${maidCafeDescribeCredential(terminal.secret)}, '
     'metricsSecret=${maidCafeDescribeCredential(_configValue(config, "metricsSecret"))}',
   );
@@ -703,6 +710,7 @@ Future<MaidCafeDaemonAccess> readMaidCafeConfig({
     terminalRelayEnabled: terminal.relayEnabled,
     terminalSecret: terminal.secret,
     terminalAllowedOrigins: terminal.allowedOrigins,
+    terminalUsers: terminal.users,
     actions: actions,
     alarms: [
       for (final fragment in alarmConfigs.values)
@@ -752,6 +760,7 @@ class MaidCafeTerminalConfig {
     this.allowedOrigins = const [],
     this.relayEnabled,
     this.shells = const [],
+    this.users = const [],
   });
 
   /// `daemon.terminal.enabled`.
@@ -773,20 +782,26 @@ class MaidCafeTerminalConfig {
   /// `daemon.terminal.allowedOrigins`: the browser origins the daemon accepts
   /// a terminal handshake from.
   final List<String> allowedOrigins;
+
+  /// `daemon.terminal.users`: the accounts a session may request as its run-as
+  /// user. Empty means the allowlist names none, so every session opens as the
+  /// daemon's own account. The daemon has the last word either way.
+  final List<String> users;
 }
 
 /// Reads the `daemon.terminal` section from a daemon configuration.
 ///
 /// The daemon accepts those settings both as keys inside `[daemon.terminal]`
-/// and as dotted keys (`daemon.terminal.enabled`), and the origin list may be
-/// written across several lines, so all of those are understood. Public so the
-/// parse can be unit-tested without a live daemon.
+/// and as dotted keys (`daemon.terminal.enabled`), and the origin, shell and
+/// user lists may be written across several lines, so all of those are
+/// understood. Public so the parse can be unit-tested without a live daemon.
 MaidCafeTerminalConfig parseMaidCafeTerminalConfig(String configText) {
   bool? enabled;
   bool? relayEnabled;
   String? secret;
   final origins = <String>[];
   final shells = <String>[];
+  final users = <String>[];
   var section = '';
   String? openListKey;
   final openList = StringBuffer();
@@ -805,6 +820,8 @@ MaidCafeTerminalConfig parseMaidCafeTerminalConfig(String configText) {
         if (origins.isEmpty) origins.addAll(_parseTomlStringList(raw));
       case 'shells':
         if (shells.isEmpty) shells.addAll(_parseTomlStringList(raw));
+      case 'users':
+        if (users.isEmpty) users.addAll(_parseTomlStringList(raw));
     }
   }
 
@@ -852,7 +869,8 @@ MaidCafeTerminalConfig parseMaidCafeTerminalConfig(String configText) {
     if ((key == 'allowedorigins' ||
             key == 'allowed_origins' ||
             key == 'origins' ||
-            key == 'shells') &&
+            key == 'shells' ||
+            key == 'users') &&
         value.startsWith('[') &&
         !value.contains(']')) {
       openListKey = key;
@@ -868,6 +886,7 @@ MaidCafeTerminalConfig parseMaidCafeTerminalConfig(String configText) {
     relayEnabled: relayEnabled,
     secret: secret,
     shells: shells,
+    users: users,
     allowedOrigins: origins,
   );
 }
