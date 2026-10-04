@@ -58,11 +58,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
     bool selectToCopyEnabled = false,
-    bool shiftInsertPasteEnabled = true,
-    bool keywordHighlightEnabled = true,
+    this._shiftInsertPasteEnabled = true,
+    this._keywordHighlightEnabled = true,
   }) : _selectToCopyEnabled = selectToCopyEnabled,
-       _shiftInsertPasteEnabled = shiftInsertPasteEnabled,
-       _keywordHighlightEnabled = keywordHighlightEnabled,
        _controller = maidterm.TerminalController(
          config: maidterm.TerminalConfig(
            scrollbackLimit: 10 * 1024 * 1024,

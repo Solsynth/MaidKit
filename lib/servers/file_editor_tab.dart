@@ -199,7 +199,10 @@ class _FileEditorTabViewState extends ConsumerState<FileEditorTabView> {
     final server = await ref
         .read(serverRepositoryProvider)
         .all()
-        .then((servers) => servers.where((s) => s.id == widget.tab.serverId).firstOrNull);
+        .then(
+          (servers) =>
+              servers.where((s) => s.id == widget.tab.serverId).firstOrNull,
+        );
     if (server == null) throw const ServerConnectionRequiredException();
     return resolveRemoteFileClient(
       manager: ref.read(connectionManagerProvider),

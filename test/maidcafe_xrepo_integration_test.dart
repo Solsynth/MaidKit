@@ -88,10 +88,7 @@ void main() {
     await writer.writeBytes(payload.sublist(0, 1000), offset: 0);
     await writer.writeBytes(payload.sublist(1000), offset: 1000);
     await writer.close();
-    expect(
-      File('$root/written.txt').readAsStringSync(),
-      utf8.decode(payload),
-    );
+    expect(File('$root/written.txt').readAsStringSync(), utf8.decode(payload));
   });
 
   test('mutations land on disk', () async {

@@ -26,6 +26,25 @@ class ServerRepository {
 
   Stream<List<Server>> watchAll() => _database.watchServers();
 
+  /// The stored row for [id], or null when the row is gone or deleted.
+  Future<Server?> serverById(int id) =>
+      (_database.select(_database.servers)
+            ..where((table) => table.id.equals(id) & table.deletedAt.isNull()))
+          .getSingleOrNull();
+
+  /// The stored state of [server], falling back to the snapshot itself when the
+  /// row is gone.
+  ///
+  /// Callers pass row snapshots — a tab keeps the instance it was opened with,
+  /// which nothing refreshes — but every daemon route is decided by storage:
+  /// an endpoint override the user just saved, a port an install just learned,
+  /// or an override the user just cleared must decide the next connection, not
+  /// the copy the widget happens to carry. A stale snapshot otherwise keeps
+  /// dialing the app's own SSH forward while the configured HTTPS endpoint sits
+  /// unused.
+  Future<Server> currentServer(Server server) async =>
+      await serverById(server.id) ?? server;
+
   Future<List<Server>> all() =>
       (_database.select(_database.servers)
             ..where((table) => table.deletedAt.isNull())
@@ -319,6 +338,11 @@ class ServerRepository {
   /// when the daemon only listens locally, which a native client reaches through
   /// its SSH forward and a browser client re-points at the server host (see
   /// [ServerMaidCafeRoute.maidCafeBrowserTerminalUrl]).
+  ///
+  /// An endpoint already on the row is left alone: a stored address is the one
+  /// every daemon reader prefers, so a host reading its daemon over HTTPS — a
+  /// TLS front the user pointed the server at — must not lose that route to a
+  /// probe that only ever learned the daemon's own listen port.
   Future<void> configureMaidCafeTerminal(
     Server server, {
     required int port,
@@ -327,6 +351,7 @@ class ServerRepository {
     String? daemonId,
     bool? terminalEnabled,
   }) async {
+    final dialAddress = _maidCafeDialAddressFor(server, listenHost, port);
     final encryptedMetricsSecret = apiSecret == null || apiSecret.trim().isEmpty
         ? null
         : await _vault.encrypt(
@@ -337,7 +362,7 @@ class ServerRepository {
       _database.servers,
     )..where((table) => table.id.equals(server.id))).write(
       ServersCompanion(
-        maidCafeTerminalUrl: Value(maidCafeDialUrl(listenHost, port)),
+        maidCafeTerminalUrl: Value(dialAddress),
         maidCafeTerminalPort: Value(port),
         maidCafeTerminalEnabled: terminalEnabled == null
             ? const Value.absent()
@@ -508,6 +533,10 @@ class ServerRepository {
     bool? useCloudRelay,
     String? relayDaemonId,
   }) async {
+    // Route on what is stored, not on the caller's snapshot: a tab hands over
+    // the row it was opened with, and an endpoint saved since then is exactly
+    // the route that has to be dialed instead of a forwarded loopback port.
+    server = await currentServer(server);
     final daemonId = (relayDaemonId ?? server.maidCafeDaemonId)?.trim();
     final service = maidCafeService;
     final relay = useCloudRelay ?? server.maidCafeTerminalViaCloud;
@@ -1015,4 +1044,27 @@ class PortableServerRecord {
   final Server? local;
   bool useImported = false;
   bool get hasConflict => local != null;
+}
+
+/// The daemon address to store for [server]: the endpoint already on the row
+/// when the user is the one who set it, and the automatic dial address
+/// otherwise.
+///
+/// Only the address this app writes for its own tunnel is replaced, so a
+/// reconfigured daemon re-points the route a previous probe stored while an
+/// endpoint a user chose — a TLS front in particular — survives an install, an
+/// update, and every later probe. Those routes are the ones every daemon reader
+/// prefers, and dropping the user's would send its daemon data back over plain
+/// HTTP inside the SSH forward.
+String _maidCafeDialAddressFor(Server server, String? listenHost, int port) {
+  final stored = server.maidCafeTerminalUrl?.trim();
+  if (stored == null || stored.isEmpty) {
+    return maidCafeDialUrl(listenHost, port);
+  }
+  final uri = Uri.tryParse(stored);
+  final isTunnelAddress =
+      uri != null &&
+      uri.scheme == 'http' &&
+      const {'127.0.0.1', 'localhost', '::1'}.contains(uri.host);
+  return isTunnelAddress ? maidCafeDialUrl(listenHost, port) : stored;
 }

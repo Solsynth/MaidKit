@@ -290,7 +290,7 @@ class _DashboardRuntimeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final kind = RuntimeKindFromWire(config.runtime);
+    final kind = runtimeKindFromWire(config.runtime);
     final isPidPin = config.runtime.startsWith('pid:');
     final pid = isPidPin ? int.tryParse(config.runtime.substring(4)) : null;
     final identity = pid != null
@@ -495,7 +495,7 @@ class _DashboardRuntimeTile extends StatelessWidget {
   List<RuntimeProcessInfo>? _matchingProcesses() {
     final snap = snapshot?.value;
     if (snap == null) return null;
-    final kind = RuntimeKindFromWire(config.runtime);
+    final kind = runtimeKindFromWire(config.runtime);
     if (kind != null) {
       for (final group in snap.groups) {
         if (group.kind == kind) return group.processes;

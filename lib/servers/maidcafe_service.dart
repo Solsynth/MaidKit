@@ -1666,6 +1666,7 @@ class MaidCafeRuntimeContainers {
   const MaidCafeRuntimeContainers({
     required this.runtime,
     required this.available,
+    this.store = '',
     this.error,
     this.containers = const [],
   });
@@ -1673,6 +1674,11 @@ class MaidCafeRuntimeContainers {
   /// `"podman"` or `"docker"`.
   final String runtime;
   final bool available;
+
+  /// Which store of that runtime these containers are in: `"own"` for the
+  /// daemon user's own, `"root"` for the ones behind `sudo`. Empty from a
+  /// daemon that predates the split, whose list was root's.
+  final String store;
 
   /// Collection failure message when the runtime exists but could not be
   /// listed; null when the list is current.
@@ -1743,6 +1749,7 @@ MaidCafeContainersSnapshot parseMaidCafeContainers(Map<String, dynamic> json) {
           available: entry['available'] is bool
               ? entry['available'] as bool
               : true,
+          store: _optionalString(entry, 'store') ?? '',
           error: _optionalString(entry, 'error'),
           containers: containers,
         ),
@@ -1771,6 +1778,7 @@ class MaidCafeRuntimeImages {
   const MaidCafeRuntimeImages({
     required this.runtime,
     required this.available,
+    this.store = '',
     this.error,
     this.images = const [],
   });
@@ -1778,6 +1786,11 @@ class MaidCafeRuntimeImages {
   /// `"podman"` or `"docker"`.
   final String runtime;
   final bool available;
+
+  /// Which store of that runtime these images are in: `"own"` for the daemon
+  /// user's own, `"root"` for the ones behind `sudo`. Empty from a daemon that
+  /// predates the split, whose list was root's.
+  final String store;
 
   /// Collection failure message when the runtime exists but could not be
   /// listed; null when the list is current.
@@ -1826,6 +1839,7 @@ MaidCafeImagesSnapshot parseMaidCafeImages(Map<String, dynamic> json) {
           available: entry['available'] is bool
               ? entry['available'] as bool
               : true,
+          store: _optionalString(entry, 'store') ?? '',
           error: _optionalString(entry, 'error'),
           images: images,
         ),
@@ -2028,7 +2042,7 @@ ProcessHistorySample? _parseProcessHistorySample(Map<String, dynamic> json) {
 
 RuntimeGroup? _parseSseRuntimeGroup(Map<String, dynamic> json) {
   final rawKind = _optionalString(json, 'runtime');
-  final kind = rawKind == null ? null : RuntimeKindFromWire(rawKind);
+  final kind = rawKind == null ? null : runtimeKindFromWire(rawKind);
   if (kind == null) return null;
   final processes = <RuntimeProcessInfo>[];
   final rawProcesses = json['processes'];

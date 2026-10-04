@@ -173,7 +173,7 @@ class _RuntimeMonitoringTabState extends ConsumerState<RuntimeMonitoringTab> {
     final pinnedNames = <String>{};
     final pinnedPids = <int>{};
     for (final config in configs) {
-      final kind = RuntimeKindFromWire(config.runtime);
+      final kind = runtimeKindFromWire(config.runtime);
       if (kind != null) enabledByKind[kind] = config.enabled;
       if (!config.pinned) continue;
       if (config.runtime.startsWith('pid:')) {

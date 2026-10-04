@@ -18,7 +18,7 @@ import 'package:maid_kit/snippets/snippet_repository.dart';
 /// on the database. The real column mapping is covered by
 /// `snippet_repository_test.dart`.
 class _FakeSnippetRepository extends SnippetRepository {
-  _FakeSnippetRepository(AppDatabase database) : super(database);
+  _FakeSnippetRepository(super.database);
 
   final rows = <ScriptSnippet>[];
   int _nextId = 1;

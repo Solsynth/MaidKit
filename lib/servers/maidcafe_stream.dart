@@ -1129,16 +1129,37 @@ class MaidCafeStreamSession {
     // An override endpoint is tried first: it is the address the user chose for
     // this server, and it is the only route that works without SSH.
     final override = server.maidCafeEndpointOverride;
+    // Every fact the decision is made from, on one line: "an SSH forward was
+    // opened although the daemon is published" is only answerable with these.
+    maidCafeLog(
+      'routing daemon data for "${server.name}": '
+      'stored=${server.maidCafeTerminalUrl ?? 'none'} '
+      'browserView=${server.maidCafeBrowserTerminalUrl ?? 'none'} '
+      'override=${override ?? 'none'} '
+      'ssh=${manager.clientFor(server.id) == null ? 'none' : 'available'}',
+    );
     Object? overrideError;
     if (override != null) {
       try {
-        return await openAt(
+        final session = await openAt(
           manager: manager,
           baseUrl: override,
           apiSecret: apiSecret,
         );
+        maidCafeLog(
+          'dialed $override for "${server.name}"; no port forward was opened',
+        );
+        return session;
       } catch (error) {
         overrideError = error;
+        // A silent fallback hides the reason a configured HTTPS endpoint is
+        // not the route that was taken (an untrusted certificate, a wrong
+        // address, a proxy that does not answer).
+        maidCafeLog(
+          'the endpoint $override did not answer for "${server.name}"; '
+          'falling back to the SSH forward',
+          error: error,
+        );
       }
     }
     if (manager.clientFor(server.id) == null) {
@@ -1151,6 +1172,10 @@ class MaidCafeStreamSession {
         'forward through.',
       );
     }
+    maidCafeLog(
+      'no direct daemon address for "${server.name}"; opening an SSH port '
+      'forward instead',
+    );
     final access = await readMaidCafeConfig(
       manager: manager,
       server: server,

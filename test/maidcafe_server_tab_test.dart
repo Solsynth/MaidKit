@@ -662,4 +662,12 @@ void main() {
 
     expect(find.text('maidCafeTestNotificationSent'.tr()), findsOneWidget);
   });
+
+  testWidgets('installation header captions the daemon version, not the '
+      'connection', (WidgetTester tester) async {
+    await pumpRunningPayloadTab(tester, mode: MaidCafeTabMode.installation);
+
+    expect(find.text('${'maidCafeVersion'.tr()} 1.2.3'), findsOneWidget);
+    expect(find.textContaining('SSH stream'), findsNothing);
+  });
 }

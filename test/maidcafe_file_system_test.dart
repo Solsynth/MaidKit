@@ -60,8 +60,7 @@ class _FakeDaemon {
       case 'GET /api/v1/files/roots':
         _json(request, {
           'roots': [
-            for (final root in roots)
-              {'path': root, 'privileged': false},
+            for (final root in roots) {'path': root, 'privileged': false},
           ],
           'writable': true,
         });
@@ -278,7 +277,10 @@ void main() {
     final handle = await client.open('/srv/app/big.bin');
     expect(utf8.decode(await handle.readBytes()), '0123456789');
     // The handle asked for windows, and the last one came back short.
-    expect(daemon.requests.where((r) => r.path == '/api/v1/files/content'), isNotEmpty);
+    expect(
+      daemon.requests.where((r) => r.path == '/api/v1/files/content'),
+      isNotEmpty,
+    );
     await handle.close();
   });
 
@@ -293,10 +295,7 @@ void main() {
     await handle.writeBytes(utf8.encode('second'), offset: 6);
     // Nothing is sent until the handle closes, because the daemon's write
     // replaces the whole file.
-    expect(
-      daemon.requests.where((r) => r.method == 'PUT'),
-      isEmpty,
-    );
+    expect(daemon.requests.where((r) => r.method == 'PUT'), isEmpty);
     await handle.close();
 
     final put = daemon.requests.last;
@@ -307,19 +306,22 @@ void main() {
     expect(put.headers['authorization'], 'Bearer $secret');
   });
 
-  test('an out-of-order write is refused rather than corrupting the file', () async {
-    final handle = await client.open(
-      '.',
-      mode: SftpFileOpenMode.write | SftpFileOpenMode.create,
-    );
-    await handle.writeBytes(utf8.encode('abc'));
-    // The daemon replaces a file, so a mid-file write cannot be expressed.
-    await expectLater(
-      handle.writeBytes(utf8.encode('xyz'), offset: 99),
-      throwsA(isA<RemoteFileSystemException>()),
-    );
-    await handle.close();
-  });
+  test(
+    'an out-of-order write is refused rather than corrupting the file',
+    () async {
+      final handle = await client.open(
+        '.',
+        mode: SftpFileOpenMode.write | SftpFileOpenMode.create,
+      );
+      await handle.writeBytes(utf8.encode('abc'));
+      // The daemon replaces a file, so a mid-file write cannot be expressed.
+      await expectLater(
+        handle.writeBytes(utf8.encode('xyz'), offset: 99),
+        throwsA(isA<RemoteFileSystemException>()),
+      );
+      await handle.close();
+    },
+  );
 
   test('mutations carry a signature over the body they send', () async {
     await client.mkdir('/srv/app/new');
@@ -335,11 +337,7 @@ void main() {
 
     for (final request in daemon.requests.where((r) => r.method == 'POST')) {
       final signature = request.headers['x-maidcafe-signature'];
-      expect(
-        signature,
-        isNotNull,
-        reason: '${request.path} must be signed',
-      );
+      expect(signature, isNotNull, reason: '${request.path} must be signed');
       // The signature must be the HMAC of exactly the bytes sent, which is what
       // makes a credential lifted in transit unusable against another body.
       expect(

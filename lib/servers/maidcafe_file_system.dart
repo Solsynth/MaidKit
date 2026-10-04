@@ -253,7 +253,6 @@ class MaidCafeRemoteFileClient implements RemoteFileClient {
     final index = path.lastIndexOf('/');
     return index < 0 ? path : path.substring(index + 1);
   }
-
 }
 
 /// SFTP mode type bits, reconstructed for entries the daemon describes with a

@@ -358,7 +358,7 @@ class _ContainerManagementTabState
         runtime: runtime.runtime == 'podman'
             ? ContainerRuntime.podman
             : ContainerRuntime.docker,
-        scope: ContainerScope.root,
+        scope: containerScopeForStore(runtime.store),
         containers: runtime.containers,
         error: runtime.error,
       ),

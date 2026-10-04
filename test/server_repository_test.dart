@@ -288,6 +288,119 @@ void main() {
       );
     });
 
+    test('auto-configuring a daemon keeps the endpoint a user set', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'proxied',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      await vaultRepository.setMaidCafeEndpointOverride(
+        created,
+        'https://daemon.example',
+      );
+
+      // An install, an update, or the next probe learns the daemon's port.
+      await vaultRepository.configureMaidCafeTerminal(
+        (await vaultRepository.all()).single,
+        port: 8747,
+        listenHost: '127.0.0.1',
+        apiSecret: 'daemon-secret',
+      );
+
+      final server = (await vaultRepository.all()).single;
+      // The route the user set stays the one every daemon reader dials; the
+      // probe must not replace it with this client's own tunnel address.
+      expect(server.maidCafeEndpointOverride, 'https://daemon.example');
+      expect(server.maidCafeTerminalUrl, 'https://daemon.example');
+      // The learned port is still recorded for the browser view.
+      expect(server.maidCafeTerminalPort, 8747);
+
+      // A row that only carries the app's own tunnel address is re-pointed at
+      // the daemon that was just configured.
+      final plain = await vaultRepository.create(
+        ServerDraft(
+          name: 'plain',
+          host: '10.0.0.10',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      await vaultRepository.setMaidCafeEndpointOverride(
+        plain,
+        'http://127.0.0.1:8747',
+      );
+      await vaultRepository.configureMaidCafeTerminal(
+        (await vaultRepository.all()).last,
+        port: 9000,
+        listenHost: '::',
+        apiSecret: 'daemon-secret',
+      );
+      expect(
+        (await vaultRepository.all()).last.maidCafeTerminalUrl,
+        'http://127.0.0.1:9000',
+      );
+    });
+
+    test('daemon routes read the stored row, not a stale snapshot', () async {
+      final vault = VaultService(database, secureStorage: _MemoryStorage());
+      await vault.create('password');
+      final vaultRepository = ServerRepository(database, vault);
+      final credentialId = await insertCredential();
+      final created = await vaultRepository.create(
+        ServerDraft(
+          name: 'proxied',
+          host: '10.0.0.9',
+          port: 22,
+          username: 'root',
+          credentialId: credentialId,
+        ),
+      );
+      // A tab holds the row it was opened with; nothing refreshes it.
+      final snapshot = created;
+      expect(snapshot.maidCafeEndpointOverride, isNull);
+
+      await vaultRepository.setMaidCafeEndpointOverride(
+        created,
+        'https://daemon.example',
+      );
+      await vaultRepository.setMaidCafeMetricsSecret(created, 'daemon-secret');
+
+      // Storage is what routes: the snapshot gains the endpoint.
+      final current = await vaultRepository.currentServer(snapshot);
+      expect(current.maidCafeEndpointOverride, 'https://daemon.example');
+
+      // ...so a daemon terminal dials the endpoint as stored instead of
+      // forwarding the daemon's loopback port through SSH.
+      final target = await vaultRepository.maidCafeTerminalTargetFor(
+        snapshot,
+        browserBuild: false,
+      );
+      expect(target?.baseUrl, 'https://daemon.example');
+
+      // A snapshot of a row that is gone stays as it is.
+      final vanished = Server(
+        id: 4242,
+        name: 'gone',
+        host: '10.0.0.11',
+        port: 22,
+        username: 'root',
+        collectStats: true,
+        collectSystemInfo: true,
+        connectionType: 'ssh',
+        maidCafeTerminalViaCloud: false,
+      );
+      expect(await vaultRepository.currentServer(vanished), same(vanished));
+    });
+
     test('a learned credential is stored like an entered one', () async {
       final vault = VaultService(database, secureStorage: _MemoryStorage());
       await vault.create('password');

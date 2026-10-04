@@ -169,9 +169,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   var _transport = 'http';
   String? _message;
   var _state = _MaidCafeState.checking;
-  String? _streamStatus;
+  String? _streamVersion;
   String? _latestVersion;
   List<MaidCafeActionDefinition>? _savedActions;
+
   /// The file roots the daemon serves, as loaded from its configuration. Null
   /// until a configuration has been read: a tab that has not read one must not
   /// claim the host has no roots, because saving that claim would delete the
@@ -669,13 +670,13 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     return true;
   }
 
-  /// Connection-only status line: no metrics, no raw daemon ids.
-  String _streamStatusLine(MaidCafeStreamSession stream) {
-    final version = stream.version;
-    final versionSuffix = version == null || version.isEmpty
-        ? ''
-        : ' · $version';
-    return '${'maidCafeStreamConnected'.tr()}$versionSuffix';
+  /// Header caption for the live stream, or null when there is nothing to
+  /// say: the running state is already visible below, so only the daemon's
+  /// version earns a second line.
+  String? _streamVersionLabel(MaidCafeStreamSession stream) {
+    final version = stream.version?.trim();
+    if (version == null || version.isEmpty) return null;
+    return '${'maidCafeVersion'.tr()} $version';
   }
 
   Future<bool> _openStream({int? port, bool force = false}) async {
@@ -699,7 +700,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
       if (mounted) {
         setState(() {
           _stream = stream;
-          _streamStatus = _streamStatusLine(stream);
+          _streamVersion = _streamVersionLabel(stream);
           // A fresh stream may be a (re)started daemon; let the next build
           // of the actions tab reload the audit log once.
           _auditLoaded = false;
@@ -1205,7 +1206,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     try {
       await stream.metrics();
       if (mounted) {
-        setState(() => _streamStatus = _streamStatusLine(stream));
+        setState(() => _streamVersion = _streamVersionLabel(stream));
       }
     } catch (error) {
       Object messageError = error;
@@ -1470,9 +1471,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                       'maidCafeTitle'.tr(),
                       style: theme.textTheme.titleMedium,
                     ),
-                    if (_streamStatus != null)
+                    if (_streamVersion != null)
                       Text(
-                        _streamStatus!,
+                        _streamVersion!,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -1480,7 +1481,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                   ],
                 ),
               ),
-              Icon(Symbols.check_circle, color: scheme.primary),
+              // Only a live stream is worth a check: this header also covers
+              // hosts where no daemon has answered yet.
+              if (_stream != null)
+                Icon(Symbols.check_circle, color: scheme.primary),
             ],
           ).padding(bottom: 8),
           if (!widget.connected)
@@ -1749,9 +1753,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                       : () => setState(
                           () => _showRootComposer = !_showRootComposer,
                         ),
-                  icon: Icon(
-                    _showRootComposer ? Symbols.close : Symbols.add,
-                  ),
+                  icon: Icon(_showRootComposer ? Symbols.close : Symbols.add),
                   label: Text(
                     _showRootComposer
                         ? 'maidCafeCancel'.tr()
@@ -3226,10 +3228,7 @@ class _MaidCafeRootCardState extends State<_MaidCafeRootCard> {
                 },
               ),
               const SizedBox(height: 12),
-              Text(
-                'maidCafeRootModes'.tr(),
-                style: theme.textTheme.labelLarge,
-              ),
+              Text('maidCafeRootModes'.tr(), style: theme.textTheme.labelLarge),
               const SizedBox(height: 4),
               Wrap(
                 spacing: 8,
@@ -3259,9 +3258,7 @@ class _MaidCafeRootCardState extends State<_MaidCafeRootCard> {
               const SizedBox(height: 8),
               Text(
                 'maidCafeRootInvalid'.tr(),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.error,
-                ),
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
               ),
             ],
             const SizedBox(height: 8),
@@ -3280,7 +3277,8 @@ class _MaidCafeRootCardState extends State<_MaidCafeRootCard> {
                 if (widget.onSubmit != null) ...[
                   const SizedBox(width: 8),
                   FilledButton.icon(
-                    onPressed: widget.busy || !valid || _path.text.trim().isEmpty
+                    onPressed:
+                        widget.busy || !valid || _path.text.trim().isEmpty
                         ? null
                         : () => widget.onSubmit!(_current),
                     icon: const Icon(Symbols.add),

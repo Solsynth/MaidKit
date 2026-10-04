@@ -322,7 +322,17 @@ class MaidCafeStatsCollector {
   /// a host whose daemon is down must not take the dashboard with it.
   Future<MaidCafeServerStats?> collect(Server server) async {
     final endpoint = endpointFor(server);
-    if (endpoint == null) return null;
+    if (endpoint == null) {
+      // Either collection is switched off for this server or its daemon has no
+      // address this client can dial; the SSH collectors cover the second.
+      maidCafeLog(
+        'no direct daemon address for "${server.name}" '
+        '(collectStats=${server.collectStats}); its statistics stay with the '
+        'SSH collectors',
+      );
+      return null;
+    }
+    maidCafeLog('reading statistics for "${server.name}" from $endpoint');
     final secret =
         await _repository.maidCafeTerminalSecretFor(server) ??
         await _repository.maidCafeMetricsSecretFor(server);

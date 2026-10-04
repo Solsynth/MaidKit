@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:maid_kit/data/local/app_database.dart';
 
+import 'maidcafe_debug.dart';
 import 'maidcafe_stream.dart';
 import 'server_models.dart';
 import 'server_repository.dart';
@@ -104,14 +105,29 @@ class MaidCafeSessionRegistry {
   }
 
   Future<MaidCafeStreamSession> _open(Server server, int? port) async {
-    final credential = await _serverRepository.credentialFor(server);
+    // The consumer's row can be a snapshot from when its tab was opened; the
+    // route — above all the endpoint override that means no port forward at
+    // all — is read from storage so a route configured since then decides this
+    // connection.
+    final current = await _serverRepository.currentServer(server);
+    if (current.maidCafeTerminalUrl != server.maidCafeTerminalUrl ||
+        current.maidCafeTerminalPort != server.maidCafeTerminalPort) {
+      maidCafeLog(
+        'session for "${server.name}" routes on the stored row: '
+        'snapshot(endpoint=${server.maidCafeTerminalUrl ?? 'none'}, '
+        'port=${server.maidCafeTerminalPort ?? 'none'}) '
+        'stored(endpoint=${current.maidCafeTerminalUrl ?? 'none'}, '
+        'port=${current.maidCafeTerminalPort ?? 'none'})',
+      );
+    }
+    final credential = await _serverRepository.credentialFor(current);
     final sudoPassword = credential.type == CredentialType.password
         ? credential.password
         : null;
-    final apiSecret = await _serverRepository.maidCafeMetricsSecretFor(server);
+    final apiSecret = await _serverRepository.maidCafeMetricsSecretFor(current);
     return MaidCafeStreamSession.open(
       manager: _manager,
-      server: server,
+      server: current,
       port: port,
       apiSecret: apiSecret,
       sudoPassword: sudoPassword,
@@ -161,7 +177,16 @@ class MaidCafeSessionEntry {
       session = opened;
       failedAt = null;
       return opened;
-    } catch (_) {
+    } catch (error) {
+      // The failure is swallowed into a null session, so the reason has to be
+      // logged here: otherwise a tab is simply "not connected" with no hint,
+      // and a configured endpoint that did not answer is indistinguishable
+      // from one that was never tried.
+      maidCafeLog(
+        'opening a daemon session failed; the next attempt waits '
+        '${_retryAfter.inSeconds}s',
+        error: error,
+      );
       failedAt = DateTime.now();
       return null;
     } finally {

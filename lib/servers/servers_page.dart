@@ -1226,9 +1226,6 @@ class _ServerCard extends ConsumerWidget {
                           compact: compact,
                           collectStats: server.collectStats,
                           collectSystemInfo: server.collectSystemInfo,
-                          sourceLabel: statsFromDaemon
-                              ? 'serversStatsSourceDaemon'.tr()
-                              : null,
                         )
                       : _DisconnectedStats(
                           connecting: connecting,
@@ -1248,9 +1245,9 @@ class _ServerCard extends ConsumerWidget {
                       connecting: connecting,
                       failed: failed,
                       networkLatency: session?.networkLatency,
-                      sourceLabel: statsFromDaemon
-                          ? 'serversStatsSourceDaemon'.tr()
-                          : null,
+                      // Only an SSH session measures a round trip; a card fed
+                      // by the daemon has no ping to report.
+                      measuresLatency: !statsFromDaemon,
                     ),
                     const Spacer(),
                     if (!connected && !connecting)
@@ -1423,8 +1420,8 @@ class _ConnectionStatus extends StatelessWidget {
     required this.connected,
     required this.connecting,
     required this.failed,
+    required this.measuresLatency,
     this.networkLatency,
-    this.sourceLabel,
   });
 
   final bool connected;
@@ -1432,10 +1429,10 @@ class _ConnectionStatus extends StatelessWidget {
   final bool failed;
   final Duration? networkLatency;
 
-  /// Replaces the latency readout for a host whose numbers arrive without a
-  /// measured round trip (the daemon route): the chip names the source instead
-  /// of showing a dash that reads as "no latency data".
-  final String? sourceLabel;
+  /// Whether the card's numbers arrived with a measured round trip. A daemon
+  /// snapshot does not, so the ping slot names the connection state instead of
+  /// showing a dash that reads as "no latency data".
+  final bool measuresLatency;
 
   @override
   Widget build(BuildContext context) {
@@ -1462,19 +1459,19 @@ class _ConnectionStatus extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (sourceLabel != null)
-            Text(
-              sourceLabel!,
-              style: textTheme.labelLarge?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
+          if (measuresLatency)
             Tooltip(
               message: 'serversNetworkPingTooltip'.tr(),
               child: Text(
                 latency == null ? '—' : '${latency.inMilliseconds} ms',
                 style: textTheme.labelLarge?.copyWith(color: latencyColor),
+              ),
+            )
+          else
+            Text(
+              'serversConnected'.tr(),
+              style: textTheme.labelLarge?.copyWith(
+                color: colorScheme.onSurface,
               ),
             ),
         ],
@@ -1558,7 +1555,6 @@ class _ServerStats extends StatelessWidget {
     required this.compact,
     required this.collectStats,
     required this.collectSystemInfo,
-    this.sourceLabel,
   });
 
   final ServerStats? stats;
@@ -1566,11 +1562,6 @@ class _ServerStats extends StatelessWidget {
   final bool compact;
   final bool collectStats;
   final bool collectSystemInfo;
-
-  /// Names the transport the numbers came from, when it is worth saying: a
-  /// daemon-backed card reports over HTTP with no SSH session, so the card
-  /// tells the user which route is live. Null hides the note (the SSH default).
-  final String? sourceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1616,17 +1607,6 @@ class _ServerStats extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (sourceLabel != null) ...[
-            Text(
-              sourceLabel!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 6),
-          ],
           if (stats != null)
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

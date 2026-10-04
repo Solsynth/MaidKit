@@ -5,6 +5,13 @@ enum ContainerRuntime { docker, podman }
 /// environment. Root operations require passwordless sudo on the server.
 enum ContainerScope { user, root }
 
+/// The scope a daemon-reported store belongs to. The daemon reads two stores
+/// through the same runtime: its own user's, and root's when its sudo policy
+/// allows it. A daemon that predates the split sends no store, and its list was
+/// root's — hence the default.
+ContainerScope containerScopeForStore(String store) =>
+    store == 'own' ? ContainerScope.user : ContainerScope.root;
+
 /// The interactive command run in a container terminal.
 String buildContainerExecCommand({
   required ContainerRuntime runtime,

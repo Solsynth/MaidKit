@@ -182,11 +182,10 @@ class _SftpRemoteFile implements RemoteFile {
   );
 
   @override
-  Future<void> writeBytes(List<int> data, {int offset = 0}) =>
-      _file.writeBytes(
-        data is Uint8List ? data : Uint8List.fromList(data),
-        offset: offset,
-      );
+  Future<void> writeBytes(List<int> data, {int offset = 0}) => _file.writeBytes(
+    data is Uint8List ? data : Uint8List.fromList(data),
+    offset: offset,
+  );
 
   @override
   Future<void> close() => _file.close();

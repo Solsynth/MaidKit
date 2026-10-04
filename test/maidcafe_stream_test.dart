@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
@@ -440,6 +441,37 @@ cooldownSeconds = 60
       expect(container.state, 'running');
       expect(container.status, 'Up 2 hours');
       expect(container.composeProject, 'myapp');
+    });
+
+    test('keeps one entry per store, and scopes each by it', () {
+      final snapshot = parseMaidCafeContainers({
+        'runtimes': [
+          {
+            'runtime': 'podman',
+            'store': 'own',
+            'available': true,
+            'containers': [],
+          },
+          {
+            'runtime': 'podman',
+            'store': 'root',
+            'available': true,
+            'containers': [],
+          },
+          {'runtime': 'docker', 'available': true, 'containers': []},
+        ],
+      });
+      expect(snapshot.runtimes.map((runtime) => runtime.store), [
+        'own',
+        'root',
+        '',
+      ]);
+      // The daemon reads its own user's store and root's separately, and a
+      // client has to show them apart: one entry per store, each scoped by it.
+      expect(containerScopeForStore('own'), ContainerScope.user);
+      expect(containerScopeForStore('root'), ContainerScope.root);
+      // A daemon older than the split sends no store, and its list was root's.
+      expect(containerScopeForStore(''), ContainerScope.root);
     });
 
     test('skips malformed entries and reports an empty runtimes list', () {

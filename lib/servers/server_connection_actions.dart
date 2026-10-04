@@ -373,7 +373,13 @@ Future<ResolvedMaidCafeTerminal> resolveMaidCafeTerminal(
   // A reachable endpoint is dialed as stored. Loopback and "no endpoint at all"
   // are the two cases a forward serves, the latter with the port a client
   // learned over SSH (see ServerMaidCafeRoute).
-  if (target != null && !loopback) return (target: target, stop: null);
+  if (target != null && !loopback) {
+    maidCafeLog(
+      'daemon terminal for "${server.name}" dials ${target.baseUrl}; no port '
+      'forward is opened',
+    );
+    return (target: target, stop: null);
+  }
   final port =
       server.maidCafeTerminalPort ??
       (uri != null && uri.hasPort ? uri.port : null);
@@ -386,6 +392,12 @@ Future<ResolvedMaidCafeTerminal> resolveMaidCafeTerminal(
   final secret =
       target?.secret ?? await _maidCafeTerminalSecret(repository, server);
   if (secret == null || secret.isEmpty) return (target: target, stop: null);
+  // The reason a forward is opened has to be visible: it is the answer to "why
+  // is this host tunnelling its daemon when the endpoint is published".
+  maidCafeLog(
+    'forwarding the daemon port $port for "${server.name}": '
+    'target=${target?.baseUrl ?? 'none'} (a loopback address or no endpoint)',
+  );
   try {
     final forward = await manager.startPortForward(
       server: server,

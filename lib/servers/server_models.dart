@@ -705,7 +705,7 @@ class ServerProcess {
 
 /// The fixed runtime set the Runtimes tab can render. Wire names equal `.name`
 /// ('java', 'dotnet', 'python', ...); the daemon's configured list may carry
-/// fewer entries and unknown names are skipped by [RuntimeKindFromWire].
+/// fewer entries and unknown names are skipped by [runtimeKindFromWire].
 enum RuntimeKind { java, dotnet, python, node, deno, go, ruby, php }
 
 /// Which channel produced a runtime snapshot.
@@ -713,7 +713,7 @@ enum RuntimeDataSource { daemon, ssh }
 
 /// Tolerant wire lookup: returns null for unknown runtime names so future
 /// daemon additions degrade gracefully instead of throwing.
-RuntimeKind? RuntimeKindFromWire(String raw) {
+RuntimeKind? runtimeKindFromWire(String raw) {
   for (final kind in RuntimeKind.values) {
     if (kind.name == raw) {
       return kind;

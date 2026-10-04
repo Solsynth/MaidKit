@@ -201,7 +201,7 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
         runtime: runtime.runtime == 'podman'
             ? ContainerRuntime.podman
             : ContainerRuntime.docker,
-        scope: ContainerScope.root,
+        scope: containerScopeForStore(runtime.store),
         images: runtime.images,
         error: runtime.error,
       ),
