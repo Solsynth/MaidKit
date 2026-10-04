@@ -158,6 +158,14 @@ void main() {
             )
             .get();
         expect(authKeyColumns, hasLength(2));
+        // The run-as account for daemon terminals is added in schema 40.
+        final terminalUserColumn = await database
+            .customSelect(
+              "SELECT name FROM pragma_table_info('servers') "
+              "WHERE name = 'maid_cafe_terminal_user'",
+            )
+            .get();
+        expect(terminalUserColumn, hasLength(1));
         await database.close();
       },
     );

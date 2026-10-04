@@ -38,6 +38,15 @@ daemon route uses the server's own loopback through a temporary SSH forward when
 one is needed, and the browser build dials the server host on the learned port
 instead.
 
+A daemon terminal opens as the daemon's own account unless the server's
+*MaidCafe daemon connection* section names a terminal user; the field is a
+text input rather than a picker, because the daemon's `daemon.terminal.users`
+allowlist is the only authority and the client does not read it. The account
+rides the session request either way — the `user` query parameter on a direct
+socket, the ticket request body on a relayed one — and the daemon refuses one
+its allowlist does not name, which the client reports as the account being
+refused rather than as a bad endpoint or origin.
+
 ### Host statistics over the daemon
 
 A host whose daemon answers on an address this client can dial reports its load,

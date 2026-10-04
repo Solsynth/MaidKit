@@ -1624,6 +1624,8 @@
   "serverMaidCafeTerminalSecretHint": "仅在守护进程单独配置了终端密钥时填写；留空则使用守护进程的指标密钥。",
   "serverMaidCafeTerminalSecretForget": "清除已保存的终端密钥",
   "serverMaidCafeTerminalSecretWillClear": "保存后将删除已保存的终端密钥，改用守护进程的指标密钥。",
+  "serverMaidCafeTerminalUserLabel": "终端用户",
+  "serverMaidCafeTerminalUserHint": "守护进程打开 Shell 时使用的账号，必须出现在守护进程的 daemon.terminal.users 白名单中；留空则以守护进程自身的账号打开。",
   "serverMaidCafeTerminalNote": "守护进程需启用终端端点；网页版还需把本应用的来源加入允许的来源。",
   "serverMaidCafeDaemonIdLabel": "云端守护进程 ID",
   "serverMaidCafeDaemonIdHint": "该守护进程在 MaidCafe 云端的 ID。由本应用注册守护进程时会自动填写；在别处创建的守护进程请手动粘贴。",

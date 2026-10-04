@@ -413,6 +413,9 @@ Future<ResolvedMaidCafeTerminal> resolveMaidCafeTerminal(
       target: MaidCafeTerminalTarget(
         baseUrl: 'http://${forward.bindHost}:${forward.bindPort}',
         secret: secret,
+        // The forward changes where the socket dials, not which account the
+        // session opens as.
+        user: target?.user,
       ),
       stop: () => manager.stopManagedPortForward(forward.id),
     );

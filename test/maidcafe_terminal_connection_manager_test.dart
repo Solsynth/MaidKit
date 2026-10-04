@@ -27,6 +27,10 @@ void main() {
       MaidCafeTerminalHandshakeFailure.remote,
     );
     expect(
+      map(403, {'error': 'terminal user not allowed'}),
+      MaidCafeTerminalHandshakeFailure.user,
+    );
+    expect(
       map(401, {'error': 'unauthorized'}),
       MaidCafeTerminalHandshakeFailure.credential,
     );
@@ -68,6 +72,45 @@ void main() {
     );
   });
 
+  test('a session endpoint carries the geometry and the run-as account', () {
+    const target = MaidCafeTerminalTarget(
+      baseUrl: 'https://host',
+      secret: 's',
+      user: 'deploy',
+    );
+    expect(
+      target.sessionEndpoint(columns: 120, rows: 36).toString(),
+      'wss://host/api/v1/terminal?cols=120&rows=36&user=deploy',
+    );
+    // No account selected: the daemon reads an absent `user` as its own.
+    expect(
+      const MaidCafeTerminalTarget(
+        baseUrl: 'https://host',
+        secret: 's',
+      ).sessionEndpoint(columns: 120, rows: 36).toString(),
+      'wss://host/api/v1/terminal?cols=120&rows=36',
+    );
+    // Blank is the same as absent, not an account named "".
+    expect(
+      const MaidCafeTerminalTarget(
+        baseUrl: 'https://host',
+        secret: 's',
+        user: '   ',
+      ).sessionEndpoint(columns: 120, rows: 36).toString(),
+      'wss://host/api/v1/terminal?cols=120&rows=36',
+    );
+    // A relayed session takes them in the ticket body, not on the socket.
+    expect(
+      const MaidCafeTerminalTarget(
+        baseUrl: 'https://mkc.solsynth.dev',
+        secret: '',
+        user: 'deploy',
+        relayDaemonId: 'daemon-1',
+      ).sessionEndpoint(columns: 120, rows: 36).toString(),
+      'wss://mkc.solsynth.dev/api/daemons/daemon-1/terminal',
+    );
+  });
+
   test('credential token is unpadded base64url of the secret', () {
     expect(
       maidCafeTerminalToken('metrics-secret'),
@@ -103,13 +146,14 @@ void main() {
     );
     addTearDown(manager.dispose);
 
-    final minted = <(int, int)>[];
+    final minted = <(int, int, String?)>[];
     final target = MaidCafeTerminalTarget(
       baseUrl: daemon.baseUrl,
       secret: '',
+      user: 'deploy',
       relayDaemonId: 'daemon-1',
-      ticketProvider: (columns, rows) async {
-        minted.add((columns, rows));
+      ticketProvider: (columns, rows, user) async {
+        minted.add((columns, rows, user));
         return MaidCafeTerminalTicket(
           sessionId: 'session-1',
           ticket: 'ticket-abc',
@@ -125,10 +169,10 @@ void main() {
     );
     addTearDown(() => manager.closeTerminal(handle.id));
 
-    // The ticket was minted with the manager's initial geometry, before the
-    // socket was dialed.
+    // The ticket was minted with the manager's initial geometry and the
+    // target's run-as account, before the socket was dialed.
     expect(minted, [
-      (maidCafeTerminalInitialColumns, maidCafeTerminalInitialRows),
+      (maidCafeTerminalInitialColumns, maidCafeTerminalInitialRows, 'deploy'),
     ]);
     // The relay endpoint addresses the cloud daemon path.
     expect(paths.single, '/api/daemons/daemon-1/terminal');
@@ -151,10 +195,11 @@ void main() {
       baseUrl: 'https://mkc.solsynth.dev',
       secret: '',
       relayDaemonId: 'daemon-1',
-      ticketProvider: (columns, rows) async => throw const MaidCafeException(
-        'Sign in with Solarpass before managing MaidCafe.',
-        kind: MaidCafeErrorKind.signInRequired,
-      ),
+      ticketProvider: (columns, rows, user) async =>
+          throw const MaidCafeException(
+            'Sign in with Solarpass before managing MaidCafe.',
+            kind: MaidCafeErrorKind.signInRequired,
+          ),
     );
 
     await expectLater(
@@ -169,6 +214,53 @@ void main() {
     );
     expect(sockets, 0);
     expect(manager.current, isEmpty);
+  });
+
+  test('a direct handshake asks for the selected account', () async {
+    final queries = <Map<String, String>>[];
+    final daemon = await _FakeDaemon.start((socket, request) {
+      queries.add(request.uri.queryParameters);
+      socket.add(
+        jsonEncode({
+          'type': 'hello',
+          'version': 'v1',
+          'session': 'session-1',
+          'shell': '/bin/sh',
+          'user': 'deploy',
+          'cols': 80,
+          'rows': 24,
+        }),
+      );
+    });
+    addTearDown(daemon.stop);
+
+    final manager = MaidCafeTerminalConnectionManager(
+      () => _AdapterFactory(_RecordingAdapter()),
+    );
+    addTearDown(manager.dispose);
+    final server = _daemonServer(daemon.baseUrl);
+
+    final selected = await manager.openTerminal(
+      server,
+      MaidCafeTerminalTarget(
+        baseUrl: daemon.baseUrl,
+        secret: 'metrics-secret',
+        user: 'deploy',
+      ),
+    );
+    addTearDown(() => manager.closeTerminal(selected.id));
+    final daemonAccount = await manager.openTerminal(
+      server,
+      MaidCafeTerminalTarget(baseUrl: daemon.baseUrl, secret: 'metrics-secret'),
+    );
+    addTearDown(() => manager.closeTerminal(daemonAccount.id));
+
+    expect(queries.first['user'], 'deploy');
+    expect(queries.first['cols'], '$maidCafeTerminalInitialColumns');
+    expect(queries.first['rows'], '$maidCafeTerminalInitialRows');
+    // No selection: the parameter is absent, which the daemon reads as its own
+    // account, rather than sent empty.
+    expect(queries.last.containsKey('user'), isFalse);
   });
 
   test('drives a live daemon terminal session', () async {

@@ -489,6 +489,59 @@ void main() {
     });
 
     test(
+      'the daemon terminal user is stored and carried on the route',
+      () async {
+        final vault = VaultService(database, secureStorage: _MemoryStorage());
+        await vault.create('password');
+        final vaultRepository = ServerRepository(database, vault);
+        final credentialId = await insertCredential();
+        final created = await vaultRepository.create(
+          ServerDraft(
+            name: 'daemon-host',
+            host: '10.0.0.9',
+            port: 22,
+            username: 'root',
+            credentialId: credentialId,
+            maidCafeTerminalUrl: 'https://daemon.example',
+            maidCafeTerminalUser: 'deploy',
+          ),
+        );
+        expect(created.maidCafeTerminalUser, 'deploy');
+        await vaultRepository.updateMaidCafeConfig(
+          created,
+          daemonUrl: 'http://127.0.0.1:8747',
+          metricsSecret: 'metrics',
+        );
+
+        // The route carries the row's account, so the daemon opens the shell as
+        // it instead of its own.
+        final server = (await vaultRepository.all()).single;
+        final target = await vaultRepository.maidCafeTerminalTargetFor(server);
+        expect(target?.baseUrl, 'https://daemon.example');
+        expect(target?.user, 'deploy');
+
+        // Whitespace is no selection, not an account named "  ".
+        await vaultRepository.update(
+          server,
+          ServerDraft(
+            name: server.name,
+            host: server.host,
+            port: server.port,
+            username: server.username,
+            maidCafeTerminalUrl: server.maidCafeTerminalUrl,
+            maidCafeTerminalUser: '  ',
+          ),
+        );
+        final cleared = (await vaultRepository.all()).single;
+        expect(cleared.maidCafeTerminalUser, isNull);
+        expect(
+          (await vaultRepository.maidCafeTerminalTargetFor(cleared))?.user,
+          isNull,
+        );
+      },
+    );
+
+    test(
       'a learned daemon port is saved and dialed on the browser host',
       () async {
         // An unlocked vault with an in-memory keychain, so the metrics secret

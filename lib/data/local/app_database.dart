@@ -82,6 +82,11 @@ class Servers extends Table {
   // terminal refuses every session, so nothing in front of it — an open port
   // included — can help, which is what a failure message has to say first.
   BoolColumn get maidCafeTerminalEnabled => boolean().nullable()();
+  // The account daemon terminals open as, for a daemon whose
+  // `daemon.terminal.users` allowlist names one. Null/empty means the daemon's
+  // own account, which is the daemon's own default. The daemon refuses an
+  // account its allowlist does not list, so this is a request, not a grant.
+  TextColumn get maidCafeTerminalUser => text().nullable()();
   // User-controlled display order on the server dashboard. Rows without a
   // value (legacy rows and imports) sort after explicitly ordered ones.
   IntColumn get sortOrder => integer().nullable()();
@@ -409,7 +414,7 @@ class AppDatabase extends _$AppDatabase {
   static const String webDatabaseName = 'maid_kit';
 
   @override
-  int get schemaVersion => 39;
+  int get schemaVersion => 40;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -866,6 +871,17 @@ class AppDatabase extends _$AppDatabase {
         ).get();
         if (terminalColumn.isEmpty) {
           await m.addColumn(servers, servers.maidCafeTerminalEnabled);
+        }
+      }
+      if (from < 40) {
+        // The account daemon terminals open as; null (the daemon's own
+        // account) for every row written before the field existed.
+        final userColumn = await customSelect(
+          "SELECT name FROM pragma_table_info('servers') "
+          "WHERE name = 'maid_cafe_terminal_user'",
+        ).get();
+        if (userColumn.isEmpty) {
+          await m.addColumn(servers, servers.maidCafeTerminalUser);
         }
       }
     },

@@ -67,6 +67,10 @@ String _maidCafeDaemonHandshakeMessage(
     MaidCafeTerminalHandshakeFailure.origin =>
       '$at: the daemon refused this browser origin. Add it to the allowed '
           'origins in the MaidCafe tab.',
+    MaidCafeTerminalHandshakeFailure.user =>
+      '$at: the daemon refused the account this session asked for. Its '
+          'daemon.terminal.users allowlist has to name it; clear the terminal '
+          'user to open as the daemon\'s own account.',
     MaidCafeTerminalHandshakeFailure.unsupported =>
       '$at: the daemon cannot serve a terminal on its platform.',
     MaidCafeTerminalHandshakeFailure.busy =>
@@ -106,6 +110,10 @@ enum MaidCafeTerminalHandshakeFailure {
   /// A browser origin the daemon does not allow (browser builds only).
   origin,
 
+  /// The account the session asked to run as is not in the daemon's
+  /// `daemon.terminal.users` allowlist.
+  user,
+
   /// The daemon cannot serve a terminal on its platform.
   unsupported,
 
@@ -137,6 +145,9 @@ MaidCafeTerminalHandshakeFailure maidCafeHandshakeFailureFrom(
     // Order matters: the remote-access message is worded "disabled" too, so the
     // more specific causes are matched before the generic disabled one.
     if (text.contains('remote')) return MaidCafeTerminalHandshakeFailure.remote;
+    // "terminal user not allowed" and "terminal shell not allowed" are the
+    // allowlist refusals; only the user one is actionable from this client.
+    if (text.contains('user')) return MaidCafeTerminalHandshakeFailure.user;
     if (text.contains('disabl')) {
       return MaidCafeTerminalHandshakeFailure.disabled;
     }
@@ -158,8 +169,11 @@ Future<MaidCafeTerminalHandshakeFailure?> diagnoseMaidCafeTerminalHandshake(
 ) async {
   if (kIsWeb || target.isRelayed || credential.isEmpty) return null;
   // The endpoint is the WebSocket URL; the same host answers a plain request,
-  // and the policy checks run before the upgrade either way.
-  final socket = target.endpoint;
+  // and the policy checks run before the upgrade either way. The session's own
+  // request is repeated — geometry and run-as account included — so a refusal
+  // only a session can provoke (a user outside the allowlist) is the one the
+  // probe meets too.
+  final socket = target.sessionEndpoint();
   final uri = socket.replace(scheme: socket.scheme == 'wss' ? 'https' : 'http');
   final dio = Dio(
     BaseOptions(
@@ -269,17 +283,15 @@ class MaidCafeTerminalConnectionManager {
     // ticket POST carries the PTY geometry; the cloud ignores query parameters
     // on the browser socket.
     final credential = await _credentialFor(target);
-    final endpoint = target.isRelayed
-        ? target.endpoint
-        : target.endpoint.replace(
-            queryParameters: {
-              'cols': '$maidCafeTerminalInitialColumns',
-              'rows': '$maidCafeTerminalInitialRows',
-            },
-          );
+    final user = target.user?.trim();
+    final endpoint = target.sessionEndpoint(
+      columns: maidCafeTerminalInitialColumns,
+      rows: maidCafeTerminalInitialRows,
+    );
     maidCafeLog(
       'opening "${server.name}" (id=${server.id}) at $endpoint\n'
       '  relayed=${target.isRelayed} storedEndpoint=${target.baseUrl}\n'
+      '  user=${user == null || user.isEmpty ? 'the daemon account' : user}\n'
       '  credential=${maidCafeDescribeCredential(credential)}, '
       'subprotocol token carries ${credential.length} chars encoded',
     );
@@ -373,6 +385,7 @@ class MaidCafeTerminalConnectionManager {
       ticket = await provider(
         maidCafeTerminalInitialColumns,
         maidCafeTerminalInitialRows,
+        target.user,
       );
     } on MaidCafeException catch (error) {
       // The cloud mints the session, so a refusal here is about the daemon

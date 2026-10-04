@@ -110,6 +110,7 @@ class ServerRepository {
               maidCafeTerminalSecretNonce: Value(terminalSecret?.nonce),
               maidCafeDaemonId: Value(_normalizedDaemonId(draft)),
               maidCafeTerminalViaCloud: Value(draft.maidCafeTerminalViaCloud),
+              maidCafeTerminalUser: Value(_normalizedTerminalUser(draft)),
               sortOrder: Value(nextOrder),
             ),
           );
@@ -186,6 +187,7 @@ class ServerRepository {
             : Value(terminalSecret.nonce),
         maidCafeDaemonId: Value(_normalizedDaemonId(draft)),
         maidCafeTerminalViaCloud: Value(draft.maidCafeTerminalViaCloud),
+        maidCafeTerminalUser: Value(_normalizedTerminalUser(draft)),
         updatedAt: Value(DateTime.now().toUtc()),
       ),
     );
@@ -540,11 +542,17 @@ class ServerRepository {
     final daemonId = (relayDaemonId ?? server.maidCafeDaemonId)?.trim();
     final service = maidCafeService;
     final relay = useCloudRelay ?? server.maidCafeTerminalViaCloud;
+    // The account the daemon should open the shell as. Read from the row, not
+    // from a caller's snapshot, for the same reason as the endpoint: an edit
+    // saved since the tab opened is the one that applies.
+    final user = server.maidCafeTerminalUser?.trim().isEmpty ?? true
+        ? null
+        : server.maidCafeTerminalUser!.trim();
     maidCafeLog(
       'route for "${server.name}": '
       'requested=${useCloudRelay ?? 'server setting'} '
       'stored=${server.maidCafeTerminalViaCloud} relay=$relay '
-      'daemonId=${daemonId ?? 'none'}',
+      'daemonId=${daemonId ?? 'none'} user=${user ?? 'daemon account'}',
     );
     if (relay && daemonId != null && daemonId.isNotEmpty && service != null) {
       maidCafeLog(
@@ -556,12 +564,15 @@ class ServerRepository {
         // The relay credential is the minted ticket, so the daemon secret is
         // unused on this path; the cloud authenticates the browser user.
         secret: '',
+        user: user,
         relayDaemonId: daemonId,
-        ticketProvider: (columns, rows) => service.createTerminalSession(
-          daemonId,
-          columns: columns,
-          rows: rows,
-        ),
+        ticketProvider: (columns, rows, requestedUser) =>
+            service.createTerminalSession(
+              daemonId,
+              columns: columns,
+              rows: rows,
+              user: requestedUser,
+            ),
       );
     }
     // The relay was asked for explicitly and cannot be built: the server has
@@ -601,7 +612,7 @@ class ServerRepository {
       );
       return null;
     }
-    return MaidCafeTerminalTarget(baseUrl: url, secret: secret);
+    return MaidCafeTerminalTarget(baseUrl: url, secret: secret, user: user);
   }
 
   /// Encrypts a draft's new daemon terminal credential, or null when there is
@@ -625,6 +636,15 @@ class ServerRepository {
   /// The cloud daemon uuid for [draft], or null when the draft has none.
   String? _normalizedDaemonId(ServerDraft draft) {
     final raw = draft.maidCafeDaemonId?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw;
+  }
+
+  /// The account daemon terminals should open as, or null for the daemon's own
+  /// account. Whitespace-only input means "no selection", not an account named
+  /// "" — the daemon reads an empty `user` the same way.
+  String? _normalizedTerminalUser(ServerDraft draft) {
+    final raw = draft.maidCafeTerminalUser?.trim();
     if (raw == null || raw.isEmpty) return null;
     return raw;
   }

@@ -143,6 +143,7 @@ class ServerDashboardTab extends ConsumerWidget {
             maidCafeTerminalUrl: server.maidCafeTerminalUrl,
             maidCafeDaemonId: server.maidCafeDaemonId,
             maidCafeTerminalViaCloud: server.maidCafeTerminalViaCloud,
+            maidCafeTerminalUser: server.maidCafeTerminalUser,
           ),
           maidCafeTerminalSecretStored:
               server.encryptedMaidCafeTerminalSecret != null,
@@ -2025,6 +2026,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   final _maidCafeTerminalUrl = TextEditingController();
   final _maidCafeTerminalSecret = TextEditingController();
   final _maidCafeDaemonId = TextEditingController();
+  final _maidCafeTerminalUser = TextEditingController();
   bool _maidCafeTerminalViaCloud = false;
   bool _clearMaidCafeTerminalSecret = false;
 
@@ -2074,6 +2076,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     // credential is never decrypted into it.
     _maidCafeTerminalUrl.text = initial.maidCafeTerminalUrl ?? '';
     _maidCafeDaemonId.text = initial.maidCafeDaemonId ?? '';
+    _maidCafeTerminalUser.text = initial.maidCafeTerminalUser ?? '';
     _maidCafeTerminalViaCloud = initial.maidCafeTerminalViaCloud;
     final serialConfig = initial.serialConfig;
     if (serialConfig != null) {
@@ -2131,6 +2134,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
       _maidCafeTerminalUrl,
       _maidCafeTerminalSecret,
       _maidCafeDaemonId,
+      _maidCafeTerminalUser,
     ]) {
       controller.dispose();
     }
@@ -2396,6 +2400,15 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     ],
     const SizedBox(height: 12),
     TextFormField(
+      controller: _maidCafeTerminalUser,
+      autocorrect: false,
+      decoration: InputDecoration(
+        labelText: 'serverMaidCafeTerminalUserLabel'.tr(),
+        helperText: 'serverMaidCafeTerminalUserHint'.tr(),
+      ),
+    ),
+    const SizedBox(height: 12),
+    TextFormField(
       controller: _maidCafeDaemonId,
       autocorrect: false,
       decoration: InputDecoration(
@@ -2526,6 +2539,9 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
         maidCafeDaemonId: _connectionType == ServerConnectionType.serial
             ? null
             : _maidCafeDaemonId.text.trim(),
+        maidCafeTerminalUser: _connectionType == ServerConnectionType.serial
+            ? null
+            : _maidCafeTerminalUser.text.trim(),
         maidCafeTerminalViaCloud:
             _connectionType != ServerConnectionType.serial &&
             _maidCafeTerminalViaCloud,

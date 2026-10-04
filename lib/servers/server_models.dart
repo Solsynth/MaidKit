@@ -87,6 +87,7 @@ class ServerDraft {
     this.clearMaidCafeTerminalSecret = false,
     this.maidCafeDaemonId,
     this.maidCafeTerminalViaCloud = false,
+    this.maidCafeTerminalUser,
   });
 
   final String name;
@@ -160,6 +161,12 @@ class ServerDraft {
   /// the daemon directly. The relay reaches a daemon behind NAT, which is the
   /// only option for a browser build that cannot route to the daemon.
   final bool maidCafeTerminalViaCloud;
+
+  /// The account a daemon terminal opens as, matching the daemon's
+  /// `daemon.terminal.users` allowlist. Null/empty opens as the daemon's own
+  /// account, which is the daemon's own default; the daemon refuses an account
+  /// its allowlist does not name.
+  final String? maidCafeTerminalUser;
 }
 
 /// JSON-encodes [environment] for storage, or null when it is empty.
@@ -338,9 +345,14 @@ String maidCafeTerminalToken(String credential) {
 }
 
 /// Mints a one-time cloud ticket for a relayed session with the requested PTY
-/// geometry. Sampled by [MaidCafeTerminalTarget.ticketProvider].
+/// geometry and run-as [user] (null/empty for the daemon's own account).
+/// Sampled by [MaidCafeTerminalTarget.ticketProvider].
 typedef MaidCafeTerminalTicketProvider =
-    Future<MaidCafeTerminalTicket> Function(int columns, int rows);
+    Future<MaidCafeTerminalTicket> Function(
+      int columns,
+      int rows,
+      String? user,
+    );
 
 /// A resolved MaidCafe daemon terminal endpoint and its credential.
 ///
@@ -356,12 +368,23 @@ class MaidCafeTerminalTarget {
   const MaidCafeTerminalTarget({
     required this.baseUrl,
     required this.secret,
+    this.user,
     this.relayDaemonId,
     this.ticketProvider,
   });
 
   final String baseUrl;
   final String secret;
+
+  /// The account the shell should open as, matching the daemon's
+  /// `daemon.terminal.users` allowlist. Null/empty opens as the daemon's own
+  /// account, which is the daemon's own default. Sent as the `user` query
+  /// parameter on a direct handshake and in the ticket request body on a
+  /// relayed one.
+  ///
+  /// The daemon is the authority: an account its allowlist does not name is
+  /// refused, so this asks rather than grants.
+  final String? user;
 
   /// Cloud daemon uuid for a cloud-relayed session. When set, [endpoint]
   /// addresses the relay (`{baseUrl}/api/daemons/{id}/terminal`) and the
@@ -412,6 +435,27 @@ class MaidCafeTerminalTarget {
   /// the session id and the ticket ([sessionId] is a uuid, so it holds none).
   String sessionToken(String sessionId, String ticket) =>
       maidCafeTerminalToken('$sessionId.$ticket');
+
+  /// The handshake URL for one session: [endpoint] with the PTY geometry and
+  /// the run-as account the daemon should apply.
+  ///
+  /// A relayed target returns [endpoint] unchanged — the cloud takes both in
+  /// the ticket request body, and the browser socket carries no query
+  /// parameters there. Also what the diagnostic probe requests, so a refusal
+  /// it has to explain is the one the session itself would have met.
+  Uri sessionEndpoint({int? columns, int? rows}) {
+    if (isRelayed) return endpoint;
+    final user = this.user?.trim();
+    return endpoint.replace(
+      queryParameters: {
+        if (columns != null) 'cols': '$columns',
+        if (rows != null) 'rows': '$rows',
+        // Absent when no account is selected, which the daemon reads as its
+        // own account — the same value an empty parameter means.
+        if (user != null && user.isNotEmpty) 'user': user,
+      },
+    );
+  }
 }
 
 enum SerialParity { none, even, odd }

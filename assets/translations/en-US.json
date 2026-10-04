@@ -1625,6 +1625,8 @@
   "serverMaidCafeTerminalSecretHint": "Only when the daemon sets one; leave empty to use the daemon metrics secret.",
   "serverMaidCafeTerminalSecretForget": "Forget the stored terminal secret",
   "serverMaidCafeTerminalSecretWillClear": "The stored terminal secret is removed on save and the daemon metrics secret is used instead.",
+  "serverMaidCafeTerminalUserLabel": "Terminal user",
+  "serverMaidCafeTerminalUserHint": "The account the daemon opens the shell as. It must appear in the daemon's daemon.terminal.users allowlist; leave empty to open as the daemon's own account.",
   "serverMaidCafeTerminalNote": "The daemon must have its terminal endpoint enabled; a browser build also needs this app's origin among the allowed origins.",
   "serverMaidCafeDaemonIdLabel": "Cloud daemon ID",
   "serverMaidCafeDaemonIdHint": "The daemon's MaidCafe cloud ID. Prefilled when this app registers the daemon; paste it for a daemon created elsewhere.",

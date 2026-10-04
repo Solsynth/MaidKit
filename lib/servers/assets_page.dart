@@ -306,6 +306,13 @@ class ServerAssetsSection extends ConsumerWidget {
                     .asNameMap()[server.connectionType] ??
                 ServerConnectionType.ssh,
             serialConfig: decodeSerialConfig(server.serialConfig),
+            // The daemon route is stored on the row, so the shared editor has
+            // to reopen with it. A draft that omitted it would silently clear
+            // the route on save.
+            maidCafeTerminalUrl: server.maidCafeTerminalUrl,
+            maidCafeDaemonId: server.maidCafeDaemonId,
+            maidCafeTerminalViaCloud: server.maidCafeTerminalViaCloud,
+            maidCafeTerminalUser: server.maidCafeTerminalUser,
           ),
         ),
       );
