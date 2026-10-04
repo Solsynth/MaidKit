@@ -1320,6 +1320,8 @@
   "maidCafeTerminalSecretHint": "留空则回退使用指标密钥。",
   "maidCafeTerminalOrigins": "允许的来源",
   "maidCafeTerminalOriginsHint": "每行一个浏览器来源，例如 https://app.example。网页版需要把自己的来源列在其中。",
+  "maidCafeTerminalUsers": "终端用户",
+  "maidCafeTerminalUsersHint": "每行一个可打开终端使用的账号，例如 deploy。留空则只允许以守护进程自身的账号打开。守护进程会拒绝未列出的账号。",
   "maidCafeSignInRequired": "请先使用 Solarpass 登录，再管理 MaidCafe 守护进程和通知。",
   "maidCafeTestNotificationSent": "测试通知已发送。",
   "maidCafeThreshold": "阈值（%）",

@@ -1321,6 +1321,8 @@
   "maidCafeTerminalSecretHint": "Leave empty to fall back to the metrics secret.",
   "maidCafeTerminalOrigins": "Allowed origins",
   "maidCafeTerminalOriginsHint": "One browser origin per line, for example https://app.example. A browser build needs its own origin listed.",
+  "maidCafeTerminalUsers": "Terminal users",
+  "maidCafeTerminalUsersHint": "One account per line that a terminal may open as, for example deploy. Leave empty to let sessions open only as the daemon's own account. The daemon refuses an account that is not listed.",
   "maidCafeSignInRequired": "Sign in with Solarpass before managing MaidCafe daemons and notifications.",
   "maidCafeTestNotificationSent": "Test notification sent.",
   "maidCafeThreshold": "Threshold (%)",

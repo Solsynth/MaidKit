@@ -175,6 +175,75 @@ void main() {
     expect(config, contains('listen = "127.0.0.1:8747"'));
   });
 
+  test('the run-as allowlist is written, and only when it is owned', () {
+    // A caller that names accounts writes them.
+    final named = decodeMaidCafeConfigFromScript(
+      buildMaidCafeDaemonConfigScript(
+        currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://cloud.example',
+        cloudSecret: 'cloud-secret',
+        apiSecret: 'metrics-secret',
+        transport: 'http',
+        terminalEnabled: true,
+        terminalUsers: const ['deploy', 'nginx'],
+      ),
+    );
+    expect(named, contains('users = ["deploy", "nginx"]'));
+
+    // A caller that does not model the list leaves an operator's own one alone,
+    // even while it writes the rest of the terminal table.
+    final untouched = decodeMaidCafeConfigFromScript(
+      buildMaidCafeDaemonConfigScript(
+        currentConfig:
+            '[daemon]\nlisten = "127.0.0.1:8747"\n\n'
+            '[daemon.terminal]\nenabled = true\n'
+            'users = ["operator"]\n',
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://cloud.example',
+        cloudSecret: 'cloud-secret',
+        apiSecret: 'metrics-secret',
+        transport: 'http',
+        terminalEnabled: true,
+      ),
+    );
+    expect(untouched, contains('users = ["operator"]'));
+
+    // An empty list from a caller that owns the key clears it.
+    final cleared = decodeMaidCafeConfigFromScript(
+      buildMaidCafeDaemonConfigScript(
+        currentConfig:
+            '[daemon]\nlisten = "127.0.0.1:8747"\n\n'
+            '[daemon.terminal]\nenabled = true\n'
+            'users = ["operator"]\n',
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://cloud.example',
+        cloudSecret: 'cloud-secret',
+        apiSecret: 'metrics-secret',
+        transport: 'http',
+        terminalEnabled: true,
+        terminalUsers: const [],
+      ),
+    );
+    expect(cleared, contains('users = []'));
+    expect(cleared, isNot(contains('"operator"')));
+
+    // Nothing to write and nothing to clear: the key is not invented.
+    final absent = decodeMaidCafeConfigFromScript(
+      buildMaidCafeDaemonConfigScript(
+        currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',
+        daemonId: 'daemon-1',
+        cloudUrl: 'https://cloud.example',
+        cloudSecret: 'cloud-secret',
+        apiSecret: 'metrics-secret',
+        transport: 'http',
+        terminalEnabled: true,
+        terminalUsers: const [],
+      ),
+    );
+    expect(absent, isNot(contains('users =')));
+  });
+
   test('the terminal origin list defaults to the hosted web build', () {
     final script = buildMaidCafeDaemonConfigScript(
       currentConfig: '[daemon]\nlisten = "127.0.0.1:8747"\n',

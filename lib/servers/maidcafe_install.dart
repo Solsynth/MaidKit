@@ -1109,6 +1109,12 @@ String buildMaidCafeDaemonConfigScript({
   bool? terminalRelayEnabled,
   List<String> terminalShells = const [],
 
+  /// The accounts a daemon terminal may open as (`daemon.terminal.users`), or
+  /// null when this caller does not model them: null leaves the list — and an
+  /// operator's own hand-written entries — alone. The daemon refuses a session
+  /// requesting an account the list does not name.
+  List<String>? terminalUsers,
+
   /// Directories the daemon's file API may serve, or null when this caller does
   /// not model them: null leaves the section and any installed grant alone,
   /// which is what keeps an operator's own configuration from being erased.
@@ -1221,6 +1227,15 @@ systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemo
       : (enablesTerminal && existingTerminal.shells.isEmpty
             ? maidCafeDefaultTerminalShells
             : const <String>[]);
+  // The run-as allowlist is written when the caller names one, and when it
+  // clears one the daemon already had: a daemon that never declared an
+  // allowlist keeps its configuration free of an empty key. A caller that does
+  // not model the list passes null and an operator's own entries survive.
+  final terminalUsersPatch =
+      terminalUsers != null &&
+          (terminalUsers.isNotEmpty || existingTerminal.users.isNotEmpty)
+      ? '[${[for (final user in terminalUsers) _tomlString(user)].join(', ')}]'
+      : null;
   patched = patchMaidCafeTerminalConfigText(patched, {
     if (terminalEnabled != null) 'enabled': '$terminalEnabled',
     if (terminalSecret.trim().isNotEmpty)
@@ -1231,6 +1246,7 @@ systemctl reload maidcafe-daemon 2>/dev/null || systemctl restart maidcafe-daemo
     if (shells.isNotEmpty)
       'shells':
           '[${[for (final shell in shells) _tomlString(shell)].join(', ')}]',
+    'users': ?terminalUsersPatch,
   });
   // Cloud-relayed sessions are a second opt-in on the daemon's side; the cloud
   // only mints a ticket once its own daemon record opted in as well.

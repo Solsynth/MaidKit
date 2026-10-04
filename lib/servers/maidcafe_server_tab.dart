@@ -144,6 +144,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   late final TextEditingController _metricsIntervalController;
   late final TextEditingController _terminalSecretController;
   late final TextEditingController _terminalOriginsController;
+  late final TextEditingController _terminalUsersController;
 
   /// `daemon.terminal.enabled` as the editor has it, and whether the daemon's
   /// configuration stated it — an untouched switch must not be written back as
@@ -233,6 +234,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _metricsIntervalController = TextEditingController(text: '1m');
     _terminalSecretController = TextEditingController();
     _terminalOriginsController = TextEditingController();
+    _terminalUsersController = TextEditingController();
     _logsIntervalController = TextEditingController(text: '30s');
     _requestTimeoutController = TextEditingController(text: '10s');
     _scriptTimeoutController = TextEditingController(text: '30s');
@@ -273,6 +275,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _metricsIntervalController.dispose();
     _terminalSecretController.dispose();
     _terminalOriginsController.dispose();
+    _terminalUsersController.dispose();
     _logsIntervalController.dispose();
     _requestTimeoutController.dispose();
     _scriptTimeoutController.dispose();
@@ -307,6 +310,14 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
 
   /// The daemon terminal origins, one per line in the editor.
   List<String> get _terminalOrigins => _terminalOriginsController.text
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+
+  /// The accounts a daemon terminal may open as, one per line in the editor.
+  /// Empty means the daemon's own account is the only account a session can be.
+  List<String> get _terminalUsers => _terminalUsersController.text
       .split('\n')
       .map((line) => line.trim())
       .where((line) => line.isNotEmpty)
@@ -392,6 +403,9 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     }
     _terminalEnabledKnown = config.terminalEnabled != null;
     _terminalEnabled = config.terminalEnabled ?? false;
+    if (config.terminalUsers.isNotEmpty) {
+      _terminalUsersController.text = config.terminalUsers.join('\n');
+    }
     _terminalRelayEnabledKnown = config.terminalRelayEnabled != null;
     _terminalRelayEnabled = config.terminalRelayEnabled ?? false;
     if (config.maxBodyBytes != null) {
@@ -1011,6 +1025,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             terminalEnabled: _terminalEnabledKnown ? _terminalEnabled : null,
             terminalSecret: _terminalSecretController.text.trim(),
             terminalAllowedOrigins: _terminalOrigins,
+            terminalUsers: _terminalUsers,
             terminalRelayEnabled: _terminalRelayEnabledKnown
                 ? _terminalRelayEnabled
                 : null,
@@ -1120,6 +1135,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             terminalEnabled: _terminalEnabledKnown ? _terminalEnabled : null,
             terminalSecret: _terminalSecretController.text.trim(),
             terminalAllowedOrigins: _terminalOrigins,
+            terminalUsers: _terminalUsers,
             terminalRelayEnabled: _terminalRelayEnabledKnown
                 ? _terminalRelayEnabled
                 : null,
@@ -1147,6 +1163,11 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             .read(serverRepositoryProvider)
             .setMaidCafeTerminalEnabled(widget.server, _terminalEnabled);
       }
+      // What the editor just wrote is the allowlist a session may open as, so
+      // the picker offers exactly the accounts this save left behind.
+      await ref
+          .read(serverRepositoryProvider)
+          .setMaidCafeTerminalUsers(widget.server, _terminalUsers);
       await _syncRelayOptIn();
       // The config and scripts are on the server; the reopen failure below is
       // connection-only, so the local snapshot is already committed.
@@ -2504,6 +2525,12 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             controller: _terminalOriginsController,
             label: 'maidCafeTerminalOrigins'.tr(),
             helperText: 'maidCafeTerminalOriginsHint'.tr(),
+            maxLines: 3,
+          ),
+          _configTextField(
+            controller: _terminalUsersController,
+            label: 'maidCafeTerminalUsers'.tr(),
+            helperText: 'maidCafeTerminalUsersHint'.tr(),
             maxLines: 3,
           ),
         ],

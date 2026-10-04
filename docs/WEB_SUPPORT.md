@@ -47,8 +47,10 @@ that configuration, can still offer the accounts. Opening a daemon terminal
 therefore asks which account to use whenever the daemon names any, and
 remembers the answer; *Terminal user* in the server's daemon section is the same
 value, editable by hand, and the way to name an account before an allowlist has
-ever been read. The allowlist itself is the daemon's configuration, which this
-app's daemon config editor does not write.
+ever been read. The allowlist itself is the daemon's own configuration, edited
+in the daemon console's *Terminal* group (one account per line) and applied by
+the same save that writes the rest of the terminal table; a save over a daemon
+that never declared an allowlist does not invent one.
 
 The account rides the session request either way — the `user` query parameter
 on a direct socket, the ticket request body on a relayed one — and the daemon

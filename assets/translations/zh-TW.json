@@ -1280,6 +1280,8 @@
   "maidCafeTerminalSecretHint": "留空則回退使用指標密鑰。",
   "maidCafeTerminalOrigins": "允許的來源",
   "maidCafeTerminalOriginsHint": "每行一個瀏覽器來源，例如 https://app.example。網頁版需要把自己的來源列於其中。",
+  "maidCafeTerminalUsers": "終端機使用者",
+  "maidCafeTerminalUsersHint": "每行一個可開啟終端機使用的帳號，例如 deploy。留空則只允許以守護程式本身的帳號開啟。守護程式會拒絕未列出的帳號。",
   "maidCafeSignInRequired": "請先使用 Solarpass 登入，再管理 MaidCafe 守護程式和通知。",
   "maidCafeThreshold": "閾值（%）",
   "maidCafeTitle": "MaidCafe",
