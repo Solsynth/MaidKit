@@ -67,7 +67,7 @@ class AboutPage extends ConsumerWidget {
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        appName,
+                        'MaidKit',
                         style: theme.textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
