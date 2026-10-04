@@ -52,15 +52,19 @@ class SessionsWorkspace extends ConsumerWidget {
     final focusedSession = _sessionForTab(sessions, tabs.selectedTab);
 
     return MaidKitAppScaffold(
-      // The pane tab bar paints the top safe area when tabs are open; the
-      // intro below pads itself instead, so the whole workspace stays flat.
-      topSafeArea: false,
+      // The workspace paints edge to edge. The top inset is owned by the pane
+      // tab bar (and by the intro when no tabs are open); the bottom inset is
+      // owned by whatever ends up on the bottom edge — the terminal status bar
+      // pads itself, and a pane with nothing below it reaches the screen bottom
+      // instead of leaving a dead band where the old navigation bar used to be.
+      useSafeArea: false,
       body: Column(
         children: [
           Expanded(
             child: tabs.isEmpty
                 ? SafeArea(
                     top: true,
+                    bottom: false,
                     child: _SessionIntro(
                       servers: servers,
                       tabs: tabs,
@@ -354,10 +358,14 @@ class _SessionPaneView extends ConsumerWidget {
           Expanded(
             // The pane tab bar owns the top safe area; strip it here so tab
             // bodies (dashboard, server detail, editors) don't re-apply the
-            // status-bar inset and leave a gap below the tab bar.
+            // status-bar inset and leave a gap below the tab bar. The bottom
+            // inset is stripped for the same reason: a tab body reaches the
+            // screen bottom (its own content padding keeps rows clear of the
+            // home indicator) unless the terminal status bar occupies the band.
             child: MediaQuery.removePadding(
               context: context,
               removeTop: true,
+              removeBottom: true,
               child: isEmptyPane
                   ? _SessionIntro(
                       servers: servers,
