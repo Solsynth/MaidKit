@@ -68,9 +68,14 @@ requirement.
 
 Detecting an installed daemon over SSH configures that shell route by itself —
 endpoint, port, credential, and cloud identity — and a finished install does the
-same, so neither needs the editor to be filled in by hand. When the direct route
-does not answer, the failure names the TCP port to expose (and the address the
-daemon listens on) instead of only reporting that the connection failed.
+same, so neither needs the editor to be filled in by hand. An endpoint already
+on the row is never replaced: a route the user set — an HTTPS front above all —
+survives installs, updates, and later probes, and stays the one daemon readers
+prefer over the app's own SSH forward. Only the address the app writes for its
+own tunnel is re-pointed when a reconfigured daemon reports a new port. When the
+direct route does not answer, the failure names the TCP port to expose (and the
+address the daemon listens on) instead of only reporting that the connection
+failed.
 
 The daemon's own terminal switch (`daemon.terminal.enabled`) is checked before
 that advice: a daemon whose terminal endpoint is off refuses every session, so

@@ -1230,7 +1230,6 @@
   "maidCafeTerminalOrigins": "允許的來源",
   "maidCafeTerminalOriginsHint": "每行一個瀏覽器來源，例如 https://app.example。網頁版需要把自己的來源列於其中。",
   "maidCafeSignInRequired": "請先使用 Solarpass 登入，再管理 MaidCafe 守護程式和通知。",
-  "maidCafeStreamConnected": "MaidCafe SSH 串流已連線",
   "maidCafeThreshold": "閾值（%）",
   "maidCafeTitle": "MaidCafe",
   "maidCafeTransport": "傳輸方式",

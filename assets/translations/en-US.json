@@ -1271,7 +1271,6 @@
   "maidCafeTerminalOrigins": "Allowed origins",
   "maidCafeTerminalOriginsHint": "One browser origin per line, for example https://app.example. A browser build needs its own origin listed.",
   "maidCafeSignInRequired": "Sign in with Solarpass before managing MaidCafe daemons and notifications.",
-  "maidCafeStreamConnected": "MaidCafe SSH stream connected",
   "maidCafeTestNotificationSent": "Test notification sent.",
   "maidCafeThreshold": "Threshold (%)",
   "maidCafeTitle": "MaidCafe",
