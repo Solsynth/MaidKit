@@ -346,7 +346,7 @@ typedef MaidCafeTerminalTicketProvider =
 ///
 /// [baseUrl] is the root the app dials: the daemon itself (e.g.
 /// `https://host.tailnet.ts.net`, authorized by [secret]) or the MaidCafe cloud
-/// for a relayed session (e.g. `https://mk.solsynth.dev`, with
+/// for a relayed session (e.g. `https://mkc.solsynth.dev`, with
 /// [relayDaemonId] and [ticketProvider] set). The transport appends
 /// `/api/v1/terminal`, or `/api/daemons/{id}/terminal` for a relayed session.
 /// [secret] is the dedicated terminal secret when one is stored and the daemon

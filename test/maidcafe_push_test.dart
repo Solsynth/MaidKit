@@ -7,11 +7,11 @@ import 'package:maid_kit/servers/server_providers.dart';
 void main() {
   group('maidCafeCloudSupportsPush', () {
     test('accepts Solsynth-hosted clouds', () {
-      expect(maidCafeCloudSupportsPush('https://mk.solsynth.dev'), isTrue);
+      expect(maidCafeCloudSupportsPush('https://mkc.solsynth.dev'), isTrue);
       expect(maidCafeCloudSupportsPush('https://cloud.solian.app'), isTrue);
       expect(maidCafeCloudSupportsPush('https://solsynth.dev'), isTrue);
       expect(maidCafeCloudSupportsPush('https://api.solian.app'), isTrue);
-      expect(maidCafeCloudSupportsPush('https://MK.SOLSYNTH.DEV'), isTrue);
+      expect(maidCafeCloudSupportsPush('https://mkc.solsynth.dev'), isTrue);
     });
 
     test('rejects self-hosted and lookalike clouds', () {

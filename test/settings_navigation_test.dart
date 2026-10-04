@@ -225,7 +225,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('maidCafeCloudUrl'.tr()), findsOneWidget);
-      // The default cloud (mk.solsynth.dev) is a supported Ring publisher.
+      // The default cloud (mkc.solsynth.dev) is a supported Ring publisher.
       expect(find.text('maidCafeSelfHostedPushHint'.tr()), findsNothing);
 
       await tester.enterText(

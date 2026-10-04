@@ -107,7 +107,7 @@ void main() {
           return _json({..._daemon(), 'secret': 'cloud-secret'}, 201);
         });
       final service = MaidCafeService(
-        baseUrl: 'https://mk.solsynth.dev///',
+        baseUrl: 'https://mkc.solsynth.dev///',
         cloudSync: CloudSyncService(vaultId: 'test'),
         accessToken: () async => 'solar-token',
         dio: dio,
@@ -118,7 +118,7 @@ void main() {
         workspaceId: 'ws-1',
       );
       expect(request.method, 'POST');
-      expect(request.uri.toString(), 'https://mk.solsynth.dev/api/daemons');
+      expect(request.uri.toString(), 'https://mkc.solsynth.dev/api/daemons');
       expect(request.headers['Authorization'], 'Bearer solar-token');
       expect((request.data as Map)['workspace_id'], 'ws-1');
       expect((request.data as Map)['name'], 'host');
@@ -140,7 +140,7 @@ void main() {
         }, 201);
       });
     final service = MaidCafeService(
-      baseUrl: 'https://mk.solsynth.dev',
+      baseUrl: 'https://mkc.solsynth.dev',
       cloudSync: CloudSyncService(vaultId: 'test'),
       accessToken: () async => 'solar-token',
       dio: dio,
@@ -158,7 +158,7 @@ void main() {
     expect(request.method, 'POST');
     expect(
       request.uri.toString(),
-      'https://mk.solsynth.dev/api/daemons/daemon-1/terminal',
+      'https://mkc.solsynth.dev/api/daemons/daemon-1/terminal',
     );
     expect(request.headers['Authorization'], 'Bearer solar-token');
     expect(request.data, {
@@ -186,7 +186,7 @@ void main() {
         }, 201);
       });
     final service = MaidCafeService(
-      baseUrl: 'https://mk.solsynth.dev',
+      baseUrl: 'https://mkc.solsynth.dev',
       cloudSync: CloudSyncService(vaultId: 'test'),
       accessToken: () async => 'solar-token',
       dio: dio,
@@ -215,7 +215,7 @@ void main() {
           }, 200);
         });
       final service = MaidCafeService(
-        baseUrl: 'https://mk.solsynth.dev',
+        baseUrl: 'https://mkc.solsynth.dev',
         cloudSync: CloudSyncService(vaultId: 'test'),
         accessToken: () async => 'solar-token',
         dio: dio,
@@ -224,7 +224,7 @@ void main() {
       expect(request.method, 'GET');
       expect(
         request.uri.toString(),
-        'https://mk.solsynth.dev/api/workspaces/ws-1/quota',
+        'https://mkc.solsynth.dev/api/workspaces/ws-1/quota',
       );
       expect(request.headers['Authorization'], 'Bearer solar-token');
       expect(quota.workspaceId, 'ws-1');
@@ -269,7 +269,7 @@ void main() {
         }, 200);
       });
     final service = MaidCafeService(
-      baseUrl: 'https://mk.solsynth.dev',
+      baseUrl: 'https://mkc.solsynth.dev',
       cloudSync: CloudSyncService(vaultId: 'test'),
       accessToken: () async => 'solar-token',
       dio: dio,
@@ -281,7 +281,7 @@ void main() {
     expect(request.method, 'GET');
     expect(
       request.uri.toString(),
-      'https://mk.solsynth.dev/api/daemons/daemon-1/health',
+      'https://mkc.solsynth.dev/api/daemons/daemon-1/health',
     );
     expect(request.headers['Authorization'], 'Bearer solar-token');
     expect(report.daemonId, 'daemon-1');
@@ -318,7 +318,7 @@ void main() {
           return ResponseBody.fromBytes(utf8.encode('accepted'), 200);
         });
       final service = MaidCafeService(
-        baseUrl: 'https://mk.solsynth.dev',
+        baseUrl: 'https://mkc.solsynth.dev',
         cloudSync: CloudSyncService(vaultId: 'test'),
         accessToken: () async => 'solar-token',
         dio: dio,
@@ -361,7 +361,7 @@ void main() {
           }, 200);
         });
       final service = MaidCafeService(
-        baseUrl: 'https://mk.solsynth.dev',
+        baseUrl: 'https://mkc.solsynth.dev',
         cloudSync: CloudSyncService(vaultId: 'test'),
         accessToken: () async => 'solar-token',
         dio: dio,
@@ -427,7 +427,7 @@ void main() {
           }, 200);
         });
       final service = MaidCafeService(
-        baseUrl: 'https://mk.solsynth.dev',
+        baseUrl: 'https://mkc.solsynth.dev',
         cloudSync: CloudSyncService(vaultId: 'test'),
         accessToken: () async => 'solar-token',
         dio: dio,
@@ -488,7 +488,7 @@ void main() {
         ], 200);
       });
     final service = MaidCafeService(
-      baseUrl: 'https://mk.solsynth.dev',
+      baseUrl: 'https://mkc.solsynth.dev',
       cloudSync: CloudSyncService(vaultId: 'test'),
       accessToken: () async => 'solar-token',
       dio: dio,
@@ -837,7 +837,7 @@ void main() {
             (_) async => ResponseBody.fromString('', status),
           );
         final service = MaidCafeService(
-          baseUrl: 'https://mk.solsynth.dev',
+          baseUrl: 'https://mkc.solsynth.dev',
           cloudSync: CloudSyncService(vaultId: 'test'),
           accessToken: () async => 'solar-token',
           dio: dio,
@@ -864,7 +864,7 @@ void main() {
         return ResponseBody.fromString('', 204);
       });
     final service = MaidCafeService(
-      baseUrl: 'https://mk.solsynth.dev',
+      baseUrl: 'https://mkc.solsynth.dev',
       cloudSync: CloudSyncService(vaultId: 'test'),
       accessToken: () async => 'solar-token',
       dio: dio,
@@ -879,7 +879,7 @@ void main() {
     expect(request.method, 'PUT');
     expect(
       request.uri.toString(),
-      'https://mk.solsynth.dev/api/daemons/daemon-1/notification-preferences/webhook.failure',
+      'https://mkc.solsynth.dev/api/daemons/daemon-1/notification-preferences/webhook.failure',
     );
     expect((request.data as Map)['preference'], 1);
     expect((request.data as Map)['workspace_id'], 'ws-1');
@@ -891,7 +891,7 @@ void main() {
     expect(request.method, 'PUT');
     expect(
       request.uri.toString(),
-      'https://mk.solsynth.dev/api/daemons/daemon-1/notification-preferences',
+      'https://mkc.solsynth.dev/api/daemons/daemon-1/notification-preferences',
     );
     expect((request.data as Map)['preference'], 2);
     expect((request.data as Map)['workspace_id'], 'ws-1');
@@ -940,7 +940,7 @@ void main() {
           }, 200);
         });
       final service = MaidCafeService(
-        baseUrl: 'https://mk.solsynth.dev',
+        baseUrl: 'https://mkc.solsynth.dev',
         cloudSync: CloudSyncService(vaultId: 'test'),
         accessToken: () async => 'solar-token',
         dio: dio,

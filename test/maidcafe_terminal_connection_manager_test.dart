@@ -148,7 +148,7 @@ void main() {
     addTearDown(manager.dispose);
 
     final target = MaidCafeTerminalTarget(
-      baseUrl: 'https://mk.solsynth.dev',
+      baseUrl: 'https://mkc.solsynth.dev',
       secret: '',
       relayDaemonId: 'daemon-1',
       ticketProvider: (columns, rows) async => throw const MaidCafeException(

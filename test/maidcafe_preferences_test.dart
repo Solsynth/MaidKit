@@ -5,7 +5,7 @@ import 'package:maid_kit/servers/maidcafe_service.dart';
 void main() {
   test('defaults and normalizes cloud endpoint', () {
     final settings = InMemoryMaidCafeSettings(
-      cloudUrl: 'https://mk.solsynth.dev///',
+      cloudUrl: 'https://mkc.solsynth.dev///',
     );
     expect(settings.cloudUrl, maidCafeDefaultCloudUrl);
   });

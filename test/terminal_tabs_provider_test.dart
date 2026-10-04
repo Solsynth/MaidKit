@@ -24,7 +24,7 @@ void main() {
     expect(
       maidCafeTerminalTransport(
         const MaidCafeTerminalTarget(
-          baseUrl: 'https://mk.solsynth.dev',
+          baseUrl: 'https://mkc.solsynth.dev',
           secret: '',
           relayDaemonId: 'daemon-1',
         ),

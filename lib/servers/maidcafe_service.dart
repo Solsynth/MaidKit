@@ -13,7 +13,7 @@ import 'server_models.dart';
 import 'systemd_models.dart';
 
 const maidCafeMinimumPort = 1024;
-const maidCafeDefaultCloudUrl = 'https://mk.solsynth.dev';
+const maidCafeDefaultCloudUrl = 'https://mkc.solsynth.dev';
 const maidCafeDefaultLocalDaemonUrl = 'http://127.0.0.1:8747';
 
 /// HMAC-SHA256 signature over [data] keyed by [secret], lowercase hex.

@@ -93,7 +93,7 @@ void main() {
       var invalidations = 0;
       final connector = MaidCafeServerConnectorImpl(
         service: service,
-        cloudUrl: () async => 'https://mk.solsynth.dev',
+        cloudUrl: () async => 'https://mkc.solsynth.dev',
         sudoPassword: (_) async => 'sudo-pass',
         runScript: ({required server, required script, sudoPassword}) async {
           capturedScript = script;
@@ -138,7 +138,7 @@ void main() {
       expect(encoded, isNotNull);
       final patched = utf8.decode(base64Decode(encoded!));
       expect(patched, contains('id = "daemon-new"'));
-      expect(patched, contains('cloudUrl = "https://mk.solsynth.dev"'));
+      expect(patched, contains('cloudUrl = "https://mkc.solsynth.dev"'));
       expect(patched, contains('cloudSecret = "cloud-secret"'));
       expect(savedUrl, 'http://127.0.0.1:8747');
       expect(savedDaemonId, 'daemon-new');
@@ -157,7 +157,7 @@ void main() {
     int? installedPort;
     final connector = MaidCafeServerConnectorImpl(
       service: service,
-      cloudUrl: () async => 'https://mk.solsynth.dev',
+      cloudUrl: () async => 'https://mkc.solsynth.dev',
       sudoPassword: (_) async => null,
       runScript: ({required server, required script, sudoPassword}) async {
         scriptRuns++;
@@ -190,7 +190,7 @@ void main() {
     expect(scriptRuns, 0);
     expect(installedDaemon?.id, 'daemon-new');
     expect(installedDaemon?.secret, 'cloud-secret');
-    expect(installedCloudUrl, 'https://mk.solsynth.dev');
+    expect(installedCloudUrl, 'https://mkc.solsynth.dev');
     expect(installedPort, 8747);
   });
 }

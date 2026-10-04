@@ -14,7 +14,7 @@ const _baseConfig = '''
  transport = "http"
  listen = "127.0.0.1:8747"
  metricsSecret = "metrics-secret"
- cloudUrl = "https://mk.solsynth.dev"
+ cloudUrl = "https://mkc.solsynth.dev"
  cloudSecret = "cloud-secret"
  metricsInterval = "1m"
  requestTimeout = "10s"
@@ -250,7 +250,7 @@ void main() {
       const secret = 'cloud-secret-with-"-quotes';
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: secret,
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
         apiSecret: 'metrics-secret',
@@ -406,7 +406,7 @@ void main() {
     final script = buildMaidCafeDaemonConfigScript(
       currentConfig: _baseConfig,
       daemonId: 'maidkit-1',
-      cloudUrl: 'https://mk.solsynth.dev',
+      cloudUrl: 'https://mkc.solsynth.dev',
       cloudSecret: 'cloud-secret',
       apiSecret: 'new-secret',
       transport: 'http',
@@ -450,12 +450,12 @@ void main() {
       final patched = patchMaidCafeConfigText(existing, {
         'id': '"new-id"',
         'maxConcurrentRuns': '8',
-        'cloudUrl': '"https://mk.solsynth.dev"',
+        'cloudUrl': '"https://mkc.solsynth.dev"',
       });
       expect(patched, contains('id = "new-id"'));
       expect(patched, contains('listen = "127.0.0.1:8747"'));
       expect(patched, contains('maxConcurrentRuns = 8'));
-      expect(patched, contains('cloudUrl = "https://mk.solsynth.dev"'));
+      expect(patched, contains('cloudUrl = "https://mkc.solsynth.dev"'));
     },
   );
 
@@ -794,7 +794,7 @@ command = "/bin/true"
     final script = buildMaidCafeDaemonConfigScript(
       currentConfig: _baseConfig,
       daemonId: 'maidkit-1',
-      cloudUrl: 'https://mk.solsynth.dev',
+      cloudUrl: 'https://mkc.solsynth.dev',
       cloudSecret: 'cloud-secret',
       transport: 'http',
       alarms: const [
@@ -887,7 +887,7 @@ command = "/bin/true"
   test('fresh installs deploy alarm fragments with the config', () {
     final script = buildMaidCafeDaemonInstallScript(
       daemonId: 'daemon-1',
-      cloudUrl: 'https://mk.solsynth.dev',
+      cloudUrl: 'https://mkc.solsynth.dev',
       cloudSecret: 'cloud-secret',
       artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
       alarms: const [
@@ -985,7 +985,7 @@ command = "/bin/true"
     test('the install script installs the helper before the config', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
         fileRoots: const [nginx],
@@ -1020,7 +1020,7 @@ command = "/bin/true"
     test('without privileged roots the standing grant is removed', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
         fileRoots: const [shared],
@@ -1072,7 +1072,7 @@ command = "/bin/true"
     test('a fresh install writes both halves of the routing', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
         priv: const MaidCafePrivSection(packages: true, firewall: true),
@@ -1103,7 +1103,7 @@ command = "/bin/true"
     test('grants alone install the helper and its rule', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
         packages: packages,
@@ -1118,7 +1118,7 @@ command = "/bin/true"
     test('an unmodelled priv table stays out of the config', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
       );
@@ -1134,7 +1134,7 @@ command = "/bin/true"
       final script = buildMaidCafeDaemonConfigScript(
         currentConfig: _baseConfig,
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         priv: const MaidCafePrivSection(packages: true, firewall: true),
       );
@@ -1152,7 +1152,7 @@ command = "/bin/true"
 [daemon]
 id = "maidkit-1"
 transport = "http"
-cloudUrl = "https://mk.solsynth.dev"
+cloudUrl = "https://mkc.solsynth.dev"
 cloudSecret = "cloud-secret"
 
 [daemon.priv]
@@ -1162,7 +1162,7 @@ helper = "/opt/maidkit-priv"
       final script = buildMaidCafeDaemonConfigScript(
         currentConfig: existing,
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
       );
       final config = decodeMaidCafeConfigFromScript(script);
@@ -1219,7 +1219,7 @@ helper = "/opt/maidkit-priv"
     test('the merge runs, and does not duplicate an existing section', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'daemon-1',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
       );
@@ -1316,7 +1316,7 @@ enabled = true
         buildMaidCafeDaemonConfigScript(
           currentConfig: current,
           daemonId: 'host',
-          cloudUrl: 'https://mk.solsynth.dev',
+          cloudUrl: 'https://mkc.solsynth.dev',
           cloudSecret: 'cloud-secret',
           transport: 'http',
           listenHost: '127.0.0.1',
@@ -1392,7 +1392,7 @@ enabled = true
     test('the install extracts the helper from the bundle', () {
       final script = buildMaidCafeDaemonInstallScript(
         daemonId: 'host',
-        cloudUrl: 'https://mk.solsynth.dev',
+        cloudUrl: 'https://mkc.solsynth.dev',
         cloudSecret: 'cloud-secret',
         artifactUrl: 'https://dist.example/maidcafe-daemon.tar',
       );
