@@ -1290,17 +1290,12 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
               conversations: conversations,
               scheme: scheme,
             ),
-            mainContent: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1120),
-                child: _buildChatColumn(
-                  servers: servers,
-                  mcpServers: mcpServers,
-                  scheme: scheme,
-                  compact: compact,
-                  windowTokens: windowTokens,
-                ),
-              ),
+            mainContent: _buildChat(
+              servers: servers,
+              mcpServers: mcpServers,
+              scheme: scheme,
+              compact: compact,
+              windowTokens: windowTokens,
             ),
           ),
         );
@@ -1471,68 +1466,18 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     );
   }
 
-  Widget _buildChatColumn({
+  /// The chat body: the log centred in the pane, the composer docked across
+  /// the pane's full width.
+  ///
+  /// Files dropped anywhere on the chat attach to the next message; the picker
+  /// behind the composer's attach button is the other way in.
+  Widget _buildChat({
     required List<Server> servers,
     required List<McpServer> mcpServers,
     required ColorScheme scheme,
     required bool compact,
     required int? windowTokens,
   }) {
-    final chat = Padding(
-      // The dock below owns the bottom margin, so its surface reaches the
-      // bottom edge of the pane.
-      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 0, compact ? 16 : 24, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: _buildMessageList(
-                    servers: servers,
-                    mcpServers: mcpServers,
-                    scheme: scheme,
-                  ),
-                ),
-                // Scroll-to-bottom affordance fades and scales in, as
-                // Solian's back-to-bottom button does, instead of popping.
-                Positioned(
-                  right: 12,
-                  bottom: 12,
-                  child: IgnorePointer(
-                    ignoring: !_showScrollToBottom,
-                    child: AnimatedOpacity(
-                      opacity: _showScrollToBottom ? 1 : 0,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeInOut,
-                      child: AnimatedScale(
-                        scale: _showScrollToBottom ? 1 : 0.8,
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                        child: FloatingActionButton.small(
-                          heroTag: 'agent-scroll-to-bottom-${widget.tabId}',
-                          tooltip: 'agentScrollToLatest'.tr(),
-                          onPressed: _scrollToLatest,
-                          child: const Icon(Symbols.arrow_downward),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _buildComposerDock(
-            compact: compact,
-            scheme: scheme,
-            windowTokens: windowTokens,
-          ),
-        ],
-      ),
-    );
-    // Files dropped anywhere on the chat attach to the next message; the
-    // picker behind the composer's attach button is the other way in.
     return DropTarget(
       onDragEntered: (_) => setState(() => _draggingFiles = true),
       onDragExited: (_) => setState(() => _draggingFiles = false),
@@ -1543,7 +1488,29 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          chat,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1120),
+                    child: _buildMessageArea(
+                      servers: servers,
+                      mcpServers: mcpServers,
+                      scheme: scheme,
+                      compact: compact,
+                    ),
+                  ),
+                ),
+              ),
+              _buildComposerDock(
+                compact: compact,
+                scheme: scheme,
+                windowTokens: windowTokens,
+              ),
+            ],
+          ),
           if (_draggingFiles)
             IgnorePointer(
               child: DecoratedBox(
@@ -1576,99 +1543,150 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     );
   }
 
-  /// The input end of the chat: the queued prompts and the composer, sitting
-  /// on a surface that only exists while the history is being read.
+  /// The log itself, held to the same insets as the composer's contents so the
+  /// two columns of text line up.
+  Widget _buildMessageArea({
+    required List<Server> servers,
+    required List<McpServer> mcpServers,
+    required ColorScheme scheme,
+    required bool compact,
+  }) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 0, compact ? 16 : 24, 0),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: _buildMessageList(
+              servers: servers,
+              mcpServers: mcpServers,
+              scheme: scheme,
+            ),
+          ),
+          // Scroll-to-bottom affordance fades and scales in, as
+          // Solian's back-to-bottom button does, instead of popping.
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: IgnorePointer(
+              ignoring: !_showScrollToBottom,
+              child: AnimatedOpacity(
+                opacity: _showScrollToBottom ? 1 : 0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: AnimatedScale(
+                  scale: _showScrollToBottom ? 1 : 0.8,
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                  child: FloatingActionButton.small(
+                    heroTag: 'agent-scroll-to-bottom-${widget.tabId}',
+                    tooltip: 'agentScrollToLatest'.tr(),
+                    onPressed: _scrollToLatest,
+                    child: const Icon(Symbols.arrow_downward),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The input end of the chat: the queued prompts and the composer, on the
+  /// bar that closes the pane.
   ///
-  /// At the latest message the backdrop is transparent, so the conversation
-  /// runs straight into the composer; once the list is scrolled back the same
-  /// area turns solid and lifts off the messages, which is what tells a reader
-  /// the composer is not part of the log. Solian's chat input does the same,
-  /// and the 300ms ease keeps the change from reading as a blink.
+  /// The bar reaches both pane edges rather than floating as a card inside
+  /// them, and keeps the log's own insets inside it, so the prompt sits where
+  /// the messages above it do.
+  ///
+  /// The bar rests a step off the pane's own surface; once the list is
+  /// scrolled back it takes the heavier fill and lifts off the messages, which
+  /// is what tells a reader the composer is not part of the log. Solian's chat
+  /// input does the same, and the 300ms ease keeps the change from reading as
+  /// a blink.
   Widget _buildComposerDock({
     required bool compact,
     required ColorScheme scheme,
     required int? windowTokens,
   }) {
     final readingHistory = _showScrollToBottom;
-    return Stack(
-      // The lifted surface's shadow is painted above this box, onto the
-      // messages it is separating the composer from.
-      clipBehavior: Clip.none,
-      children: [
-        Positioned.fill(
-          child: IgnorePointer(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-              decoration: BoxDecoration(
-                color: readingHistory
-                    ? scheme.surfaceContainer
-                    : Colors.transparent,
-                boxShadow: [
-                  if (readingHistory)
-                    BoxShadow(
-                      color: scheme.shadow.withValues(alpha: 0.2),
-                      blurRadius: 12,
-                      spreadRadius: 2,
-                      offset: const Offset(0, -4),
+    final gutter = compact ? 16.0 : 24.0;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      decoration: BoxDecoration(
+        color: readingHistory
+            ? scheme.surfaceContainerHighest
+            : scheme.surfaceContainer,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+        boxShadow: [
+          if (readingHistory)
+            BoxShadow(
+              color: scheme.shadow.withValues(alpha: 0.2),
+              blurRadius: 12,
+              spreadRadius: 2,
+              offset: const Offset(0, -4),
+            ),
+        ],
+      ),
+      // Ink has to land on the bar's surface rather than on the pane behind
+      // it.
+      child: Material(
+        type: MaterialType.transparency,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1120),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                gutter,
+                8,
+                gutter,
+                compact ? 16 : 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // The panel keeps its slot while empty so its height animates
+                  // in and out instead of the composer jumping.
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    alignment: Alignment.topCenter,
+                    child: _queuedPrompts.isEmpty
+                        ? const SizedBox(width: double.infinity)
+                        : Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _buildQueuedPrompts(scheme),
+                          ),
+                  ),
+                  AgentComposer(
+                    controller: _prompt,
+                    focusNode: _promptFocus,
+                    attachments: _attachments,
+                    working: _working,
+                    // A pending proposal owns the turn: its answer has to be run or
+                    // declined before anything else can be sent.
+                    enabled: _proposal == null,
+                    onAttach: _attachFromPicker,
+                    onAttachText: _attachText,
+                    onEditAttachment: _editAttachment,
+                    onRemoveAttachment: _removeAttachment,
+                    onSubmit: _submitPrompt,
+                    onStop: _interrupt,
+                    status: _AgentContextStatus(
+                      meter: _meter,
+                      windowTokens: windowTokens,
                     ),
+                    reasoning: _reasoning,
+                    onReasoningChanged: _selectReasoning,
+                  ),
                 ],
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(12),
-                ),
               ),
             ),
           ),
         ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(0, 0, 0, compact ? 16 : 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // The panel keeps its slot while empty so its height animates
-              // in and out instead of the composer jumping.
-              AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                alignment: Alignment.topCenter,
-                child: _queuedPrompts.isEmpty
-                    ? const SizedBox(width: double.infinity)
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const SizedBox(height: 12),
-                          _buildQueuedPrompts(scheme),
-                        ],
-                      ),
-              ),
-              const SizedBox(height: 12),
-              AgentComposer(
-                controller: _prompt,
-                focusNode: _promptFocus,
-                attachments: _attachments,
-                working: _working,
-                // A pending proposal owns the turn: its answer has to be run or
-                // declined before anything else can be sent.
-                enabled: _proposal == null,
-                onAttach: _attachFromPicker,
-                onAttachText: _attachText,
-                onEditAttachment: _editAttachment,
-                onRemoveAttachment: _removeAttachment,
-                onSubmit: _submitPrompt,
-                onStop: _interrupt,
-                status: _AgentContextStatus(
-                  meter: _meter,
-                  windowTokens: windowTokens,
-                ),
-                reasoning: _reasoning,
-                onReasoningChanged: _selectReasoning,
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -1815,7 +1833,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         return false;
       },
       child: ListView.separated(
-        padding: const EdgeInsets.only(top: 16),
+        padding: const EdgeInsets.only(top: 16, bottom: 16),
         controller: _messagesScroll,
         itemCount:
             _messages.length +

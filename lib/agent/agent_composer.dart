@@ -10,9 +10,10 @@ import 'agent_reasoning.dart';
 /// the one control that sends them.
 ///
 /// The shape follows Persynth's insight composer: attachments queue as a strip
-/// above the field, the field itself is the surface with no fill of its own,
-/// and the send control is the single filled button — disabled until there is
-/// something to send, and held back while an attachment could not be read.
+/// above the field, the field carries no surface of its own — the chat docks it
+/// on the bar that closes the pane, so the two read as one — and the send
+/// control is the single filled button: disabled until there is something to
+/// send, and held back while an attachment could not be read.
 ///
 /// A block pasted into the field at least [kPasteTextAttachmentChars] long
 /// leaves the field and becomes a text attachment, so a pasted log stays
@@ -149,134 +150,122 @@ class _AgentComposerState extends State<AgentComposer> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      elevation: 0,
-      color: scheme.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: scheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.attachments.isNotEmpty) ...[
-              SizedBox(
-                height: _AgentAttachmentTile.size,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: EdgeInsets.zero,
-                  itemCount: widget.attachments.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final attachment = widget.attachments[index];
-                    return _AgentAttachmentTile(
-                      attachment: attachment,
-                      onEdit: attachment.isImage
-                          ? null
-                          : () => widget.onEditAttachment(index),
-                      onPreview: attachment.isImage
-                          ? () => _previewAttachment(context, attachment)
-                          : null,
-                      onRemove: () => widget.onRemoveAttachment(index),
-                    );
-                  },
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.attachments.isNotEmpty) ...[
+            SizedBox(
+              height: _AgentAttachmentTile.size,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
+                itemCount: widget.attachments.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final attachment = widget.attachments[index];
+                  return _AgentAttachmentTile(
+                    attachment: attachment,
+                    onEdit: attachment.isImage
+                        ? null
+                        : () => widget.onEditAttachment(index),
+                    onPreview: attachment.isImage
+                        ? () => _previewAttachment(context, attachment)
+                        : null,
+                    onRemove: () => widget.onRemoveAttachment(index),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              IconButton(
+                tooltip: 'agentAttachFiles'.tr(),
+                onPressed: widget.enabled ? widget.onAttach : null,
+                icon: const Icon(Symbols.attach_file),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: widget.controller,
+                  focusNode: widget.focusNode,
+                  enabled: widget.enabled,
+                  keyboardType: TextInputType.multiline,
+                  maxLines: 5,
+                  minLines: 1,
+                  onChanged: _handleChanged,
+                  onTapOutside: (_) =>
+                      FocusManager.instance.primaryFocus?.unfocus(),
+                  onSubmitted: (_) => widget.onSubmit(),
+                  decoration: InputDecoration(
+                    hintText: 'agentPromptHint'.tr(),
+                    hintMaxLines: 1,
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 12,
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(height: 6),
-            ],
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
+              if (widget.working)
                 IconButton(
-                  tooltip: 'agentAttachFiles'.tr(),
-                  onPressed: widget.enabled ? widget.onAttach : null,
-                  icon: const Icon(Symbols.attach_file),
+                  tooltip: 'commonStop'.tr(),
+                  onPressed: widget.onStop,
+                  icon: const Icon(Symbols.stop),
                 ),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: widget.controller,
+                builder: (context, value, _) {
+                  // An attachment that could not be read keeps the turn here:
+                  // what was written and what would be sent have to be the
+                  // same thing. The tooltip says which control is holding it.
+                  final failed = widget.attachments.any(
+                    (attachment) => attachment.error != null,
+                  );
+                  final canSend =
+                      widget.enabled &&
+                      !failed &&
+                      (value.text.trim().isNotEmpty ||
+                          widget.attachments.any(
+                            (attachment) => attachment.isSendable,
+                          ));
+                  return IconButton.filled(
+                    tooltip: failed
+                        ? 'agentAttachmentSendBlocked'.tr()
+                        : widget.working
+                        ? 'agentQueueMessage'.tr()
+                        : 'agentSendMessage'.tr(),
+                    onPressed: canSend ? widget.onSubmit : null,
+                    icon: Icon(
+                      widget.working ? Symbols.schedule : Symbols.send,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              _ReasoningPill(
+                reasoning: widget.reasoning,
+                onChanged: widget.onReasoningChanged,
+              ),
+              if (widget.status case final status?) ...[
+                const SizedBox(width: 8),
                 Expanded(
-                  child: TextField(
-                    controller: widget.controller,
-                    focusNode: widget.focusNode,
-                    enabled: widget.enabled,
-                    keyboardType: TextInputType.multiline,
-                    maxLines: 5,
-                    minLines: 1,
-                    onChanged: _handleChanged,
-                    onTapOutside: (_) =>
-                        FocusManager.instance.primaryFocus?.unfocus(),
-                    onSubmitted: (_) => widget.onSubmit(),
-                    decoration: InputDecoration(
-                      hintText: 'agentPromptHint'.tr(),
-                      hintMaxLines: 1,
-                      border: InputBorder.none,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
-                ),
-                if (widget.working)
-                  IconButton(
-                    tooltip: 'commonStop'.tr(),
-                    onPressed: widget.onStop,
-                    icon: const Icon(Symbols.stop),
-                  ),
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: widget.controller,
-                  builder: (context, value, _) {
-                    // An attachment that could not be read keeps the turn here:
-                    // what was written and what would be sent have to be the
-                    // same thing. The tooltip says which control is holding it.
-                    final failed = widget.attachments.any(
-                      (attachment) => attachment.error != null,
-                    );
-                    final canSend =
-                        widget.enabled &&
-                        !failed &&
-                        (value.text.trim().isNotEmpty ||
-                            widget.attachments.any(
-                              (attachment) => attachment.isSendable,
-                            ));
-                    return IconButton.filled(
-                      tooltip: failed
-                          ? 'agentAttachmentSendBlocked'.tr()
-                          : widget.working
-                          ? 'agentQueueMessage'.tr()
-                          : 'agentSendMessage'.tr(),
-                      onPressed: canSend ? widget.onSubmit : null,
-                      icon: Icon(
-                        widget.working ? Symbols.schedule : Symbols.send,
-                      ),
-                    );
-                  },
+                  child: Align(alignment: Alignment.centerRight, child: status),
                 ),
               ],
-            ),
-            const SizedBox(height: 2),
-            Row(
-              children: [
-                _ReasoningPill(
-                  reasoning: widget.reasoning,
-                  onChanged: widget.onReasoningChanged,
-                ),
-                if (widget.status case final status?) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: status,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
