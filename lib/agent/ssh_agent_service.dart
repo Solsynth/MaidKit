@@ -249,6 +249,108 @@ class AgentSkillTarget {
       description.isEmpty ? '#$id: $name' : '#$id: $name — $description';
 }
 
+/// A live handle to a remote process an agent action started.
+///
+/// The chat page uses it to answer a prompt (a sudo password, a `[y/N]`
+/// question) and to stop a long-running command without cancelling the whole
+/// turn. Output itself is delivered through [AgentExecutionSink.onOutput]; the
+/// handle only owns the process side.
+class AgentExecutionSession {
+  AgentExecutionSession(this._session);
+
+  final SSHSession _session;
+  var _stopped = false;
+  var _closed = false;
+
+  /// True once [stop] asked the remote process to terminate, so the caller can
+  /// tell a stopped command from one that exited on its own.
+  bool get isStopped => _stopped;
+
+  /// Writes [line] and a newline to the process's stdin. A no-op once the
+  /// process is gone, so a late keystroke cannot throw into the UI.
+  ///
+  /// The password of a `sudo` prompt is only ever sent when the user asks for
+  /// it: the command being answered was written by the model, so filling it in
+  /// automatically would hand the stored secret to whatever prompt appears.
+  void sendLine(String line) {
+    if (_closed) return;
+    try {
+      _session.stdin.add(Uint8List.fromList(utf8.encode('$line\n')));
+    } catch (_) {
+      // The channel is already gone; the output stream reports the end.
+    }
+  }
+
+  /// Terminates the remote process and closes its channel. The caller's stream
+  /// then ends on the output that arrived, so a stopped command becomes a
+  /// partial result the turn can continue from instead of an interruption.
+  void stop() {
+    if (_stopped || _closed) return;
+    _stopped = true;
+    try {
+      _session.kill(SSHSignal.TERM);
+    } catch (_) {}
+    try {
+      _session.close();
+    } catch (_) {}
+  }
+
+  void _markClosed() => _closed = true;
+}
+
+/// Streaming and interaction hooks for the remote half of an agent action.
+///
+/// [onOutput] receives output in arrival order, [onSession] receives the live
+/// process once it starts so its owner can send input or stop it, and
+/// [interactive] allocates a pseudo terminal — without one a command such as
+/// `sudo` cannot prompt for a password at all.
+class AgentExecutionSink {
+  const AgentExecutionSink({
+    this.onOutput,
+    this.onSession,
+    this.interactive = false,
+  });
+
+  final void Function(String chunk)? onOutput;
+  final void Function(AgentExecutionSession session)? onSession;
+  final bool interactive;
+}
+
+/// The plain text a terminal would show for [value]: escape sequences removed
+/// and carriage-return rewrites settled, so a progress line reads as its last
+/// frame instead of carrying every frame the process drew.
+///
+/// A pseudo terminal reports its own `\r\n` line endings and repaints progress
+/// in place, neither of which belongs in the result sent to the model or shown
+/// in a finished tool card.
+String settleTerminalOutput(String value) {
+  // Control sequences must not survive into the text, but a bare escape is
+  // otherwise kept: the pattern mirrors the terminal's own stripper.
+  final plain = value
+      .replaceAll(
+        RegExp(
+          r'\x1B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])',
+        ),
+        '',
+      )
+      .replaceAll('\r\n', '\n');
+  final settled = StringBuffer();
+  var first = true;
+  for (final line in plain.split('\n')) {
+    if (!first) settled.write('\n');
+    first = false;
+    final frames = line.split('\r');
+    // The last frame is what the line reads as; a frame that came back empty
+    // only moved the cursor home, leaving what was already there on screen.
+    var frame = frames.last;
+    if (frame.isEmpty && frames.length > 1) {
+      frame = frames[frames.length - 2];
+    }
+    settled.write(frame);
+  }
+  return settled.toString();
+}
+
 /// A deliberately small remote-tool boundary. The model can propose actions,
 /// but this class never executes one until the UI explicitly calls [execute].
 class SshAgentService {
@@ -504,11 +606,13 @@ class SshAgentService {
     AgentProposal proposal, {
     String? snippetScript,
     AgentCancelToken? cancelToken,
+    AgentExecutionSink? sink,
   }) => executeProposal(
     client,
     proposal,
     snippetScript: snippetScript,
     cancelToken: cancelToken,
+    sink: sink,
   );
 
   /// Runs the remote half of [proposal] over [client]. Shared by the chat page
@@ -518,40 +622,36 @@ class SshAgentService {
     AgentProposal proposal, {
     String? snippetScript,
     AgentCancelToken? cancelToken,
+    AgentExecutionSink? sink,
   }) async {
-    SSHSession? session;
-    void closeSession() {
-      session?.close();
-    }
-
-    cancelToken?.register(closeSession);
     try {
       final path = proposal.arguments['path'] as String?;
       switch (proposal.kind) {
         case AgentActionKind.command:
-          session = await client.execute(
+          return await _runSession(
+            client,
             proposal.arguments['command'] as String,
+            // A PTY is what lets a command that prompts — `sudo`, `read`,
+            // a credential helper — ask the user for input at all.
+            usePty: sink?.interactive ?? false,
+            sink: sink,
+            cancelToken: cancelToken,
           );
-          cancelToken?.throwIfCancelled();
-          final output = await utf8.decoder.bind(session.stdout).join();
-          final error = await utf8.decoder.bind(session.stderr).join();
-          await session.done;
-          cancelToken?.throwIfCancelled();
-          return _limit('$output$error');
         case AgentActionKind.runSnippet:
           if (snippetScript == null || snippetScript.trim().isEmpty) {
             throw ArgumentError('The saved snippet is empty.');
           }
-          session = await client.execute('sh -s');
-          session.stdin.add(
-            Uint8List.fromList(utf8.encode('$snippetScript\n')),
+          // A snippet's script arrives on stdin, so it must not hold a PTY:
+          // the terminal keeps some shells open past end-of-input and the
+          // exit status of a snippet has to be deterministic.
+          return await _runSession(
+            client,
+            'sh -s',
+            stdin: '$snippetScript\n',
+            usePty: false,
+            sink: sink,
+            cancelToken: cancelToken,
           );
-          await session.stdin.close();
-          final output = await utf8.decoder.bind(session.stdout).join();
-          final error = await utf8.decoder.bind(session.stderr).join();
-          await session.done;
-          cancelToken?.throwIfCancelled();
-          return _limit('$output$error');
         case AgentActionKind.readFile:
           if (path == null || path.isEmpty) {
             throw ArgumentError('A file path is required to read a file.');
@@ -608,10 +708,75 @@ class SshAgentService {
         throw const AgentCancelledException();
       }
       rethrow;
-    } finally {
-      cancelToken?.unregister(closeSession);
     }
   }
+
+  /// Runs one remote process, forwarding its output as it arrives and letting
+  /// the sink's owner answer prompts or stop it.
+  ///
+  /// Output is capped while it is collected: a command that never ends would
+  /// otherwise grow both the socket buffer and the UI's log without bound, and
+  /// the result the model receives is truncated well below this anyway.
+  static Future<String> _runSession(
+    SSHClient client,
+    String command, {
+    String? stdin,
+    required bool usePty,
+    AgentExecutionSink? sink,
+    AgentCancelToken? cancelToken,
+  }) async {
+    final session = await client.execute(
+      command,
+      pty: usePty
+          ? const SSHPtyConfig(type: 'xterm-256color', width: 120, height: 40)
+          : null,
+    );
+    final handle = AgentExecutionSession(session);
+    sink?.onSession?.call(handle);
+    void abort() => handle.stop();
+    cancelToken?.register(abort);
+    final output = StringBuffer();
+    // Malformed bytes are replaced rather than thrown: a command may print
+    // binary, and the turn must not fail because of what it printed.
+    const decoder = Utf8Decoder(allowMalformed: true);
+    void collect(String text) {
+      final remaining = _maxStreamedCharacters - output.length;
+      if (remaining <= 0) return;
+      final kept = text.length <= remaining
+          ? text
+          : text.substring(0, remaining);
+      output.write(kept);
+      sink?.onOutput?.call(kept);
+    }
+
+    final stdoutDone = decoder.bind(session.stdout).listen(collect).asFuture();
+    final stderrDone = decoder.bind(session.stderr).listen(collect).asFuture();
+    if (stdin != null) {
+      session.stdin.add(Uint8List.fromList(utf8.encode(stdin)));
+      await session.stdin.close();
+    }
+    try {
+      await session.done;
+      await Future.wait([stdoutDone, stderrDone]);
+    } finally {
+      handle._markClosed();
+      cancelToken?.unregister(abort);
+    }
+    cancelToken?.throwIfCancelled();
+    final exitCode = session.exitCode;
+    // The status is appended after truncation: what a command was stopped or
+    // failed with matters more than the tail of a long dump.
+    final status = handle.isStopped
+        ? '\n[stopped by user]'
+        : exitCode == null || exitCode == 0
+        ? ''
+        : '\n[exit $exitCode]';
+    return '${_limit(settleTerminalOutput(output.toString()))}$status';
+  }
+
+  /// Largest command output kept in memory while it streams. The UI log is the
+  /// reason for a bound at all; what reaches the model is cut shorter still.
+  static const _maxStreamedCharacters = 64 * 1024;
 
   /// Opens one SFTP channel for an action and always closes it afterwards.
   ///

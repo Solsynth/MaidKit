@@ -15,11 +15,15 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
+import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/terminal_session_adapter.dart'
+    show SudoPromptAutofill;
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/agent/mcp_client.dart';
 import 'package:maid_kit/agent/mcp_config_parser.dart';
@@ -129,6 +133,19 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   bool _working = false;
   bool _personalityProviderProvisioned = false;
   AgentCancelToken? _activeToken;
+  // The command an approved action is running, and the chat card streaming its
+  // output. The session answers typed input and stops the process on its own,
+  // so a stuck or prompting command never has to cancel the whole turn.
+  AgentExecutionSession? _activeCommand;
+  // Index of the tool card currently streaming, or -1 when none is.
+  int _liveToolIndex = -1;
+  bool _commandAcceptsInput = false;
+  bool _commandPrompting = false;
+  String? _commandPassword;
+  // Reused from the terminal: the same watcher decides whether the remote is
+  // showing a sudo password prompt, so the card can offer the saved secret
+  // without a second, drifting matcher.
+  SudoPromptAutofill? _commandAutofill;
   // MCP tools and skills gathered when a turn starts. Reused for the
   // continuation after an approved action so the model always sees the same
   // tool set across the request/execute/continue cycle.
@@ -583,6 +600,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         return;
       }
       SSHClient? client;
+      Server? targetServer;
       final serverId = approvedProposal.serverId;
       if (serverId != null) {
         final server = servers
@@ -591,6 +609,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         if (server == null) {
           throw StateError('agentServerGone'.tr());
         }
+        targetServer = server;
         if (ref.read(connectionManagerProvider).clientFor(server.id) == null &&
             !await connectForStatistics(context, ref, server)) {
           if (mounted) setState(() => _reconnectRequired = true);
@@ -614,22 +633,42 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       );
       final cancelToken = AgentCancelToken();
       _activeToken = cancelToken;
-      final result = await _executeProposal(
-        agent,
-        client,
+      final toolIndex = await _beginToolCard(
         approvedProposal,
-        cancelToken,
+        autoApproved: autoApproved,
+        server: targetServer,
       );
+      if (!mounted) return;
+      final String result;
+      try {
+        result = await _executeProposal(
+          agent,
+          client,
+          approvedProposal,
+          cancelToken,
+          sink: _commandSink(toolIndex),
+        );
+      } catch (_) {
+        // The card has to stop streaming even when the action never produced a
+        // result, or it would keep the stop control and the input field alive
+        // for a run that is over. What the process printed stays on screen.
+        if (mounted && toolIndex < _messages.length) {
+          setState(() {
+            _messages[toolIndex] = _messages[toolIndex].copyWith(live: false);
+            _endToolCard();
+          });
+        }
+        rethrow;
+      }
       if (!mounted) {
         return;
       }
       setState(() {
-        _messages.add(
-          _AgentMessage.tool(
-            '${approvedProposal.title}:\n$result',
-            autoApproved: autoApproved,
-          ),
+        _messages[toolIndex] = _AgentMessage.tool(
+          '${approvedProposal.title}:\n$result',
+          autoApproved: autoApproved,
         );
+        _endToolCard();
         _proposal = null;
         _reconnectRequired = false;
       });
@@ -791,12 +830,108 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     );
   }
 
+  /// Adds the tool card for an action that is about to run and returns its
+  /// index. The card streams the command's output in place until the finished
+  /// result replaces it, so a long command is visible while it runs instead of
+  /// appearing all at once when it ends.
+  Future<int> _beginToolCard(
+    AgentProposal proposal, {
+    required bool autoApproved,
+    required Server? server,
+  }) async {
+    final password = server == null ? null : await _storedSudoPassword(server);
+    if (!mounted) return _liveToolIndex;
+    final index = _messages.length;
+    setState(() {
+      _messages.add(
+        _AgentMessage.tool(
+          '${proposal.title}:\n',
+          autoApproved: autoApproved,
+          live: true,
+        ),
+      );
+      _liveToolIndex = index;
+      // A command may prompt for anything; a snippet's stdin already carries
+      // its script, so it cannot take typed input on top.
+      _commandAcceptsInput = proposal.kind == AgentActionKind.command;
+      _commandPrompting = false;
+      _commandPassword = password;
+      _commandAutofill = password == null ? null : SudoPromptAutofill(password);
+    });
+    _scrollToBottom();
+    return index;
+  }
+
+  /// Forgets the streaming card. Safe to call when none is live.
+  void _endToolCard() {
+    _liveToolIndex = -1;
+    _activeCommand = null;
+    _commandAcceptsInput = false;
+    _commandPrompting = false;
+    _commandPassword = null;
+    _commandAutofill = null;
+  }
+
+  AgentExecutionSink _commandSink(int index) => AgentExecutionSink(
+    interactive: true,
+    onOutput: (chunk) => _appendCommandOutput(index, chunk),
+    onSession: (session) => _activeCommand = session,
+  );
+
+  /// Appends one chunk of command output to the live card, watching it for a
+  /// sudo prompt so the card can offer the server's saved password.
+  void _appendCommandOutput(int index, String chunk) {
+    if (!mounted || index < 0 || index >= _messages.length) return;
+    final message = _messages[index];
+    if (!message.live) return;
+    _commandAutofill?.inspect(Uint8List.fromList(utf8.encode(chunk)));
+    final prompting = _commandAutofill?.prompting ?? false;
+    setState(() {
+      _messages[index] = message.copyWith(text: message.text + chunk);
+      _commandPrompting = prompting;
+    });
+    _scrollToBottom();
+  }
+
+  /// Answers a prompt on the running command with a line of typed input.
+  void _sendCommandInput(String line) {
+    if (line.isEmpty) return;
+    _activeCommand?.sendLine(line);
+    if (mounted) setState(() => _commandPrompting = false);
+  }
+
+  /// Answers a sudo prompt with the target server's saved password.
+  ///
+  /// Only ever sent on this explicit request: the command came from the model,
+  /// so filling the secret in automatically would leak it to any prompt the
+  /// model's command chooses to print.
+  void _sendSavedPassword() {
+    final password = _commandPassword;
+    if (password == null) return;
+    _activeCommand?.sendLine(password);
+    if (mounted) setState(() => _commandPrompting = false);
+  }
+
+  /// Stops the running command, keeping the turn: the model receives the
+  /// output so far and a note that the command was stopped.
+  void _stopActiveCommand() => _activeCommand?.stop();
+
+  Future<String?> _storedSudoPassword(Server server) async {
+    final credential = await ref
+        .read(serverRepositoryProvider)
+        .credentialFor(server);
+    return credential.type == CredentialType.password
+        ? credential.password
+        : null;
+  }
+
   Future<String> _executeProposal(
     SshAgentService agent,
     SSHClient? client,
     AgentProposal proposal,
-    AgentCancelToken cancelToken,
-  ) async {
+    AgentCancelToken cancelToken, {
+    AgentExecutionSink? sink,
+  }) async {
     final snippets = ref.read(snippetRepositoryProvider);
     switch (proposal.kind) {
       case AgentActionKind.createSnippet:
@@ -821,6 +956,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           proposal,
           snippetScript: snippet.script,
           cancelToken: cancelToken,
+          sink: sink,
         );
       case AgentActionKind.command:
       case AgentActionKind.readFile:
@@ -830,6 +966,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           _requireClient(client),
           proposal,
           cancelToken: cancelToken,
+          sink: sink,
         );
       case AgentActionKind.mcpToolCall:
         final serverId = proposal.mcpServerId;
@@ -1855,7 +1992,19 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
               index == _messages.length + (pendingProposal != null ? 1 : 0)) {
             return const _AgentThinkingIndicator();
           }
-          return _MessageCard(message: _messages[index]);
+          return _MessageCard(
+            message: _messages[index],
+            liveTool: index == _liveToolIndex
+                ? _LiveToolControl(
+                    interactive: _commandAcceptsInput,
+                    prompting: _commandPrompting,
+                    hasSavedPassword: _commandPassword != null,
+                    onInput: _sendCommandInput,
+                    onSendSavedPassword: _sendSavedPassword,
+                    onStop: _stopActiveCommand,
+                  )
+                : null,
+          );
         },
       ),
     );
@@ -1953,6 +2102,7 @@ class _AgentMessage {
     this.kind, {
     required this.autoApproved,
     this.attachments = const [],
+    this.live = false,
   });
   const _AgentMessage.user(
     String text, {
@@ -1965,14 +2115,29 @@ class _AgentMessage {
        );
   const _AgentMessage.assistant(String text)
     : this(text, _MessageKind.assistant, autoApproved: false);
-  const _AgentMessage.tool(String text, {bool autoApproved = false})
-    : this(text, _MessageKind.tool, autoApproved: autoApproved);
+  const _AgentMessage.tool(
+    String text, {
+    bool autoApproved = false,
+    bool live = false,
+  }) : this(text, _MessageKind.tool, autoApproved: autoApproved, live: live);
   final String text;
   final _MessageKind kind;
   final bool autoApproved;
 
+  /// Whether this tool call is still running and appending to [text], which
+  /// makes its card show the live output with the stop and input controls.
+  final bool live;
+
   /// What the turn was sent with. Only a user turn has any.
   final List<AgentAttachment> attachments;
+
+  _AgentMessage copyWith({String? text, bool? live}) => _AgentMessage(
+    text ?? this.text,
+    kind,
+    autoApproved: autoApproved,
+    attachments: attachments,
+    live: live ?? this.live,
+  );
 }
 
 class _QueuedPrompt {
@@ -2477,20 +2642,32 @@ String _relativeTime(DateTime time) {
 }
 
 class _MessageCard extends StatelessWidget {
-  const _MessageCard({required this.message});
+  const _MessageCard({required this.message, this.liveTool});
   final _AgentMessage message;
+
+  /// Controls for a tool card that is still running. Non-null only for the
+  /// message of the action currently executing.
+  final _LiveToolControl? liveTool;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     if (message.kind == _MessageKind.tool) {
+      final live = liveTool;
       return Align(
         alignment: Alignment.centerLeft,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: _ToolCallCard(
-            text: message.text,
-            autoApproved: message.autoApproved,
-          ),
+          child: message.live && live != null
+              ? _LiveToolCard(
+                  text: message.text,
+                  autoApproved: message.autoApproved,
+                  control: live,
+                )
+              : _ToolCallCard(
+                  text: message.text,
+                  autoApproved: message.autoApproved,
+                ),
         ),
       );
     }
@@ -2576,6 +2753,227 @@ class _MessageCard extends StatelessWidget {
   }
 }
 
+/// What the live tool card needs from the chat that owns the running command.
+class _LiveToolControl {
+  const _LiveToolControl({
+    required this.interactive,
+    required this.prompting,
+    required this.hasSavedPassword,
+    required this.onInput,
+    required this.onSendSavedPassword,
+    required this.onStop,
+  });
+
+  /// Whether the running action can take typed input at all. A snippet reads
+  /// its script from stdin, so it never can.
+  final bool interactive;
+
+  /// Whether the remote currently shows a prompt worth answering.
+  final bool prompting;
+
+  /// Whether the target server has a saved password worth offering.
+  final bool hasSavedPassword;
+
+  final ValueChanged<String> onInput;
+  final VoidCallback onSendSavedPassword;
+  final VoidCallback onStop;
+}
+
+/// The card of a tool call that is still running: output streams in as the
+/// process writes it, and the running command can be answered or stopped
+/// without cancelling the turn that asked for it.
+class _LiveToolCard extends StatefulWidget {
+  const _LiveToolCard({
+    required this.text,
+    required this.autoApproved,
+    required this.control,
+  });
+
+  final String text;
+  final bool autoApproved;
+  final _LiveToolControl control;
+
+  @override
+  State<_LiveToolCard> createState() => _LiveToolCardState();
+}
+
+class _LiveToolCardState extends State<_LiveToolCard> {
+  final _input = TextEditingController();
+  final _inputFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _input.dispose();
+    _inputFocus.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final text = _input.text.trim();
+    if (text.isEmpty) return;
+    widget.control.onInput(text);
+    _input.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final separator = widget.text.indexOf('\n');
+    final title = separator < 0
+        ? widget.text
+        : widget.text
+              .substring(0, separator)
+              .replaceFirst(RegExp(r':\s*$'), '');
+    final content = separator < 0 ? '' : widget.text.substring(separator + 1);
+    final control = widget.control;
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+            child: Row(
+              children: [
+                Icon(Symbols.terminal, size: 16, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                if (widget.autoApproved) ...[
+                  const SizedBox(width: 8),
+                  const _AutoApprovedBadge(),
+                ],
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'agentStopCommand'.tr(),
+                  onPressed: control.onStop,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Symbols.stop, size: 18),
+                ),
+              ],
+            ),
+          ),
+          if (content.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+              // MaidTerm renders what a PTY actually emitted: progress lines
+              // rewrite in place and colors survive, instead of the raw
+              // carriage returns landing in a text block.
+              child: SizedBox(
+                height: 180,
+                child: AnsiLogView(
+                  text: content,
+                  streaming: true,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          if (control.interactive)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (control.prompting) ...[
+                    Row(
+                      children: [
+                        Icon(
+                          Symbols.password,
+                          size: 14,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'agentCommandWaitingInput'.tr(),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        if (control.hasSavedPassword)
+                          TextButton.icon(
+                            onPressed: control.onSendSavedPassword,
+                            icon: const Icon(Symbols.key, size: 16),
+                            label: Text('agentSendSavedPassword'.tr()),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _input,
+                          focusNode: _inputFocus,
+                          onSubmitted: (_) => _submit(),
+                          style: TextStyle(
+                            fontFamily: MaidKitFonts.mono,
+                            fontSize: 12,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                            hintText: 'agentCommandInputHint'.tr(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        tooltip: 'agentSendCommandInput'.tr(),
+                        onPressed: _submit,
+                        icon: const Icon(Symbols.send, size: 18),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AutoApprovedBadge extends StatelessWidget {
+  const _AutoApprovedBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        'agentAutoApproved'.tr(),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: scheme.onPrimaryContainer,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 class _ToolCallCard extends StatelessWidget {
   const _ToolCallCard({required this.text, this.autoApproved = false});
   final String text;
@@ -2621,20 +3019,7 @@ class _ToolCallCard extends StatelessWidget {
           ),
           if (autoApproved) ...[
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'agentAutoApproved'.tr(),
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onPrimaryContainer,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+            const _AutoApprovedBadge(),
           ],
         ],
       ),
