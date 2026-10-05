@@ -250,9 +250,10 @@ class _AgentComposerState extends State<AgentComposer> {
               ),
             ],
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Row(
             children: [
+              const SizedBox(width: 4),
               _ReasoningPill(
                 reasoning: widget.reasoning,
                 onChanged: widget.onReasoningChanged,

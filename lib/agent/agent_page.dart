@@ -1774,12 +1774,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1120),
             child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                gutter,
-                8,
-                gutter,
-                compact ? 16 : 24,
-              ),
+              padding: EdgeInsets.fromLTRB(gutter, 4, gutter, 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
