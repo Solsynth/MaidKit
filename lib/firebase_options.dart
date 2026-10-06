@@ -1,6 +1,6 @@
 // Generated manually from the platform Firebase configs (the FlutterFire CLI
 // requires a ruby `xcodeproj` gem this project does not install): values come
-// from android/app/google-services.json and ios/Runner/GoogleService-Info.plist
+// from android/app/google-services.json and ios/MaidKit/GoogleService-Info.plist
 // (project `maidkit-0x001`, project number 332533411625). The macOS app uses
 // the same Apple app as iOS — both bundle ids are `dev.solsynth.maid`.
 //

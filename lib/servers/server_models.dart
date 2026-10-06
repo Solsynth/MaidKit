@@ -227,7 +227,7 @@ ServerConnectionType serverConnectionTypeFromName(String? raw) =>
 
 /// Whether serial-port servers are offered in the UI and can be connected.
 ///
-/// On macOS, the unsandboxed Runner opens /dev/cu.* device nodes directly.
+/// On macOS, the unsandboxed MaidKit host opens /dev/cu.* device nodes directly.
 /// Windows and Linux need their own transport before this flag can cover them.
 /// A browser has no device nodes and no platform channel to open one, so
 /// serial servers are offered read-only there and cannot be connected.

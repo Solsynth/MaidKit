@@ -71,7 +71,7 @@ class SerialPortSession {
 
 /// Client for the serial-port implementation hosted by the macOS app.
 ///
-/// The app is not sandboxed, so the native Runner opens `/dev/cu.*` directly.
+/// The app is not sandboxed, so the native MaidKit host opens `/dev/cu.*` directly.
 /// Dart communicates with it over a method channel; serial bytes are delivered
 /// back on the same channel as native `data` calls.
 class SerialPortClient {
