@@ -1482,6 +1482,15 @@ Stream<List<ActivePortForward>> _watchPortForwards(
   yield* manager.portForwards;
 }
 
+/// The forwards the dashboard surfaces, empty in a browser: the web build has
+/// no SSH transport, so no port can be forwarded there.
+final dashboardPortForwardsProvider = Provider<List<ActivePortForward>>(
+  (ref) => kIsWeb
+      ? const <ActivePortForward>[]
+      : ref.watch(portForwardsProvider).asData?.value ??
+            const <ActivePortForward>[],
+);
+
 /// Saved port-forwarding presets for one server, oldest first.
 final portForwardConfigsProvider =
     StreamProvider.family<List<PortForwardConfig>, int>((ref, serverId) {

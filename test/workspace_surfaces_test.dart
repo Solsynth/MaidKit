@@ -60,6 +60,8 @@ void main() {
   Future<void> pumpWorkspace(
     WidgetTester tester, {
     SshConnectionManager? connectionManager,
+    List<Server> servers = const <Server>[],
+    Size viewSize = const Size(1200, 800),
     List<ActivePortForward> forwards = const [
       ActivePortForward(
         id: 'f1',
@@ -74,7 +76,7 @@ void main() {
       ),
     ],
   }) async {
-    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.physicalSize = viewSize;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -85,7 +87,7 @@ void main() {
         fallbackLocale: const Locale('en', 'US'),
         child: ProviderScope(
           overrides: [
-            serversProvider.overrideWith((ref) => Stream.value(<Server>[])),
+            serversProvider.overrideWith((ref) => Stream.value(servers)),
             savedCredentialsProvider.overrideWith(
               (ref) => Stream.value(<SavedCredential>[]),
             ),
@@ -132,6 +134,50 @@ void main() {
     },
   );
 
+  testWidgets('a wide pane keeps the port-forward button above the catalog', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester, servers: [_server]);
+
+    expect(
+      find.ancestor(
+        of: find.text('activePortForwards'.plural(1)),
+        matching: find.byType(CustomScrollView),
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('a narrow pane moves the port-forward button into the footer', (
+    tester,
+  ) async {
+    // A pane this narrow has no room for the fixed strip above the catalog.
+    await pumpWorkspace(
+      tester,
+      servers: [_server],
+      viewSize: const Size(420, 1400),
+    );
+
+    final chip = find.text('activePortForwards'.plural(1));
+    expect(chip, findsOneWidget);
+    // It renders inside the catalog's own scroll view, below the card it
+    // forwards for, and still hands its tap to the status sheet.
+    expect(
+      find.ancestor(of: chip, matching: find.byType(CustomScrollView)),
+      findsOneWidget,
+    );
+    expect(
+      tester.getTopLeft(chip).dy,
+      greaterThan(tester.getTopLeft(find.text('Build host')).dy),
+    );
+
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SheetScaffold), findsOneWidget);
+    expect(find.text('test-server'), findsOneWidget);
+  });
+
   testWidgets('managed port forwards show locked in the sheet', (tester) async {
     await pumpWorkspace(
       tester,
@@ -157,3 +203,16 @@ void main() {
     expect(find.byTooltip('portForwardingStop'.tr()), findsNothing);
   });
 }
+
+/// One SSH server: enough for the dashboard to render its catalog and footer.
+final _server = Server(
+  id: 1,
+  name: 'Build host',
+  host: 'build.example',
+  port: 22,
+  username: 'builder',
+  collectStats: true,
+  collectSystemInfo: true,
+  connectionType: 'ssh',
+  maidCafeTerminalViaCloud: false,
+);

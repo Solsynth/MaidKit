@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -35,6 +34,11 @@ import 'tailscale_settings_section.dart';
 import 'tailscale_ssh_socket.dart';
 import 'terminal_tabs_provider.dart';
 import 'workspace_snapshot.dart';
+
+/// Pane width below which the dashboard counts as narrow: the port-forward
+/// chip leaves the fixed strip above the catalog for the bottom action bar,
+/// where it costs the cards no height. The workspace's own narrow breakpoint.
+const _portForwardFooterBreakpoint = 768.0;
 
 class ServerDashboardTab extends ConsumerWidget {
   const ServerDashboardTab({super.key});
@@ -248,34 +252,45 @@ class _ServersCatalog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaidKitAppScaffold(
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _WorkspaceSurfacesRow(),
-          Expanded(
-            child: servers.when(
-              data: (items) => items.isEmpty
-                  ? _EmptyServers(onAdd: onAdd)
-                  : _ServerGrid(
-                      servers: items,
-                      sessions: sessions,
-                      onConnect: onConnect,
-                      onReconnectAll: onReconnectAll,
-                      onEdit: onEdit,
-                      onDelete: onDelete,
-                      onReorder: onReorder,
-                      onOpenDetail: onOpenDetail,
-                      onOpenTerminal: onOpenTerminal,
-                      onOpenFiles: onOpenFiles,
-                      onRefresh: onRefresh,
+      // The pane owns the narrow decision: the strip above the catalog and the
+      // catalog's own footer must agree on where the port-forward chip lives.
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final narrow = constraints.maxWidth < _portForwardFooterBreakpoint;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _WorkspaceSurfacesRow(narrow: narrow),
+              Expanded(
+                child: servers.when(
+                  data: (items) => items.isEmpty
+                      ? _EmptyServers(onAdd: onAdd)
+                      : _ServerGrid(
+                          narrow: narrow,
+                          servers: items,
+                          sessions: sessions,
+                          onConnect: onConnect,
+                          onReconnectAll: onReconnectAll,
+                          onEdit: onEdit,
+                          onDelete: onDelete,
+                          onReorder: onReorder,
+                          onOpenDetail: onOpenDetail,
+                          onOpenTerminal: onOpenTerminal,
+                          onOpenFiles: onOpenFiles,
+                          onRefresh: onRefresh,
+                        ),
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (error, _) => Center(
+                    child: Text(
+                      'serversLoadError'.tr(args: [error.toString()]),
                     ),
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, _) => Center(
-                child: Text('serversLoadError'.tr(args: [error.toString()])),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'servers-create-fab',
@@ -289,6 +304,7 @@ class _ServersCatalog extends StatelessWidget {
 
 class _ServerGrid extends ConsumerStatefulWidget {
   const _ServerGrid({
+    required this.narrow,
     required this.servers,
     required this.sessions,
     required this.onConnect,
@@ -302,6 +318,9 @@ class _ServerGrid extends ConsumerStatefulWidget {
     required this.onRefresh,
   });
 
+  /// Whether the pane is narrow enough for the port-forward chip to live in
+  /// this widget's footer instead of the strip above the catalog.
+  final bool narrow;
   final List<Server> servers;
   final List<SshSessionInfo> sessions;
   final ValueChanged<Server> onConnect;
@@ -709,11 +728,28 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
   }
 
   Widget _dashboardActions(BuildContext context) {
+    // A narrow pane keeps the port-forward chip down here with the other
+    // dashboard controls; above the catalog it would cost the cards height.
+    final activeForwards = ref.watch(dashboardPortForwardsProvider);
+    final forwards = widget.narrow
+        ? activeForwards
+        : const <ActivePortForward>[];
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (forwards.isNotEmpty) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => showPortForwardSheet(context, forwards),
+                icon: const Icon(Symbols.swap_horiz, size: 18),
+                label: Text('activePortForwards'.plural(forwards.length)),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           DashboardActionsBar(
             isArranging: _isArranging,
             canArrange: widget.servers.length > 1,
@@ -744,16 +780,20 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
 /// The workspace-wide surfaces the navigation rail used to host: live port
 /// forwards and deploy sessions nobody is looking at. Both hide themselves
 /// when there is nothing to show.
+///
+/// On a narrow pane ([narrow]) the port-forward chip is not here: it belongs to
+/// the dashboard's bottom action bar, which cannot afford it above the cards.
 class _WorkspaceSurfacesRow extends ConsumerWidget {
-  const _WorkspaceSurfacesRow();
+  const _WorkspaceSurfacesRow({required this.narrow});
+
+  /// Whether the pane is narrow enough to have given the port-forward chip to
+  /// the catalog's footer.
+  final bool narrow;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // A browser has no SSH transport, so no port can be forwarded there.
-    final forwards = kIsWeb
-        ? const <ActivePortForward>[]
-        : ref.watch(portForwardsProvider).asData?.value ??
-              const <ActivePortForward>[];
+    final activeForwards = ref.watch(dashboardPortForwardsProvider);
+    final forwards = narrow ? const <ActivePortForward>[] : activeForwards;
     final hiddenDeploys = ref
         .watch(deploySessionsProvider)
         .where((session) => !session.modalVisible)
