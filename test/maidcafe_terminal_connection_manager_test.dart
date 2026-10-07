@@ -465,8 +465,10 @@ void main() {
 
   test('fails the handshake when the daemon refuses the credential', () async {
     // A daemon that answers like the real one does for a wrong secret.
+    final seen = <String>[];
     final daemon = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     daemon.listen((request) async {
+      seen.add(request.headers.value('authorization') ?? '');
       request.response.statusCode = HttpStatus.unauthorized;
       request.response.write('{"ok":false,"error":"unauthorized"}');
       await request.response.close();
@@ -504,6 +506,12 @@ void main() {
       ),
     );
     expect(manager.current, isEmpty);
+    // The upgrade attempt carries the credential as a subprotocol token, so the
+    // only request with an Authorization header is the probe — and it presents
+    // the secret itself. Presenting the encoded token instead would have the
+    // daemon answer 401 to a valid credential and send the user after the wrong
+    // thing.
+    expect(seen.where((value) => value.isNotEmpty), ['Bearer wrong']);
   });
 
   test('a switched-off terminal is reported as switched off', () async {

@@ -161,13 +161,20 @@ MaidCafeTerminalHandshakeFailure maidCafeHandshakeFailureFrom(
 /// Asks the daemon which policy refused a failed handshake, or null when it
 /// cannot be asked.
 ///
-/// Browser builds cannot make the request (the daemon sets no CORS headers) and
-/// a relayed route authenticates at the cloud, so both keep the generic report.
+/// [secret] is the daemon credential itself — not the subprotocol token the
+/// socket carries. A plain request can send a bearer, and the daemon reads that
+/// as the same secret, so the probe asks with the credential the socket would
+/// have presented rather than with an encoding of it.
+///
+/// A relayed route authenticates at the cloud and keeps the generic report. A
+/// browser can ask now that the daemon answers CORS for the origins its
+/// terminal allowlist names; an origin the daemon does not answer for fails the
+/// request here, which is reported as the probe having no answer.
 Future<MaidCafeTerminalHandshakeFailure?> diagnoseMaidCafeTerminalHandshake(
   MaidCafeTerminalTarget target,
-  String credential,
+  String secret,
 ) async {
-  if (kIsWeb || target.isRelayed || credential.isEmpty) return null;
+  if (target.isRelayed || secret.isEmpty) return null;
   // The endpoint is the WebSocket URL; the same host answers a plain request,
   // and the policy checks run before the upgrade either way. The session's own
   // request is repeated — geometry and run-as account included — so a refusal
@@ -177,7 +184,7 @@ Future<MaidCafeTerminalHandshakeFailure?> diagnoseMaidCafeTerminalHandshake(
   final uri = socket.replace(scheme: socket.scheme == 'wss' ? 'https' : 'http');
   final dio = Dio(
     BaseOptions(
-      headers: <String, String>{'Authorization': 'Bearer $credential'},
+      headers: <String, String>{'Authorization': 'Bearer $secret'},
       connectTimeout: const Duration(seconds: 4),
       receiveTimeout: const Duration(seconds: 4),
       // The refusal *is* the answer, so every status is a success here.
@@ -187,7 +194,7 @@ Future<MaidCafeTerminalHandshakeFailure?> diagnoseMaidCafeTerminalHandshake(
   try {
     maidCafeLog(
       'asking $uri why the handshake failed; credential '
-      '${maidCafeDescribeCredential(credential)}',
+      '${maidCafeDescribeCredential(secret)}',
     );
     final response = await dio.getUri<dynamic>(uri);
     final failure = maidCafeHandshakeFailureFrom(
@@ -330,7 +337,7 @@ class MaidCafeTerminalConnectionManager {
       maidCafeLog('the socket to $endpoint never upgraded', error: error);
       final failure = await diagnoseMaidCafeTerminalHandshake(
         target,
-        credential,
+        target.secret,
       );
       if (failure == null) {
         maidCafeLog(

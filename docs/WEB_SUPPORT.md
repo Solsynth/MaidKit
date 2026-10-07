@@ -94,6 +94,18 @@ page is blocked as mixed content, so that combination needs the TLS front the
 endpoint override section describes; a WebSocket terminal has the same
 requirement.
 
+A browser reaching a daemon on another origin also needs that origin listed:
+every read a browser build makes over HTTP — metrics, the event stream,
+containers, files, the config API — is refused by the browser unless the daemon
+names the page's origin, and the console reports a cross-origin failure with no
+answer from the daemon at all. Listing the web build in
+`daemon.terminal.allowedOrigins` covers both, the socket and the HTTP API. The
+terminal on its own needs no CORS (a WebSocket is not policed that way), which
+is what makes the failure confusing: a daemon whose terminal attaches perfectly
+can look unreachable everywhere else. Serving the web build and the daemon from
+one origin — a reverse proxy in front of both — avoids the requirement
+altogether.
+
 Detecting an installed daemon over SSH configures that shell route by itself —
 endpoint, port, credential, and cloud identity — and a finished install does the
 same, so neither needs the editor to be filled in by hand. An endpoint already
