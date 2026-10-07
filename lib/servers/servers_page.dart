@@ -1158,21 +1158,34 @@ class _ServerCard extends ConsumerWidget {
     // statistics; serial and daemon hosts have no SSH route at all, so their
     // card names the transport instead of offering an SSH-shaped action.
     final isTerminalOnly = connectionType != ServerConnectionType.ssh;
-    // Statistics come from the MaidCafe daemon when the host runs one on a
-    // directly reachable address — no SSH session is opened for them. The SSH
-    // route stays the default for every other host, and for a daemon host it
-    // remains the fallback while the direct route answers nothing.
+    // Statistics come from the MaidCafe daemon while no SSH session is up: the
+    // daemon is the *no-session* route, and the only statistics route a browser
+    // has. A session opened by hand owns the card instead — it is the
+    // connection the user asked for, and the only one that measures a round
+    // trip. Letting the snapshot outrank it reports a connection nobody made:
+    // on a native build that hides Connect behind a live daemon, so the SSH
+    // route becomes unreachable on a host whose daemon answers.
     final daemonStats = ref.watch(maidCafeStatsProvider)[server.id];
-    final stats = daemonStats?.stats ?? session?.stats;
+    final sessionStatus = session?.status;
+    final sshConnected = sessionStatus == SessionStatus.connected;
+    final stats = (sshConnected ? session?.stats : null) ?? daemonStats?.stats;
     final systemInfo = session?.systemInfo;
-    final statsFromDaemon = daemonStats != null;
+    final statsFromDaemon = !sshConnected && daemonStats != null;
     // A card with daemon statistics is live without an SSH session: that is the
     // point of the direct route, and the only statistics route in a browser.
-    final connected =
-        session?.status == SessionStatus.connected || statsFromDaemon;
+    final connected = sshConnected || statsFromDaemon;
     final connecting =
-        session?.status == SessionStatus.connecting && !statsFromDaemon;
-    final failed = session?.status == SessionStatus.failed && !statsFromDaemon;
+        sessionStatus == SessionStatus.connecting && !sshConnected;
+    final failed = sessionStatus == SessionStatus.failed && !statsFromDaemon;
+    // Connect is offered while no SSH session of this card is up or on its way.
+    // A daemon snapshot is not a connection this client made, so it does not
+    // take the offer away on a native build — that button is how the SSH route
+    // stays reachable on a host whose daemon feeds the card. A browser has no
+    // socket to open, and serial and daemon transports have no SSH route at all,
+    // so both keep the snapshot meaning "connected".
+    final offersConnect = isTerminalOnly || kIsWeb
+        ? !connected && !connecting
+        : !sshConnected && !connecting;
 
     return Card(
       margin: EdgeInsets.zero,
@@ -1320,7 +1333,7 @@ class _ServerCard extends ConsumerWidget {
                       measuresLatency: !statsFromDaemon,
                     ),
                     const Spacer(),
-                    if (!connected && !connecting)
+                    if (offersConnect)
                       TextButton(
                         onPressed: onConnect,
                         child: Text('serversConnect'.tr()),

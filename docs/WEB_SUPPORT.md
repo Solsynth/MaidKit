@@ -80,12 +80,17 @@ the point of the route is that it costs the server no connection at all.
 
 `MaidCafeStatsScheduler` polls on the same cadence as the SSH path, driven by
 `maidCafeStatsSchedulerProvider` from `app.dart` so a browser build collects
-statistics without any tab asking first. Cards and the server detail page read
-`maidCafeStatsProvider` first and fall back to the SSH session's numbers; a
-daemon-backed card is live — `connected` — with no SSH session, and its status
-chip says *"Live from the MaidCafe daemon — no SSH session"* instead of a
-latency readout it never measured. When a daemon stops answering, its snapshot
-is withdrawn instead of being left on screen as if it were current.
+statistics without any tab asking first. A card and the server detail page read
+the daemon snapshot while no SSH session is up — that is what makes a
+daemon-backed card live (`connected`) with no session, and what makes the
+browser's cards work at all — and the session's own numbers whenever one is: a
+connection the user opened outranks the no-session route, and it is the only
+route that measures a round trip. The card says *Connected* rather than a
+latency it never measured while the daemon is the source, and it keeps offering
+*Connect*: a native build has an SSH route to open, and a daemon snapshot is not
+a session this client made (a browser, which has no socket to open, keeps the
+button away). When a daemon stops answering, its snapshot is withdrawn instead
+of being left on screen as if it were current.
 
 The daemon serves this only to a caller that presents its terminal secret or,
 when none is set, its metrics secret — the same fallback the daemon applies to
