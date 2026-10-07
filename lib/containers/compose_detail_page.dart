@@ -18,6 +18,7 @@ import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
+import 'package:maid_kit/servers/session_lookup.dart';
 import 'compose_project_actions.dart';
 import 'container_detail_page.dart';
 import 'container_list_tile.dart';
@@ -348,9 +349,18 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     if (_actionBusy) return;
     setState(() => _actionBusy = true);
     try {
-      final session = await ref
-          .read(maidCafeSessionRegistryProvider)
-          .sessionFor(widget.server);
+      // A live session owns actions: run over SSH, in the task terminal, and
+      // let a failure be reported rather than the daemon quietly running it
+      // through a second route.
+      final sshPreferred = sshPreferredOverDaemon(
+        widget.server,
+        ref.read(sessionsProvider).asData?.value ?? const [],
+      );
+      final session = sshPreferred
+          ? null
+          : await ref
+                .read(maidCafeSessionRegistryProvider)
+                .sessionFor(widget.server);
       if (session != null) {
         // Daemon present: the daemon runs the action, and the app watches it
         // in the task terminal. The pulling actions are tasks, so their
@@ -407,9 +417,15 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     ContainerAction action,
   ) async {
     try {
-      final session = await ref
-          .read(maidCafeSessionRegistryProvider)
-          .sessionFor(widget.server);
+      final sshPreferred = sshPreferredOverDaemon(
+        widget.server,
+        ref.read(sessionsProvider).asData?.value ?? const [],
+      );
+      final session = sshPreferred
+          ? null
+          : await ref
+                .read(maidCafeSessionRegistryProvider)
+                .sessionFor(widget.server);
       if (session != null) {
         final result = await session.runContainerAction(
           container.id,

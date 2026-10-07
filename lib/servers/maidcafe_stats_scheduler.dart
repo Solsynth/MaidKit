@@ -17,12 +17,25 @@ class MaidCafeStatsScheduler {
     required Future<MaidCafeServerStats?> Function(Server server) collect,
     required void Function(int serverId, MaidCafeServerStats? snapshot)
     onSnapshot,
-  }) : this._(collect, onSnapshot);
+    bool Function(Server server) sshOwnsServer = _neverSsh,
+  }) : this._(collect, onSnapshot, sshOwnsServer);
 
-  MaidCafeStatsScheduler._(this._collect, this._onSnapshot);
+  MaidCafeStatsScheduler._(
+    this._collect,
+    this._onSnapshot,
+    this._sshOwnsServer,
+  );
+
+  static bool _neverSsh(Server server) => false;
 
   final Future<MaidCafeServerStats?> Function(Server server) _collect;
   final void Function(int serverId, MaidCafeServerStats? snapshot) _onSnapshot;
+
+  /// Whether SSH has taken [server] over on this client. A refresh for such a
+  /// server withdraws any snapshot instead of publishing one: the numbers on
+  /// screen belong to the session, and the daemon is not to be dialled while a
+  /// session covers the host.
+  final bool Function(Server server) _sshOwnsServer;
 
   Timer? _timer;
   Duration _interval = const Duration(seconds: 30);
@@ -77,6 +90,12 @@ class MaidCafeStatsScheduler {
   /// Reads [server] once and publishes the result (or withdraws the previous
   /// snapshot when the daemon did not answer).
   Future<void> refreshServer(Server server) async {
+    if (_sshOwnsServer(server)) {
+      // SSH is the route for this host right now: withdraw the daemon's numbers
+      // rather than keep a second, silently dialled source alive.
+      _onSnapshot(server.id, null);
+      return;
+    }
     MaidCafeServerStats? snapshot;
     try {
       snapshot = await _collect(server);

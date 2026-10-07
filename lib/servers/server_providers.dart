@@ -41,6 +41,7 @@ import 'metrics_refresh_preferences.dart';
 import 'port_forwarding_models.dart';
 import 'privacy_preferences.dart';
 import 'server_repository.dart';
+import 'session_lookup.dart';
 import 'server_metrics_refresh_scheduler.dart';
 import 'serial_port_client.dart';
 import 'serial_connection_manager.dart';
@@ -1708,6 +1709,13 @@ final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
   final scheduler = MaidCafeStatsScheduler(
     collect: collector.collect,
     onSnapshot: notifier.set,
+    // Read per refresh rather than watched: a session coming and going must not
+    // rebuild the scheduler and its timer, and the answer only matters at the
+    // moment a request would be dialled.
+    sshOwnsServer: (server) => sshPreferredOverDaemon(
+      server,
+      ref.read(sessionsProvider).asData?.value ?? const [],
+    ),
   );
   final interval = ref.watch(serverMetricsRefreshIntervalProvider);
   final servers = ref.watch(serversProvider).asData?.value ?? const <Server>[];

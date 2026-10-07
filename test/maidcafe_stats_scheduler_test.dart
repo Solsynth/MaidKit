@@ -88,4 +88,38 @@ void main() {
 
     expect(published[7], isNull);
   });
+
+  test(
+    'a host SSH owns is not dialled and its snapshot is withdrawn',
+    () async {
+      final published = <int, MaidCafeServerStats?>{};
+      final dialled = <int>[];
+      final scheduler = MaidCafeStatsScheduler(
+        collect: (server) async {
+          dialled.add(server.id);
+          return _snapshot();
+        },
+        onSnapshot: (id, snapshot) => published[id] = snapshot,
+        // The policy reads the live session feed; here one host is taken over.
+        sshOwnsServer: (server) => server.id == 1,
+      );
+      addTearDown(scheduler.dispose);
+
+      await scheduler.refreshServer(_server(id: 1));
+      expect(
+        dialled,
+        isEmpty,
+        reason: 'the daemon stands aside for the session',
+      );
+      expect(published.containsKey(1), isTrue);
+      // Withdrawn, not left behind: a stale snapshot would keep presenting the
+      // daemon as the source of numbers the session is now measuring.
+      expect(published[1], isNull);
+
+      // A host SSH does not own is dialled exactly as before.
+      await scheduler.refreshServer(_server(id: 2));
+      expect(dialled, [2]);
+      expect(published[2], isNotNull);
+    },
+  );
 }

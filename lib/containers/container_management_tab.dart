@@ -23,6 +23,7 @@ import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
@@ -98,6 +99,17 @@ class _ContainerManagementTabState
   /// and the connect prompt with it, the same rule the file surfaces apply.
   bool get _daemonAllowed => kIsWeb;
 
+  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
+  /// server's list and actions right now.
+  ///
+  /// False on a browser, which has no raw socket to prefer, as it is for a
+  /// `maidcafe` or `serial` row, which has no SSH route at all — those keep the
+  /// daemon outright, exactly as before.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+  );
+
   @override
   void initState() {
     super.initState();
@@ -161,6 +173,22 @@ class _ContainerManagementTabState
         // An explicit action may have changed what the daemon can see.
         _containersSseAttempted = false;
         _containersUnavailable = false;
+      }
+      // A live SSH session owns the list on a native build: the station's own
+      // answer is read first and the daemon answers only when it fails. The
+      // daemon route is still resolved by that read for the surfaces with no
+      // SSH equivalent — its managed stacks and update answers.
+      if (_sshPreferred) {
+        // A session owns the list now: stop the daemon stream this tab may
+        // have opened before one appeared.
+        _closeContainersSse();
+        try {
+          await _loadFromSsh();
+          return;
+        } catch (_) {
+          // The session dropped between the guard and the read, or the station
+          // refused: the daemon answers, exactly as it does with no session.
+        }
       }
       if (!force) {
         // SSE containers own freshness while active. When it is not, one
@@ -230,23 +258,7 @@ class _ContainerManagementTabState
         }
         return;
       }
-      final environments = await ref
-          .read(connectionManagerProvider)
-          .listContainers(
-            widget.server.id,
-            sshUserIsRoot: widget.server.username == 'root',
-            sudoPassword: await _storedSudoPassword(),
-          );
-      if (mounted) {
-        setState(() {
-          _containersFromMaidCafe = false;
-          // The registry is the daemon's: a list served over SSH has no daemon
-          // behind it, so its projects come from the containers themselves.
-          _stacks = const ComposeStacksSnapshot();
-          _hasLoadedEnvironments = true;
-          _environments = AsyncValue.data(environments);
-        });
-      }
+      await _loadFromSsh();
     } catch (error, stackTrace) {
       if (mounted && !_hasLoadedEnvironments) {
         setState(() => _environments = AsyncValue.error(error, stackTrace));
@@ -254,6 +266,39 @@ class _ContainerManagementTabState
     } finally {
       _loading = false;
     }
+  }
+
+  /// Reads the container list over SSH — the station's own answer.
+  ///
+  /// The daemon-only surfaces ride along: its managed stacks and its update
+  /// answers have no SSH equivalent, so the route is resolved here too and
+  /// asked for them, without letting it answer the list. With no daemon route
+  /// there is no registry behind an SSH list, so its projects come from the
+  /// containers' own labels.
+  Future<void> _loadFromSsh() async {
+    final environments = await ref
+        .read(connectionManagerProvider)
+        .listContainers(
+          widget.server.id,
+          sshUserIsRoot: widget.server.username == 'root',
+          sudoPassword: await _storedSudoPassword(),
+        );
+    if (!mounted) return;
+    setState(() {
+      _containersFromMaidCafe = false;
+      _hasLoadedEnvironments = true;
+      _environments = AsyncValue.data(environments);
+    });
+    final session = await _ensureMaidCafeStream();
+    if (!mounted) return;
+    if (session == null) {
+      if (_stacks.stacks.isNotEmpty) {
+        setState(() => _stacks = const ComposeStacksSnapshot());
+      }
+      return;
+    }
+    unawaited(_loadUpdateStatuses(session));
+    unawaited(_loadManagedStacks(session));
   }
 
   /// Manual refresh: always fetch (the stream may be silent), and re-arm the

@@ -24,6 +24,7 @@ import 'package:maid_kit/shared/presentation/cloud_file_picker.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:maid_kit/servers/session_lookup.dart';
 import 'compose_detail_page.dart';
 import 'compose_project_actions.dart';
 import 'container_detail_page.dart';
@@ -961,14 +962,21 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     );
   }
 
+  /// Whether a live SSH session owns this server, so its actions run over SSH
+  /// rather than through a daemon that happens to be installed.
+  bool _sshPreferred(Server host) => sshPreferredOverDaemon(
+    host,
+    ref.read(sessionsProvider).asData?.value ?? const [],
+  );
+
   Future<void> _runCompose(ComposeProjectAction action) async {
     final host = server!;
     if (!_composeReady) {
       throw StateError('deploymentComposeMissing'.tr());
     }
-    final session = await ref
-        .read(maidCafeSessionRegistryProvider)
-        .sessionFor(host);
+    final session = _sshPreferred(host)
+        ? null
+        : await ref.read(maidCafeSessionRegistryProvider).sessionFor(host);
     if (session != null) {
       // Daemon present: the daemon runs the action in the task terminal, live
       // for the actions that pull and reported at once for the rest.
@@ -1003,9 +1011,9 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (_containerRef.isEmpty) {
       throw StateError('deploymentContainerMissing'.tr());
     }
-    final session = await ref
-        .read(maidCafeSessionRegistryProvider)
-        .sessionFor(host);
+    final session = _sshPreferred(host)
+        ? null
+        : await ref.read(maidCafeSessionRegistryProvider).sessionFor(host);
     if (session != null) {
       final result = await session.runContainerAction(
         _containerRef,
@@ -1059,9 +1067,9 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (unit.isEmpty) {
       throw StateError('deploymentSystemdMissing'.tr());
     }
-    final session = await ref
-        .read(maidCafeSessionRegistryProvider)
-        .sessionFor(host);
+    final session = _sshPreferred(host)
+        ? null
+        : await ref.read(maidCafeSessionRegistryProvider).sessionFor(host);
     if (session != null) {
       final result = await session.runSystemdAction(
         unit,

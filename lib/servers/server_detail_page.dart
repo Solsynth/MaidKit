@@ -31,6 +31,7 @@ import 'server_connection_actions.dart';
 import 'server_health_chip.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'session_lookup.dart';
 import 'systemd_tab.dart';
 import 'web_server_tab.dart';
 
@@ -153,6 +154,14 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     _refreshTimer = Timer.periodic(interval, (_) => _refresh());
   }
 
+  /// Whether a live SSH session owns this server's readings rather than its
+  /// MaidCafe daemon. The processes and runtimes tabs read the session when it
+  /// does, and leave the daemon's stream closed.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const [],
+  );
+
   void _onTabChanged(int index) {
     final openedProcesses =
         index == _processesTabIndex && _activeTabIndex != _processesTabIndex;
@@ -180,6 +189,25 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     if (_processesSseActive && !force) return;
     if (!_hasLoadedProcesses) {
       setState(() => _processes = const AsyncValue.loading());
+    }
+    // A live session owns the table: the daemon is the fallback here, not the
+    // default, and its stream stays closed while a session is up.
+    if (_sshPreferred) {
+      try {
+        final processes = await ref
+            .read(connectionManagerProvider)
+            .listProcesses(widget.server.id);
+        if (mounted) {
+          setState(() {
+            _hasLoadedProcesses = true;
+            _processes = AsyncValue.data(processes);
+          });
+        }
+        return;
+      } catch (_) {
+        // The session dropped between the guard and the read: the daemon
+        // answers, exactly as it does for a host with no session.
+      }
     }
     final session = await _ensureMaidCafeStream();
     if (session != null) {
@@ -232,6 +260,25 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     if (!_hasLoadedRuntimes) {
       setState(() => _runtimeSnapshot = const AsyncValue.loading());
     }
+    // As in _loadProcesses: a live session is the route, and SSH collection
+    // only runs on tab open and manual refresh anyway.
+    if (_sshPreferred) {
+      try {
+        final snapshot = await ref
+            .read(connectionManagerProvider)
+            .refreshRuntimeMetrics(widget.server.id);
+        if (mounted && snapshot != null) {
+          setState(() {
+            _hasLoadedRuntimes = true;
+            _runtimesDataSource = RuntimeDataSource.ssh;
+            _runtimeSnapshot = AsyncValue.data(snapshot);
+          });
+          return;
+        }
+      } catch (_) {
+        // Fall through to the daemon's stream.
+      }
+    }
     final session = await _ensureMaidCafeStream();
     if (session != null) {
       try {
@@ -281,6 +328,8 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   /// Opens a MaidCafe session with the same credential flow the Activity tab
   /// uses, then subscribes to `runtimes` events.
   Future<void> _startRuntimesSse() async {
+    // A live SSH session owns the readings: no daemon stream beside it.
+    if (_sshPreferred) return;
     if (_runtimesSubscription != null || _runtimesSseAttempted) return;
     final session = await _ensureMaidCafeStream();
     if (session == null || !mounted) return;
@@ -354,40 +403,50 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     try {
       await manager.refreshServerInfo(widget.server);
       if (_activeTabIndex == _processesTabIndex) {
-        if (_processesSseActive) {
-          final silence = DateTime.now().difference(_lastProcessesEvent);
-          final timeoutSeconds = _processesSseIntervalSeconds * 3 >= 15
-              ? _processesSseIntervalSeconds * 3
-              : 15;
-          if (silence > Duration(seconds: timeoutSeconds)) {
-            // The stream stays connected (heartbeats) but stopped delivering
-            // data — the daemon collector may be disabled or failing. Fall
-            // back to on-demand fetches instead of freezing the list.
-            _processesSseAttempted = true;
-            _closeProcessesSse();
+        if (_sshPreferred) {
+          // The session owns the table: drop any stream opened before it, and
+          // do not start another.
+          _closeProcessesSse();
+        } else {
+          if (_processesSseActive) {
+            final silence = DateTime.now().difference(_lastProcessesEvent);
+            final timeoutSeconds = _processesSseIntervalSeconds * 3 >= 15
+                ? _processesSseIntervalSeconds * 3
+                : 15;
+            if (silence > Duration(seconds: timeoutSeconds)) {
+              // The stream stays connected (heartbeats) but stopped delivering
+              // data — the daemon collector may be disabled or failing. Fall
+              // back to on-demand fetches instead of freezing the list.
+              _processesSseAttempted = true;
+              _closeProcessesSse();
+            }
           }
-        }
-        if (_processesSubscription == null) {
-          unawaited(_startProcessesSse());
+          if (_processesSubscription == null) {
+            unawaited(_startProcessesSse());
+          }
         }
         await _loadProcesses();
       }
       if (_activeTabIndex == _runtimesTabIndex) {
-        if (_runtimesSseActive) {
-          final silence = DateTime.now().difference(_lastRuntimesEvent);
-          final timeoutSeconds = _runtimesSseIntervalSeconds * 3 >= 15
-              ? _runtimesSseIntervalSeconds * 3
-              : 15;
-          if (silence > Duration(seconds: timeoutSeconds)) {
-            // The stream stays connected (heartbeats) but stopped delivering
-            // data — the daemon collector may be disabled or failing. Fall
-            // back to on-demand fetches instead of freezing the cards.
-            _runtimesSseAttempted = true;
-            _closeRuntimesSse();
+        if (_sshPreferred) {
+          _closeRuntimesSse();
+        } else {
+          if (_runtimesSseActive) {
+            final silence = DateTime.now().difference(_lastRuntimesEvent);
+            final timeoutSeconds = _runtimesSseIntervalSeconds * 3 >= 15
+                ? _runtimesSseIntervalSeconds * 3
+                : 15;
+            if (silence > Duration(seconds: timeoutSeconds)) {
+              // The stream stays connected (heartbeats) but stopped delivering
+              // data — the daemon collector may be disabled or failing. Fall
+              // back to on-demand fetches instead of freezing the cards.
+              _runtimesSseAttempted = true;
+              _closeRuntimesSse();
+            }
           }
-        }
-        if (_runtimesSubscription == null) {
-          unawaited(_startRuntimesSse());
+          if (_runtimesSubscription == null) {
+            unawaited(_startRuntimesSse());
+          }
         }
         // No _loadRuntimes() on the tick: SSH collection runs jstat per JVM
         // and must not repeat every refresh interval. The SSH fallback only
@@ -401,6 +460,9 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   /// Opens a MaidCafe session with the same credential flow the Activity tab
   /// uses, then subscribes to `processes` events.
   Future<void> _startProcessesSse() async {
+    // A live SSH session owns the readings: never open a daemon stream beside
+    // one, or its events would keep overwriting what the session reports.
+    if (_sshPreferred) return;
     if (_processesSubscription != null || _processesSseAttempted) return;
     final session = await _ensureMaidCafeStream();
     if (session == null || !mounted) return;
@@ -487,9 +549,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
   @override
   Widget build(BuildContext context) {
     final sessions = ref.watch(sessionsProvider).asData?.value ?? const [];
-    final session = sessions
-        .where((item) => item.serverId == widget.server.id)
-        .firstOrNull;
+    final session = sessionForServer(sessions, widget.server.id);
     final connected = session?.status == SessionStatus.connected;
     // A daemon snapshot feeds the overview while no SSH session is up: on a
     // browser build that snapshot is the only statistics route there is. A
@@ -1548,6 +1608,33 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
     return copy;
   }
 
+  /// Whether a live SSH session owns this server, so the kill runs over it
+  /// rather than through a daemon that happens to be installed.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const [],
+  );
+
+  /// Kills [process] over the retained SSH session, with the sudo password the
+  /// run needs. The same call serves the hosts with no daemon session and the
+  /// hosts a live session has taken over.
+  Future<void> _killProcessOverSsh(ServerProcess process) async {
+    final credential = await ref
+        .read(serverRepositoryProvider)
+        .credentialFor(widget.server);
+    final sudoPassword = credential.type == CredentialType.password
+        ? credential.password
+        : null;
+    await ref
+        .read(connectionManagerProvider)
+        .killProcess(
+          widget.server.id,
+          pid: process.pid,
+          sshUserIsRoot: widget.server.username == 'root',
+          sudoPassword: sudoPassword,
+        );
+  }
+
   Future<void> _killProcess(ServerProcess process) async {
     if (_killingPid) return;
     final approved = await showMaidKitConfirmAlert(
@@ -1560,32 +1647,26 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
 
     setState(() => _killingPid = true);
     try {
-      final session = await ref
-          .read(maidCafeSessionRegistryProvider)
-          .sessionFor(widget.server);
-      if (session != null) {
-        // Daemon present: kill through the native op. The daemon refuses
-        // pids <= 1 and elevates through sudo -n when needed.
-        final result = await session.killProcess(
-          process.pid,
-          invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
-        );
-        result.ensureSuccess();
+      // A live session owns actions as well as readings: the kill runs over SSH
+      // and its failure is reported, rather than the daemon quietly doing it
+      // through a second route.
+      if (_sshPreferred) {
+        await _killProcessOverSsh(process);
       } else {
-        final credential = await ref
-            .read(serverRepositoryProvider)
-            .credentialFor(widget.server);
-        final sudoPassword = credential.type == CredentialType.password
-            ? credential.password
-            : null;
-        await ref
-            .read(connectionManagerProvider)
-            .killProcess(
-              widget.server.id,
-              pid: process.pid,
-              sshUserIsRoot: widget.server.username == 'root',
-              sudoPassword: sudoPassword,
-            );
+        final session = await ref
+            .read(maidCafeSessionRegistryProvider)
+            .sessionFor(widget.server);
+        if (session != null) {
+          // Daemon present: kill through the native op. The daemon refuses
+          // pids <= 1 and elevates through sudo -n when needed.
+          final result = await session.killProcess(
+            process.pid,
+            invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+          );
+          result.ensureSuccess();
+        } else {
+          await _killProcessOverSsh(process);
+        }
       }
       if (!mounted) return;
       showStyledSnackBar(

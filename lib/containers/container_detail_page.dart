@@ -16,6 +16,7 @@ import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
@@ -150,16 +151,41 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     return session;
   }
 
-  /// Runs a read on the daemon when a session exists, falling back to SSH.
+  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
+  /// server's reads and actions right now.
+  ///
+  /// False on a browser, which has no raw socket to prefer, as it is for a
+  /// `maidcafe` or `serial` row, which has no SSH route at all — those keep the
+  /// daemon outright, exactly as before.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+  );
+
+  /// Runs a read on the transport this server prefers, falling back to the
+  /// other.
   ///
   /// Reads are safe to retry: the daemon may simply not see this container —
   /// a user-scoped runtime, or one it has no binary for — and a daemon older
-  /// than the detail reads has no such route at all. Actions take the opposite
-  /// rule and surface a daemon failure instead of replaying it over SSH.
+  /// than the detail reads has no such route at all. A connected SSH session is
+  /// the preferred transport on a native build, so the station's own answer is
+  /// the one read first there and the daemon answers only when it fails;
+  /// everywhere else the daemon leads, as it did before. Actions take the
+  /// opposite rule and surface a failure instead of replaying it over the
+  /// other transport.
   Future<T> _daemonOrSsh<T>(
     Future<T> Function(MaidCafeStreamSession session) daemon,
     Future<T> Function() ssh,
   ) async {
+    if (_sshPreferred) {
+      try {
+        return await ssh();
+      } catch (error) {
+        final session = await _ensureDaemon();
+        if (session == null) rethrow;
+        return daemon(session);
+      }
+    }
     final session = await _ensureDaemon();
     if (session != null) {
       try {
@@ -346,8 +372,10 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       _loadingLogs = true;
       _followingLogs = false;
     });
-    final sshConnected = _connected(ref.read(sessionsProvider).asData?.value);
-    if (!sshConnected) {
+    // A live session owns the stream on a native build. The daemon's captured
+    // window takes over while no session is — a browser above all, where the
+    // feed's daemon terminal must not read as an SSH session.
+    if (!_sshPreferred) {
       final session = await _ensureDaemon();
       if (session != null) {
         try {
@@ -578,10 +606,12 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     }
     setState(() => _actionBusy = true);
     try {
-      final session = await _ensureDaemon();
+      // A live session owns this server's actions on a native build: run it
+      // over SSH and let a failure surface, never replaying it through the
+      // daemon. Otherwise the daemon runs the native op, exactly as before —
+      // it validates the target and elevates through sudo -n when needed.
+      final session = _sshPreferred ? null : await _ensureDaemon();
       if (session != null) {
-        // Daemon present: run the native op. The daemon validates the
-        // target and elevates through sudo -n when needed.
         final result = await session.runContainerAction(
           widget.containerId,
           action.name,
@@ -918,14 +948,14 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
   @override
   Widget build(BuildContext context) {
     final sessions = ref.watch(sessionsProvider).asData?.value ?? const [];
-    final session = sessions
-        .where((item) => item.serverId == widget.server.id)
-        .firstOrNull;
-    final sshConnected = session?.status == SessionStatus.connected;
+    // The feed also carries a daemon terminal for this server, and that is
+    // `connected` too: only an SSH session runs the SSH-shaped work behind the
+    // exec, attach and re-create entries below.
+    final session = sessionForServer(sessions, widget.server.id);
+    final sshConnected = isLiveSshSession(session);
     final daemonLive = _daemon != null && !_daemon!.isClosed;
-    // The reads and actions prefer the daemon, so the page is usable whenever
-    // either transport answers. That is what a browser with a daemon route but
-    // no SSH at all needs.
+    // A live session heads the reads and actions; the daemon answers whenever
+    // it is the only route, which is what a browser with no SSH at all needs.
     final connected = sshConnected || daemonLive;
     final inspect = _inspect;
     final running = inspect?.isRunning ?? false;

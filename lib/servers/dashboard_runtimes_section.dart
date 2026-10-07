@@ -12,12 +12,14 @@ import 'maidcafe_stream.dart';
 import 'runtime_monitoring_tab.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'session_lookup.dart';
 
 /// Dashboard section aggregating every server's pinned runtime / watched
 /// process. One tile per (server, pinned name). Live data streams over the
-/// MaidCafe SSE `runtimes` channel per pinned server; servers without a
-/// daemon (or whose stream died) fall back to one-shot/SSH on a slow tick.
-/// Hidden when nothing is pinned.
+/// MaidCafe SSE `runtimes` channel per pinned server; a server with a live SSH
+/// session is read over SSH on the same tick instead, and a server with no
+/// stream — no daemon channel, or one that died — is read one-shot, again SSH
+/// first and the daemon second. Hidden when nothing is pinned.
 class DashboardRuntimesSection extends ConsumerStatefulWidget {
   const DashboardRuntimesSection({super.key});
 
@@ -102,23 +104,30 @@ class _DashboardRuntimesSectionState
           _retained[id] = server;
           _sessionRegistry.retain(server);
         }
-        if (_subscriptions[id] == null) {
+        final preferSsh = sshPreferredOverDaemon(server, sessions);
+        if (preferSsh) {
+          // A live session owns the readings: drop a daemon stream this
+          // section may have opened before the session appeared, and read
+          // over SSH below.
+          await _endSubscription(id);
+        } else if (_subscriptions[id] == null) {
           await _subscribe(server);
         } else if (_isStale(id)) {
           // The stream stays connected but stopped delivering data: re-arm.
           await _endSubscription(id);
           await _subscribe(server);
         }
-        // No daemon channel (or the stream failed again): one-shot/SSH on
-        // the slow tick. Refresh whenever the subscription is down — the
-        // existing snapshot must not freeze the tile after a stream death —
-        // but keep the old data on screen while a refresh is in flight.
+        // No stream (a live session, no daemon channel, or one that failed
+        // again): read on the slow tick — SSH when a session owns the server,
+        // the daemon otherwise. Refresh whenever the subscription is down —
+        // the existing snapshot must not freeze the tile after a stream death
+        // — but keep the old data on screen while a refresh is in flight.
         if (_subscriptions[id] == null && mounted) {
           if (!_snapshots.containsKey(id)) {
             setState(() => _snapshots[id] = const AsyncValue.loading());
           }
           try {
-            final snapshot = await _collect(server);
+            final snapshot = await _collect(server, preferSsh: preferSsh);
             if (mounted) {
               setState(() => _snapshots[id] = AsyncValue.data(snapshot));
             }
@@ -199,7 +208,20 @@ class _DashboardRuntimesSectionState
     _sseIntervalSeconds.remove(serverId);
   }
 
-  Future<RuntimeSnapshot?> _collect(Server server) async {
+  Future<RuntimeSnapshot?> _collect(
+    Server server, {
+    required bool preferSsh,
+  }) async {
+    if (preferSsh) {
+      try {
+        return await ref
+            .read(connectionManagerProvider)
+            .refreshRuntimeMetrics(server.id);
+      } catch (_) {
+        // The session dropped between the guard and the read: the daemon
+        // answers, exactly as it does on a build with no session.
+      }
+    }
     final session = await _sessionRegistry.sessionFor(server);
     if (session != null) {
       try {

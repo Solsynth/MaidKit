@@ -14,6 +14,7 @@ import 'maidcafe_stream.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'session_lookup.dart';
 
 /// Host package maintenance for supported package managers.
 class PackageManagementTab extends ConsumerStatefulWidget {
@@ -45,6 +46,13 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
   MaidCafeStreamSession? _maidCafeStream;
 
   bool get _isRoot => widget.server.username == 'root';
+
+  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
+  /// server's package actions.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+  );
 
   @override
   void initState() {
@@ -83,8 +91,9 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
   /// The shared daemon session, when this server has one.
   ///
   /// The daemon has no package status endpoint — reads stay on SSH — so this
-  /// only feeds the mutating actions, which prefer the native op and fall back
-  /// to SSH when the daemon is older than the route.
+  /// only feeds the mutating actions, and only while no live session owns the
+  /// server: it prefers the native op and falls back to SSH when the daemon is
+  /// older than the route.
   Future<MaidCafeStreamSession?> _ensureMaidCafeStream() async {
     final cached = _maidCafeStream;
     if (cached != null && !cached.isClosed) return cached;
@@ -164,24 +173,28 @@ class _PackageManagementTabState extends ConsumerState<PackageManagementTab> {
         subtitle: '${manager.label} · ${widget.server.name}',
         command: _actionDescription(action, packageName),
         run: (onOutput) async {
-          final session = await _ensureMaidCafeStream();
-          if (session != null) {
-            try {
-              // Daemon present: run the native package op. The manager is the
-              // helper's grant or the daemon's own sudo rule to choose, and a
-              // real failure surfaces as an error instead of being retried
-              // over SSH.
-              final result = await session.runPackageAction(
-                action.name,
-                name: packageName,
-                invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
-              );
-              result.ensureSuccess();
-              if (result.stdout.isNotEmpty) onOutput(result.stdout);
-              if (result.stderr.isNotEmpty) onOutput(result.stderr);
-              return;
-            } on MaidCafeRouteMissingException {
-              // Daemon older than /api/v1/packages: fall back to SSH.
+          // A live session runs the op itself, so its failure surfaces instead
+          // of the action being re-run through the daemon.
+          if (!_sshPreferred) {
+            final session = await _ensureMaidCafeStream();
+            if (session != null) {
+              try {
+                // Daemon present: run the native package op. The manager is
+                // the helper's grant or the daemon's own sudo rule to choose,
+                // and a real failure surfaces as an error instead of being
+                // retried over SSH.
+                final result = await session.runPackageAction(
+                  action.name,
+                  name: packageName,
+                  invokedBy: ref.read(cloudUserProvider).asData?.value?.handle,
+                );
+                result.ensureSuccess();
+                if (result.stdout.isNotEmpty) onOutput(result.stdout);
+                if (result.stderr.isNotEmpty) onOutput(result.stderr);
+                return;
+              } on MaidCafeRouteMissingException {
+                // Daemon older than /api/v1/packages: fall back to SSH.
+              }
             }
           }
           await ref

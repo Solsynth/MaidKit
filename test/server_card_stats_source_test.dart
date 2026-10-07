@@ -81,6 +81,15 @@ SshSessionInfo _session(SessionStatus status, {Duration? latency}) =>
       networkLatency: latency,
     );
 
+/// The same feed entry the daemon's own terminal publishes.
+final _daemonTerminalSession = SshSessionInfo(
+  serverId: 1,
+  serverName: 'Build host',
+  connectedAt: DateTime(2026, 10, 7, 12),
+  status: SessionStatus.connected,
+  transport: SessionTransport.maidcafe,
+);
+
 void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -189,6 +198,22 @@ void main() {
 
     expect(connectButton, findsOneWidget);
     expect(find.text('12 ms'), findsNothing);
+  });
+
+  testWidgets('a daemon terminal is not the SSH session the card reads', (
+    tester,
+  ) async {
+    // "Open terminal via daemon" puts a `connected` entry on the same feed. It
+    // carries no readings and cannot run the SSH-shaped work, so the card keeps
+    // offering Connect rather than reading it as a session.
+    await pumpDashboard(
+      tester,
+      sessions: [_daemonTerminalSession],
+      daemonStats: {1: _daemonSnapshot},
+    );
+
+    expect(find.text('12 ms'), findsNothing);
+    expect(connectButton, findsOneWidget);
   });
 
   testWidgets('the detail page names the daemon while it is the source', (

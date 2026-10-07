@@ -372,6 +372,7 @@ class MaidCafeTerminalConnectionManager {
         serverName: server.name,
         connectedAt: DateTime.now(),
         status: SessionStatus.connected,
+        transport: SessionTransport.maidcafe,
       ),
     );
     // Do not use `whenComplete` here: its returned future re-emits a transport

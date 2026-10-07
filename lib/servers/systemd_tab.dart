@@ -17,6 +17,7 @@ import 'maidcafe_session_registry.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'session_lookup.dart';
 import 'systemd_models.dart';
 
 enum _ServiceFilter { all, active, failed, inactive }
@@ -116,8 +117,70 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
         : null;
   }
 
+  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
+  /// server's unit list and service actions.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+  );
+
+  Future<SystemdUnitsSnapshot> _listOverSsh() async => ref
+      .read(connectionManagerProvider)
+      .listSystemdUnits(
+        widget.server.id,
+        sshUserIsRoot: _isRoot,
+        sudoPassword: await _sudoPassword(),
+      );
+
+  Future<void> _runOverSsh(SystemdUnit unit, SystemdUnitAction action) async =>
+      ref
+          .read(connectionManagerProvider)
+          .runSystemdUnitAction(
+            widget.server.id,
+            unit: unit.name,
+            action: action,
+            sshUserIsRoot: _isRoot,
+            sudoPassword: await _sudoPassword(),
+          );
+
+  /// Reads the unit list from the daemon. Returns true when the daemon
+  /// answered — with units, or with its verdict that the host has no
+  /// systemctl. False leaves the caller on SSH.
+  Future<bool> _loadFromMaidCafe() async {
+    if (_systemdUnavailable) return false;
+    final session = await _ensureMaidCafeStream();
+    if (session == null) return false;
+    try {
+      final snapshot = parseMaidCafeSystemd(await session.systemd());
+      if (snapshot.available && mounted) {
+        setState(() {
+          _snapshot = AsyncValue.data(
+            SystemdUnitsSnapshot(available: true, units: snapshot.units),
+          );
+        });
+        return true;
+      }
+      if (!snapshot.available) {
+        // The daemon (root) found no systemctl; stop asking for it.
+        _systemdUnavailable = true;
+        if (mounted) {
+          setState(() {
+            _snapshot = AsyncValue.data(
+              SystemdUnitsSnapshot(available: false, error: snapshot.error),
+            );
+          });
+        }
+        return true;
+      }
+    } catch (_) {
+      // Old daemon without /api/v1/systemd: fall back to SSH.
+    }
+    return false;
+  }
+
   Future<void> _load({bool force = false}) async {
     if (!mounted || !widget.connected) return;
+    final preferSsh = _sshPreferred;
     if (force) {
       // An explicit action may have changed what the daemon can see.
       _systemdSseAttempted = false;
@@ -128,7 +191,7 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
       // is made only until it fails once — MaidCafe is not retried
       // automatically, only on manual refresh, an explicit action, or a
       // fresh session.
-      if (_systemdSseActive) {
+      if (_systemdSseActive && !preferSsh) {
         final silence = DateTime.now().difference(_lastSystemdEvent);
         final timeoutSeconds = _systemdSseIntervalSeconds * 3 >= 15
             ? _systemdSseIntervalSeconds * 3
@@ -143,50 +206,37 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
           return;
         }
       }
-      if (_systemdSubscription == null && !_systemdSseAttempted) {
-        await _startSystemdSse();
+      if (preferSsh) {
+        // A live session owns the unit list now: stop the daemon stream this
+        // tab may have opened before the session appeared.
+        _closeSystemdSse();
+      } else {
+        if (_systemdSubscription == null && !_systemdSseAttempted) {
+          await _startSystemdSse();
+        }
+        if (_systemdSseActive) return;
       }
-      if (_systemdSseActive) return;
     }
     setState(() => _snapshot = const AsyncValue.loading());
-    if (!_systemdUnavailable) {
-      final session = await _ensureMaidCafeStream();
-      if (session != null) {
-        try {
-          final snapshot = parseMaidCafeSystemd(await session.systemd());
-          if (snapshot.available && mounted) {
-            setState(() {
-              _snapshot = AsyncValue.data(
-                SystemdUnitsSnapshot(available: true, units: snapshot.units),
-              );
-            });
-            return;
-          }
-          if (!snapshot.available) {
-            // The daemon (root) found no systemctl; stop asking for it.
-            _systemdUnavailable = true;
-            if (mounted) {
-              setState(() {
-                _snapshot = AsyncValue.data(
-                  SystemdUnitsSnapshot(available: false, error: snapshot.error),
-                );
-              });
-            }
-            return;
-          }
-        } catch (_) {
-          // Old daemon without /api/v1/systemd: fall back to SSH.
+    if (preferSsh) {
+      try {
+        final snapshot = await _listOverSsh();
+        if (mounted) setState(() => _snapshot = AsyncValue.data(snapshot));
+        return;
+      } catch (sshError, sshStackTrace) {
+        // A live session owns the list, so the daemon is only asked when that
+        // read failed — the same fallback a build with no session would take.
+        // With neither route the error lands in the snapshot.
+        if (await _loadFromMaidCafe()) return;
+        if (mounted) {
+          setState(() => _snapshot = AsyncValue.error(sshError, sshStackTrace));
         }
+        return;
       }
     }
+    if (await _loadFromMaidCafe()) return;
     try {
-      final snapshot = await ref
-          .read(connectionManagerProvider)
-          .listSystemdUnits(
-            widget.server.id,
-            sshUserIsRoot: _isRoot,
-            sudoPassword: await _sudoPassword(),
-          );
+      final snapshot = await _listOverSsh();
       if (mounted) setState(() => _snapshot = AsyncValue.data(snapshot));
     } catch (error, stackTrace) {
       if (mounted) {
@@ -426,6 +476,12 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
     }
     await _run(
       () async {
+        if (_sshPreferred) {
+          // A live session runs the change; a failure surfaces instead of the
+          // op being re-run through the daemon.
+          await _runOverSsh(unit, action);
+          return;
+        }
         final session = await _ensureMaidCafeStream();
         if (session != null) {
           // Daemon present: run the native systemd op. The daemon validates
@@ -437,15 +493,7 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
           );
           result.ensureSuccess();
         } else {
-          await ref
-              .read(connectionManagerProvider)
-              .runSystemdUnitAction(
-                widget.server.id,
-                unit: unit.name,
-                action: action,
-                sshUserIsRoot: _isRoot,
-                sudoPassword: await _sudoPassword(),
-              );
+          await _runOverSsh(unit, action);
         }
       },
       success: 'systemdSuccess'.tr(

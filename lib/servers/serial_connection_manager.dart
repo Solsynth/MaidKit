@@ -83,6 +83,7 @@ class SerialConnectionManager {
         serverName: server.name,
         connectedAt: DateTime.now(),
         status: SessionStatus.connected,
+        transport: SessionTransport.serial,
       ),
     );
     return TerminalSessionHandle(

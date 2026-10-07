@@ -17,6 +17,7 @@ import 'maidcafe_stream.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'session_lookup.dart';
 import 'systemd_models.dart';
 
 /// Live database health snapshot plus rates derived from the previous one.
@@ -68,6 +69,13 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
   Timer? _metricsTimer;
 
   bool get _isRoot => widget.server.username == 'root';
+
+  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
+  /// server's performance metrics.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+  );
 
   DatabaseInstance? get _instance {
     final engine = _engine;
@@ -202,7 +210,8 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
   }
 
   // ---------------------------------------------------------------------
-  // Performance metrics (daemon `databaseMetrics` SSE first, SSH fallback)
+  // Performance metrics (SSH first while a live session owns the server,
+  // daemon `databaseMetrics` otherwise)
   // ---------------------------------------------------------------------
 
   void _startMetricsTimer() {
@@ -216,18 +225,24 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
   Future<void> _onMetricsTick() async {
     if (!mounted || !widget.connected) return;
     if (_metricsSseActive) {
-      final silence = DateTime.now().difference(_lastMetricsEvent);
-      final timeoutSeconds = _metricsSseIntervalSeconds * 3 >= 15
-          ? _metricsSseIntervalSeconds * 3
-          : 15;
-      if (silence > Duration(seconds: timeoutSeconds)) {
-        // The stream stays connected (heartbeats) but stopped delivering
-        // data — the daemon collector may be disabled or failing. Fall
-        // back to on-demand fetches instead of freezing the cards.
-        _metricsSseAttempted = true;
+      if (_sshPreferred) {
+        // A live session owns the readings now: stop the daemon stream this
+        // tab may have opened before the session appeared.
         _closeMetricsSse();
       } else {
-        return;
+        final silence = DateTime.now().difference(_lastMetricsEvent);
+        final timeoutSeconds = _metricsSseIntervalSeconds * 3 >= 15
+            ? _metricsSseIntervalSeconds * 3
+            : 15;
+        if (silence > Duration(seconds: timeoutSeconds)) {
+          // The stream stays connected (heartbeats) but stopped delivering
+          // data — the daemon collector may be disabled or failing. Fall
+          // back to on-demand fetches instead of freezing the cards.
+          _metricsSseAttempted = true;
+          _closeMetricsSse();
+        } else {
+          return;
+        }
       }
     }
     if (_metricsSubscription == null && !_metricsSseAttempted) {
@@ -245,6 +260,15 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
     if (!force && _metrics.asData?.value == null && !_metrics.isLoading) {
       setState(() => _metrics = const AsyncValue.loading());
     }
+    if (_sshPreferred) {
+      try {
+        await _loadMetricsOverSsh(engine);
+        return;
+      } catch (_) {
+        // The session dropped between the guard and the read: the daemon
+        // answers, exactly as it does on a build with no session.
+      }
+    }
     final session = await _ensureMaidCafeStream();
     if (session != null) {
       try {
@@ -261,26 +285,30 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
       }
     }
     try {
-      final snapshot = await ref
-          .read(connectionManagerProvider)
-          .refreshDatabaseMetrics(
-            widget.server.id,
-            engine: engine,
-            sshUserIsRoot: _isRoot,
-            sudoPassword: await _sudoPassword(),
-          );
-      if (!mounted) return;
-      final entry = snapshot?.forEngine(engine);
-      if (entry == null) {
-        setState(() => _metrics = const AsyncValue.data(null));
-        return;
-      }
-      _applyMetrics(snapshot!, entry);
+      await _loadMetricsOverSsh(engine);
     } catch (error, stackTrace) {
       if (mounted) {
         setState(() => _metrics = AsyncValue.error(error, stackTrace));
       }
     }
+  }
+
+  Future<void> _loadMetricsOverSsh(DatabaseEngine engine) async {
+    final snapshot = await ref
+        .read(connectionManagerProvider)
+        .refreshDatabaseMetrics(
+          widget.server.id,
+          engine: engine,
+          sshUserIsRoot: _isRoot,
+          sudoPassword: await _sudoPassword(),
+        );
+    if (!mounted) return;
+    final entry = snapshot?.forEngine(engine);
+    if (entry == null) {
+      setState(() => _metrics = const AsyncValue.data(null));
+      return;
+    }
+    _applyMetrics(snapshot!, entry);
   }
 
   void _applyMetrics(
@@ -304,6 +332,9 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
 
   Future<void> _startMetricsSse() async {
     if (_metricsSubscription != null || _metricsSseAttempted) return;
+    // A live session owns the readings, so the daemon is not asked for a
+    // stream; the one-shot daemon read stays as the failed-SSH fallback.
+    if (_sshPreferred) return;
     final session = await _ensureMaidCafeStream();
     if (session == null || !mounted) return;
     try {

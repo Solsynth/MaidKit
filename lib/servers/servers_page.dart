@@ -29,6 +29,7 @@ import 'server_health_chip.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'serial_port_client.dart';
+import 'session_lookup.dart';
 import 'privacy_preferences.dart';
 import 'tailscale_service.dart';
 import 'tailscale_settings_section.dart';
@@ -487,9 +488,13 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
         ),
       ),
     );
-    final sessionsByServerId = {
-      for (final session in widget.sessions) session.serverId: session,
-    };
+    // One entry per card: the transport-aware pick keeps a daemon terminal from
+    // standing in for an SSH session that carries the readings.
+    final sessionsByServerId = <int, SshSessionInfo>{};
+    for (final server in widget.servers) {
+      final session = sessionForServer(widget.sessions, server.id);
+      if (session != null) sessionsByServerId[server.id] = session;
+    }
     final allTags =
         widget.servers
             .expand((server) => decodeStringList(server.tags))
@@ -1167,13 +1172,23 @@ class _ServerCard extends ConsumerWidget {
     // route becomes unreachable on a host whose daemon answers.
     final daemonStats = ref.watch(maidCafeStatsProvider)[server.id];
     final sessionStatus = session?.status;
-    final sshConnected = sessionStatus == SessionStatus.connected;
+    // The feed also carries a daemon terminal for this server, and that is
+    // `connected` too: only an SSH session is a connection this card can read
+    // numbers from or reach SSH work through.
+    final sshConnected = isLiveSshSession(session);
     final stats = (sshConnected ? session?.stats : null) ?? daemonStats?.stats;
     final systemInfo = session?.systemInfo;
     final statsFromDaemon = !sshConnected && daemonStats != null;
     // A card with daemon statistics is live without an SSH session: that is the
-    // point of the direct route, and the only statistics route in a browser.
-    final connected = sshConnected || statsFromDaemon;
+    // point of the direct route, and the only statistics route in a browser. A
+    // serial console and a daemon terminal are the transport of a row that has
+    // no SSH route, and in a browser the only kind of session there is — they
+    // are not a connection for a native row that can do SSH.
+    final terminalConnected =
+        !sshConnected &&
+        (kIsWeb || isTerminalOnly) &&
+        sessionStatus == SessionStatus.connected;
+    final connected = sshConnected || terminalConnected || statsFromDaemon;
     final connecting =
         sessionStatus == SessionStatus.connecting && !sshConnected;
     final failed = sessionStatus == SessionStatus.failed && !statsFromDaemon;

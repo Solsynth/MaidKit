@@ -11,6 +11,7 @@ import 'maidcafe_stream.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'session_lookup.dart';
 
 /// Host firewall management (UFW preferred; also firewalld, nftables, iptables).
 class FirewallTab extends ConsumerStatefulWidget {
@@ -38,6 +39,13 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
   MaidCafeStreamSession? _maidCafeStream;
 
   bool get _isRoot => widget.server.username == 'root';
+
+  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
+  /// server's firewall changes.
+  bool get _sshPreferred => sshPreferredOverDaemon(
+    widget.server,
+    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+  );
 
   @override
   void initState() {
@@ -91,15 +99,20 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
   /// endpoint is a real failure, and re-running it over SSH would be a second
   /// firewall change the user did not ask for. A null [daemon] means the action
   /// has no daemon form at all (a verb the helper does not implement) and goes
-  /// straight to SSH.
-  Future<void> _preferDaemon(
+  /// straight to SSH. A live SSH session outranks the daemon outright: the SSH
+  /// form runs first, and its failure surfaces the same way.
+  Future<void> _runOnPreferredRoute(
     Future<void> Function(MaidCafeStreamSession session)? daemon,
     Future<void> Function() ssh,
   ) async {
-    final session = daemon == null ? null : await _ensureMaidCafeStream();
+    if (daemon == null || _sshPreferred) {
+      await ssh();
+      return;
+    }
+    final session = await _ensureMaidCafeStream();
     if (session != null) {
       try {
-        await daemon!(session);
+        await daemon(session);
         return;
       } on MaidCafeRouteMissingException {
         // Daemon older than /api/v1/firewall: fall back to SSH.
@@ -224,7 +237,7 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
     );
     if (approved != true || !mounted) return;
     await _run(() async {
-      await _preferDaemon(
+      await _runOnPreferredRoute(
         (session) async {
           // Daemon present: run the native firewall op, which elevates through
           // the helper's grant.
@@ -260,7 +273,7 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
       _ => null,
     };
     await _run(() async {
-      await _preferDaemon(
+      await _runOnPreferredRoute(
         daemonVerb == null
             ? null
             : (session) async {
@@ -335,7 +348,7 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
       _ => null,
     };
     await _run(() async {
-      await _preferDaemon(
+      await _runOnPreferredRoute(
         daemonVerb == null
             ? null
             : (session) async {

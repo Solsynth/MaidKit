@@ -13,7 +13,21 @@ MaidKit is a desktop-first Flutter application for managing SSH servers.
   host statistics, activity history, and terminals reach a daemon without an SSH
   session (`lib/servers/maidcafe_stats.dart`, `maidcafe_stream.dart`,
   `maidcafe_terminal_connection_manager.dart`). This is the only route that
-  works in a browser build.
+  works in a browser build, and on a native build it is a fallback rather than
+  the default: for a server that can also do SSH, a connected SSH session owns
+  statistics, activity, container and management actions, while the daemon
+  answers only until a session is live (and the statistics poll stands aside
+  while one is). `lib/servers/session_lookup.dart` holds that rule —
+  `sshPreferredOverDaemon` reads the session feed, whose
+  `SessionTransport` tag is what keeps a daemon terminal from passing for an SSH
+  session. Features SSH has no implementation for keep the daemon outright: the
+  daemon console, container update checks, the compose stack registry,
+  watched-process history, and the daemon's health score.
+- **Server rows are independent of transports.** `connectionType` names what the
+  row *is* — `ssh`, `serial`, or `maidcafe` — and a daemon route can sit on any
+  of them as a second way in. Only a row typed `maidcafe` is daemon-only; a row
+  typed `ssh` always keeps its SSH route, and the daemon is what covers it when
+  no session is up.
 - **island_ui_foundation** from the Solian Git repository for the desktop window frame and reusable responsive UI utilities.
 - **window_manager** for native desktop window setup, with **screen_retriever** for the display layout saved window bounds are restored against.
 

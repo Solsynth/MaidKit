@@ -576,6 +576,15 @@ class ServerProxy {
 
 enum SessionStatus { connecting, connected, failed, closed }
 
+/// Which transport a session in the merged feed runs on.
+///
+/// The feed unions every transport — an SSH session, a serial console and a
+/// MaidCafe daemon terminal for one server are three entries — and only SSH can
+/// run the SSH-shaped work this app does (statistics, SFTP, exec). Consumers
+/// that must not mistake a daemon terminal for a connection that can do that
+/// work read this field rather than guessing from the entry's shape.
+enum SessionTransport { ssh, serial, maidcafe }
+
 /// Raised when an operation needs the server's retained SSH connection.
 class ServerConnectionRequiredException implements Exception {
   const ServerConnectionRequiredException();
@@ -927,6 +936,7 @@ class SshSessionInfo {
     required this.serverName,
     required this.connectedAt,
     required this.status,
+    this.transport = SessionTransport.ssh,
     this.error,
     this.stats,
     this.systemInfo,
@@ -937,6 +947,11 @@ class SshSessionInfo {
   final String serverName;
   final DateTime connectedAt;
   final SessionStatus status;
+
+  /// The transport that produced this entry. Defaults to SSH, which is what
+  /// every entry meant before the feed carried more than one.
+  final SessionTransport transport;
+
   final String? error;
   final ServerStats? stats;
   final ServerSystemInfo? systemInfo;
@@ -946,6 +961,7 @@ class SshSessionInfo {
 
   SshSessionInfo copyWith({
     SessionStatus? status,
+    SessionTransport? transport,
     String? error,
     ServerStats? stats,
     ServerSystemInfo? systemInfo,
@@ -955,6 +971,7 @@ class SshSessionInfo {
     serverName: serverName,
     connectedAt: connectedAt,
     status: status ?? this.status,
+    transport: transport ?? this.transport,
     error: error ?? this.error,
     stats: stats ?? this.stats,
     systemInfo: systemInfo ?? this.systemInfo,
