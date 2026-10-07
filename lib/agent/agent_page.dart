@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:dart_openai/dart_openai.dart';
-import 'package:dartssh2/dartssh2.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
@@ -20,6 +19,7 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
+import 'package:maid_kit/servers/remote_file_client_resolver.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart'
@@ -32,6 +32,7 @@ import 'package:maid_kit/agent/skill_repository.dart';
 import 'package:maid_kit/agent/skill_registry.dart';
 import 'agent_attachment.dart';
 import 'agent_composer.dart';
+import 'agent_host_executor.dart';
 import 'agent_reasoning.dart';
 import 'agent_repository.dart';
 import 'agent_run_policy.dart';
@@ -599,7 +600,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       if (!mounted) {
         return;
       }
-      SSHClient? client;
+      AgentHostExecutor? executor;
       Server? targetServer;
       final serverId = approvedProposal.serverId;
       if (serverId != null) {
@@ -610,14 +611,21 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           throw StateError('agentServerGone'.tr());
         }
         targetServer = server;
-        if (ref.read(connectionManagerProvider).clientFor(server.id) == null &&
-            !await connectForStatistics(context, ref, server)) {
-          if (mounted) setState(() => _reconnectRequired = true);
-          return;
-        }
-        client = ref.read(connectionManagerProvider).clientFor(server.id);
-        if (client == null) {
-          if (mounted) setState(() => _reconnectRequired = true);
+        executor = await _executorFor(server);
+        if (!mounted) return;
+        if (executor == null) {
+          setState(() {
+            _reconnectRequired = true;
+            // A browser has no SSH to reconnect to: what is missing is a daemon
+            // route, and saying so is the difference between a dead end and a
+            // fix.
+            if (kIsWeb) {
+              _messages.add(
+                _AgentMessage.assistant('agentMaidCafeRouteRequired'.tr()),
+              );
+            }
+          });
+          _scrollToBottom();
           return;
         }
       }
@@ -642,8 +650,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       final String result;
       try {
         result = await _executeProposal(
-          agent,
-          client,
+          executor,
           approvedProposal,
           cancelToken,
           sink: _commandSink(toolIndex),
@@ -926,8 +933,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   }
 
   Future<String> _executeProposal(
-    SshAgentService agent,
-    SSHClient? client,
+    AgentHostExecutor? executor,
     AgentProposal proposal,
     AgentCancelToken cancelToken, {
     AgentExecutionSink? sink,
@@ -951,8 +957,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         if (snippet == null) {
           throw StateError('agentSnippetGone'.tr(args: ['$snippetId']));
         }
-        return agent.execute(
-          _requireClient(client),
+        return _requireExecutor(executor).run(
           proposal,
           snippetScript: snippet.script,
           cancelToken: cancelToken,
@@ -962,12 +967,9 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       case AgentActionKind.readFile:
       case AgentActionKind.writeFile:
       case AgentActionKind.deleteFile:
-        return agent.execute(
-          _requireClient(client),
-          proposal,
-          cancelToken: cancelToken,
-          sink: sink,
-        );
+        return _requireExecutor(
+          executor,
+        ).run(proposal, cancelToken: cancelToken, sink: sink);
       case AgentActionKind.mcpToolCall:
         final serverId = proposal.mcpServerId;
         if (serverId == null) {
@@ -1019,8 +1021,50 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       ? value
       : '${value.substring(0, 12000)}\n[output truncated]';
 
-  SSHClient _requireClient(SSHClient? client) =>
-      client ?? (throw StateError('agentRequiresConnection'.tr()));
+  AgentHostExecutor _requireExecutor(AgentHostExecutor? executor) =>
+      executor ?? (throw StateError('agentRequiresConnection'.tr()));
+
+  /// The transport this action runs over, or null when this build has none to
+  /// offer for [server].
+  ///
+  /// SSH comes first wherever this build can open it, which is what a desktop
+  /// client keeps doing. A browser cannot open one at all, so asking for it
+  /// would only ever report a transport the build does not have: there the
+  /// daemon is the route, and an action runs in a daemon terminal session.
+  Future<AgentHostExecutor?> _executorFor(Server server) async {
+    final manager = ref.read(connectionManagerProvider);
+    final client = manager.clientFor(server.id);
+    if (client != null) return SshAgentHostExecutor(client);
+    if (kIsWeb) return _daemonExecutor(server);
+    if (!await connectForStatistics(context, ref, server)) return null;
+    final connected = manager.clientFor(server.id);
+    return connected == null ? null : SshAgentHostExecutor(connected);
+  }
+
+  /// The daemon transport for [server], or null when this client has no route
+  /// to dial — no endpoint, no credential, or a relayed daemon with no cloud
+  /// session.
+  ///
+  /// Files are resolved per action through the same resolver the file surfaces
+  /// use, so an action sees exactly the roots the daemon grants this client and
+  /// nothing else.
+  Future<AgentHostExecutor?> _daemonExecutor(Server server) async {
+    final target = await ref
+        .read(serverRepositoryProvider)
+        .maidCafeTerminalTargetFor(server);
+    if (target == null) return null;
+    return MaidCafeAgentHostExecutor(
+      server: server,
+      target: target,
+      terminals: ref.read(maidCafeTerminalConnectionManagerProvider),
+      files: () => resolveRemoteFileClient(
+        manager: ref.read(connectionManagerProvider),
+        registry: ref.read(maidCafeSessionRegistryProvider),
+        server: server,
+        daemonAllowed: true,
+      ),
+    );
+  }
 
   Future<void> _handleTurn(AgentTurn turn) async {
     final proposal = turn.proposal;

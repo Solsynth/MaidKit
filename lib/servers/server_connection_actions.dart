@@ -12,6 +12,7 @@ import 'auth_challenge_dialog.dart';
 import 'maidcafe_connectivity.dart';
 import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
+import 'maidcafe_stats.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_terminal_connection_manager.dart';
 import 'port_forwarding_models.dart';
@@ -55,6 +56,52 @@ Future<List<CloudPickedPath>?> pickRemotePaths(
     selection: selection,
     allowMultiple: allowMultiple,
   );
+}
+
+/// Reads [server]'s statistics from its MaidCafe daemon once and publishes
+/// them — the browser's substitute for the SSH session
+/// [connectForStatistics] opens, and the same read the scheduler performs on
+/// its own cadence.
+///
+/// The reason for a failure is named rather than left as "this build cannot
+/// connect": a host with no daemon address this client can dial, one with no
+/// credential stored for it, and a daemon that stayed silent are three
+/// different things to fix, and only the last is about the daemon being down.
+Future<bool> refreshMaidCafeStatistics(
+  BuildContext context,
+  WidgetRef ref,
+  Server server,
+) async {
+  final collector = ref.read(maidCafeStatsCollectorProvider);
+  final blocker = await collector.blockerFor(server);
+  if (blocker != null) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: switch (blocker) {
+          MaidCafeStatsBlocker.routeMissing =>
+            'serversMaidCafeStatsNoRoute'.tr(),
+          MaidCafeStatsBlocker.credentialMissing =>
+            'serversMaidCafeStatsNoCredential'.tr(),
+        },
+        title: 'serverCannotConnect'.tr(),
+        icon: Symbols.link_off,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+    return false;
+  }
+  final snapshot = await collector.collect(server);
+  ref.read(maidCafeStatsProvider.notifier).set(server.id, snapshot);
+  if (snapshot != null) return true;
+  if (context.mounted) {
+    showStyledSnackBar(
+      message: 'serversMaidCafeStatsUnreachable'.tr(),
+      title: 'serverCannotConnect'.tr(),
+      icon: Symbols.link_off,
+      accentColor: Theme.of(context).colorScheme.error,
+    );
+  }
+  return false;
 }
 
 Future<bool> connectForStatistics(

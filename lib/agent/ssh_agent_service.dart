@@ -255,10 +255,47 @@ class AgentSkillTarget {
 /// question) and to stop a long-running command without cancelling the whole
 /// turn. Output itself is delivered through [AgentExecutionSink.onOutput]; the
 /// handle only owns the process side.
+///
+/// It is transport-blind: the two ways this app reaches a host — an SSH channel
+/// and a MaidCafe daemon terminal session — each supply the two things the
+/// handle does, so the page answers a prompt and stops a command the same way
+/// on either.
 class AgentExecutionSession {
-  AgentExecutionSession(this._session);
+  AgentExecutionSession({
+    required void Function(String line) sendLine,
+    required void Function() terminate,
+  }) : // The public parameter names are what the callers pass; the private
+       // fields keep the handle's own surface to what it does.
+       // ignore: prefer_initializing_formals
+       _send = sendLine,
+       // ignore: prefer_initializing_formals
+       _terminate = terminate;
 
-  final SSHSession _session;
+  /// The session of an SSH channel: a keystroke goes to its stdin, and stopping
+  /// it signals the remote process and closes the channel.
+  AgentExecutionSession.ssh(SSHSession session)
+    : _send = ((line) => _writeToSsh(session, line)),
+      _terminate = (() => _closeSsh(session));
+
+  static void _writeToSsh(SSHSession session, String line) {
+    try {
+      session.stdin.add(Uint8List.fromList(utf8.encode('$line\n')));
+    } catch (_) {
+      // The channel is already gone; the output stream reports the end.
+    }
+  }
+
+  static void _closeSsh(SSHSession session) {
+    try {
+      session.kill(SSHSignal.TERM);
+    } catch (_) {}
+    try {
+      session.close();
+    } catch (_) {}
+  }
+
+  final void Function(String line) _send;
+  final void Function() _terminate;
   var _stopped = false;
   var _closed = false;
 
@@ -274,11 +311,7 @@ class AgentExecutionSession {
   /// automatically would hand the stored secret to whatever prompt appears.
   void sendLine(String line) {
     if (_closed) return;
-    try {
-      _session.stdin.add(Uint8List.fromList(utf8.encode('$line\n')));
-    } catch (_) {
-      // The channel is already gone; the output stream reports the end.
-    }
+    _send(line);
   }
 
   /// Terminates the remote process and closes its channel. The caller's stream
@@ -287,15 +320,12 @@ class AgentExecutionSession {
   void stop() {
     if (_stopped || _closed) return;
     _stopped = true;
-    try {
-      _session.kill(SSHSignal.TERM);
-    } catch (_) {}
-    try {
-      _session.close();
-    } catch (_) {}
+    _terminate();
   }
 
-  void _markClosed() => _closed = true;
+  /// Marks the process gone, so late input is dropped rather than thrown into
+  /// the UI. Called by whoever owns the transport once it reports the end.
+  void markClosed() => _closed = true;
 }
 
 /// Streaming and interaction hooks for the remote half of an agent action.
@@ -315,6 +345,16 @@ class AgentExecutionSink {
   final void Function(AgentExecutionSession session)? onSession;
   final bool interactive;
 }
+
+/// Largest command output kept in memory while it streams, on either transport.
+/// The UI log is the reason for a bound at all; what reaches the model is cut
+/// shorter still by [limitAgentOutput].
+const int maxStreamedAgentCharacters = 64 * 1024;
+
+/// Largest result one action hands back to the model, in characters.
+String limitAgentOutput(String value) => value.length <= 12000
+    ? value
+    : '${value.substring(0, 12000)}\n[output truncated]';
 
 /// The plain text a terminal would show for [value]: escape sequences removed
 /// and carriage-return rewrites settled, so a progress line reads as its last
@@ -659,7 +699,7 @@ class SshAgentService {
           return await _withSftp(client, cancelToken, (sftp) async {
             final file = await sftp.open(path, mode: SftpFileOpenMode.read);
             try {
-              return _limit(utf8.decode(await file.readBytes()));
+              return limitAgentOutput(utf8.decode(await file.readBytes()));
             } finally {
               await file.close();
             }
@@ -731,7 +771,7 @@ class SshAgentService {
           ? const SSHPtyConfig(type: 'xterm-256color', width: 120, height: 40)
           : null,
     );
-    final handle = AgentExecutionSession(session);
+    final handle = AgentExecutionSession.ssh(session);
     sink?.onSession?.call(handle);
     void abort() => handle.stop();
     cancelToken?.register(abort);
@@ -740,7 +780,7 @@ class SshAgentService {
     // binary, and the turn must not fail because of what it printed.
     const decoder = Utf8Decoder(allowMalformed: true);
     void collect(String text) {
-      final remaining = _maxStreamedCharacters - output.length;
+      final remaining = maxStreamedAgentCharacters - output.length;
       if (remaining <= 0) return;
       final kept = text.length <= remaining
           ? text
@@ -759,7 +799,7 @@ class SshAgentService {
       await session.done;
       await Future.wait([stdoutDone, stderrDone]);
     } finally {
-      handle._markClosed();
+      handle.markClosed();
       cancelToken?.unregister(abort);
     }
     cancelToken?.throwIfCancelled();
@@ -771,12 +811,8 @@ class SshAgentService {
         : exitCode == null || exitCode == 0
         ? ''
         : '\n[exit $exitCode]';
-    return '${_limit(settleTerminalOutput(output.toString()))}$status';
+    return '${limitAgentOutput(settleTerminalOutput(output.toString()))}$status';
   }
-
-  /// Largest command output kept in memory while it streams. The UI log is the
-  /// reason for a bound at all; what reaches the model is cut shorter still.
-  static const _maxStreamedCharacters = 64 * 1024;
 
   /// Opens one SFTP channel for an action and always closes it afterwards.
   ///
@@ -802,10 +838,6 @@ class SshAgentService {
       await sftp.close();
     }
   }
-
-  static String _limit(String value) => value.length <= 12000
-      ? value
-      : '${value.substring(0, 12000)}\n[output truncated]';
 
   /// [content] is what the OpenAI-compatible endpoint accepts under `content`:
   /// a string, or a multimodal part list.

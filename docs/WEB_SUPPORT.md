@@ -17,7 +17,8 @@ and what is still open.
 | Containers | MaidCafe daemon `/api/v1/containers` and its per-container reads, over HTTP(S). Exec, attach and re-create-from-inspect stay SSH-only |
 | Port forwarding, systemd, web servers, packages, firewall | Unavailable (SSH or local filesystem) |
 | Tailscale, network ping | Unavailable (native runtime) |
-| Local MCP server, agent processes | Unavailable (no child processes) |
+| Local MCP server | Unavailable (no child processes) |
+| Agent chat actions | MaidCafe daemon terminal sessions (commands and snippets) and the daemon file API (reads and writes), when no SSH client exists |
 | Desktop window control, system notifications, biometric unlock, system fonts | Unavailable (no plugin) |
 
 Unavailable surfaces are hidden, and the entry points that funnel into them
@@ -28,6 +29,14 @@ does the same unless the server carries a MaidCafe route — a daemon endpoint, 
 cloud relay identity, or the port a native client learned for it — in which case
 the terminal is opened over the daemon. The terminal command palette lists only
 MaidCafe servers there.
+
+The dashboard's own *Connect* is not that gate. In a browser it reads the host's
+statistics from its daemon (`refreshMaidCafeStatistics`) and names what is
+missing when it cannot — no daemon address this client can dial, no credential
+stored for it, or a daemon that stayed silent — so a card whose numbers come
+over HTTP is never told to open the SSH session it cannot have. *Files* on a card
+opens the daemon-backed file manager the same way, without asking for a session
+first.
 
 Every server card's context menu names the MaidCafe transports explicitly
 ("Open terminal via daemon", "Open terminal via cloud relay") and adds a
@@ -258,6 +267,48 @@ As with the file API, a browser needs a route it can dial on its own: the
 session that carries all of the above cannot open an SSH forward there, so a
 server with no endpoint override (normally the HTTPS front described below)
 shows the containers tab with the route it is missing instead of a list.
+
+## The agent without SSH
+
+An agent chat runs in a browser; its *actions* used to need an SSH client the
+build could not open, so every approved command ended in "the browser build can
+only open MaidCafe daemon terminals". Actions now run over whichever transport
+the build can actually open (`AgentHostExecutor`,
+`lib/agent/agent_host_executor.dart`):
+
+| Transport | Used when |
+| --- | --- |
+| `SshAgentHostExecutor` | This client has a live SSH session for the server, or can open one (a desktop build) |
+| `MaidCafeAgentHostExecutor` | The build cannot open an SSH session (a browser), so the daemon is the route |
+
+Files go through `RemoteFileClient`, the same abstraction the file surfaces use,
+so a daemon action is confined to the roots the daemon grants this client. The
+daemon has **no exec request**: its terminal is an interactive login shell on a
+PTY, so a script is typed into that shell — see `daemonShellPayload` for how
+that stays safe:
+
+- The text travels as octal escapes of its UTF-8 bytes accumulated in one shell
+  variable, so nothing the model wrote — quotes, `$`, backticks, here-doc
+  delimiters, newlines — can be reinterpreted by the shell it is typed into.
+- Each typed line stays under the terminal driver's canonical input limit (1024
+  bytes on BSD, 4096 on Linux), because the escapes are sliced into fixed pieces
+  however long the script is.
+- The run wraps the script in begin/end markers that are printed through `%s`,
+  so a terminal's *echo* of the typed line cannot contain them — and only what
+  falls between the markers is the result. What a themed `~/.zshrc` draws on
+  every line, and the app's own typing, land outside them and are dropped from
+  both the streamed card and the model's result.
+- The end marker carries the script's own exit status (`[exit N]`, as on the SSH
+  path). A script that exits the shell never prints it, and the session's own end
+  supplies the status instead.
+
+The card's input field answers a prompt on the running command, and *Stop*
+closes the session, which ends the process on the daemon's side. The step the
+app cannot make is interactive: the command runs on a PTY, so a program that
+pages its output waits for input the same way it does in a terminal tab.
+
+MCP servers stay unavailable there (no child processes to spawn); skills and
+snippets are local and work unchanged.
 
 ## How the platform split works
 

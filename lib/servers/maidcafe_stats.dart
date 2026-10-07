@@ -283,6 +283,21 @@ String _formatHealthBytes(double value) {
   return '${scaled.toStringAsFixed(1)} ${units[index]}';
 }
 
+/// Why a daemon statistics read produced no numbers.
+///
+/// Only the first of these is about the transport; the other two are
+/// configuration, which is why a caller reports which one it hit rather than
+/// blaming the build it runs in.
+enum MaidCafeStatsBlocker {
+  /// Collection is switched off for the server, or its daemon has no address
+  /// this client can dial — a loopback-only daemon whose port was never
+  /// learned.
+  routeMissing,
+
+  /// The daemon's address is known but no credential is stored for it.
+  credentialMissing,
+}
+
 /// Reads statistics straight from the daemon, over the route a client can take
 /// **without SSH**.
 ///
@@ -317,6 +332,30 @@ class MaidCafeStatsCollector {
     return url;
   }
 
+  /// Why [server]'s statistics cannot be read from its daemon, or null when a
+  /// read can be attempted.
+  ///
+  /// A caller that has to explain the failure — the dashboard's connect action,
+  /// which is the only way a browser has to fill a card in — needs these told
+  /// apart: an address this client cannot dial, a credential that was never
+  /// stored, and a daemon that stayed silent are three different things to fix.
+  Future<MaidCafeStatsBlocker?> blockerFor(Server server) async {
+    if (endpointFor(server) == null) return MaidCafeStatsBlocker.routeMissing;
+    return await _credentialFor(server) == null
+        ? MaidCafeStatsBlocker.credentialMissing
+        : null;
+  }
+
+  /// The credential a direct read presents: the dedicated terminal secret when
+  /// one is stored, the metrics secret otherwise — the same fallback the daemon
+  /// itself applies to `daemon.terminal.secret`.
+  Future<String?> _credentialFor(Server server) async {
+    final secret =
+        await _repository.maidCafeTerminalSecretFor(server) ??
+        await _repository.maidCafeMetricsSecretFor(server);
+    return secret == null || secret.isEmpty ? null : secret;
+  }
+
   /// One snapshot, or null when the daemon is unreachable on its direct route
   /// or answered with something unusable. Failures are logged, never thrown:
   /// a host whose daemon is down must not take the dashboard with it.
@@ -333,10 +372,8 @@ class MaidCafeStatsCollector {
       return null;
     }
     maidCafeLog('reading statistics for "${server.name}" from $endpoint');
-    final secret =
-        await _repository.maidCafeTerminalSecretFor(server) ??
-        await _repository.maidCafeMetricsSecretFor(server);
-    if (secret == null || secret.isEmpty) {
+    final secret = await _credentialFor(server);
+    if (secret == null) {
       maidCafeLog(
         'no daemon credential is stored for "${server.name}", so its '
         'statistics cannot be read directly',

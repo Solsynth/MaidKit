@@ -268,10 +268,17 @@ class MaidCafeTerminalConnectionManager {
   /// Throws [MaidCafeTerminalException] when the handshake is refused (a wrong
   /// credential, a disabled endpoint, a rejected origin, or an unreachable
   /// daemon), or when the daemon cannot start the shell.
+  ///
+  /// [onOutput] receives every PTY chunk and [onExit] the session's exit code,
+  /// for a caller that drives the session without a terminal view — an agent
+  /// action running a command over the daemon. The emulator still renders the
+  /// same bytes; these are taps, not a replacement.
   Future<TerminalSessionHandle> openTerminal(
     Server server,
     MaidCafeTerminalTarget target, {
     String? initialOutput,
+    void Function(Uint8List chunk)? onOutput,
+    void Function(int? exitCode)? onExit,
   }) async {
     final terminal = _terminalAdapterFactory().create();
     if (initialOutput != null && initialOutput.isNotEmpty) {
@@ -300,6 +307,8 @@ class MaidCafeTerminalConnectionManager {
       serverId: server.id,
       channel: channel,
       output: StreamController<Uint8List>(),
+      onOutput: onOutput,
+      onExit: onExit,
     );
     try {
       await channel.ready;
@@ -419,6 +428,17 @@ class MaidCafeTerminalConnectionManager {
     await _finish(connection);
   }
 
+  /// Sends [text] to the terminal with [terminalId] as if it had been typed.
+  ///
+  /// A caller that drives a session without a view — an agent action feeding a
+  /// command, or answering a prompt — writes through here rather than through
+  /// an emulator it never built. Unknown ids are ignored, like [closeTerminal].
+  void writeToTerminal(String terminalId, String text) {
+    final connection = _terminals[terminalId];
+    if (connection == null || text.isEmpty) return;
+    _sendBytes(connection, Uint8List.fromList(utf8.encode(text)));
+  }
+
   void dispose() {
     unawaited(_closeAll());
   }
@@ -468,6 +488,7 @@ class MaidCafeTerminalConnectionManager {
     };
     if (bytes == null || bytes.isEmpty) return;
     connection.output.add(bytes);
+    connection.onOutput?.call(bytes);
   }
 
   void _handleControlFrame(
@@ -553,6 +574,10 @@ class MaidCafeTerminalConnectionManager {
       );
     }
     if (!connection.done.isCompleted) connection.done.complete();
+    // A caller that drives this session reports the end to whoever asked for
+    // the run; it happens after the socket is closed and the last chunk queued,
+    // so a command's output is never cut short by its own exit.
+    connection.onExit?.call(exitCode);
   }
 
   void _closeTerminalAfterSessionEnds(
@@ -581,6 +606,8 @@ class _MaidCafeTerminalConnection {
     required this.serverId,
     required this.channel,
     required this.output,
+    this.onOutput,
+    this.onExit,
   });
 
   final int serverId;
@@ -589,6 +616,11 @@ class _MaidCafeTerminalConnection {
   /// Client-bound PTY chunks. The binding owns the listener; the frame pump
   /// feeds it and the daemon's backpressure is the socket itself.
   final StreamController<Uint8List> output;
+
+  /// Optional taps for a caller that drives this session without a view (see
+  /// [MaidCafeTerminalConnectionManager.openTerminal]).
+  final void Function(Uint8List chunk)? onOutput;
+  final void Function(int? exitCode)? onExit;
 
   late final TerminalSessionBinding binding;
   StreamSubscription<Object?>? frames;

@@ -351,6 +351,61 @@ void main() {
     expect(manager.current.single.error, isNull);
   });
 
+  test(
+    'a session driven without a view reports output and exit status',
+    () async {
+      final received = <String>[];
+      final sockets = <WebSocket>[];
+      final daemon = await _FakeDaemon.start((socket, request) {
+        sockets.add(socket);
+        socket.add(jsonEncode({'type': 'hello', 'version': 'v1'}));
+        socket.listen((frame) {
+          if (frame is String) return;
+          final text = utf8.decode((frame as List<int>));
+          received.add(text);
+          socket.add(Uint8List.fromList(utf8.encode('out:$text')));
+          if (text.contains('exit')) {
+            socket.add(jsonEncode({'type': 'exit', 'code': 7, 'reason': ''}));
+          }
+        });
+      });
+      addTearDown(daemon.stop);
+
+      final output = <int>[];
+      int? exitCode;
+      final manager = MaidCafeTerminalConnectionManager(
+        () => _AdapterFactory(_RecordingAdapter()),
+      );
+      addTearDown(manager.dispose);
+      final server = _daemonServer(daemon.baseUrl);
+
+      final handle = await manager.openTerminal(
+        server,
+        MaidCafeTerminalTarget(
+          baseUrl: daemon.baseUrl,
+          secret: 'metrics-secret',
+        ),
+        onOutput: output.addAll,
+        onExit: (code) => exitCode = code,
+      );
+
+      // Typed through the manager, which is what a caller without a view does.
+      manager.writeToTerminal(handle.id, 'echo hi\n');
+      await _until(() => received.isNotEmpty);
+      expect(received.single, 'echo hi\n');
+      await _until(() => utf8.decode(output).contains('out:echo hi'));
+      expect(exitCode, isNull);
+
+      // The daemon's exit frame reaches the caller that asked for the status.
+      manager.writeToTerminal(handle.id, 'exit\n');
+      await _until(() => exitCode != null);
+      expect(exitCode, 7);
+
+      // Unknown ids are ignored, exactly as closeTerminal ignores them.
+      manager.writeToTerminal('maidcafe-unknown', 'nope\n');
+    },
+  );
+
   test('reports a daemon error frame as a failed session', () async {
     final daemon = await _FakeDaemon.start((socket, request) {
       socket.add(jsonEncode({'type': 'error', 'message': 'terminal disabled'}));

@@ -8,6 +8,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:maid_kit/platform/tailscale.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
@@ -84,6 +85,13 @@ class ServerDashboardTab extends ConsumerWidget {
     // SSH servers connect without opening a terminal so the card can collect
     // statistics; every other transport exists to serve a terminal.
     if (server.connectionType == ServerConnectionType.ssh.name) {
+      // A browser cannot open that raw socket, so its cards are filled by the
+      // daemon over HTTP instead — the same read the scheduler makes, asked
+      // for by hand. A host with no such route says so itself.
+      if (kIsWeb) {
+        await refreshMaidCafeStatistics(context, ref, server);
+        return;
+      }
       await connectForStatistics(context, ref, server);
       return;
     }
@@ -211,6 +219,12 @@ class ServerDashboardTab extends ConsumerWidget {
     // File management talks to the host over SSH; serial and daemon servers
     // have no SSH client to reach it with.
     if (server.connectionType != ServerConnectionType.ssh.name) return;
+    // A browser browses through the daemon's file API instead of SFTP, so the
+    // surface opens without a session and reports its own missing route.
+    if (kIsWeb) {
+      ref.read(terminalTabsProvider.notifier).openFileManagement(server);
+      return;
+    }
     final manager = ref.read(connectionManagerProvider);
     if (manager.clientFor(server.id) == null &&
         !await connectForStatistics(context, ref, server)) {
