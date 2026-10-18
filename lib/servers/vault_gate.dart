@@ -240,11 +240,11 @@ class _VaultGateState extends ConsumerState<VaultGate>
 
   Future<void> _openVaultFile() async {
     if (_busy || !externalVaultsSupported) return;
-    final selection = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['sqlite', 'db', 'maidkit'],
     );
-    final path = selection?.files.singleOrNull?.path;
+    final path = file?.path;
     if (path == null) return;
     try {
       final managedPath = await ref

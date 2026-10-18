@@ -116,7 +116,7 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
   Future<void> _export() async {
     try {
       final source = await ref.read(projectRepositoryProvider).exportToml();
-      final path = await FilePicker.saveFile(
+      final saved = await FilePicker.saveFile(
         dialogTitle: 'deploymentExportDialogTitle'.tr(),
         fileName:
             'maidkit-projects-${exportFileNamePrefix(ref)}-${exportTimestamp()}.toml',
@@ -124,7 +124,7 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
         allowedExtensions: const ['toml'],
         bytes: utf8.encode(source),
       );
-      if (path != null && mounted) {
+      if (saved != null && mounted) {
         showStyledSnackBar(
           message: 'deploymentExportSuccess'.tr(),
           title: 'deploymentExportComplete'.tr(),
@@ -145,20 +145,16 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
 
   Future<void> _import() async {
     try {
-      final result = await FilePicker.pickFiles(
+      final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['toml'],
-        // A browser has no filesystem path to read back, so ask the picker for
-        // the bytes; native keeps reading the file from disk.
-        withData: kIsWeb,
       );
-      final file = result?.files.singleOrNull;
       if (file == null) return;
       final String source;
       if (kIsWeb) {
-        final bytes = file.bytes;
-        if (bytes == null) return;
-        source = utf8.decode(bytes);
+        // A browser has no filesystem path to read back, so the bytes come
+        // from the picked file itself; native reads it from disk.
+        source = utf8.decode(await file.readAsBytes());
       } else {
         final path = file.path;
         if (path == null) return;

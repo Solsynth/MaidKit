@@ -183,23 +183,24 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   /// own, so one that turns out not to be text shows its problem on the strip
   /// instead of failing the whole pick.
   Future<void> _attachFromPicker() async {
-    final result = await FilePicker.pickFiles(
-      allowMultiple: true,
-      // A browser has no filesystem path to read back, so ask the picker for
-      // the bytes; native keeps reading the file from disk.
-      withData: kIsWeb,
-    );
-    final files = result?.files ?? const <PlatformFile>[];
+    final files = await FilePicker.pickFiles();
     if (files.isEmpty) return;
     await _addAttachments([
-      for (final file in files)
-        readAgentAttachment(
-          name: file.name,
-          path: file.path,
-          bytes: file.bytes,
-        ),
+      for (final file in files) _attachmentFromFile(file),
     ]);
   }
+
+  /// Reads one picked file into a queued attachment.
+  ///
+  /// A browser's picker hands over bytes and no readable path; a desktop pick
+  /// is read by the helper, which can refuse an oversized file before pulling
+  /// it into memory.
+  Future<AgentAttachment> _attachmentFromFile(PlatformFile file) async =>
+      readAgentAttachment(
+        name: file.name,
+        path: kIsWeb ? null : file.path,
+        bytes: kIsWeb ? await file.readAsBytes() : null,
+      );
 
   /// Queues files dropped on the chat: the same path a picked file takes, with
   /// the macOS sandbox access a drag out of Finder needs.

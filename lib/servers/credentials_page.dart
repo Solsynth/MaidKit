@@ -210,11 +210,10 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
       value == null || value.isEmpty ? 'commonRequired'.tr() : null;
 
   Future<void> _pickKey() async {
-    final result = await FilePicker.pickFiles(withData: true);
-    final bytes = result?.files.singleOrNull?.bytes;
-    if (bytes != null && mounted) {
-      setState(() => _secret.text = String.fromCharCodes(bytes));
-    }
+    final file = await FilePicker.pickFile();
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (mounted) setState(() => _secret.text = String.fromCharCodes(bytes));
   }
 
   void _save() {

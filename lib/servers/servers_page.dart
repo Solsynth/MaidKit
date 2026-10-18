@@ -2228,11 +2228,10 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
   }
 
   Future<void> _pickKey() async {
-    final result = await FilePicker.pickFiles(withData: true);
-    final bytes = result?.files.single.bytes;
-    if (bytes != null) {
-      setState(() => _secret.text = String.fromCharCodes(bytes));
-    }
+    final file = await FilePicker.pickFile();
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (mounted) setState(() => _secret.text = String.fromCharCodes(bytes));
   }
 
   /// Discovers serial devices through the platform bridge helper and fills

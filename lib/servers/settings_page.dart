@@ -1253,11 +1253,11 @@ class SettingsPage extends HookConsumerWidget {
     BuildContext context,
     WidgetRef ref,
   ) async {
-    final selection = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       dialogTitle: 'settingsBackgroundImageChoose'.tr(),
       type: FileType.image,
     );
-    final path = selection?.files.singleOrNull?.path;
+    final path = file?.path;
     if (path == null) return;
     try {
       await saveMaidKitBackgroundImage(ref, File(path));
@@ -1513,7 +1513,7 @@ class SettingsPage extends HookConsumerWidget {
         ref.read(databaseProvider),
         ref.read(vaultServiceProvider),
       ).exportArchive(password);
-      final path = await FilePicker.saveFile(
+      final saved = await FilePicker.saveFile(
         dialogTitle: 'settingsExportData'.tr(),
         fileName:
             'maidkit-${exportFileNamePrefix(ref)}-${exportTimestamp()}.mkb',
@@ -1521,7 +1521,7 @@ class SettingsPage extends HookConsumerWidget {
         allowedExtensions: const ['mkb'],
         bytes: utf8.encode(archive),
       );
-      if (path != null && context.mounted) {
+      if (saved != null && context.mounted) {
         _showMessage('settingsExportSuccess'.tr());
       }
     } catch (error) {
@@ -1532,12 +1532,12 @@ class SettingsPage extends HookConsumerWidget {
   }
 
   Future<void> _importDatabase(BuildContext context, WidgetRef ref) async {
-    final selection = await FilePicker.pickFiles(
+    final file = await FilePicker.pickFile(
       dialogTitle: 'settingsImportData'.tr(),
       type: FileType.custom,
       allowedExtensions: const ['mkb'],
     );
-    final path = selection?.files.singleOrNull?.path;
+    final path = file?.path;
     if (path == null || !context.mounted) return;
 
     final password = await _backupPasswordSheet(context, confirm: false);
@@ -1762,14 +1762,14 @@ class SettingsPage extends HookConsumerWidget {
         _ConnectionsExportFormat.csv => await service.exportCsv(),
         _ => await service.exportJson(passphrase: passphrase),
       };
-      final path = await FilePicker.saveFile(
+      final saved = await FilePicker.saveFile(
         dialogTitle: 'settingsConnectionsExportTitle'.tr(),
         fileName: fileName,
         type: FileType.custom,
         allowedExtensions: [extension],
         bytes: utf8.encode(content),
       );
-      if (path != null && context.mounted) {
+      if (saved != null && context.mounted) {
         _showMessage('settingsConnectionsExportSuccess'.tr());
       }
     } on VaultLockedException {
@@ -1786,19 +1786,17 @@ class SettingsPage extends HookConsumerWidget {
   }
 
   Future<void> _importConnections(BuildContext context, WidgetRef ref) async {
-    final selection = await FilePicker.pickFiles(
+    final picked = await FilePicker.pickFiles(
       dialogTitle: 'settingsConnectionsImportTitle'.tr(),
       type: FileType.any,
-      allowMultiple: true,
-      // A browser's picker hands over bytes, not a readable path.
-      withData: kIsWeb,
     );
     final files = <ImportedConnectionFile>[
-      for (final file in selection?.files ?? const <PlatformFile>[])
+      for (final file in picked)
+        // A browser's picker hands over bytes, not a readable path.
         ?importedConnectionFileFromPicker(
           name: file.name,
           path: file.path,
-          bytes: file.bytes,
+          bytes: kIsWeb ? await file.readAsBytes() : null,
         ),
     ];
     if (files.isEmpty || !context.mounted) return;

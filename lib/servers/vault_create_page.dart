@@ -391,19 +391,17 @@ class _VaultCreatePageState extends ConsumerState<VaultCreatePage> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final selection = await FilePicker.pickFiles(
+      final picked = await FilePicker.pickFiles(
         dialogTitle: 'settingsConnectionsImportTitle'.tr(),
         type: FileType.any,
-        allowMultiple: true,
-        // A browser's picker hands over bytes, not a readable path.
-        withData: kIsWeb,
       );
       final files = <ImportedConnectionFile>[
-        for (final file in selection?.files ?? const <PlatformFile>[])
+        for (final file in picked)
+          // A browser's picker hands over bytes, not a readable path.
           ?importedConnectionFileFromPicker(
             name: file.name,
             path: file.path,
-            bytes: file.bytes,
+            bytes: kIsWeb ? await file.readAsBytes() : null,
           ),
       ];
       if (files.isEmpty || !mounted) return;
