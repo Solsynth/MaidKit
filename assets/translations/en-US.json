@@ -2149,8 +2149,8 @@
   "updateAvailable": "Update available",
   "updateComplete": "Update complete",
   "updateDownloadingAppImage": "Downloading AppImage...",
-  "updateDownloadingInstaller": "Downloading installer...",
-  "updateExtractingInstaller": "Extracting installer...",
+  "updateDownloadingInstaller": "Downloading installer…",
+  "updateExtractingInstaller": "Extracting installer…",
   "updateFailedDownloadAppImage": "Failed to download AppImage",
   "updateFailedDownloadInstaller": "Failed to download installer",
   "updateFailedExtractInstaller": "Failed to extract installer",
@@ -2158,7 +2158,7 @@
   "updateFailedInstallAppImage": "Failed to install AppImage",
   "updateFailedRunInstaller": "Failed to run installer",
   "updateFailedTitle": "Update failed",
-  "updateInstallingAppImage": "Installing AppImage...",
+  "updateInstallingAppImage": "Installing AppImage…",
   "updateInstallingTitle": "Installing update",
   "updateRunningInstaller": "Running installer...",
   "updateSection": "Update",
@@ -2334,5 +2334,12 @@
   "maidCafeNativeOpFieldProject": "Compose project",
   "maidCafeNativeOpFieldDirectory": "Compose directory",
   "maidCafeNativeOpCancel": "Cancel",
-  "maidCafeNativeOpRun": "Run"
+  "maidCafeNativeOpRun": "Run",
+  "updateInstalledVersion": "Installed",
+  "updateChannelLabel": "{} channel",
+  "updateDownloadSize": "{} download",
+  "updateInstalling": "Installing update",
+  "updateFailed": "Update failed",
+  "updateFailedHint": "The update could not be installed. Try again, or download the latest release from the release page.",
+  "ok": "OK"
 }

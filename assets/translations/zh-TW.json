@@ -2107,8 +2107,8 @@
   "updateAvailable": "發現新版本",
   "updateComplete": "更新完成",
   "updateDownloadingAppImage": "正在下載 AppImage...",
-  "updateDownloadingInstaller": "正在下載安裝程式...",
-  "updateExtractingInstaller": "正在解壓安裝程式...",
+  "updateDownloadingInstaller": "正在下載安裝程式…",
+  "updateExtractingInstaller": "正在解壓縮安裝程式…",
   "updateFailedDownloadAppImage": "下載 AppImage 失敗",
   "updateFailedDownloadInstaller": "下載安裝程式失敗",
   "updateFailedExtractInstaller": "解壓安裝程式失敗",
@@ -2116,7 +2116,7 @@
   "updateFailedInstallAppImage": "安裝 AppImage 失敗",
   "updateFailedRunInstaller": "執行安裝程式失敗",
   "updateFailedTitle": "更新失敗",
-  "updateInstallingAppImage": "正在安裝 AppImage...",
+  "updateInstallingAppImage": "正在安裝 AppImage…",
   "updateInstallingTitle": "正在安裝更新",
   "updateRunningInstaller": "正在執行安裝程式...",
   "updateSection": "更新",
@@ -2290,5 +2290,12 @@
   "maidCafeNativeOpFieldProject": "Compose 專案",
   "maidCafeNativeOpFieldDirectory": "Compose 目錄",
   "maidCafeNativeOpCancel": "取消",
-  "maidCafeNativeOpRun": "執行"
+  "maidCafeNativeOpRun": "執行",
+  "updateInstalledVersion": "已安裝",
+  "updateChannelLabel": "{} 通道",
+  "updateDownloadSize": "下載 {}",
+  "updateInstalling": "正在安裝更新",
+  "updateFailed": "更新失敗",
+  "updateFailedHint": "無法安裝更新。請重試，或前往發佈頁面下載最新版本。",
+  "ok": "確定"
 }
