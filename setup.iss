@@ -17,7 +17,9 @@ UninstallDisplayName=MaidKit
 UninstallDisplayIcon={app}\maid_kit.exe
 
 DefaultDirName={commonpf}\MaidKit
-UsePreviousAppDir=no
+; Reuse the directory of an existing installation so unattended updates
+; (/SILENT) replace the same files the running build came from.
+UsePreviousAppDir=yes
 DefaultGroupName=MaidKit
 
 OutputDir=.\Installer
@@ -45,6 +47,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Run]
 Filename: "{app}\maid_kit.exe"; Description: "Launch MaidKit"; Flags: nowait postinstall skipifsilent
+; The updater runs this installer with /SILENT, and Setup closes the running
+; MaidKit through the Restart Manager before replacing its files. Nothing is
+; left on screen afterwards and RestartApplications cannot bring MaidKit back
+; (Flutter's Windows runner never calls RegisterApplicationRestart), so relaunch
+; the installed build with the original, non-elevated user token.
+Filename: "{app}\maid_kit.exe"; Flags: nowait runasoriginaluser skipifnotsilent
+
 ; Stop every MaidKit engine before removing files locked by Flutter/WebView2.
 
 [UninstallRun]

@@ -141,6 +141,8 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 - MaidCafe cloud endpoint configuration (self-hosted clouds supported)
 - Cloud sync per vault, import and export of server connections
 - Update release channel and check for updates via Solsynth Express
+- Windows updates install unattended: the installer closes MaidKit, replaces
+  the files, and relaunches the new build without a single wizard page
 
 ---
 
