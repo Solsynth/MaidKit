@@ -18,6 +18,7 @@ UninstallDisplayIcon={app}\maid_kit.exe
 
 DefaultDirName={commonpf}\MaidKit
 UsePreviousAppDir=no
+DefaultGroupName=MaidKit
 
 OutputDir=.\Installer
 OutputBaseFilename=windows-x86_64-setup
