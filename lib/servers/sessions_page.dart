@@ -13,6 +13,7 @@ import 'package:maid_kit/agent/agent_page.dart';
 import 'package:maid_kit/containers/projects_page.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
+import 'package:maid_kit/shared/presentation/window_chrome.dart';
 import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'assets_page.dart';
@@ -37,6 +38,10 @@ import 'terminal_sudo_hint.dart';
 import 'terminal_tabs_provider.dart';
 
 /// Unified server workspace with dashboard, terminal, and file-management tabs.
+///
+/// On desktop the top pane tab strip doubles as the window title bar: it is the
+/// row that already names the app's work, so it claims the shell's title bar
+/// slot instead of leaving a second, mostly empty bar above it.
 class SessionsWorkspace extends ConsumerWidget {
   const SessionsWorkspace({super.key});
 
@@ -154,9 +159,16 @@ class _SessionLayoutView extends ConsumerWidget {
         tabs: tabs,
         servers: servers,
         atTop: true,
+        titleBarSlot: true,
       );
     }
-    return _LayoutNode(node: root, tabs: tabs, servers: servers, atTop: true);
+    return _LayoutNode(
+      node: root,
+      tabs: tabs,
+      servers: servers,
+      atTop: true,
+      titleBarSlot: true,
+    );
   }
 }
 
@@ -166,6 +178,7 @@ class _LayoutNode extends ConsumerWidget {
     required this.tabs,
     required this.servers,
     required this.atTop,
+    required this.titleBarSlot,
   });
 
   final SessionLayout node;
@@ -176,6 +189,10 @@ class _LayoutNode extends ConsumerWidget {
   /// should therefore paint the top safe area with the tab-bar color.
   final bool atTop;
 
+  /// Whether this subtree owns the merged window title bar. Only the first
+  /// child of a split can: it is the strip at the top-left of the window.
+  final bool titleBarSlot;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     switch (node) {
@@ -185,6 +202,7 @@ class _LayoutNode extends ConsumerWidget {
           tabs: tabs,
           servers: servers,
           atTop: atTop,
+          titleBarSlot: titleBarSlot,
         );
       case SessionLayoutSplit(
         :final id,
@@ -205,12 +223,14 @@ class _LayoutNode extends ConsumerWidget {
             tabs: tabs,
             servers: servers,
             atTop: atTop,
+            titleBarSlot: titleBarSlot,
           ),
           second: _LayoutNode(
             node: second,
             tabs: tabs,
             servers: servers,
             atTop: axis == SessionSplitAxis.horizontal ? atTop : false,
+            titleBarSlot: false,
           ),
         );
     }
@@ -323,6 +343,7 @@ class _SessionPaneView extends ConsumerWidget {
     required this.tabs,
     required this.servers,
     this.atTop = false,
+    this.titleBarSlot = false,
   });
 
   final String paneId;
@@ -331,6 +352,10 @@ class _SessionPaneView extends ConsumerWidget {
 
   /// Whether this pane's tab bar sits on the top edge of the workspace.
   final bool atTop;
+
+  /// Whether this pane's strip is the one merged into the window title bar.
+  /// Only the top-left strip of the layout owns that slot.
+  final bool titleBarSlot;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -346,7 +371,8 @@ class _SessionPaneView extends ConsumerWidget {
       onTap: () => ref.read(terminalTabsProvider.notifier).focusPane(paneId),
       child: Column(
         children: [
-          // Only the pane's own tab strip — never a workspace-wide bar.
+          // Only the pane's own tab strip — never a workspace-wide bar. On
+          // desktop the topmost strip is also the window title bar.
           _PaneTabBar(
             paneId: paneId,
             paneTabs: paneTabs,
@@ -354,6 +380,7 @@ class _SessionPaneView extends ConsumerWidget {
             focused: focused,
             showClosePane: tabs.hasSplits || isEmptyPane,
             fillTopSafeArea: atTop,
+            isTitleBar: titleBarSlot && ref.watch(desktopWindowProvider),
           ),
           Expanded(
             // The pane tab bar owns the top safe area; strip it here so tab
@@ -390,7 +417,10 @@ class _SessionPaneView extends ConsumerWidget {
 }
 
 /// Shared height for each pane tab strip and its tab chips.
-const _paneTabBarHeight = 40.0;
+///
+/// On desktop the topmost strip is the window title bar, so the height is the
+/// title bar height and the two rows collapse into one.
+const _paneTabBarHeight = kMaidKitTitleBarHeight;
 
 /// Pane width below which a strip keeps the title of the focused tab only.
 ///
@@ -419,6 +449,7 @@ class _PaneTabBar extends ConsumerWidget {
     required this.focused,
     required this.showClosePane,
     this.fillTopSafeArea = false,
+    this.isTitleBar = false,
   });
 
   final String paneId;
@@ -430,6 +461,11 @@ class _PaneTabBar extends ConsumerWidget {
   /// Whether this tab bar sits on the top edge and should extend its color
   /// into the top safe area instead of leaving a background-colored strip.
   final bool fillTopSafeArea;
+
+  /// Whether this strip is merged into the window title bar: it reserves the
+  /// macOS traffic-light inset, drags the window from its empty space, and
+  /// carries the window buttons where the OS does not draw them.
+  final bool isTitleBar;
 
   void _acceptTab(WidgetRef ref, _TabDragData data, {int? toIndex}) {
     ref
@@ -459,89 +495,29 @@ class _PaneTabBar extends ConsumerWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // The macOS traffic lights sit inside the content view, so
+                    // the title bar reserves their room on its leading edge.
+                    if (isTitleBar && usesNativeWindowButtons)
+                      const SizedBox(width: kMaidKitTrafficLightInset),
                     Expanded(
-                      child: DragTarget<_TabDragData>(
-                        onWillAcceptWithDetails: (details) =>
-                            details.data.tabId.isNotEmpty,
-                        onAcceptWithDetails: (details) =>
-                            _acceptTab(ref, details.data),
-                        builder: (context, candidate, rejected) {
-                          final hovering = candidate.isNotEmpty;
-                          return DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: hovering
-                                  ? scheme.primary.withValues(alpha: 0.08)
-                                  : null,
-                            ),
-                            child: paneTabs.isEmpty
-                                ? Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(left: 12),
-                                      child: Text(
-                                        hovering
-                                            ? 'sessionsDropTabHere'.tr()
-                                            : 'sessionsNewPane'.tr(),
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelMedium
-                                            ?.copyWith(
-                                              color: scheme.onSurfaceVariant,
-                                            ),
-                                      ),
-                                    ),
-                                  )
-                                : ListView.builder(
-                                    scrollDirection: Axis.horizontal,
-                                    padding: EdgeInsets.zero,
-                                    // Trailing slot so tabs can be dropped after the last item.
-                                    itemCount: paneTabs.length + 1,
-                                    itemBuilder: (context, index) {
-                                      if (index == paneTabs.length) {
-                                        return _TabDropTail(
-                                          hovering: hovering,
-                                          onAccept: (data) => _acceptTab(
-                                            ref,
-                                            data,
-                                            toIndex: paneTabs.length,
-                                          ),
-                                        );
-                                      }
-                                      final tab = paneTabs[index];
-                                      final selected = tab.id == selectedTabId;
-                                      return _DraggablePaneTab(
-                                        key: ValueKey(tab.id),
-                                        tab: tab,
-                                        paneId: paneId,
-                                        selected: selected,
-                                        showTitle: !compact || selected,
-                                        index: index,
-                                        onSelect: () {
-                                          ref
-                                              .read(
-                                                terminalTabsProvider.notifier,
-                                              )
-                                              .focusPane(paneId);
-                                          ref
-                                              .read(
-                                                terminalTabsProvider.notifier,
-                                              )
-                                              .select(tab.id);
-                                        },
-                                        onClose: () => ref
-                                            .read(terminalTabsProvider.notifier)
-                                            .close(tab.id),
-                                        onAccept: (data, insertIndex) =>
-                                            _acceptTab(
-                                              ref,
-                                              data,
-                                              toIndex: insertIndex,
-                                            ),
-                                      );
-                                    },
-                                  ),
+                      child: _PaneTabStrip(
+                        paneId: paneId,
+                        paneTabs: paneTabs,
+                        selectedTabId: selectedTabId,
+                        compact: compact,
+                        dragsWindow: isTitleBar,
+                        onSelect: (tab) {
+                          final notifier = ref.read(
+                            terminalTabsProvider.notifier,
                           );
+                          notifier.focusPane(paneId);
+                          notifier.select(tab.id);
                         },
+                        onClose: (tab) => ref
+                            .read(terminalTabsProvider.notifier)
+                            .close(tab.id),
+                        onAccept: (data, insertIndex) =>
+                            _acceptTab(ref, data, toIndex: insertIndex),
                       ),
                     ),
                     // Pane splitting lives in the command palette (Shift+Tab,
@@ -580,7 +556,17 @@ class _PaneTabBar extends ConsumerWidget {
                             .closePane(paneId),
                         icon: const Icon(Symbols.close, size: 18),
                       ),
-                    const SizedBox(width: 4),
+                    if (!isTitleBar) const SizedBox(width: 4),
+                    if (isTitleBar && !usesNativeWindowButtons)
+                      // Keep the workspace's own close control apart from the
+                      // window close button: side by side they read as one.
+                      Container(
+                        width: 1,
+                        height: 16,
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        color: scheme.outlineVariant,
+                      ),
+                    if (isTitleBar) const MaidKitWindowButtons(),
                   ],
                 ),
               ),
@@ -588,6 +574,107 @@ class _PaneTabBar extends ConsumerWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// The tabs of one strip, with the strip's empty space beneath them.
+///
+/// The empty space is the window's drag surface when the strip is the title
+/// bar, and the drop target for tabs dragged out of other panes. It sits
+/// *under* the tabs so a drag that starts on a tab still drags that tab; the
+/// tab row is shrink-wrapped, so space to its right is not part of it.
+class _PaneTabStrip extends StatelessWidget {
+  const _PaneTabStrip({
+    required this.paneId,
+    required this.paneTabs,
+    required this.selectedTabId,
+    required this.compact,
+    required this.dragsWindow,
+    required this.onSelect,
+    required this.onClose,
+    required this.onAccept,
+  });
+
+  final String paneId;
+  final List<SessionTab> paneTabs;
+  final String? selectedTabId;
+  final bool compact;
+  final bool dragsWindow;
+  final void Function(SessionTab tab) onSelect;
+  final void Function(SessionTab tab) onClose;
+  final void Function(_TabDragData data, int insertIndex) onAccept;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // The tabs shrink-wrap, so whatever space is left of the strip belongs to
+    // the window: dragging there moves it, and dropping a tab there appends.
+    return Row(
+      children: [
+        Flexible(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.zero,
+            child: Row(
+              children: [
+                if (paneTabs.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12),
+                    child: Text(
+                      'sessionsNewPane'.tr(),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else ...[
+                  for (var index = 0; index < paneTabs.length; index++)
+                    _DraggablePaneTab(
+                      key: ValueKey(paneTabs[index].id),
+                      tab: paneTabs[index],
+                      paneId: paneId,
+                      selected: paneTabs[index].id == selectedTabId,
+                      showTitle:
+                          !compact || paneTabs[index].id == selectedTabId,
+                      index: index,
+                      onSelect: () => onSelect(paneTabs[index]),
+                      onClose: () => onClose(paneTabs[index]),
+                      onAccept: onAccept,
+                    ),
+                  // Trailing slot so tabs can be dropped after the last item.
+                  _TabDropTail(
+                    hovering: false,
+                    onAccept: (data) => onAccept(data, paneTabs.length),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: DragTarget<_TabDragData>(
+            onWillAcceptWithDetails: (details) => details.data.tabId.isNotEmpty,
+            onAcceptWithDetails: (details) =>
+                onAccept(details.data, paneTabs.length),
+            builder: (context, candidate, rejected) {
+              final surface = DecoratedBox(
+                decoration: BoxDecoration(
+                  color: candidate.isEmpty
+                      ? null
+                      : scheme.primary.withValues(alpha: 0.08),
+                ),
+                child: const SizedBox.expand(),
+              );
+              // Only the title bar strip moves the window; a split's lower
+              // strips just host the drop target.
+              return dragsWindow
+                  ? MaidKitWindowDragArea(child: surface)
+                  : surface;
+            },
+          ),
+        ),
+      ],
     );
   }
 }

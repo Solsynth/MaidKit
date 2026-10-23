@@ -21,6 +21,7 @@ import 'package:maid_kit/servers/sessions_page.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/shared/presentation/maidkit_window_scaffold.dart';
+import 'package:maid_kit/shared/presentation/window_chrome.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
 

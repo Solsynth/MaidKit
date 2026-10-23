@@ -12,15 +12,56 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:maid_kit/shared/presentation/maidkit_window_scaffold.dart';
+import 'package:maid_kit/servers/vault_gate.dart';
+import 'package:maid_kit/shared/presentation/window_chrome.dart';
 import 'package:maid_kit/shared/presentation/task_progress.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
-  testWidgets('bridges the app theme to the Island window frame', (
+  /// Pumps the shell as if it ran in a desktop window.
+  Future<void> pumpDesktopShell(
+    WidgetTester tester, {
+    required bool vaultUnlocked,
+  }) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        // A fresh scope per pump: Riverpod keeps the first scope's overrides
+        // when the same ProviderScope is rebuilt.
+        key: ValueKey(vaultUnlocked),
+        overrides: [
+          desktopWindowProvider.overrideWithValue(true),
+          vaultUnlockedProvider.overrideWith(
+            () => _StubVaultUnlocked(vaultUnlocked),
+          ),
+        ],
+        child: MaterialApp(
+          theme: createMaidKitTheme(Brightness.light),
+          home: const MaidKitWindowScaffold(child: SizedBox()),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
+
+  testWidgets('draws a title bar only while no workspace strip owns it', (
     tester,
   ) async {
+    await pumpDesktopShell(tester, vaultUnlocked: false);
+    expect(
+      find.byType(MaidKitTitleBar),
+      findsOneWidget,
+      reason: 'the locked vault has no tab strip to merge into the title bar',
+    );
+
+    // The workspace is unlocked and has its dashboard tab, so its pane tab
+    // strip is the title bar and the shell must not draw a second one.
+    await pumpDesktopShell(tester, vaultUnlocked: true);
+    expect(find.byType(MaidKitTitleBar), findsNothing);
+  });
+
+  testWidgets('bridges the app theme to the window chrome', (tester) async {
     final appTheme = createMaidKitTheme(
       Brightness.dark,
       seedColor: const Color(0xFF2563EB),
@@ -240,4 +281,13 @@ void main() {
 
     expect(find.text('persisted'), findsOneWidget);
   });
+}
+
+class _StubVaultUnlocked extends VaultUnlocked {
+  _StubVaultUnlocked(this.unlocked);
+
+  final bool unlocked;
+
+  @override
+  bool build() => unlocked;
 }

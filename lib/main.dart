@@ -8,13 +8,13 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'servers/window_state_preferences.dart';
 import 'servers/window_placement.dart';
 import 'shared/presentation/app_scaffold.dart';
+import 'shared/presentation/window_chrome.dart';
 import 'servers/server_providers.dart';
 import 'servers/app_theme_preferences.dart';
 import 'servers/metrics_refresh_preferences.dart';
@@ -110,7 +110,7 @@ Future<void> main(List<String> args) async {
     ],
   );
 
-  if (DesktopWindowFrame.isPlatformDesktop) {
+  if (isMaidKitDesktop) {
     await windowManager.ensureInitialized();
     await windowManager.setOpacity(await loadMaidKitWindowOpacity());
     // Keep the desktop window resizable below the responsive breakpoint so

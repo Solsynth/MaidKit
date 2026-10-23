@@ -17,6 +17,7 @@ import 'package:styled_widget/styled_widget.dart';
 import 'package:system_fonts/system_fonts.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/window_chrome.dart';
 import 'package:maid_kit/agent/agent_personality.dart';
 import 'package:maid_kit/agent/local_mcp_server.dart';
 import 'package:maid_kit/agent/mcp_review_mode.dart';
@@ -362,7 +363,7 @@ class SettingsPage extends HookConsumerWidget {
                                         ),
                             ),
                           ],
-                          if (DesktopWindowFrame.isPlatformDesktop) ...[
+                          if (isMaidKitDesktop) ...[
                             const SizedBox(height: 16),
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),

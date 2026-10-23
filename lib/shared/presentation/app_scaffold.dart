@@ -4,10 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
+
+import 'window_chrome.dart';
 
 /// File name used for an optional user-provided workspace background image.
 ///
@@ -99,7 +100,7 @@ Future<void> setTransparentTerminalBackgroundEnabled(
 Future<void> setMaidKitWindowOpacity(WidgetRef ref, double opacity) async {
   final value = opacity.clamp(0.4, 1.0).toDouble();
   await SharedPreferencesAsync().setDouble(_maidKitWindowOpacityKey, value);
-  if (DesktopWindowFrame.isPlatformDesktop) {
+  if (isMaidKitDesktop) {
     await windowManager.setOpacity(value);
   }
   ref.invalidate(maidKitWindowOpacityProvider);

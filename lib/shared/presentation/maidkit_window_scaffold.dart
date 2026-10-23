@@ -1,50 +1,20 @@
-import 'package:window_manager/window_manager.dart';
-
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' as flutter;
-import 'package:maid_kit/theme.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart'
     as flutter_localizations;
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:island_ui_foundation/island_ui_foundation.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/servers/app_theme_preferences.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
-import 'package:maid_kit/servers/window_state_preferences.dart';
+import 'package:maid_kit/servers/vault_gate.dart';
+import 'package:maid_kit/theme.dart';
 import 'task_progress.dart';
-
-/// Closes the desktop window without a visible teardown stall.
-///
-/// On Windows, `windowManager.destroy()` only posts WM_QUIT; the window stays
-/// on screen while the engines (Flutter, plus WebView2's title-bar engine)
-/// shut down and stop pumping messages, which reads as a freeze. Hide first,
-/// then quit. On macOS/Linux `destroy()` tears down immediately either way.
-///
-/// `destroy()` quits the process without emitting a window-close event on
-/// Windows and macOS, so the geometry is flushed here while the isolate still
-/// runs — that is the only save the in-app close button gets. The flush is
-/// bounded so a stalled platform call cannot trap the app on a hidden window.
-Future<void> closeMaidKitWindow() async {
-  // window_manager has no web implementation; the browser tab owns its own
-  // lifetime, so there is no window to hide or destroy.
-  if (kIsWeb) return;
-  await windowManager.hide();
-  await saveMaidKitWindowStateFromWindow().timeout(
-    const Duration(milliseconds: 750),
-    onTimeout: () {},
-  );
-  await windowManager.destroy();
-}
-
-final desktopWindowProvider = Provider<bool>(
-  (ref) => DesktopWindowFrame.isPlatformDesktop,
-);
+import 'window_chrome.dart';
 
 /// Scales the complete window subtree while keeping the native window bounds
 /// unchanged. The subtree receives a correspondingly smaller logical viewport,
@@ -94,6 +64,13 @@ class MaidKitUiScale extends StatelessWidget {
   }
 }
 
+/// The app's window shell.
+///
+/// On desktop the window is borderless and the top pane tab strip *is* the
+/// title bar: the strip already draws the app's identity and its tabs, so a
+/// second bar above it only costs a row. While no strip is on screen — the
+/// locked vault, an empty workspace — the shell draws a plain title bar so the
+/// window stays draggable and closable.
 class MaidKitWindowScaffold extends ConsumerWidget {
   const MaidKitWindowScaffold({super.key, required this.child, this.title});
 
@@ -103,8 +80,17 @@ class MaidKitWindowScaffold extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDesktop = ref.watch(desktopWindowProvider);
+    // The workspace renders a pane tab strip on the top edge as soon as it has
+    // a pane, and that strip *is* the title bar. Until then (locked vault, no
+    // panes) the shell owns the bar.
+    final titleBarClaimed =
+        ref.watch(vaultUnlockedProvider) &&
+        ref.watch(terminalTabsProvider).isNotEmpty;
 
     return Focus(
+      // The shell holds the app-level shortcuts, so it keeps focus whenever
+      // nothing inside the workspace has claimed it.
+      autofocus: true,
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         if (event.logicalKey == LogicalKeyboardKey.tab &&
@@ -144,22 +130,23 @@ class MaidKitWindowScaffold extends ConsumerWidget {
             // Keep the frame's existing surface painting while providing the
             // Flutter SDK Material ancestor required by legacy controls.
             type: flutter.MaterialType.transparency,
-            child: DesktopWindowFrame(
-              // Closing the custom title bar must terminate the native window.
-              // Hiding it leaves the Dart isolate (and local MCP server) alive,
-              // so every relaunch creates another background MaidKit process.
-              onClose: isDesktop ? closeMaidKitWindow : null,
-              isDesktopPlatform: isDesktop,
-              title: Text(
-                title ?? 'MaidKit',
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-              // Routes own their safe areas. Consuming mobile insets here prevents
-              // page scaffolds from participating correctly in gesture-back.
+            child: ColoredBox(
+              color: Theme.of(context).colorScheme.surface,
               child: Column(
                 children: [
-                  Expanded(child: child),
-                  const TaskProgressBar(),
+                  if (isDesktop && !titleBarClaimed)
+                    MaidKitTitleBar(title: Text(title ?? 'MaidKit')),
+                  Expanded(
+                    // Routes own their safe areas. Consuming mobile insets here
+                    // prevents page scaffolds from participating correctly in
+                    // gesture-back.
+                    child: Column(
+                      children: [
+                        Expanded(child: child),
+                        const TaskProgressBar(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -170,10 +157,10 @@ class MaidKitWindowScaffold extends ConsumerWidget {
   }
 }
 
-/// Supplies the Flutter Material theme consumed by Island's window frame.
+/// Supplies the Flutter Material theme consumed by the window chrome.
 ///
 /// `material_ui` and Flutter's Material library expose separate Theme
-/// inherited widgets, so the frame otherwise falls back to Flutter defaults.
+/// inherited widgets, so the chrome otherwise falls back to Flutter defaults.
 flutter.ThemeData _createWindowFrameTheme(
   ThemeData theme, {
   String? fontFamily,

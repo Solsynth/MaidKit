@@ -17,6 +17,21 @@ import 'vault_create_page.dart';
 import 'vault_file_storage.dart';
 import 'vault_service.dart';
 
+/// Whether the vault is unlocked, and therefore whether the workspace — which
+/// merges its pane tab strip into the window title bar — is on screen.
+final vaultUnlockedProvider = NotifierProvider<VaultUnlocked, bool>(
+  VaultUnlocked.new,
+);
+
+class VaultUnlocked extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) {
+    if (state != value) state = value;
+  }
+}
+
 class VaultGate extends ConsumerStatefulWidget {
   const VaultGate({super.key, required this.child});
   final Widget child;
@@ -29,6 +44,12 @@ class _VaultGateState extends ConsumerState<VaultGate>
     with WidgetsBindingObserver {
   final _password = TextEditingController();
   bool _unlocked = false;
+
+  void _setUnlocked(bool value) {
+    setState(() => _unlocked = value);
+    ref.read(vaultUnlockedProvider.notifier).set(value);
+  }
+
   bool _busy = false;
   bool _blankPasswordAttempted = false;
   int _vaultGeneration = 0;
@@ -146,7 +167,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
         return;
       }
       if (unlocked) {
-        setState(() => _unlocked = true);
+        _setUnlocked(true);
         unawaited(_autoSync());
       }
     } catch (_) {
@@ -207,7 +228,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
         }
       }
       if (mounted) {
-        setState(() => _unlocked = true);
+        _setUnlocked(true);
         if (!downloadedCloudVault) unawaited(_autoSync());
       }
     } catch (error) {
@@ -228,7 +249,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
           .read(vaultServiceProvider)
           .unlockWithBiometrics();
       if (unlocked && mounted) {
-        setState(() => _unlocked = true);
+        _setUnlocked(true);
         unawaited(_autoSync());
       }
     } catch (error) {
@@ -269,7 +290,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
       context,
     ).push<bool>(MaterialPageRoute(builder: (_) => const VaultCreatePage()));
     if (created == true && mounted) {
-      setState(() => _unlocked = true);
+      _setUnlocked(true);
       unawaited(_autoSync());
     }
   }
@@ -327,8 +348,8 @@ class _VaultGateState extends ConsumerState<VaultGate>
     ref.listen<String?>(activeVaultFileProvider, (previous, next) {
       if (previous != next && mounted) {
         _vaultGeneration++;
+        _setUnlocked(false);
         setState(() {
-          _unlocked = false;
           _busy = false;
           _blankPasswordAttempted = false;
           _error = null;

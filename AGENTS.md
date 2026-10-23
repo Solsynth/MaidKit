@@ -13,7 +13,7 @@ Read `docs/architecture.md` before making structural changes.
 
 ## Window and layout rules
 
-- Keep the app wrapped in `MaidKitWindowScaffold`, which uses Island's `DesktopWindowFrame` for desktop-native chrome.
+- Keep the app wrapped in `MaidKitWindowScaffold`. On desktop the window is borderless and the top pane tab strip is the window title bar; `shared/presentation/window_chrome.dart` owns the drag area, window buttons and macOS traffic-light alignment. Do not add a second bar above the strip.
 - Preserve desktop window initialization in `main.dart` when changing startup code.
 - The main workspace is one pane-tab shell: `SessionsWorkspace` renders `terminalTabsProvider`'s panes and per-pane tab strips. Every destination — the servers dashboard, terminals, file management, file editors, agent chats, assets, projects, MaidCafe cloud, settings — is a `SessionTab` in that strip. Do not reintroduce a navigation rail, bottom bar, or `AutoTabsRouter`.
 - `AppRouter` owns a single route (`ServerWorkspacePage`). Detail pages opened from a tab are pushed with `TabNavigator.of(context).push(...)` so they stay inside that tab's own stack; never call `context.router.push` from inside the workspace.

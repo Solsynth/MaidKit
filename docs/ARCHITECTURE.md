@@ -28,7 +28,7 @@ MaidKit is a desktop-first Flutter application for managing SSH servers.
   of them as a second way in. Only a row typed `maidcafe` is daemon-only; a row
   typed `ssh` always keeps its SSH route, and the daemon is what covers it when
   no session is up.
-- **island_ui_foundation** from the Solian Git repository for the desktop window frame and reusable responsive UI utilities.
+- **island_ui_foundation** from the Solian Git repository for reusable responsive UI utilities and sheets. Its `DesktopWindowFrame` is not used: `shared/presentation/window_chrome.dart` owns the window chrome.
 - **window_manager** for native desktop window setup, with **screen_retriever** for the display layout saved window bounds are restored against.
 
 ## Source layout
@@ -62,7 +62,17 @@ tab that opened it and survives switching tabs and panes; pop them with
 `TabNavigator.of(context).pop()`. `context.router` is only the root navigator and
 must not be used for detail pages.
 
-The pane tab strip is the workspace's title bar. On a pane narrower than 768
+The pane tab strip is the workspace's title bar, and on desktop it *is* the
+window title bar: the window is borderless, the topmost strip occupies the
+native title bar row (`kMaidKitTitleBarHeight`, 40 pt), and there is no second
+bar above it. The strip reserves the macOS traffic-light inset on its leading
+edge, moves the window when dragged from empty strip space, and draws the
+minimize/maximize/close buttons itself where the OS does not (Windows, Linux).
+`MainFlutterWindow.swift` re-centers the macOS traffic lights on the strip
+whenever the Dart side reports a new effective height, so they stay aligned
+across UI-scale changes. While no strip exists — the locked vault, a workspace
+with no panes — `MaidKitWindowScaffold` draws a standalone `MaidKitTitleBar`
+instead, so the window is never draggable-less. On a pane narrower than 768
 logical pixels only the focused tab draws its title, and that title expands out
 of its icon and collapses back instead of snapping the strip's layout, so
 background tabs stay icon-sized. The window shell
