@@ -807,6 +807,7 @@
   "fileManagerUploaded": "Uploaded",
   "fileManagerUploading": "Uploading {}",
   "fileManagerUseAnotherServer": "Use another server",
+  "fileManagerUseOnlyThisServer": "Use only this server",
   "fileManagerUtilityCompleted": "Completed",
   "fileManagerUtilityFailed": "{} failed",
   "filePickerCancel": "Cancel",

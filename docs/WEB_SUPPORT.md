@@ -13,7 +13,7 @@ and what is still open.
 | Server statistics | MaidCafe daemon `/api/v1/metrics` over HTTP(S) — the only statistics route that needs no SSH |
 | Servers, settings, snippets, GitHub, projects, cloud sync | Local database + HTTP(S) |
 | SSH, serial, local shells | Unavailable (no raw sockets) |
-| File management, file editor | MaidCafe daemon `/api/v1/files` over HTTP(S) for a remote server; the local pane is absent (no local filesystem in a browser) |
+| File management, file editor | MaidCafe daemon `/api/v1/files` over HTTP(S) for a remote server; the browser shows the same remote-only file manager the desktop does |
 | Containers | MaidCafe daemon `/api/v1/containers` and its per-container reads, over HTTP(S). Exec, attach and re-create-from-inspect stay SSH-only |
 | Port forwarding, systemd, web servers, packages, firewall | Unavailable (SSH or local filesystem) |
 | Tailscale, network ping | Unavailable (native runtime) |
@@ -245,8 +245,9 @@ than faking:
 | A file larger than the daemon's write cap | The daemon writes whole files, so the client buffers an upload and refuses past the cap. SFTP streams instead. |
 | Permission and ownership changes | Not implemented by the daemon; the file manager only performs those over SSH. |
 
-The local pane is hidden in a browser rather than disabled: there is no local
-filesystem to browse, and downloads go through the browser's own save flow.
+There is no local-disk pane any more: the file manager is remote-only, with an
+optional second server on the left, and every download saves through the
+device's own save flow.
 
 ## Containers without SSH
 
@@ -376,7 +377,7 @@ happening:
    notifications/FCM, system fonts, biometrics, desktop window code, and the
    local MCP server. The file manager and editor are no longer blanket-gated:
    they choose their transport per server (see the file transport section
-   below) and a browser renders the remote pane alone.
+   below), and neither needs a local filesystem any more.
 
 Pure replacements were preferred where they exist: `defaultTargetPlatform`
 instead of `Platform.isMacOS`, `platformPathSeparator` instead of

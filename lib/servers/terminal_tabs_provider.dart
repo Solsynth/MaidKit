@@ -782,9 +782,9 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialPath,
     String? paneId,
   }) {
-    // The file manager browses the local disk, SFTP, or the MaidCafe daemon's
-    // file API. A browser has neither of the first two but can use the daemon,
-    // so it needs a route rather than a blanket refusal.
+    // The file manager browses a server over SFTP or the MaidCafe daemon's
+    // file API. A browser has no socket for the former, so it needs a daemon
+    // route rather than a blanket refusal.
     if (kIsWeb && !server.hasMaidCafeTerminalRoute) return;
     final tab = FileManagementTab(
       id: 'files-${DateTime.now().microsecondsSinceEpoch}',

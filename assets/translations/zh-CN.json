@@ -807,6 +807,7 @@
   "fileManagerUploaded": "已上传",
   "fileManagerUploading": "正在上传 {}",
   "fileManagerUseAnotherServer": "使用另一台服务器",
+  "fileManagerUseOnlyThisServer": "仅使用此服务器",
   "fileManagerUtilityCompleted": "已完成",
   "fileManagerUtilityFailed": "{} 失败",
   "filePickerCancel": "取消",

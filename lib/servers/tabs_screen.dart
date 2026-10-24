@@ -110,7 +110,8 @@ Future<void> _openFiles(
   String? paneId,
   String? initialPath,
 }) async {
-  // The file manager needs SFTP and the local disk.
+  // Reached from a terminal, so this path stays SSH-only; a browser has no
+  // socket to hold the SFTP session the file manager browses with.
   if (kIsWeb) return;
   if (server.connectionType != ServerConnectionType.ssh.name) return;
   final manager = ref.read(connectionManagerProvider);
