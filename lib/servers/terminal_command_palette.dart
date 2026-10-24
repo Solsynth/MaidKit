@@ -14,6 +14,7 @@ import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
+import 'workspace_shortcuts.dart';
 
 Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
   // The palette renders in an overlay entry that is removed when it closes, so
@@ -30,7 +31,7 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
             server.connectionType == ServerConnectionType.maidcafe.name,
       )
       .toList();
-  final activeTab = tabs.selectedTab;
+  final activeTab = tabs.selectedTabContent;
   final activeServer = activeTab == null
       ? null
       : servers.where((server) => server.id == activeTab.serverId).firstOrNull;
@@ -76,7 +77,7 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
           : () {
               ref
                   .read(terminalTabsProvider.notifier)
-                  .splitEmpty(SessionSplitAxis.horizontal);
+                  .splitSelectedTab(SessionSplitAxis.horizontal);
               close(null);
             },
       onSplitDown: !canSplit
@@ -84,13 +85,15 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
           : () {
               ref
                   .read(terminalTabsProvider.notifier)
-                  .splitEmpty(SessionSplitAxis.vertical);
+                  .splitSelectedTab(SessionSplitAxis.vertical);
               close(null);
             },
-      onClose: activeTab == null
+      onClose: tabs.selectedId == null
           ? null
           : () async {
-              await ref.read(terminalTabsProvider.notifier).close(activeTab.id);
+              await ref
+                  .read(terminalTabsProvider.notifier)
+                  .closeTab(tabs.selectedId!);
               close(null);
             },
       onDisconnect: activeTab == null
@@ -183,12 +186,14 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
         _TerminalAction(
           label: 'sessionsSplitRight'.tr(),
           icon: Symbols.vertical_split,
+          shortcut: splitShortcutLabel(SessionSplitAxis.horizontal),
           onSelect: () async => widget.onSplitRight!(),
         ),
       if (widget.onSplitDown != null)
         _TerminalAction(
           label: 'sessionsSplitDown'.tr(),
           icon: Symbols.horizontal_split,
+          shortcut: splitShortcutLabel(SessionSplitAxis.vertical),
           onSelect: () async => widget.onSplitDown!(),
         ),
       if (widget.onClose != null)
@@ -257,6 +262,19 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
                           return ListTile(
                             leading: Icon(action.icon),
                             title: Text(action.label),
+                            trailing: action.shortcut == null
+                                ? null
+                                : Text(
+                                    action.shortcut!,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
                             onTap: () => action.onSelect(),
                           );
                         },
@@ -275,10 +293,15 @@ class _TerminalAction {
     required this.label,
     required this.icon,
     required this.onSelect,
+    this.shortcut,
   });
 
   final String label;
   final IconData icon;
+
+  /// The chord that runs this action, printed on the row. Null for actions
+  /// that only exist as palette entries.
+  final String? shortcut;
   final Future<void> Function() onSelect;
 }
 

@@ -520,8 +520,8 @@ class _TerminalServerGrid extends ConsumerWidget {
       itemCount: servers.length,
       itemBuilder: (context, index) {
         final server = servers[index];
-        final openCount = tabs.tabs
-            .where((tab) => tab.serverId == server.id)
+        final openCount = tabs.allTabs
+            .where((content) => content.serverId == server.id)
             .length;
         // A browser can only reach a terminal over the MaidCafe daemon
         // WebSocket, and it has no local disk or SFTP for the file manager.

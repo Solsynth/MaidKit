@@ -24,6 +24,7 @@ import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/tabs_screen.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'package:maid_kit/shared/presentation/panel.dart';
 import 'package:maid_kit/theme.dart';
 
 /// The pane tab strip keeps one title on a narrow pane — the tab the user is
@@ -115,12 +116,10 @@ void main() {
         widget.scrollDirection == Axis.horizontal,
   );
 
-  /// A chip is keyed by its bar entry, which is the tab's own id unless the tab
-  /// was split into a second pane.
-  Finder chip(String groupId) => find.descendant(
-    of: strip,
-    matching: find.byKey(ValueKey('group-$groupId')),
-  );
+  /// A chip is keyed by its workspace tab, which is the tab id it was opened
+  /// under.
+  Finder chip(String tabId) =>
+      find.descendant(of: strip, matching: find.byKey(ValueKey('tab-$tabId')));
 
   /// Width of the title area inside one chip: zero while the title is
   /// collapsed into its icon, the label's own width once it is expanded.
@@ -252,5 +251,62 @@ void main() {
 
     expect(find.byType(CloudAccountButton), findsOneWidget);
     expect(find.byTooltip('settingsCloudSignIn'.tr()), findsOneWidget);
+  });
+
+  testWidgets('a split stays inside its tab and prints the pane count', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester, const Size(1200, 800));
+    final notifier = await openTabs(tester, [
+      (notifier) => notifier.openAssets(),
+    ]);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SessionsWorkspace)),
+    );
+    final panelsBefore = find.byType(MaidKitPanel).evaluate().length;
+
+    notifier.splitSelectedTab(SessionSplitAxis.horizontal);
+    await tester.pumpAndSettle();
+
+    // The bar still shows one entry for both viewports, with its count.
+    expect(chip('assets'), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    // The split added a viewport to the tab, not a second tab.
+    expect(find.byType(MaidKitPanel).evaluate().length, panelsBefore + 1);
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(2));
+    expect(state.tabs.last.hasSplits, isTrue);
+  });
+
+  testWidgets('a tab body fills the tone of the panel it sits in', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester, const Size(900, 800));
+
+    final panel = tester.widget<MaidKitPanel>(find.byType(MaidKitPanel));
+    expect(panel.emphasized, isTrue);
+    // The tone the panel published, whichever role it picked for it.
+    final sheet = tester
+        .widget<Card>(
+          find
+              .descendant(
+                of: find.byType(MaidKitPanel),
+                matching: find.byType(Card),
+              )
+              .first,
+        )
+        .color;
+
+    // The dashboard draws its own page scaffold, and that scaffold has to fill
+    // the pane's card instead of painting the window paper over it.
+    final page = tester.widget<Scaffold>(
+      find
+          .descendant(
+            of: find.byType(MaidKitPanel),
+            matching: find.byType(Scaffold),
+          )
+          .first,
+    );
+    expect(page.backgroundColor, sheet);
   });
 }

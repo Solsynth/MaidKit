@@ -139,8 +139,12 @@ ThemeData createMaidKitTheme(
     colorScheme: colorScheme,
     brightness: brightness,
     fontFamily: fontFamily ?? MaidKitFonts.sans,
-    scaffoldBackgroundColor: colorScheme.surface,
-    canvasColor: colorScheme.surface,
+    // One paper for the app: the pane tab strip's tone is also the page paper,
+    // so the locked vault, a sheet and the workspace never sit on two slightly
+    // different off-whites. A pane republishes its own sheet tone inside its
+    // content (see `MaidKitPanel`).
+    scaffoldBackgroundColor: colorScheme.surfaceContainerLow,
+    canvasColor: colorScheme.surfaceContainerLow,
     // Symbol glyphs read as one weight everywhere: no filled/optical jitter
     // between a rail, a list row and a toolbar.
     iconTheme: IconThemeData(
@@ -564,8 +568,18 @@ ThemeData createMaidKitTheme(
       year2023: false,
       color: colorScheme.primary,
       linearTrackColor: colorScheme.surfaceContainerHighest,
-      circularTrackColor: colorScheme.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(MaidKitRadius.pill),
+      // The 2024 circular shape is drawn for one standalone 40 px ring: it
+      // insets itself by 4, draws a track ring behind an indeterminate arc,
+      // notches 4 px out of the track and caps a determinate bar with a dot.
+      // Here a spinner is a 14–20 px glyph inside a button, a tab chip or a
+      // status row, so that inset halved every one of them and the track
+      // turned a plain arc into a grey doughnut. The widget that places a
+      // spinner owns its size; the ring fills the box it is given, and an
+      // indicator that wants a track or a stop dot asks for one.
+      circularTrackPadding: EdgeInsets.zero,
+      trackGap: 0,
+      stopIndicatorRadius: 0,
     ),
     sliderTheme: SliderThemeData(
       // ignore: deprecated_member_use

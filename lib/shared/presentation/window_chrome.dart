@@ -20,16 +20,34 @@ bool get isMaidKitDesktop =>
 ///
 /// macOS keeps its traffic lights at the top-left of a full-size content view,
 /// so the app only reserves room for them. Windows and Linux get a borderless
-/// window, so the app draws the buttons in the pane tab strip.
+/// window, so the app draws the buttons in the title bar band.
 bool get usesNativeWindowButtons => !kIsWeb && Platform.isMacOS;
 
-/// Height of the window title bar. The top pane tab strip fills exactly this,
-/// which is what merges the two bars into one.
+/// Height of the title bar band, in logical points.
+///
+/// The band sits above the workspace's tabs and is the only place that moves
+/// the window. On macOS AppKit keeps its own title bar above a full-size
+/// content view and spends any pointer inside it on dragging the window, so
+/// the band must stay clear of anything the user has to click or drag — the
+/// tabs above all, which drag themselves along the strip. AppKit's own title
+/// bar is 28 window points, and even the smallest allowed UI scale leaves this
+/// band covering it.
 const double kMaidKitTitleBarHeight = 40;
 
-/// Leading room the macOS traffic lights need on the title bar.
+/// Height of the workspace's tab strip row, in logical points.
+///
+/// This is a row of its own below the title bar band: it holds the tabs and
+/// their controls, but never the window drag.
+const double kMaidKitTabStripHeight = 40;
+
+/// Width reserved on the leading edge of the title bar for the macOS traffic
+/// lights, which the native window places there and the app must not cover.
 const double kMaidKitTrafficLightInset = 78 + 8;
 
+/// Whether the app is running as a native desktop window.
+///
+/// Desktop draws a real title bar band above the workspace; mobile and web
+/// have no OS window chrome to merge with, so they draw none.
 final desktopWindowProvider = Provider<bool>((ref) => isMaidKitDesktop);
 
 /// Closes the desktop window without a visible teardown stall.
@@ -55,12 +73,13 @@ Future<void> closeMaidKitWindow() async {
   await windowManager.destroy();
 }
 
-/// Tells the native window how tall the merged title bar is, in points.
+/// Tells the native window how tall the title bar band is, in points.
 ///
-/// macOS centers its traffic lights in AppKit's 28 pt title bar, so the native
-/// window has to know where the strip's center line actually is. The height is
-/// in *window* points, so it scales with the app's UI scale, which shrinks the
-/// logical viewport while leaving the native window alone.
+/// macOS centers the traffic lights in AppKit's title bar; the band the app
+/// reserves sits at the window's top edge and holds nothing interactive, so
+/// the native window moves the lights onto the band's center line. The height
+/// is in *window* points, so it scales with the app's UI scale, which shrinks
+/// the logical viewport while leaving the native window alone.
 class MaidKitTitleBarHeightReporter extends StatefulWidget {
   const MaidKitTitleBarHeightReporter({
     super.key,
@@ -95,7 +114,7 @@ class _MaidKitTitleBarHeightReporterState
   void _report() {
     if (!isMaidKitDesktop || !usesNativeWindowButtons) return;
     final scale = widget.uiScale <= 0 ? 1.0 : widget.uiScale;
-    // The subtree is scaled down by `scale`, so one logical title bar point
+    // The subtree is scaled down by `scale`, so one logical point of the band
     // covers `scale` window points.
     _channel.invokeMethod<void>(
       'setTitleBarHeight',
@@ -107,11 +126,14 @@ class _MaidKitTitleBarHeightReporterState
   Widget build(BuildContext context) => widget.child;
 }
 
-/// A standalone window title bar.
+/// The window's title bar: the band that moves the window.
 ///
-/// The workspace merges its pane tab strip into the title bar, so this is only
-/// for screens that have no strip to merge: the locked vault, and a workspace
-/// with no panes left. It keeps the window draggable and closable in both.
+/// It sits above the workspace's tab strip rather than behind it. macOS gives
+/// the top of the window to AppKit before Flutter sees the pointer, so a tab
+/// drawn there could be neither pressed nor dragged; a band of its own keeps
+/// both jobs separate. The band names the window while no tab strip is on
+/// screen (the locked vault, an empty workspace), and on platforms whose
+/// window Flutter draws it carries the window buttons too.
 class MaidKitTitleBar extends StatelessWidget {
   const MaidKitTitleBar({super.key, this.title, this.trailing = const []});
 
@@ -127,9 +149,9 @@ class MaidKitTitleBar extends StatelessWidget {
     if (!isMaidKitDesktop) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      // Same paper as a pane tab strip, so the bar does not change tone when
-      // the workspace takes the title bar over.
-      color: scheme.surfaceContainerLow,
+      // Same paper as the tab bar beneath it: the two read as one title area
+      // even though only the top band moves the window.
+      color: scheme.surfaceContainerLowest,
       child: MaidKitWindowDragArea(
         child: SizedBox(
           height: kMaidKitTitleBarHeight,
@@ -165,7 +187,9 @@ class MaidKitTitleBar extends StatelessWidget {
 
 /// Makes its child drag the native window, and a double tap toggle maximize.
 ///
-/// The window is borderless, so the title bar is the only place that moves it.
+/// The window is borderless, so the title bar band is the only place that
+/// moves it. Child widgets that own a drag — a tab — stay outside this area,
+/// so the two gestures never compete.
 class MaidKitWindowDragArea extends StatelessWidget {
   const MaidKitWindowDragArea({super.key, required this.child});
 
@@ -246,8 +270,9 @@ class _MaidKitWindowButtonsState extends State<MaidKitWindowButtons>
         _WindowButton(
           icon: Symbols.close,
           tooltip: 'windowClose'.tr(),
-          // The one place the strip may raise its voice: the glyph turns into
-          // the danger color under the pointer while the surface stays quiet.
+          // The one place the title bar may raise its voice: the glyph turns
+          // into the danger color under the pointer while the surface stays
+          // quiet.
           iconHoverColor: scheme.error,
           onPressed: () => unawaited(closeMaidKitWindow()),
         ),

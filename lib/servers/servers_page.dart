@@ -266,6 +266,8 @@ class _ServersCatalog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The page paper is inherited from the pane's panel, so the dashboard's
+    // cards sit on the same sheet as every other tab's content.
     return MaidKitAppScaffold(
       // The pane owns the narrow decision: the strip above the catalog and the
       // catalog's own footer must agree on where the port-forward chip lives.
@@ -1292,7 +1294,7 @@ class _ServerCard extends ConsumerWidget {
                           ? () => unawaited(
                               ref
                                   .read(maidCafeStatsSchedulerProvider)
-                                  .refreshServer(server),
+                                  .refreshServer(server, force: true),
                             )
                           : onRefresh,
                       icon: const Icon(Symbols.refresh),

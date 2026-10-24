@@ -1666,7 +1666,7 @@
   "sessionsCloseThisTab": "關閉此標籤頁",
   "sessionsDropTabHere": "拖放標籤頁到此處",
   "sessionsNewPane": "新建面板",
-  "sessionsPaneCountTooltip": "此分頁顯示在 {0} 個面板中",
+  "sessionsPaneCountTooltip": "此分頁拆分為 {0} 個面板",
   "sessionsNewTerminal": "新建終端",
   "sessionsNewTerminalOn": "在 {} 上新建終端",
   "sessionsOpenCount": "{} 個開啟",

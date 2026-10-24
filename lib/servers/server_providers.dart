@@ -1723,6 +1723,10 @@ final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
       server,
       ref.read(sessionsProvider).asData?.value ?? const [],
     ),
+    // The collector keeps each daemon's session open between polls; the
+    // scheduler is the only thing that knows when a host stops being watched.
+    releaseRoute: collector.closeSession,
+    releaseRoutes: collector.closeAll,
   );
   final dashboardFocused = ref.watch(dashboardFocusedProvider);
   final interval = ref.watch(serverMetricsRefreshIntervalProvider);

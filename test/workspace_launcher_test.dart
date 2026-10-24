@@ -172,9 +172,15 @@ void main() {
     expect(assetsSection(tester), AssetsSection.snippets.index);
   });
 
-  testWidgets('the command palette splits the focused pane', (tester) async {
+  testWidgets('the command palette splits the tab into a second pane', (
+    tester,
+  ) async {
     await pumpWorkspace(tester);
-    expect(find.text('sessionsNewPane'.tr()), findsNothing);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SessionsWorkspace)),
+    );
+    final before = container.read(terminalTabsProvider);
+    expect(before.tabs.single.hasSplits, isFalse);
 
     await openPalette(tester, query: 'split');
     final splitDown = find.widgetWithText(ListTile, 'sessionsSplitDown'.tr());
@@ -182,7 +188,15 @@ void main() {
     await tester.tap(splitDown);
     await tester.pumpAndSettle();
 
-    // The pane the split added has no tabs yet, so its strip says so.
-    expect(find.text('sessionsNewPane'.tr()), findsOneWidget);
+    // The split belongs to the tab the user was on: the workspace still lists
+    // one tab, now with two panes, and the new pane waits for a session.
+    final after = container.read(terminalTabsProvider);
+    expect(after.tabs, hasLength(1));
+    expect(after.tabs.single.hasSplits, isTrue);
+    expect(after.tabs.single.panes, hasLength(2));
+    expect(
+      after.tabs.single.panes[after.tabs.single.focusedPaneId]!.isEmpty,
+      isTrue,
+    );
   });
 }

@@ -58,16 +58,15 @@ void main() {
       transport: TerminalTransport.ssh,
     );
     notifier.state = TerminalTabsState(
-      tabs: [tab],
-      panes: {
-        'pane-1': const SessionPane(
-          id: 'pane-1',
-          tabIds: ['terminal-1'],
-          selectedTabId: 'terminal-1',
+      tabs: [
+        WorkspaceTab(
+          id: tab.id,
+          panes: {'pane-1': TabPane(id: 'pane-1', tab: tab)},
+          layout: const SessionLayoutLeaf('pane-1'),
+          focusedPaneId: 'pane-1',
         ),
-      },
-      layout: const SessionLayoutLeaf('pane-1'),
-      focusedPaneId: 'pane-1',
+      ],
+      selectedTabId: tab.id,
     );
 
     final now = DateTime.utc(2026, 1, 1);
@@ -86,6 +85,82 @@ void main() {
 
     expect(adapter.inputs, ["eval '  echo start\n./deploy.sh'\n"]);
   });
+
+  test('a split adds a pane to the tab instead of a second tab', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    notifier.openFileManagement(const _ServerStub());
+    notifier.splitSelectedTab(SessionSplitAxis.horizontal);
+
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(2), reason: 'dashboard + the file manager');
+    final split = state.tabs.last;
+    expect(split.hasSplits, isTrue);
+    expect(split.panes, hasLength(2));
+    expect(split.layout.paneIds, containsAll(split.panes.keys));
+    // The file manager is a view over shared data, so the new pane shows a
+    // second instance of it under the same bar entry.
+    expect(split.tabs, hasLength(2));
+    expect(split.tabs.map((tab) => tab.id).toSet(), hasLength(2));
+    expect(split.tabs.every((tab) => tab is FileManagementTab), isTrue);
+    expect(state.selectedTabId, split.id);
+  });
+
+  test('closing a pane keeps the tab and its other viewport', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    notifier.openFileManagement(const _ServerStub());
+    notifier.splitSelectedTab(SessionSplitAxis.vertical);
+    final split = container.read(terminalTabsProvider).tabs.last;
+    final kept = split.panes.entries
+        .firstWhere((entry) => entry.key != split.focusedPaneId)
+        .value;
+
+    await notifier.closePaneInTab(split.id, split.focusedPaneId);
+
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(2));
+    final remaining = state.tabs.last;
+    expect(remaining.hasSplits, isFalse);
+    expect(remaining.panes.values.single.tab!.id, kept.tab!.id);
+    expect(state.selectedTabId, remaining.id);
+  });
+
+  test('closing a split tab closes every pane it owns', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    notifier.openFileManagement(const _ServerStub());
+    notifier.splitSelectedTab(SessionSplitAxis.horizontal);
+    final split = container.read(terminalTabsProvider).tabs.last;
+
+    await notifier.closeTab(split.id);
+
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(1));
+    expect(state.tabs.single.tab, isA<DashboardTab>());
+    expect(state.selectedTabId, 'dashboard');
+  });
+}
+
+class _ServerStub extends Server {
+  const _ServerStub()
+    : super(
+        id: 1,
+        name: 'Server 1',
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        collectStats: false,
+        collectSystemInfo: false,
+        connectionType: 'ssh',
+        maidCafeTerminalViaCloud: false,
+      );
 }
 
 class _RecordingTerminalAdapter implements TerminalSessionAdapter {

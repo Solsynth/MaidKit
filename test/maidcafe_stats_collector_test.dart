@@ -184,4 +184,128 @@ void main() {
       expect(await collector.blockerFor(stored), isNull);
     },
   );
+
+  routeCacheTests();
+}
+
+/// A daemon on the loopback interface, counting the requests a direct
+/// statistics read makes. The collector is supposed to keep one session open
+/// between polls, so the `/health` count is what says whether it did.
+class _DirectDaemon {
+  HttpServer? _server;
+  var healthReads = 0;
+  var metricReads = 0;
+
+  String get baseUrl => 'http://127.0.0.1:${_server!.port}';
+
+  Future<void> start() async {
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server!.listen((request) async {
+      if (request.uri.path == '/health') {
+        healthReads++;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('{"version":"test"}');
+      } else if (request.uri.path == '/api/v1/metrics') {
+        metricReads++;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('{"cpu_count":4,"uptime_seconds":60}');
+      } else {
+        request.response.statusCode = 404;
+      }
+      await request.response.close();
+    });
+  }
+
+  Future<void> stop() async => _server?.close(force: true);
+}
+
+/// flutter_test's binding answers every HttpClient request with a bare 400;
+/// these tests dial a real loopback daemon, so the default client is restored.
+class _RealHttpOverrides extends HttpOverrides {}
+
+void routeCacheTests() {
+  _mockPathProvider();
+
+  late HttpOverrides? previousOverrides;
+
+  late AppDatabase database;
+  late ServerRepository repository;
+  late MaidCafeStatsCollector collector;
+  late _DirectDaemon daemon;
+
+  setUp(() async {
+    previousOverrides = HttpOverrides.current;
+    HttpOverrides.global = _RealHttpOverrides();
+    final directory = Directory.systemTemp.createTempSync('maidcafe_routes');
+    database = AppDatabase(filePath: '${directory.path}/test.sqlite');
+    final vault = VaultService(database, secureStorage: _MemoryStorage());
+    await vault.create('vault-password');
+    repository = ServerRepository(database, vault);
+    collector = MaidCafeStatsCollector(
+      repository: repository,
+      manager: SshConnectionManager(() => throw UnimplementedError()),
+    );
+    daemon = _DirectDaemon();
+    await daemon.start();
+  });
+
+  tearDown(() async {
+    await collector.closeAll();
+    await daemon.stop();
+    await database.close();
+    HttpOverrides.global = previousOverrides;
+  });
+
+  Future<Server> directServer() async {
+    final server = await repository.create(
+      ServerDraft(
+        name: 'daemon host',
+        host: '127.0.0.1',
+        port: 22,
+        username: 'root',
+        maidCafeTerminalUrl: null,
+      ),
+    );
+    await repository.updateMaidCafeConfig(
+      server,
+      daemonUrl: daemon.baseUrl,
+      metricsSecret: 'metrics-secret',
+    );
+    return repository.currentServer(server);
+  }
+
+  test('a second read reuses the session instead of dialling again', () async {
+    final server = await directServer();
+
+    expect(await collector.collect(server), isNotNull);
+    expect(await collector.collect(server), isNotNull);
+
+    expect(daemon.healthReads, 1, reason: 'the handshake happens once');
+    expect(daemon.metricReads, 2);
+  });
+
+  test('closing a route makes the next read dial again', () async {
+    final server = await directServer();
+
+    await collector.collect(server);
+    await collector.closeSession(server.id);
+    await collector.collect(server);
+
+    expect(daemon.healthReads, 2);
+  });
+
+  test('a rotated credential invalidates the cached session', () async {
+    final server = await directServer();
+    await collector.collect(server);
+
+    await repository.updateMaidCafeConfig(
+      server,
+      daemonUrl: daemon.baseUrl,
+      metricsSecret: 'rotated-secret',
+    );
+    final rotated = await repository.currentServer(server);
+    await collector.collect(rotated);
+
+    expect(daemon.healthReads, 2, reason: 'the old session is not reused');
+  });
 }

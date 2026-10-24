@@ -6,45 +6,62 @@ import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/servers/workspace_restore_preferences.dart';
 import 'package:maid_kit/servers/workspace_snapshot.dart';
 
-/// The untouched single-dashboard workspace every session starts with.
-TerminalTabsState _pristineTabs() => const TerminalTabsState(
-  tabs: [DashboardTab()],
-  panes: {
-    'main': SessionPane(
-      id: 'main',
-      tabIds: ['dashboard'],
-      selectedTabId: 'dashboard',
-    ),
-  },
-  layout: SessionLayoutLeaf('main'),
-  focusedPaneId: 'main',
+/// A workspace tab holding [contents] in one pane.
+WorkspaceTab _tab(String paneId, List<SessionTab> contents) => WorkspaceTab(
+  id: contents.isEmpty ? paneId : contents.first.id,
+  panes: {paneId: TabPane(id: paneId, tab: contents.firstOrNull)},
+  layout: SessionLayoutLeaf(paneId),
+  focusedPaneId: paneId,
 );
 
-/// A workspace that already holds a live terminal.
-TerminalTabsState _liveTabs() => const TerminalTabsState(
-  tabs: [DashboardTab()],
-  panes: {
-    'main': SessionPane(
-      id: 'main',
-      tabIds: ['dashboard', 'term-1'],
-      selectedTabId: 'term-1',
-    ),
-  },
-  layout: SessionLayoutLeaf('main'),
-  focusedPaneId: 'main',
+/// The untouched single-dashboard workspace every session starts with.
+TerminalTabsState _pristineTabs() => TerminalTabsState(
+  tabs: [
+    _tab('main', const [DashboardTab()]),
+  ],
+  selectedTabId: 'dashboard',
+);
+
+/// A workspace that already holds something besides the dashboard.
+TerminalTabsState _liveTabs() => TerminalTabsState(
+  tabs: [
+    _tab('main', const [DashboardTab()]),
+    _tab('pane-2', const [
+      FileManagementTab(id: 'files-1', serverId: 1, serverName: 'Server 1'),
+    ]),
+  ],
+  selectedTabId: 'files-1',
 );
 
 StoredWorkspaceSnapshot _storedAt(DateTime updatedAt) =>
     StoredWorkspaceSnapshot(
-      const WorkspaceSnapshot(
-        layout: SessionLayoutLeaf('main'),
-        panes: {
-          'main': SessionPane(
-            id: 'main',
-            tabIds: ['dashboard', 'term-1'],
-            selectedTabId: 'term-1',
+      WorkspaceSnapshot(
+        tabs: [
+          WorkspaceTabSnapshot(
+            id: 'dashboard',
+            layout: const SessionLayoutLeaf('main'),
+            focusedPaneId: 'main',
+            panes: const {
+              'main': WorkspaceContentSnapshot(
+                id: 'dashboard',
+                kind: WorkspaceTabKind.dashboard,
+              ),
+            },
           ),
-        },
+          const WorkspaceTabSnapshot(
+            id: 'term-1',
+            layout: SessionLayoutLeaf('pane-2'),
+            focusedPaneId: 'pane-2',
+            panes: {
+              'pane-2': WorkspaceContentSnapshot(
+                id: 'term-1',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 1,
+              ),
+            },
+          ),
+        ],
+        selectedTabId: 'term-1',
       ),
       updatedAt,
     );

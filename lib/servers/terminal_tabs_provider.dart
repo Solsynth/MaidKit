@@ -57,16 +57,13 @@ enum AssetsSection { connections, github, credentials, snippets }
 /// Optional close confirmation for dirty file-editor tabs.
 final Map<String, Future<bool> Function()> fileEditorCloseGuards = {};
 
-/// Tab id → bar entry, for a tab that was split into a second pane.
+/// What one pane shows.
 ///
-/// The entry id is the id of the tab that opened it. A tab absent from this map
-/// is its own entry. Splitting is the only thing that adds an entry here, so
-/// two independent chats remain two bar entries.
-final Map<String, String> _tabGroupMembership = {};
-
-/// The bar entry [tabId] belongs to.
-String tabGroupOf(String tabId) => _tabGroupMembership[tabId] ?? tabId;
-
+/// A tab is the document; its panes are viewports onto it, and every pane
+/// mounts its own instance because a terminal socket, a file browser's remote
+/// listing or an agent conversation cannot be rendered twice. Instances of the
+/// same kind therefore carry the same [type] and target while keeping separate
+/// [id]s.
 sealed class SessionTab {
   const SessionTab({
     required this.id,
@@ -159,7 +156,7 @@ class FileEditorTab extends SessionTab {
   SessionTabType get type => SessionTabType.fileEditor;
 }
 
-/// The persistent server overview, shown in the same pane tab system as live
+/// The persistent server overview, shown in the same tab system as live
 /// terminals and file-management views.
 class DashboardTab extends SessionTab {
   const DashboardTab()
@@ -196,7 +193,7 @@ class MaidCafePayloadSessionTab extends SessionTab {
   SessionTabType get type => SessionTabType.maidCafePayload;
 }
 
-/// A non-server destination hosted in the pane tab system.
+/// A non-server destination hosted in the tab system.
 ///
 /// These used to be navigation-rail destinations; each one is a singleton tab
 /// (there is never a second Projects or Settings tab), so opening an already
@@ -248,8 +245,8 @@ class SettingsSessionTab extends DestinationTab {
 }
 
 /// One agent chat. The chat itself lives in the tab body; the tab carries the
-/// title and in-flight flag so the tab strip can show them without rebuilding
-/// the conversation.
+/// title and in-flight flag so the strip can show them without rebuilding the
+/// conversation.
 class AgentChatSessionTab extends SessionTab {
   const AgentChatSessionTab({
     required super.id,
@@ -271,207 +268,162 @@ class AgentChatSessionTab extends SessionTab {
   SessionTabType get type => SessionTabType.agentChat;
 }
 
-/// A pane: one tab strip's worth of tabs, showing one at a time.
+/// One viewport of a tab.
 ///
-/// Panes never share a tab instance — a renderer mounts once — so a tab that
-/// spans several panes is a *group*: each pane shows its own session of the
-/// same kind, and the bar lists the group once with a pane count.
-///
-/// A pane may be empty (`tabIds` is empty); empty panes show the session intro
-/// so the user can choose what to open.
-class SessionPane {
-  const SessionPane({
-    required this.id,
-    this.tabIds = const [],
-    this.selectedTabId,
-  });
+/// A pane carries the content instance it mounts, or nothing while it waits for
+/// the user to pick something in the pane's intro.
+class TabPane {
+  const TabPane({required this.id, this.tab});
 
   final String id;
-  final List<String> tabIds;
-  final String? selectedTabId;
 
-  bool get isEmpty => tabIds.isEmpty;
+  /// The mounted instance. Null in a pane a split just created.
+  final SessionTab? tab;
 
-  SessionPane copyWith({List<String>? tabIds, String? selectedTabId}) =>
-      SessionPane(
-        id: id,
-        tabIds: tabIds ?? this.tabIds,
-        selectedTabId: selectedTabId ?? this.selectedTabId,
-      );
+  bool get isEmpty => tab == null;
 
-  SessionPane withTab(String tabId) =>
-      SessionPane(id: id, tabIds: [...tabIds, tabId], selectedTabId: tabId);
+  TabPane withTab(SessionTab tab) => TabPane(id: id, tab: tab);
+}
 
-  SessionPane withTabAt(String tabId, int index) {
-    final ids = [...tabIds]..remove(tabId);
-    final insertAt = index.clamp(0, ids.length);
-    ids.insert(insertAt, tabId);
-    return SessionPane(id: id, tabIds: ids, selectedTabId: tabId);
+/// One workspace tab: a single document plus its own pane layout.
+///
+/// This is the unit the workspace bar shows. Splitting adds a pane *to this
+/// tab*, so a split terminal reads as one tab with two shells rather than as
+/// two unrelated tabs; closing the tab closes every pane it owns. The layout
+/// tree belongs to the tab, so each tab remembers its own arrangement instead
+/// of the workspace keeping one tree for all of them.
+class WorkspaceTab {
+  const WorkspaceTab({
+    required this.id,
+    required this.panes,
+    required this.layout,
+    required this.focusedPaneId,
+  });
+
+  /// Stable document identity. It starts as the first content's id and is
+  /// kept across splits, so a tab outlives any one pane.
+  final String id;
+
+  /// Panes keyed by pane id. The layout's leaves are these ids.
+  final Map<String, TabPane> panes;
+  final SessionLayout layout;
+  final String focusedPaneId;
+
+  TabPane? get focusedPane => panes[focusedPaneId];
+
+  /// The content the bar names: whatever the focused pane shows, else the
+  /// first pane that shows anything.
+  SessionTab? get tab {
+    final focused = focusedPane?.tab;
+    if (focused != null) return focused;
+    for (final pane in panes.values) {
+      if (pane.tab != null) return pane.tab;
+    }
+    return null;
   }
 
-  SessionPane withoutTab(String tabId) {
-    final index = tabIds.indexOf(tabId);
-    final nextIds = [...tabIds]..remove(tabId);
-    if (nextIds.isEmpty) {
-      return SessionPane(id: id, tabIds: const []);
+  /// Every content instance mounted by this tab, in pane order.
+  Iterable<SessionTab> get tabs sync* {
+    for (final paneId in layout.paneIds) {
+      final tab = panes[paneId]?.tab;
+      if (tab != null) yield tab;
     }
-    final String? nextSelected;
-    if (selectedTabId == tabId) {
-      nextSelected = nextIds[(index - 1).clamp(0, nextIds.length - 1)];
-    } else if (nextIds.contains(selectedTabId)) {
-      nextSelected = selectedTabId;
-    } else {
-      nextSelected = nextIds.last;
-    }
-    return SessionPane(id: id, tabIds: nextIds, selectedTabId: nextSelected);
   }
+
+  bool get hasSplits => layout.isSplit;
+
+  bool get isPristineDashboard =>
+      panes.length == 1 &&
+      panes.values.first.id == 'main' &&
+      tab is DashboardTab &&
+      layout is SessionLayoutLeaf;
+
+  String? paneIdForContent(String contentId) {
+    for (final pane in panes.values) {
+      if (pane.tab?.id == contentId) return pane.id;
+    }
+    return null;
+  }
+
+  WorkspaceTab copyWith({
+    Map<String, TabPane>? panes,
+    SessionLayout? layout,
+    String? focusedPaneId,
+  }) => WorkspaceTab(
+    id: id,
+    panes: panes ?? this.panes,
+    layout: layout ?? this.layout,
+    focusedPaneId: focusedPaneId ?? this.focusedPaneId,
+  );
 }
 
 class TerminalTabsState {
-  const TerminalTabsState({
-    this.tabs = const [],
-    this.panes = const {},
-    this.layout,
-    this.focusedPaneId,
-  });
+  const TerminalTabsState({this.tabs = const [], this.selectedTabId});
 
-  /// Every mounted tab. A tab renders once, so a tab that fills several panes
-  /// is several tabs of the same kind, one per pane.
-  final List<SessionTab> tabs;
-  final Map<String, SessionPane> panes;
+  /// Workspace tabs in bar order. Each one owns its pane layout.
+  final List<WorkspaceTab> tabs;
+  final String? selectedTabId;
 
-  /// Arrangement of panes. Null when no panes are open.
-  final SessionLayout? layout;
-  final String? focusedPaneId;
-
-  SessionPane? get focusedPane =>
-      focusedPaneId == null ? null : panes[focusedPaneId];
-
-  /// Tab selected in the focused pane (drives status bar, palette, etc.).
-  SessionTab? get selectedTab {
-    final tabId = focusedPane?.selectedTabId;
-    if (tabId == null) return null;
-    return tabs.where((tab) => tab.id == tabId).firstOrNull;
+  WorkspaceTab? get selectedTab {
+    final id = selectedTabId;
+    if (id == null) return null;
+    for (final tab in tabs) {
+      if (tab.id == id) return tab;
+    }
+    return null;
   }
+
+  /// The content the selected tab is showing (drives status bar, palette).
+  SessionTab? get selectedTabContent => selectedTab?.tab;
 
   String? get selectedId => selectedTab?.id;
 
-  bool get hasSplits => layout?.isSplit ?? false;
-
-  /// Workspace is empty when there are no panes (not merely no tabs).
-  bool get isEmpty => panes.isEmpty;
-  bool get isNotEmpty => panes.isNotEmpty;
+  /// Workspace is empty when there are no tabs at all.
+  bool get isEmpty => tabs.isEmpty;
+  bool get isNotEmpty => tabs.isNotEmpty;
 
   /// The untouched single-dashboard workspace every session starts with.
   /// Used to decide whether a previous snapshot may be shown for restore
   /// without clobbering a live workspace.
   bool get isPristineDefault =>
-      panes.length == 1 &&
-      panes.values.first.id == 'main' &&
-      panes.values.first.tabIds.length == 1 &&
-      panes.values.first.tabIds.first == 'dashboard' &&
-      tabs.length == 1 &&
-      tabs.first is DashboardTab &&
-      layout is SessionLayoutLeaf;
+      tabs.length == 1 && tabs.first.isPristineDashboard;
 
-  List<SessionTab> tabsInPane(String paneId) {
-    final pane = panes[paneId];
-    if (pane == null) return const [];
-    final byId = {for (final tab in tabs) tab.id: tab};
-    return [for (final id in pane.tabIds) ?byId[id]];
-  }
+  /// Whether any tab is split into more than one pane.
+  bool get hasSplits => tabs.any((tab) => tab.hasSplits);
 
-  SessionTab? selectedTabInPane(String paneId) {
-    final tabId = panes[paneId]?.selectedTabId;
-    if (tabId == null) return null;
-    return tabs.where((tab) => tab.id == tabId).firstOrNull;
-  }
+  /// Every mounted content instance in the workspace.
+  Iterable<SessionTab> get allTabs => tabs.expand((tab) => tab.tabs);
 
-  String? paneIdForTab(String tabId) {
-    for (final pane in panes.values) {
-      if (pane.tabIds.contains(tabId)) return pane.id;
-    }
-    return null;
-  }
-
-  // ---------------------------------------------------------------------
-  // Tab groups: one bar entry per tab, however many panes show it.
-  //
-  // A split mounts a second session of the same target, and the bar keeps one
-  // entry for both so the user reads "this terminal, two viewports" rather
-  // than two unrelated tabs. The group key is the tab's target — its kind plus
-  // its server — so grouping follows what the tab *is* and needs no bookkeeping
-  // when tabs move between panes.
-  // ---------------------------------------------------------------------
-
-  /// The bar entry [tab] belongs to.
-  ///
-  /// A tab that was never split is its own entry. Two chats, or two shells on
-  /// one server, therefore stay separate entries: grouping is the consequence
-  /// of a split, never of what two tabs happen to look like.
-  String groupIdFor(SessionTab tab) => tabGroupOf(tab.id);
-
-  /// Group ids in bar order: the order their first tab was opened in.
-  List<String> get groupOrder {
-    final seen = <String>{};
-    return [
-      for (final tab in tabs)
-        if (seen.add(groupIdFor(tab))) groupIdFor(tab),
-    ];
-  }
-
-  /// Members of [groupId], in workspace order. The first names the entry.
-  List<SessionTab> tabsInGroup(String groupId) =>
-      tabs.where((tab) => groupIdFor(tab) == groupId).toList();
-
-  /// The tab that names [groupId] in the bar.
-  SessionTab? groupLead(String groupId) => tabsInGroup(groupId).firstOrNull;
-
-  /// How many panes currently show a tab of [groupId].
-  int paneCountForGroup(String groupId) {
-    var count = 0;
-    for (final paneId in panes.keys) {
-      final tab = selectedTabInPane(paneId);
-      if (tab != null && groupIdFor(tab) == groupId) count++;
-    }
-    return count;
-  }
-
-  /// Whether the focused pane shows [groupId].
-  bool isGroupActive(String groupId) {
-    final tab = selectedTab;
-    return tab != null && groupIdFor(tab) == groupId;
-  }
-
-  /// The member of [groupId] to select: the one in the focused pane when it
-  /// shows the group, else the first pane that does.
-  SessionTab? groupSelectable(String groupId) {
-    final focused = selectedTab;
-    if (focused != null &&
-        groupIdFor(focused) == groupId &&
-        focusedPaneId != null) {
-      return focused;
-    }
-    for (final pane in panes.values) {
-      for (final id in pane.tabIds) {
-        final tab = tabs.where((t) => t.id == id).firstOrNull;
-        if (tab != null && groupIdFor(tab) == groupId) return tab;
+  WorkspaceTab? tabForContent(String contentId) {
+    for (final tab in tabs) {
+      if (tab.tab?.id == contentId || tab.paneIdForContent(contentId) != null) {
+        return tab;
       }
     }
     return null;
   }
 
-  /// The pane showing [groupId]: the focused one when it does, else the first.
-  String? paneIdForGroup(String groupId) {
-    final focused = selectedTab;
-    if (focused != null &&
-        groupIdFor(focused) == groupId &&
-        focusedPaneId != null) {
-      return focusedPaneId;
+  WorkspaceTab? tabById(String tabId) {
+    for (final tab in tabs) {
+      if (tab.id == tabId) return tab;
     }
-    for (final pane in panes.values) {
-      final tab = selectedTabInPane(pane.id);
-      if (tab != null && groupIdFor(tab) == groupId) return pane.id;
+    return null;
+  }
+
+  /// The pane [contentId] is mounted in, searched across every tab.
+  String? paneIdForContent(String contentId) {
+    for (final tab in tabs) {
+      final paneId = tab.paneIdForContent(contentId);
+      if (paneId != null) return paneId;
+    }
+    return null;
+  }
+
+  SessionTab? contentById(String contentId) {
+    for (final tab in tabs) {
+      for (final pane in tab.panes.values) {
+        if (pane.tab?.id == contentId) return pane.tab;
+      }
     }
     return null;
   }
@@ -486,14 +438,67 @@ final terminalTabsProvider =
 ///
 /// The dashboard owns the background statistics refresh — its cards are the
 /// readers — and a tab left behind in the strip must not keep dialling hosts
-/// nobody is watching. Selected in the focused pane, the same rule the status
+/// nobody is watching. Selected in the focused tab, the same rule the status
 /// bar and the command palette use.
 final dashboardFocusedProvider = Provider<bool>((ref) {
   final tabs = ref.watch(terminalTabsProvider);
-  return tabs.selectedTab is DashboardTab;
+  return tabs.selectedTabContent is DashboardTab;
 });
 
-/// Holds live terminal tabs for the entire app lifetime.
+/// A second instance of [tab] for a new pane, or null when it cannot be shown
+/// twice.
+///
+/// A terminal and an agent chat each own one live session with one renderer, so
+/// a split gives those a new session instead; a destination tab is a singleton
+/// whose id the bar reads, so it stays a single entry too. Everything else is a
+/// view over shared data and is forked with its own id.
+SessionTab? forkSessionTab(SessionTab tab, {required String id}) {
+  return switch (tab) {
+    TerminalTab() ||
+    AgentChatSessionTab() ||
+    DashboardTab() ||
+    DestinationTab() => null,
+    ServerDetailTab(
+      :final server,
+      :final initialTab,
+      :final initialComposeProject,
+    ) =>
+      ServerDetailTab(
+        id: id,
+        server: server,
+        initialTab: initialTab,
+        initialComposeProject: initialComposeProject,
+      ),
+    MaidCafePayloadSessionTab(:final server) => MaidCafePayloadSessionTab(
+      id: id,
+      server: server,
+    ),
+    FileManagementTab(:final serverId, :final serverName, :final initialPath) =>
+      FileManagementTab(
+        id: id,
+        serverId: serverId,
+        serverName: serverName,
+        initialPath: initialPath,
+      ),
+    FileEditorTab(
+      :final serverId,
+      :final serverName,
+      :final fileName,
+      :final path,
+      :final isRemote,
+    ) =>
+      FileEditorTab(
+        id: id,
+        serverId: serverId,
+        serverName: serverName,
+        fileName: fileName,
+        path: path,
+        isRemote: isRemote,
+      ),
+  };
+}
+
+/// Holds live workspace tabs for the entire app lifetime.
 ///
 /// This provider deliberately is not auto-disposed, so terminals continue to
 /// receive output while the user visits another workspace page.
@@ -510,17 +515,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       _historyTimer = null;
     });
     const dashboard = DashboardTab();
-    const pane = SessionPane(
-      id: 'main',
-      tabIds: ['dashboard'],
-      selectedTabId: 'dashboard',
-    );
-    return const TerminalTabsState(
-      tabs: [dashboard],
-      panes: {'main': pane},
-      layout: SessionLayoutLeaf('main'),
-      focusedPaneId: 'main',
-    );
+    final tab = _newTab(paneId: 'main', content: dashboard);
+    return TerminalTabsState(tabs: [tab], selectedTabId: tab.id);
   }
 
   // ---------------------------------------------------------------------------
@@ -534,7 +530,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   final _lastBufferRows = <String, int>{};
   final _cachedHistory = <String, String>{};
 
-  /// Cleanups keyed by terminal tab id. A daemon terminal opened through a
+  /// Cleanups keyed by terminal content id. A daemon terminal opened through a
   /// temporary SSH forward stops that forward here, so it lives exactly as long
   /// as its terminal and no other tab is affected.
   final _tabCleanups = <String, Future<void> Function()>{};
@@ -583,7 +579,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   void _ensureHistoryTimer() {
     _historyTimer ??= Timer.periodic(const Duration(seconds: 30), (_) {
       if (_restoring || state.isPristineDefault) return;
-      if (!state.tabs.any((tab) => tab is TerminalTab)) return;
+      if (!state.allTabs.any((tab) => tab is TerminalTab)) return;
       unawaited(saveSnapshotNow());
     });
   }
@@ -607,9 +603,9 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     await restoreWorkspace(stored.snapshot);
   }
 
-  /// Rebuilds [snapshot] into the live workspace: panes and every
-  /// non-terminal tab first, then connections and terminal tabs as they
-  /// become available.
+  /// Rebuilds [snapshot] into the live workspace: every tab with its pane
+  /// arrangement and non-terminal content first, then connections and
+  /// terminal sessions as they become available.
   Future<void> restoreWorkspace(WorkspaceSnapshot snapshot) async {
     // A browser has no SSH or serial transport and no file tabs to restore;
     // only MaidCafe WebSocket terminals could reopen, which is not a saved
@@ -622,47 +618,23 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       final byId = {for (final server in servers) server.id: server};
       final resolved = resolveWorkspaceSnapshot(snapshot, byId);
 
-      // Phase 1: structure plus all non-terminal tabs, immediately.
+      // Phase 1: structure plus all non-terminal content, immediately.
       state = TerminalTabsState(
         tabs: resolved.initialTabs,
-        panes: resolved.panes,
-        layout: resolved.layout,
-        focusedPaneId: resolved.focusedPaneId,
+        selectedTabId: resolved.selectedTabId,
       );
 
       // Phase 2: terminals, opened in parallel per pane and ordered once they
       // all land (or fail).
-      if (resolved.pendingTerminals.isEmpty) {
-        _applyFinalSelections(resolved);
-        return;
-      }
-      final byPane = <String, List<PendingTerminalRestore>>{};
+      if (resolved.pendingTerminals.isEmpty) return;
       for (final pending in resolved.pendingTerminals) {
-        byPane.putIfAbsent(pending.paneId, () => []).add(pending);
+        await _restoreTerminal(pending, byId);
       }
-      for (final entry in byPane.entries) {
-        await Future.wait([
-          for (final pending in entry.value) _restoreTerminal(pending, byId),
-        ]);
-        final desired = resolved.desiredPaneTabIds[entry.key];
-        if (desired != null) _reorderPaneTo(entry.key, desired);
-      }
-      _applyFinalSelections(resolved);
     } finally {
       _restoring = false;
       // Persist the restored workspace (or whatever succeeded), so the next
       // launch can restore it again.
       unawaited(saveSnapshotNow());
-    }
-  }
-
-  void _applyFinalSelections(ResolvedWorkspace resolved) {
-    for (final selected in resolved.desiredPaneSelections.values) {
-      if (selected != null) select(selected);
-    }
-    final focus = resolved.focusedPaneId;
-    if (focus != null && state.panes.containsKey(focus)) {
-      focusPane(focus);
     }
   }
 
@@ -706,20 +678,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         initialOutput: pending.history,
       );
     } catch (_) {
-      // A failed connection skips that terminal tab; the pane keeps its
-      // remaining tabs and connection errors surface in the server grid.
-    }
-  }
-
-  /// Reorders [paneId]'s tabs to [desired]. Missing tabs (e.g. terminals that
-  /// failed to reconnect) are skipped.
-  void _reorderPaneTo(String paneId, List<String> desired) {
-    var current = state.panes[paneId]?.tabIds ?? const <String>[];
-    if (_listEquals(current, desired)) return;
-    for (var i = 0; i < desired.length; i++) {
-      if (i >= current.length || current[i] == desired[i]) continue;
-      moveTab(desired[i], paneId, toIndex: i);
-      current = state.panes[paneId]?.tabIds ?? const <String>[];
+      // A failed connection skips that terminal; the rest of the tab restores.
     }
   }
 
@@ -741,7 +700,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         'SSH terminals are not available in this browser.',
       );
     }
-    if (paneId != null) focusPane(paneId);
     final handle = await _openTerminalHandle(
       server,
       credential,
@@ -777,7 +735,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         'Serial terminals are not available in this browser.',
       );
     }
-    if (paneId != null) focusPane(paneId);
     final handle = await ref
         .read(serialConnectionManagerProvider)
         .openTerminal(server, initialOutput: initialOutput);
@@ -805,7 +762,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialOutput,
     Future<void> Function()? onClose,
   }) async {
-    if (paneId != null) focusPane(paneId);
     final handle = await ref
         .read(maidCafeTerminalConnectionManagerProvider)
         .openTerminal(server, target, initialOutput: initialOutput);
@@ -830,7 +786,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     // file API. A browser has neither of the first two but can use the daemon,
     // so it needs a route rather than a blanket refusal.
     if (kIsWeb && !server.hasMaidCafeTerminalRoute) return;
-    if (paneId != null) focusPane(paneId);
     final tab = FileManagementTab(
       id: 'files-${DateTime.now().microsecondsSinceEpoch}',
       serverId: server.id,
@@ -852,7 +807,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     // The editor reads and writes through dart:io, SFTP or the daemon's file
     // API; a browser can only reach a remote file through the daemon.
     if (kIsWeb && (!isRemote || !server.hasMaidCafeTerminalRoute)) return;
-    final existing = state.tabs.whereType<FileEditorTab>().where((tab) {
+    final existing = state.allTabs.whereType<FileEditorTab>().where((tab) {
       return tab.serverId == server.id &&
           tab.path == path &&
           tab.isRemote == isRemote;
@@ -861,7 +816,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       select(existing.id);
       return;
     }
-    if (paneId != null) focusPane(paneId);
     final side = isRemote ? 'remote' : 'local';
     _insertTab(
       FileEditorTab(
@@ -882,7 +836,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     String? initialComposeProject,
     String? paneId,
   }) {
-    final existing = state.tabs
+    final existing = state.allTabs
         .whereType<ServerDetailTab>()
         .where((tab) => tab.serverId == server.id)
         .firstOrNull;
@@ -890,7 +844,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       select(existing.id);
       return;
     }
-    if (paneId != null) focusPane(paneId);
     _insertTab(
       ServerDetailTab(
         id: 'server-${server.id}',
@@ -903,7 +856,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   }
 
   void openMaidCafePayload(Server server, {String? paneId}) {
-    final existing = state.tabs
+    final existing = state.allTabs
         .whereType<MaidCafePayloadSessionTab>()
         .where((tab) => tab.serverId == server.id)
         .firstOrNull;
@@ -911,7 +864,6 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       select(existing.id);
       return;
     }
-    if (paneId != null) focusPane(paneId);
     _insertTab(
       MaidCafePayloadSessionTab(
         id: 'maidcafe-payload-${server.id}',
@@ -924,7 +876,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// Opens [tab] unless that singleton destination is already open, in which
   /// case its tab is selected instead.
   void _openDestination(DestinationTab tab) {
-    final existing = state.tabs
+    final existing = state.allTabs
         .whereType<DestinationTab>()
         .where((candidate) => candidate.id == tab.id)
         .firstOrNull;
@@ -936,7 +888,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   }
 
   void openAssets({AssetsSection section = AssetsSection.connections}) {
-    final existing = state.tabs.whereType<AssetsSessionTab>().firstOrNull;
+    final existing = state.allTabs.whereType<AssetsSessionTab>().firstOrNull;
     if (existing == null) {
       _insertTab(AssetsSessionTab(section: section));
       return;
@@ -950,7 +902,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// Records the assets page the user switched to, so re-opening the tab from
   /// the launcher can land back on it.
   void setAssetsSection(String tabId, AssetsSection section) {
-    final tab = state.tabs
+    final tab = state.allTabs
         .whereType<AssetsSessionTab>()
         .where((candidate) => candidate.id == tabId)
         .firstOrNull;
@@ -968,7 +920,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// emptied by closing every other tab. The dashboard is the workspace's home
   /// tab and cannot be closed, so this only ever selects it.
   void openDashboard() {
-    final dashboard = state.tabs.whereType<DashboardTab>().firstOrNull;
+    final dashboard = state.allTabs.whereType<DashboardTab>().firstOrNull;
     if (dashboard != null) {
       select(dashboard.id);
       return;
@@ -986,248 +938,205 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     return tab;
   }
 
-  /// Updates the tab-strip label of an agent chat without touching the live
-  /// chat state, which the tab body owns.
+  /// Updates the strip label of an agent chat without touching the live chat
+  /// state, which the tab body owns.
   void renameAgentChat(String tabId, String title) {
     final tab = _agentChat(tabId);
     if (tab == null || tab.title == title) return;
     _replaceTab(tab.copyWith(title: title));
   }
 
-  /// Marks an agent chat as streaming so its tab chip can show activity.
+  /// Marks an agent chat as streaming so its chip can show activity.
   void setAgentChatWorking(String tabId, bool working) {
     final tab = _agentChat(tabId);
     if (tab == null || tab.working == working) return;
     _replaceTab(tab.copyWith(working: working));
   }
 
-  AgentChatSessionTab? _agentChat(String tabId) => state.tabs
+  AgentChatSessionTab? _agentChat(String tabId) => state.allTabs
       .whereType<AgentChatSessionTab>()
       .where((tab) => tab.id == tabId)
       .firstOrNull;
 
-  /// Swaps [tab] for an updated instance with the same id.
-  void _replaceTab(SessionTab tab) {
-    final index = state.tabs.indexWhere((candidate) => candidate.id == tab.id);
-    if (index < 0) return;
-    final tabs = [...state.tabs]..[index] = tab;
+  /// Swaps one mounted instance for an updated one with the same id.
+  void _replaceTab(SessionTab content) {
+    var changed = false;
+    final tabs = [
+      for (final tab in state.tabs)
+        if (tab.paneIdForContent(content.id) case final paneId?)
+          () {
+            changed = true;
+            return tab.copyWith(
+              panes: {
+                ...tab.panes,
+                paneId: tab.panes[paneId]!.withTab(content),
+              },
+            );
+          }()
+        else
+          tab,
+    ];
+    if (!changed) return;
+    state = TerminalTabsState(tabs: tabs, selectedTabId: state.selectedTabId);
+  }
+
+  /// Splits the selected tab, giving it a second pane.
+  ///
+  /// The new pane belongs to the same tab — it is a second viewport of it, not
+  /// another tab — and starts with a second session of the same target when
+  /// that target can be mounted twice. A terminal or an agent chat owns one
+  /// live session, so its new pane starts empty for the user to open something
+  /// in.
+  void splitSelectedTab(SessionSplitAxis axis) {
+    final tab = state.selectedTab;
+    if (tab == null) {
+      splitEmpty(axis);
+      return;
+    }
+    final paneId = _uuid.v4();
+    final source = tab.tab;
+    final clone = source == null
+        ? null
+        : forkSessionTab(
+            source,
+            id: '${source.id}-pane-${DateTime.now().microsecondsSinceEpoch}',
+          );
+    final nextTab = tab.copyWith(
+      panes: {
+        ...tab.panes,
+        paneId: TabPane(id: paneId, tab: clone),
+      },
+      layout: splitPane(
+        layout: tab.layout,
+        focusedPaneId: tab.focusedPaneId,
+        newPaneId: paneId,
+        axis: axis,
+        splitId: _uuid.v4(),
+      ),
+      focusedPaneId: paneId,
+    );
     state = TerminalTabsState(
-      tabs: tabs,
-      panes: state.panes,
-      layout: state.layout,
-      focusedPaneId: state.focusedPaneId,
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tab.id ? nextTab : candidate,
+      ],
+      selectedTabId: tab.id,
     );
   }
 
-  /// Splits the focused pane and opens an empty sibling for the user to fill.
+  /// Splits the selected tab into an empty sibling for the user to fill.
   void splitEmpty(SessionSplitAxis axis) {
-    final focusId = state.focusedPaneId;
-    final layout = state.layout;
-    if (focusId == null || layout == null || !layout.containsPane(focusId)) {
-      // No pane yet — create a single empty workspace pane.
+    final tab = state.selectedTab;
+    if (tab == null) {
+      // No tab yet — start a workspace tab with one empty pane.
       final paneId = _uuid.v4();
-      state = TerminalTabsState(
-        tabs: state.tabs,
-        panes: {paneId: SessionPane(id: paneId)},
+      final next = WorkspaceTab(
+        id: _uuid.v4(),
+        panes: {paneId: TabPane(id: paneId)},
         layout: SessionLayoutLeaf(paneId),
         focusedPaneId: paneId,
       );
+      state = TerminalTabsState(
+        tabs: [...state.tabs, next],
+        selectedTabId: next.id,
+      );
       return;
     }
+    _splitTab(tab, axis, content: null);
+  }
 
-    final newPaneId = _uuid.v4();
-    final nextLayout = splitPane(
-      layout: layout,
-      focusedPaneId: focusId,
-      newPaneId: newPaneId,
-      axis: axis,
-      splitId: _uuid.v4(),
+  void _splitTab(
+    WorkspaceTab tab,
+    SessionSplitAxis axis, {
+    SessionTab? content,
+  }) {
+    final paneId = _uuid.v4();
+    final nextTab = tab.copyWith(
+      panes: {
+        ...tab.panes,
+        paneId: TabPane(id: paneId, tab: content),
+      },
+      layout: splitPane(
+        layout: tab.layout,
+        focusedPaneId: tab.focusedPaneId,
+        newPaneId: paneId,
+        axis: axis,
+        splitId: _uuid.v4(),
+      ),
+      focusedPaneId: paneId,
     );
-    // A split gives the new pane a second viewport of what the user is looking
-    // at. A tab that owns one live session — a terminal's socket, an agent
-    // chat's conversation — cannot be mounted twice, so that pane starts empty
-    // and the user opens a session there; any other tab is duplicated and both
-    // copies group under one entry in the bar.
-    final source = state.selectedTab;
-    final clone = source == null ? null : _duplicate(source);
-    final panes = Map<String, SessionPane>.from(state.panes)
-      ..[newPaneId] = clone == null
-          ? SessionPane(id: newPaneId)
-          : SessionPane(
-              id: newPaneId,
-              tabIds: [clone.id],
-              selectedTabId: clone.id,
-            );
-    if (clone != null && source != null) {
-      _tabGroupMembership[clone.id] = tabGroupOf(source.id);
-    }
     state = TerminalTabsState(
-      tabs: clone == null ? state.tabs : [...state.tabs, clone],
-      panes: panes,
-      layout: nextLayout,
-      focusedPaneId: newPaneId,
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tab.id ? nextTab : candidate,
+      ],
+      selectedTabId: tab.id,
     );
   }
 
-  /// A second mount of [tab], or null when it cannot be shown twice.
+  /// Selects the workspace tab that owns [contentId] and focuses its pane.
   ///
-  /// A terminal and an agent chat each own one live session with one renderer,
-  /// and the dashboard is the workspace's home view, so a split leaves those
-  /// panes empty for a new session. Every other tab is a view over shared data
-  /// and gets its own id, so it can appear in a second pane; both copies group
-  /// under one entry in the bar.
-  SessionTab? _duplicate(SessionTab tab) {
-    final id = '${tab.id}-pane-${DateTime.now().microsecondsSinceEpoch}';
-    return switch (tab) {
-      // A destination tab's id is fixed, so a second instance would collide
-      // with the first; the empty pane keeps its group hint instead.
-      TerminalTab() ||
-      AgentChatSessionTab() ||
-      DashboardTab() ||
-      DestinationTab() => null,
-      ServerDetailTab(
-        :final server,
-        :final initialTab,
-        :final initialComposeProject,
-      ) =>
-        ServerDetailTab(
-          id: id,
-          server: server,
-          initialTab: initialTab,
-          initialComposeProject: initialComposeProject,
-        ),
-      MaidCafePayloadSessionTab(:final server) => MaidCafePayloadSessionTab(
-        id: id,
-        server: server,
-      ),
-      FileManagementTab(
-        :final serverId,
-        :final serverName,
-        :final initialPath,
-      ) =>
-        FileManagementTab(
-          id: id,
-          serverId: serverId,
-          serverName: serverName,
-          initialPath: initialPath,
-        ),
-      FileEditorTab(
-        :final serverId,
-        :final serverName,
-        :final fileName,
-        :final path,
-        :final isRemote,
-      ) =>
-        FileEditorTab(
-          id: id,
-          serverId: serverId,
-          serverName: serverName,
-          fileName: fileName,
-          path: path,
-          isRemote: isRemote,
-        ),
-    };
+  /// [contentId] is a mounted instance (a terminal, an editor, a destination)
+  /// or a workspace tab id; both resolve to the tab the bar shows.
+  void select(String contentId) {
+    final owner = state.tabById(contentId) ?? state.tabForContent(contentId);
+    if (owner == null) return;
+    final paneId = owner.paneIdForContent(contentId);
+    final next = paneId == null ? owner : owner.copyWith(focusedPaneId: paneId);
+    state = TerminalTabsState(
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == owner.id ? next : candidate,
+      ],
+      selectedTabId: owner.id,
+    );
+  }
+
+  void selectTab(String tabId) {
+    if (state.tabById(tabId) == null) return;
+    if (state.selectedTabId == tabId) return;
+    state = TerminalTabsState(tabs: state.tabs, selectedTabId: tabId);
   }
 
   void focusPane(String paneId) {
-    if (!state.panes.containsKey(paneId)) return;
-    if (state.focusedPaneId == paneId) return;
+    final tab = state.selectedTab;
+    if (tab == null || !tab.panes.containsKey(paneId)) return;
+    if (tab.focusedPaneId == paneId) return;
     state = TerminalTabsState(
-      tabs: state.tabs,
-      panes: state.panes,
-      layout: state.layout,
-      focusedPaneId: paneId,
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tab.id
+              ? candidate.copyWith(focusedPaneId: paneId)
+              : candidate,
+      ],
+      selectedTabId: tab.id,
     );
   }
 
-  /// Selects [tabId] within its pane and focuses that pane.
-  void select(String tabId) {
-    final paneId = state.paneIdForTab(tabId);
-    if (paneId == null) return;
-    final pane = state.panes[paneId]!;
-    final panes = Map<String, SessionPane>.from(state.panes)
-      ..[paneId] = pane.copyWith(selectedTabId: tabId);
-    state = TerminalTabsState(
-      tabs: state.tabs,
-      panes: panes,
-      layout: state.layout,
-      focusedPaneId: paneId,
-    );
+  /// Moves the tab at [fromIndex] so it sits before [toIndex].
+  void moveTab(int fromIndex, int toIndex) {
+    if (fromIndex < 0 || fromIndex >= state.tabs.length) return;
+    if (toIndex < 0 || toIndex > state.tabs.length) return;
+    if (fromIndex == toIndex || fromIndex + 1 == toIndex) return;
+    final tabs = [...state.tabs];
+    final tab = tabs.removeAt(fromIndex);
+    tabs.insert(toIndex > fromIndex ? toIndex - 1 : toIndex, tab);
+    state = TerminalTabsState(tabs: tabs, selectedTabId: state.selectedTabId);
   }
 
-  /// Moves [tabId] into [toPaneId].
-  ///
-  /// [toIndex] means “insert before this index” in the destination’s current
-  /// order. When null, the tab is appended. Supports reordering within a pane
-  /// and moving across panes.
-  void moveTab(String tabId, String toPaneId, {int? toIndex}) {
-    final fromPaneId = state.paneIdForTab(tabId);
-    if (fromPaneId == null) return;
-    final toPane = state.panes[toPaneId];
-    if (toPane == null) return;
-
-    final panes = Map<String, SessionPane>.from(state.panes);
-
-    if (fromPaneId == toPaneId) {
-      final pane = panes[fromPaneId]!;
-      final oldIndex = pane.tabIds.indexOf(tabId);
-      if (oldIndex < 0) return;
-      // Insert-before semantics on the pre-removal list (ReorderableListView style).
-      var insertAt = toIndex ?? pane.tabIds.length;
-      if (insertAt > pane.tabIds.length) insertAt = pane.tabIds.length;
-      // Dropping on self or immediately after self is a no-op.
-      if (insertAt == oldIndex || insertAt == oldIndex + 1) {
-        // Still select/focus the tab.
-        if (pane.selectedTabId != tabId || state.focusedPaneId != toPaneId) {
-          panes[fromPaneId] = pane.copyWith(selectedTabId: tabId);
-          state = TerminalTabsState(
-            tabs: state.tabs,
-            panes: panes,
-            layout: state.layout,
-            focusedPaneId: toPaneId,
-          );
-        }
-        return;
-      }
-      final ids = [...pane.tabIds]..removeAt(oldIndex);
-      if (insertAt > oldIndex) insertAt -= 1;
-      ids.insert(insertAt.clamp(0, ids.length), tabId);
-      if (_listEquals(ids, pane.tabIds)) return;
-      panes[fromPaneId] = SessionPane(
-        id: fromPaneId,
-        tabIds: ids,
-        selectedTabId: tabId,
-      );
-    } else {
-      final fromPane = panes[fromPaneId]!;
-      panes[fromPaneId] = fromPane.withoutTab(tabId);
-      final dest = panes[toPaneId]!;
-      final ids = [...dest.tabIds];
-      final insertAt = (toIndex ?? ids.length).clamp(0, ids.length);
-      ids.insert(insertAt, tabId);
-      panes[toPaneId] = SessionPane(
-        id: toPaneId,
-        tabIds: ids,
-        selectedTabId: tabId,
-      );
-    }
-
+  void setSplitRatio(String tabId, String splitId, double ratio) {
+    final tab = state.tabById(tabId);
+    if (tab == null) return;
     state = TerminalTabsState(
-      tabs: state.tabs,
-      panes: panes,
-      layout: state.layout,
-      focusedPaneId: toPaneId,
-    );
-  }
-
-  void setSplitRatio(String splitId, double ratio) {
-    final current = state.layout;
-    if (current == null) return;
-    state = TerminalTabsState(
-      tabs: state.tabs,
-      panes: state.panes,
-      layout: applySplitRatio(current, splitId, ratio),
-      focusedPaneId: state.focusedPaneId,
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tabId
+              ? candidate.copyWith(
+                  layout: applySplitRatio(candidate.layout, splitId, ratio),
+                )
+              : candidate,
+      ],
+      selectedTabId: state.selectedTabId,
     );
   }
 
@@ -1254,39 +1163,68 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     );
   }
 
-  Future<void> close(String tabId) async {
-    final tab = state.tabs.where((tab) => tab.id == tabId).firstOrNull;
-    if (tab is DashboardTab) return;
-    if (!await _confirmCloseWhileWorking(tab)) return;
-    if (tab is FileEditorTab) {
-      final guard = fileEditorCloseGuards[tabId];
-      if (guard != null && !await guard()) return;
+  /// Closes one mounted instance, which closes its pane when it is the only
+  /// thing there.
+  Future<void> close(String contentId) async {
+    final owner = state.tabForContent(contentId);
+    if (owner == null) {
+      // A workspace tab id: closing it closes the whole tab, panes included.
+      await closeTab(contentId);
+      return;
     }
-    if (tab is TerminalTab) {
-      await ref.read(connectionManagerProvider).closeTerminal(tabId);
-      // Idempotent for SSH terminal ids, closes serial and daemon sessions.
-      await ref.read(serialConnectionManagerProvider).closeTerminal(tabId);
-      await ref
-          .read(maidCafeTerminalConnectionManagerProvider)
-          .closeTerminal(tabId);
+    final paneId = owner.paneIdForContent(contentId);
+    if (paneId == null) return;
+    await closePaneInTab(owner.id, paneId);
+  }
+
+  /// Closes a whole workspace tab, every pane it owns.
+  Future<void> closeTab(String tabId) async {
+    final tab = state.tabById(tabId);
+    if (tab == null || tab.tab is DashboardTab) return;
+    for (final content in tab.tabs.toList()) {
+      if (!await _confirmCloseWhileWorking(content)) return;
+      if (content is FileEditorTab) {
+        final guard = fileEditorCloseGuards[content.id];
+        if (guard != null && !await guard()) return;
+      }
     }
-    fileEditorCloseGuards.remove(tabId);
+    for (final content in tab.tabs.toList()) {
+      await _releaseContent(content);
+    }
     _removeTab(tabId);
   }
 
-  /// Closes every session behind one bar entry.
-  ///
-  /// A tab split across panes is one entry but several mounted sessions, so its
-  /// close button has to take them all; closing one would leave the entry
-  /// standing on the sibling. Cancelling any confirm (a running task, a dirty
-  /// editor) stops the rest, the same way closing a pane does.
-  Future<void> closeGroup(String groupId) async {
-    if (state.groupLead(groupId) is DashboardTab) return;
-    final tabIds = state.tabsInGroup(groupId).map((tab) => tab.id).toList();
-    for (final tabId in tabIds) {
-      await close(tabId);
-      if (state.tabs.any((tab) => tab.id == tabId)) return;
+  /// Closes [paneId] inside [tabId], with the content it shows.
+  Future<void> closePaneInTab(String tabId, String paneId) async {
+    final tab = state.tabById(tabId);
+    final pane = tab?.panes[paneId];
+    if (tab == null || pane == null) return;
+    if (pane.tab is DashboardTab) return;
+    if (tab.panes.length == 1) {
+      await closeTab(tabId);
+      return;
     }
+    final content = pane.tab;
+    if (content != null) {
+      if (!await _confirmCloseWhileWorking(content)) return;
+      if (content is FileEditorTab) {
+        final guard = fileEditorCloseGuards[content.id];
+        if (guard != null && !await guard()) return;
+      }
+    }
+    // The layout may have changed while the modal was open.
+    final current = state.tabById(tabId);
+    if (current == null || !current.panes.containsKey(paneId)) return;
+    if (content != null) await _releaseContent(content);
+    _removePane(current, paneId);
+  }
+
+  Future<void> closeForServer(int serverId) async {
+    final tabIds = [
+      for (final tab in state.tabs)
+        if (tab.tabs.any((content) => content.serverId == serverId)) tab.id,
+    ];
+    await Future.wait(tabIds.map(closeTab));
   }
 
   /// Sends a saved shell snippet to the terminal identified by [terminalId].
@@ -1295,8 +1233,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// keeps every line in the shell parser instead of allowing later lines to
   /// become stdin for the first command.
   void executeSnippet(String terminalId, ScriptSnippet snippet) {
-    final tab = state.tabs.where((tab) => tab.id == terminalId).firstOrNull;
-    if (tab is! TerminalTab) return;
+    final content = state.contentById(terminalId);
+    if (content is! TerminalTab) return;
 
     final script = snippet.script
         .replaceAll('\r\n', '\n')
@@ -1304,40 +1242,26 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         .trimRight();
     if (script.trim().isEmpty) return;
     final quotedScript = "'${script.replaceAll("'", "'\\''")}'";
-    tab.terminal.sendInput('eval $quotedScript\n');
+    content.terminal.sendInput('eval $quotedScript\n');
   }
 
-  /// Closes every tab in [paneId] and removes the pane from the layout.
-  Future<void> closePane(String paneId) async {
-    final pane = state.panes[paneId];
-    if (pane == null) return;
-    if (pane.tabIds.contains(DashboardTab().id)) return;
-    final tabIds = [...pane.tabIds];
-    for (final tabId in tabIds) {
-      // Route through [close] so dirty file editors can confirm discard.
-      await close(tabId);
-      // User cancelled closing a dirty editor — keep the pane.
-      if (state.tabs.any((tab) => tab.id == tabId)) return;
+  /// Runs the cleanup registered for [content] and forgets its view state.
+  Future<void> _releaseContent(SessionTab content) async {
+    final cleanup = _tabCleanups.remove(content.id);
+    if (cleanup != null) await cleanup();
+    if (content is TerminalTab) {
+      await ref.read(connectionManagerProvider).closeTerminal(content.id);
+      // Idempotent for SSH terminal ids, closes serial and daemon sessions.
+      await ref.read(serialConnectionManagerProvider).closeTerminal(content.id);
+      await ref
+          .read(maidCafeTerminalConnectionManagerProvider)
+          .closeTerminal(content.id);
     }
-    if (state.panes.containsKey(paneId)) {
-      _removePane(paneId, alsoRemoveTabs: const []);
-    }
-  }
-
-  Future<void> closeForServer(int serverId) async {
-    final tabIds = state.tabs
-        .where((tab) => tab.serverId == serverId)
-        .map((tab) => tab.id)
-        .toList();
-    await Future.wait(tabIds.map(close));
-  }
-
-  bool _listEquals(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
+    fileEditorCloseGuards.remove(content.id);
+    _releaseSessionTabViewKey(content.id);
+    releaseTabNavigator(content.id);
+    _lastBufferRows.remove(content.id);
+    _cachedHistory.remove(content.id);
   }
 
   Future<TerminalSessionHandle> _openTerminalHandle(
@@ -1374,152 +1298,122 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         );
   }
 
-  void _insertTab(SessionTab tab, {String? targetPaneId}) {
-    final preferredId = targetPaneId ?? state.focusedPaneId;
-    final target = preferredId == null ? null : state.panes[preferredId];
+  WorkspaceTab _newTab({required String paneId, SessionTab? content}) =>
+      WorkspaceTab(
+        id: content?.id ?? _uuid.v4(),
+        panes: {paneId: TabPane(id: paneId, tab: content)},
+        layout: SessionLayoutLeaf(paneId),
+        focusedPaneId: paneId,
+      );
 
-    if (target != null) {
-      final panes = Map<String, SessionPane>.from(state.panes)
-        ..[target.id] = target.withTab(tab.id);
+  WorkspaceTab? _tabOwningPane(String paneId) {
+    for (final tab in state.tabs) {
+      if (tab.panes.containsKey(paneId)) return tab;
+    }
+    return null;
+  }
+
+  /// Mounts [tab] in an empty [targetPaneId] when one is named and still
+  /// empty; otherwise it becomes a workspace tab of its own.
+  void _insertTab(SessionTab tab, {String? targetPaneId}) {
+    final owner = targetPaneId == null ? null : _tabOwningPane(targetPaneId);
+    final pane = owner?.panes[targetPaneId];
+    if (owner != null && pane != null && pane.isEmpty) {
       state = TerminalTabsState(
-        tabs: [...state.tabs, tab],
-        panes: panes,
-        layout: state.layout ?? SessionLayoutLeaf(target.id),
-        focusedPaneId: target.id,
+        tabs: [
+          for (final candidate in state.tabs)
+            candidate.id == owner.id
+                ? candidate.copyWith(
+                    panes: {...owner.panes, pane.id: pane.withTab(tab)},
+                    focusedPaneId: pane.id,
+                  )
+                : candidate,
+        ],
+        selectedTabId: owner.id,
       );
       return;
     }
-
-    // First pane: create a single-pane workspace.
-    final paneId = _uuid.v4();
-    final pane = SessionPane(
-      id: paneId,
-      tabIds: [tab.id],
-      selectedTabId: tab.id,
-    );
+    final created = _newTab(paneId: _uuid.v4(), content: tab);
     state = TerminalTabsState(
-      tabs: [...state.tabs, tab],
-      panes: {paneId: pane},
-      layout: SessionLayoutLeaf(paneId),
-      focusedPaneId: paneId,
+      tabs: [...state.tabs, created],
+      selectedTabId: created.id,
     );
   }
 
   void _watchTerminalDone(TerminalSessionHandle handle) {
     unawaited(
       handle.done.then<void>(
-        (_) => _removeTab(handle.id),
-        onError: (_, _) => _removeTab(handle.id),
+        (_) => _dropContent(handle.id),
+        onError: (_, _) => _dropContent(handle.id),
       ),
     );
   }
 
-  void _removeTab(String tabId) {
-    final tabIndex = state.tabs.indexWhere((tab) => tab.id == tabId);
-    if (tabIndex < 0) return;
-    final cleanup = _tabCleanups.remove(tabId);
-    if (cleanup != null) unawaited(cleanup());
-    _releaseSessionTabViewKey(tabId);
-    releaseTabNavigator(tabId);
-    _lastBufferRows.remove(tabId);
-    _cachedHistory.remove(tabId);
-    // Forget the entry, and any tab that was grouped under it, so reopening a
-    // tab with the same id never inherits a dead split.
-    final entry = _tabGroupMembership.remove(tabId);
-    if (entry != null) {
-      _tabGroupMembership.removeWhere((_, group) => group == tabId);
-    }
-
-    final paneId = state.paneIdForTab(tabId);
-    final tabs = [...state.tabs]..removeAt(tabIndex);
-    var panes = Map<String, SessionPane>.from(state.panes);
-
-    if (paneId != null && panes[paneId] != null) {
-      // Keep empty panes so the intro can be shown again.
-      panes[paneId] = panes[paneId]!.withoutTab(tabId);
-    }
-
-    // Drop dangling tab references only; do not remove empty panes here.
-    for (final entry in panes.entries.toList()) {
-      final validIds = entry.value.tabIds
-          .where((id) => tabs.any((t) => t.id == id))
-          .toList();
-      if (validIds.length != entry.value.tabIds.length) {
-        final selected = validIds.contains(entry.value.selectedTabId)
-            ? entry.value.selectedTabId
-            : (validIds.isEmpty ? null : validIds.last);
-        panes[entry.key] = SessionPane(
-          id: entry.key,
-          tabIds: validIds,
-          selectedTabId: selected,
-        );
-      }
-    }
-
-    // If the only remaining state is a single empty pane with no tabs at all
-    // in the workspace, clear back to the full empty intro.
-    final hasAnyTabs = tabs.isNotEmpty;
-    if (!hasAnyTabs && panes.length == 1 && panes.values.first.isEmpty) {
-      state = const TerminalTabsState();
+  /// Drops a mounted instance whose session ended on its own: no close guard,
+  /// no transport teardown, just its pane.
+  void _dropContent(String contentId) {
+    final owner = state.tabForContent(contentId);
+    if (owner == null) return;
+    final paneId = owner.paneIdForContent(contentId);
+    if (paneId == null) return;
+    _tabCleanups.remove(contentId);
+    fileEditorCloseGuards.remove(contentId);
+    _releaseSessionTabViewKey(contentId);
+    releaseTabNavigator(contentId);
+    _lastBufferRows.remove(contentId);
+    _cachedHistory.remove(contentId);
+    if (owner.panes.length == 1) {
+      _removeTab(owner.id);
       return;
     }
-
-    if (panes.isEmpty) {
-      state = const TerminalTabsState();
-      return;
-    }
-
-    var focusedPaneId = state.focusedPaneId;
-    if (focusedPaneId != null && !panes.containsKey(focusedPaneId)) {
-      focusedPaneId = panes.keys.firstOrNull;
-    }
-
-    state = TerminalTabsState(
-      tabs: tabs,
-      panes: panes,
-      layout: state.layout,
-      focusedPaneId: focusedPaneId,
-    );
+    _removePane(owner, paneId);
   }
 
-  void _removePane(String paneId, {required List<String> alsoRemoveTabs}) {
-    for (final tabId in alsoRemoveTabs) {
-      _releaseSessionTabViewKey(tabId);
-      releaseTabNavigator(tabId);
+  void _removeTab(String tabId) {
+    final index = state.tabs.indexWhere((tab) => tab.id == tabId);
+    if (index < 0) return;
+    for (final content in state.tabs[index].tabs) {
+      _tabCleanups.remove(content.id);
+      fileEditorCloseGuards.remove(content.id);
+      _releaseSessionTabViewKey(content.id);
+      releaseTabNavigator(content.id);
+      _lastBufferRows.remove(content.id);
+      _cachedHistory.remove(content.id);
     }
-    final tabs = state.tabs
-        .where((tab) => !alsoRemoveTabs.contains(tab.id))
-        .toList();
-    final panes = Map<String, SessionPane>.from(state.panes)..remove(paneId);
-    final previousLayout = state.layout;
-    var layout = previousLayout == null
-        ? null
-        : removePaneFromLayout(previousLayout, paneId);
-
-    var focusedPaneId = state.focusedPaneId == paneId
-        ? fallbackPaneAfterRemove(previousLayout, paneId, panes.keys.toList())
-        : state.focusedPaneId;
-
-    if (focusedPaneId != null && !panes.containsKey(focusedPaneId)) {
-      focusedPaneId = panes.keys.firstOrNull;
-    }
-
-    if (panes.isEmpty || layout == null) {
+    final tabs = [...state.tabs]..removeAt(index);
+    if (tabs.isEmpty) {
       state = const TerminalTabsState();
       return;
     }
+    final selectedTabId = state.selectedTabId == tabId
+        ? tabs[(index - 1).clamp(0, tabs.length - 1)].id
+        : state.selectedTabId;
+    state = TerminalTabsState(tabs: tabs, selectedTabId: selectedTabId);
+  }
 
-    // Single empty pane left with no tabs → full workspace intro.
-    if (tabs.isEmpty && panes.length == 1 && panes.values.first.isEmpty) {
-      state = const TerminalTabsState();
+  void _removePane(WorkspaceTab tab, String paneId) {
+    final layout = removePaneFromLayout(tab.layout, paneId);
+    final panes = {...tab.panes}..remove(paneId);
+    if (layout == null || panes.isEmpty) {
+      _removeTab(tab.id);
       return;
     }
-
+    final focusedPaneId = tab.focusedPaneId == paneId
+        ? fallbackPaneAfterRemove(tab.layout, paneId, panes.keys.toList()) ??
+              panes.keys.first
+        : tab.focusedPaneId;
     state = TerminalTabsState(
-      tabs: tabs,
-      panes: panes,
-      layout: layout,
-      focusedPaneId: focusedPaneId,
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tab.id
+              ? candidate.copyWith(
+                  panes: panes,
+                  layout: layout,
+                  focusedPaneId: focusedPaneId,
+                )
+              : candidate,
+      ],
+      selectedTabId: state.selectedTabId,
     );
   }
 }

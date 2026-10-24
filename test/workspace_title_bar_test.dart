@@ -40,7 +40,8 @@ class _UnlockedVault extends VaultUnlocked {
   bool build() => true;
 }
 
-/// The window title bar and the workspace's tab strip are one bar on desktop.
+/// On desktop the window draws a title bar band above the workspace's tab
+/// strip: the band moves the window, the strip below it holds the tabs.
 void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -127,25 +128,26 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('the workspace strip is the only bar on desktop', (tester) async {
+  testWidgets('the desktop draws a title bar band above the tab strip', (
+    tester,
+  ) async {
     await pumpWindow(tester, desktop: true);
 
-    // The shell hands the title bar to the workspace: no second bar above it.
-    expect(find.byType(MaidKitTitleBar), findsNothing);
+    // The band is a separate row that owns the window drag, sitting above the
+    // workspace's tabs.
+    expect(find.byType(MaidKitTitleBar), findsOneWidget);
+    expect(find.byType(MaidKitWindowDragArea), findsOneWidget);
 
-    // The tab strip occupies the title bar slot, at title bar height, and is
-    // the surface that drags the window.
-    final strip = find.ancestor(
+    // The tab strip is its own 40pt row below the band. Anchored on the row's
+    // SizedBox so the outer Material (which also wraps the safe-area inset)
+    // is not matched.
+    final stripRow = find.ancestor(
       of: find.text('tabDashboard'.tr()),
-      matching: find.byType(Material),
+      matching: find.byWidgetPredicate(
+        (w) => w is SizedBox && w.height == kMaidKitTabStripHeight,
+      ),
     );
-    expect(strip, findsWidgets);
-    expect(
-      tester.getSize(strip.first).height,
-      kMaidKitTitleBarHeight,
-      reason: 'the strip and the title bar are one row',
-    );
-    expect(find.byType(MaidKitWindowDragArea), findsWidgets);
+    expect(stripRow, findsWidgets);
   });
 
   testWidgets('reports the scaled title bar height to the native window', (

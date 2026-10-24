@@ -34,20 +34,38 @@ class MaidKitPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    // The focused pane is the card; an unfocused one steps one tone toward the
-    // paper so it recedes without changing size or losing its content.
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    // The focused pane is the card, one step off the bar's paper — no further,
+    // or a pane reads as a lit sheet instead of the same paper as the strip.
+    // An unfocused pane sits back down on that paper, so a split shows exactly
+    // one live card and the gutters alone divide the rest.
     final color = emphasized
-        ? scheme.surfaceContainerHigh
-        : scheme.surfaceContainer;
-    return Card(
-      elevation: 0,
-      margin: margin,
-      color: color,
-      shape: const RoundedRectangleBorder(
-        borderRadius: MaidKitRadius.cardRadius,
+        ? scheme.surfaceContainerLow
+        : scheme.surfaceContainerLowest;
+    // Inside a pane the sheet *is* the page paper: a tab body that paints its
+    // own surface — a page scaffold, a pushed detail page, an editor — fills
+    // the panel's tone instead of cutting a paper-coloured hole in the card.
+    // Cards inside step one tone off the sheet, so the hierarchy in a pane
+    // reads exactly as it does on the window paper.
+    final cardColor = emphasized
+        ? scheme.surfaceContainer
+        : scheme.surfaceContainerLow;
+    return Theme(
+      data: theme.copyWith(
+        scaffoldBackgroundColor: color,
+        canvasColor: color,
+        cardTheme: theme.cardTheme.copyWith(color: cardColor),
       ),
-      child: child,
+      child: Card(
+        elevation: 0,
+        margin: margin,
+        color: color,
+        shape: const RoundedRectangleBorder(
+          borderRadius: MaidKitRadius.cardRadius,
+        ),
+        child: child,
+      ),
     );
   }
 }

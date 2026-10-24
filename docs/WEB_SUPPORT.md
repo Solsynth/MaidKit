@@ -85,6 +85,24 @@ tab strip stops dialling its hosts, so a browser build collects statistics only
 while the dashboard is the focused tab. Coming back into focus re-arms each
 timer and refreshes at once, so the cards are never stale for a whole interval.
 
+The scheduler remembers the route instead of rediscovering it. The collector
+keeps one `MaidCafeStreamSession` per host open between polls — the address,
+the stored credential it was resolved against (identified by the secret's
+nonces, so a rotation invalidates it without decrypting anything), and the
+connection — and the next poll reuses it, which makes a refresh one
+`/api/v1/metrics` request rather than a vault decrypt, a TCP dial and a
+`/health` handshake. The session is closed when SSH takes the host over, when
+the host leaves the served set, and when the dashboard stops being the focused
+tab. A route that fails is backed off exponentially from the poll interval up to
+five minutes, so a dead daemon costs one attempt per backoff rather than two log
+lines every 30 seconds; a manual refresh always bypasses that. Only the
+transition is logged: one line when a route goes down, one when it recovers.
+
+The first read a focus change triggers is deferred by a microtask: the
+scheduler provider calls `update` from its own build, and publishing a snapshot
+there would modify another provider during initialisation, which Riverpod
+rejects as an unhandled assertion on every rebuild.
+
 A card and the server detail page read the daemon snapshot while no SSH session
 is up — that is what makes a
 daemon-backed card live (`connected`) with no session, and what makes the

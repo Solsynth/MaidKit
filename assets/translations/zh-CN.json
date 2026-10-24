@@ -1708,7 +1708,7 @@
   "sessionsCloseThisTab": "关闭此标签页",
   "sessionsDropTabHere": "拖放标签页到此处",
   "sessionsNewPane": "新建面板",
-  "sessionsPaneCountTooltip": "此标签显示在 {0} 个面板中",
+  "sessionsPaneCountTooltip": "此标签拆分为 {0} 个面板",
   "sessionsNewTerminal": "新建终端",
   "sessionsNewTerminalOn": "在 {} 上新建终端",
   "sessionsOpenCount": "{} 个打开",

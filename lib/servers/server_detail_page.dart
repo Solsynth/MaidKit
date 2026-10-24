@@ -398,7 +398,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       // host has, so refresh it instead of doing nothing.
       await ref
           .read(maidCafeStatsSchedulerProvider)
-          .refreshServer(widget.server);
+          .refreshServer(widget.server, force: true);
       return;
     }
     _refreshing = true;

@@ -323,6 +323,21 @@ class MaidCafeStatsCollector {
   final ServerRepository _repository;
   final SshConnectionManager _manager;
 
+  /// The resolved direct route per server id: the address, the credential
+  /// version it was resolved against, and the session it opened.
+  ///
+  /// The scheduler polls every served host on a fixed cadence, so resolving
+  /// the route again on every read would decrypt the vault secret and open a
+  /// fresh TCP connection — and re-run the daemon's `/health` handshake — for
+  /// numbers that come from the same place every time. A cached session is
+  /// reused until the address or the stored credential changes, or the
+  /// session dies.
+  final Map<int, _DirectRoute> _routes = {};
+
+  /// Reads already running per server id, so a manual refresh landing on top
+  /// of a scheduled poll shares one dial instead of opening a second session.
+  final Map<int, Future<MaidCafeServerStats?>> _inFlight = {};
+
   /// The direct daemon address for [server], or null when only an SSH route
   /// exists.
   String? endpointFor(Server server) {
@@ -356,10 +371,27 @@ class MaidCafeStatsCollector {
     return secret == null || secret.isEmpty ? null : secret;
   }
 
+  /// Identifies the credential a route was resolved against.
+  ///
+  /// A stored secret's nonce is regenerated whenever the secret is written, so
+  /// the pair of nonces changes exactly when the secret does — without the
+  /// plaintext being read, or the vault decrypted, to find that out.
+  String _credentialVersion(Server server) =>
+      '${server.maidCafeTerminalSecretNonce ?? '-'}/'
+      '${server.maidCafeMetricsSecretNonce ?? '-'}';
+
   /// One snapshot, or null when the daemon is unreachable on its direct route
   /// or answered with something unusable. Failures are logged, never thrown:
   /// a host whose daemon is down must not take the dashboard with it.
-  Future<MaidCafeServerStats?> collect(Server server) async {
+  Future<MaidCafeServerStats?> collect(Server server) {
+    final pending = _inFlight[server.id];
+    if (pending != null) return pending;
+    final future = _collectOnce(server);
+    _inFlight[server.id] = future;
+    return future.whenComplete(() => _inFlight.remove(server.id));
+  }
+
+  Future<MaidCafeServerStats?> _collectOnce(Server server) async {
     final endpoint = endpointFor(server);
     if (endpoint == null) {
       // Either collection is switched off for this server or its daemon has no
@@ -371,23 +403,50 @@ class MaidCafeStatsCollector {
       );
       return null;
     }
-    maidCafeLog('reading statistics for "${server.name}" from $endpoint');
-    final secret = await _credentialFor(server);
-    if (secret == null) {
-      maidCafeLog(
-        'no daemon credential is stored for "${server.name}", so its '
-        'statistics cannot be read directly',
-      );
-      return null;
+    final version = _credentialVersion(server);
+    var route = _routes[server.id];
+    if (route != null &&
+        (route.endpoint != endpoint ||
+            route.credentialVersion != version ||
+            route.session.isClosed)) {
+      // The address or the credential moved: the old session is speaking to a
+      // configuration that no longer exists.
+      await closeSession(server.id);
+      route = null;
     }
-    MaidCafeStreamSession? session;
-    try {
-      session = await MaidCafeStreamSession.openAt(
-        manager: _manager,
-        baseUrl: endpoint,
-        apiSecret: secret,
+    if (route == null) {
+      final secret = await _credentialFor(server);
+      if (secret == null) {
+        maidCafeLog(
+          'no daemon credential is stored for "${server.name}", so its '
+          'statistics cannot be read directly',
+        );
+        return null;
+      }
+      maidCafeLog('reading statistics for "${server.name}" from $endpoint');
+      final MaidCafeStreamSession session;
+      try {
+        session = await MaidCafeStreamSession.openAt(
+          manager: _manager,
+          baseUrl: endpoint,
+          apiSecret: secret,
+        );
+      } catch (error) {
+        maidCafeLog(
+          'opening $endpoint for "${server.name}" failed',
+          error: error,
+        );
+        return null;
+      }
+      route = _DirectRoute(
+        endpoint: endpoint,
+        credentialVersion: version,
+        session: session,
       );
-      final metrics = await session.metrics();
+      _routes[server.id] = route;
+    }
+    try {
+      final metrics = await route.session.metrics();
       final stats = parseMaidCafeServerStats(metrics);
       if (stats == null) {
         maidCafeLog(
@@ -406,9 +465,40 @@ class MaidCafeStatsCollector {
         'reading statistics for "${server.name}" from $endpoint failed',
         error: error,
       );
+      // A failed read is what a dead socket or a restarted daemon looks like;
+      // the next read has to dial again rather than retry the corpse.
+      await closeSession(server.id);
       return null;
-    } finally {
-      await session?.close();
     }
   }
+
+  /// Drops the cached session for [serverId], if one is open.
+  Future<void> closeSession(int serverId) async {
+    final route = _routes.remove(serverId);
+    await route?.session.close();
+  }
+
+  /// Drops every cached session — what the scheduler does when no dashboard is
+  /// watching, so no idle daemon socket outlives the readings it served.
+  Future<void> closeAll() async {
+    final routes = _routes.values.toList();
+    _routes.clear();
+    for (final route in routes) {
+      await route.session.close();
+    }
+  }
+}
+
+/// One server's resolved direct daemon route: the address it was resolved at,
+/// the credential version behind it, and the session that serves it.
+class _DirectRoute {
+  const _DirectRoute({
+    required this.endpoint,
+    required this.credentialVersion,
+    required this.session,
+  });
+
+  final String endpoint;
+  final String credentialVersion;
+  final MaidCafeStreamSession session;
 }

@@ -102,99 +102,123 @@ class _FakeAdapter implements TerminalSessionAdapter {
   Future<void> dispose() async {}
 }
 
+/// One workspace tab per content, except the split one: a tab holding a
+/// terminal and a file manager in two panes is the shape this test is about.
 WorkspaceSnapshot _fullSnapshot() {
   return const WorkspaceSnapshot(
-    layout: SessionLayoutSplit(
-      id: 'split-1',
-      axis: SessionSplitAxis.horizontal,
-      ratio: 0.5,
-      first: SessionLayoutLeaf('main'),
-      second: SessionLayoutLeaf('p2'),
-    ),
-    panes: {
-      'main': SessionPane(
-        id: 'main',
-        tabIds: ['dashboard', 'term-1', 'files-1'],
-        selectedTabId: 'term-1',
-      ),
-      'p2': SessionPane(
-        id: 'p2',
-        tabIds: ['editor-1', 'detail-1'],
-        selectedTabId: 'editor-1',
-      ),
-    },
     tabs: [
       WorkspaceTabSnapshot(
         id: 'dashboard',
-        kind: WorkspaceTabKind.dashboard,
-        serverId: -1,
+        layout: SessionLayoutLeaf('main'),
+        focusedPaneId: 'main',
+        panes: {
+          'main': WorkspaceContentSnapshot(
+            id: 'dashboard',
+            kind: WorkspaceTabKind.dashboard,
+          ),
+        },
       ),
       WorkspaceTabSnapshot(
         id: 'term-1',
-        kind: WorkspaceTabKind.terminal,
-        serverId: 1,
-        cwd: '/home/builder/proj',
-        history: 'user@host:~\$ cd /home/builder/proj\n',
-      ),
-      WorkspaceTabSnapshot(
-        id: 'files-1',
-        kind: WorkspaceTabKind.fileManagement,
-        serverId: 1,
-        path: '/home/builder/proj',
+        layout: SessionLayoutSplit(
+          id: 'split-1',
+          axis: SessionSplitAxis.horizontal,
+          ratio: 0.5,
+          first: SessionLayoutLeaf('term-pane'),
+          second: SessionLayoutLeaf('files-pane'),
+        ),
+        focusedPaneId: 'term-pane',
+        panes: {
+          'term-pane': WorkspaceContentSnapshot(
+            id: 'term-1',
+            kind: WorkspaceTabKind.terminal,
+            serverId: 1,
+            cwd: '/home/builder/proj',
+            history: 'user@host:~\$ cd /home/builder/proj\n',
+          ),
+          'files-pane': WorkspaceContentSnapshot(
+            id: 'files-1',
+            kind: WorkspaceTabKind.fileManagement,
+            serverId: 1,
+            path: '/home/builder/proj',
+          ),
+        },
       ),
       WorkspaceTabSnapshot(
         id: 'editor-1',
-        kind: WorkspaceTabKind.fileEditor,
-        serverId: 1,
-        fileName: 'main.go',
-        path: '/home/builder/proj/main.go',
-        isRemote: true,
+        layout: SessionLayoutLeaf('editor-pane'),
+        focusedPaneId: 'editor-pane',
+        panes: {
+          'editor-pane': WorkspaceContentSnapshot(
+            id: 'editor-1',
+            kind: WorkspaceTabKind.fileEditor,
+            serverId: 1,
+            fileName: 'main.go',
+            path: '/home/builder/proj/main.go',
+            isRemote: true,
+          ),
+        },
       ),
       WorkspaceTabSnapshot(
         id: 'detail-1',
-        kind: WorkspaceTabKind.serverDetail,
-        serverId: 1,
-        initialTab: 2,
-        initialComposeProject: 'stack',
+        layout: SessionLayoutLeaf('detail-pane'),
+        focusedPaneId: 'detail-pane',
+        panes: {
+          'detail-pane': WorkspaceContentSnapshot(
+            id: 'detail-1',
+            kind: WorkspaceTabKind.serverDetail,
+            serverId: 1,
+            initialTab: 2,
+            initialComposeProject: 'stack',
+          ),
+        },
       ),
     ],
-    focusedPaneId: 'main',
+    selectedTabId: 'term-1',
   );
 }
 
 void main() {
   group('WorkspaceSnapshot codec', () {
-    test('round-trips layout, panes, tabs, and history', () {
+    test('round-trips tabs, layouts, and history', () {
       final snapshot = _fullSnapshot();
       final decoded = WorkspaceSnapshot.decode(snapshot.encode());
 
       expect(decoded, isNotNull);
       expect(decoded!.version, WorkspaceSnapshot.currentVersion);
-      expect(decoded.focusedPaneId, 'main');
-      expect(decoded.panes.keys, ['main', 'p2']);
-      expect(decoded.panes['main']!.tabIds, ['dashboard', 'term-1', 'files-1']);
-      expect(decoded.panes['main']!.selectedTabId, 'term-1');
-      expect(decoded.panes['p2']!.tabIds, ['editor-1', 'detail-1']);
-      expect(decoded.panes['p2']!.selectedTabId, 'editor-1');
+      expect(decoded.selectedTabId, 'term-1');
+      expect(decoded.tabs.map((tab) => tab.id), [
+        'dashboard',
+        'term-1',
+        'editor-1',
+        'detail-1',
+      ]);
 
-      final layout = decoded.layout!;
+      // The split belongs to the terminal tab, not to the workspace.
+      final splitTab = decoded.tabs[1];
+      expect(splitTab.focusedPaneId, 'term-pane');
+      final layout = splitTab.layout;
       expect(layout, isA<SessionLayoutSplit>());
       final split = layout as SessionLayoutSplit;
       expect(split.axis, SessionSplitAxis.horizontal);
       expect(split.ratio, 0.5);
-      expect(split.first, const SessionLayoutLeaf('main'));
-      expect(split.second, const SessionLayoutLeaf('p2'));
+      expect(split.first, const SessionLayoutLeaf('term-pane'));
+      expect(split.second, const SessionLayoutLeaf('files-pane'));
+      expect(
+        splitTab.panes['files-pane']!.kind,
+        WorkspaceTabKind.fileManagement,
+      );
 
-      final terminal = decoded.tabById('term-1')!;
+      final terminal = splitTab.panes['term-pane']!;
       expect(terminal.kind, WorkspaceTabKind.terminal);
       expect(terminal.cwd, '/home/builder/proj');
       expect(terminal.history, 'user@host:~\$ cd /home/builder/proj\n');
 
-      final editor = decoded.tabById('editor-1')!;
+      final editor = decoded.tabs[2].panes['editor-pane']!;
       expect(editor.isRemote, isTrue);
       expect(editor.fileName, 'main.go');
 
-      final detail = decoded.tabById('detail-1')!;
+      final detail = decoded.tabs[3].panes['detail-pane']!;
       expect(detail.initialTab, 2);
       expect(detail.initialComposeProject, 'stack');
     });
@@ -202,70 +226,130 @@ void main() {
     test('rejects malformed payloads', () {
       expect(WorkspaceSnapshot.decode('not json'), isNull);
       expect(WorkspaceSnapshot.decode('{"version":99}'), isNull);
-      expect(WorkspaceSnapshot.decode('{"version":1,"panes":42}'), isNull);
+      expect(WorkspaceSnapshot.decode('{"version":2,"tabs":42}'), isNull);
+    });
+
+    test('reads a version 1 workspace as one tab per pane tab', () {
+      // Version 1 kept one layout for the whole workspace and a tab list per
+      // pane; the migration turns each of those tabs into its own tab so a
+      // saved workspace still opens.
+      final legacy = WorkspaceSnapshot.decode(
+        '{"version":1,'
+        '"layout":{"type":"leaf","paneId":"main"},'
+        '"panes":{"main":{"tabIds":["dashboard","term-1"],'
+        '"selectedTabId":"term-1"}},'
+        '"focusedPaneId":"main",'
+        '"tabs":['
+        '{"id":"dashboard","kind":"dashboard"},'
+        '{"id":"term-1","kind":"terminal","serverId":1,"cwd":"/srv"}'
+        ']}',
+      );
+
+      expect(legacy, isNotNull);
+      expect(legacy!.tabs.map((tab) => tab.id), ['dashboard', 'term-1']);
+      expect(legacy.selectedTabId, 'term-1');
+      final terminal = legacy.tabs.last.panes.values.single!;
+      expect(terminal.kind, WorkspaceTabKind.terminal);
+      expect(terminal.cwd, '/srv');
     });
 
     test('detects the pristine default and empty workspaces', () {
       expect(_fullSnapshot().isPristineDefault, isFalse);
       expect(const WorkspaceSnapshot().isEmpty, isTrue);
       expect(const WorkspaceSnapshot().isPristineDefault, isFalse);
+      expect(
+        const WorkspaceSnapshot(
+          tabs: [
+            WorkspaceTabSnapshot(
+              id: 'dashboard',
+              layout: SessionLayoutLeaf('main'),
+              focusedPaneId: 'main',
+              panes: {
+                'main': WorkspaceContentSnapshot(
+                  id: 'dashboard',
+                  kind: WorkspaceTabKind.dashboard,
+                ),
+              },
+            ),
+          ],
+        ).isPristineDefault,
+        isTrue,
+      );
     });
   });
 
   group('WorkspaceSnapshot.capture', () {
-    test('captures every tab kind with cwd and history', () {
+    test('captures every content kind with cwd and history', () {
       final server = _server();
+      final terminal = TerminalTab(
+        id: 'term-1',
+        serverId: 1,
+        serverName: server.name,
+        terminal: _FakeAdapter(
+          directory: '/home/builder/proj',
+          history: 'history text',
+        ),
+        transport: TerminalTransport.ssh,
+      );
+      final contents = <SessionTab>[
+        const DashboardTab(),
+        ServerDetailTab(
+          id: 'detail-1',
+          server: server,
+          initialTab: 2,
+          initialComposeProject: 'stack',
+        ),
+        MaidCafePayloadSessionTab(id: 'maid-1', server: server),
+        terminal,
+        FileManagementTab(
+          id: 'files-1',
+          serverId: 1,
+          serverName: server.name,
+          initialPath: '/home/builder/proj',
+        ),
+        FileEditorTab(
+          id: 'editor-1',
+          serverId: 1,
+          serverName: server.name,
+          fileName: 'main.go',
+          path: '/home/builder/proj/main.go',
+          isRemote: true,
+        ),
+      ];
+      // One tab holding a split: the terminal and the file manager in two
+      // panes.
+      final split = WorkspaceTab(
+        id: 'term-1',
+        panes: {
+          'p1': TabPane(id: 'p1', tab: terminal),
+          'p2': TabPane(id: 'p2', tab: contents[4]),
+        },
+        layout: const SessionLayoutSplit(
+          id: 'split',
+          axis: SessionSplitAxis.vertical,
+          first: SessionLayoutLeaf('p1'),
+          second: SessionLayoutLeaf('p2'),
+        ),
+        focusedPaneId: 'p1',
+      );
       final state = TerminalTabsState(
         tabs: [
-          const DashboardTab(),
-          ServerDetailTab(
-            id: 'detail-1',
-            server: server,
-            initialTab: 2,
-            initialComposeProject: 'stack',
-          ),
-          MaidCafePayloadSessionTab(id: 'maid-1', server: server),
-          TerminalTab(
-            id: 'term-1',
-            serverId: 1,
-            serverName: server.name,
-            terminal: _FakeAdapter(
-              directory: '/home/builder/proj',
-              history: 'history text',
+          for (final content in [contents[0], contents[1], contents[2]])
+            WorkspaceTab(
+              id: content.id,
+              panes: {'main': TabPane(id: 'main', tab: content)},
+              layout: const SessionLayoutLeaf('main'),
+              focusedPaneId: 'main',
             ),
-            transport: TerminalTransport.ssh,
-          ),
-          FileManagementTab(
-            id: 'files-1',
-            serverId: 1,
-            serverName: server.name,
-            initialPath: '/home/builder/proj',
-          ),
-          FileEditorTab(
-            id: 'editor-1',
-            serverId: 1,
-            serverName: server.name,
-            fileName: 'main.go',
-            path: '/home/builder/proj/main.go',
-            isRemote: true,
+          split,
+          WorkspaceTab(
+            id: contents[5].id,
+            panes: {'main': TabPane(id: 'main', tab: contents[5])},
+            layout: const SessionLayoutLeaf('main'),
+            focusedPaneId: 'main',
           ),
         ],
-        panes: const {
-          'main': SessionPane(
-            id: 'main',
-            tabIds: [
-              'dashboard',
-              'detail-1',
-              'maid-1',
-              'term-1',
-              'files-1',
-              'editor-1',
-            ],
-            selectedTabId: 'term-1',
-          ),
-        },
-        layout: const SessionLayoutLeaf('main'),
-        focusedPaneId: 'main',
+        selectedTabId: 'term-1',
       );
 
       final snapshot = WorkspaceSnapshot.capture(
@@ -273,90 +357,103 @@ void main() {
         historyFor: (tab) => 'captured:${tab.id}',
       );
 
-      expect(snapshot.panes['main']!.tabIds, hasLength(6));
-      expect(snapshot.tabs, hasLength(6));
-      final terminal = snapshot.tabById('term-1')!;
-      expect(terminal.kind, WorkspaceTabKind.terminal);
-      expect(terminal.cwd, '/home/builder/proj');
-      expect(terminal.history, 'captured:term-1');
-      final detail = snapshot.tabById('detail-1')!;
+      expect(snapshot.tabs, hasLength(5));
+      final captured = snapshot.tabs.firstWhere((tab) => tab.id == 'term-1');
+      expect(captured.layout, isA<SessionLayoutSplit>());
+      expect(captured.panes, hasLength(2));
+      final capturedTerminal = captured.panes['p1']!;
+      expect(capturedTerminal.kind, WorkspaceTabKind.terminal);
+      expect(capturedTerminal.cwd, '/home/builder/proj');
+      expect(capturedTerminal.history, 'captured:term-1');
+      expect(captured.panes['p2']!.path, '/home/builder/proj');
+
+      final detail = snapshot.tabs
+          .firstWhere((tab) => tab.id == 'detail-1')
+          .panes['main']!;
       expect(detail.initialTab, 2);
       expect(detail.initialComposeProject, 'stack');
-      final editor = snapshot.tabById('editor-1')!;
+      final editor = snapshot.tabs
+          .firstWhere((tab) => tab.id == 'editor-1')
+          .panes['main']!;
       expect(editor.isRemote, isTrue);
-      expect(snapshot.tabById('files-1')!.path, '/home/builder/proj');
     });
   });
 
   group('resolveWorkspaceSnapshot', () {
-    test('maps tabs to live objects and defers terminals', () {
+    test('rebuilds tabs and defers terminals into their panes', () {
       final resolved = resolveWorkspaceSnapshot(_fullSnapshot(), {
         1: _server(),
       });
 
-      expect(resolved.layout, isA<SessionLayoutSplit>());
-      expect(resolved.panes.keys, ['main', 'p2']);
-      expect(resolved.panes['main']!.tabIds, [
+      expect(resolved.initialTabs.map((tab) => tab.id), [
         'dashboard',
-        'files-1',
-      ], reason: 'terminals are deferred, not placed');
-      expect(resolved.panes['p2']!.tabIds, ['editor-1', 'detail-1']);
+        'term-1',
+        'editor-1',
+        'detail-1',
+      ]);
+      expect(resolved.selectedTabId, 'term-1');
 
-      final tabs = resolved.initialTabs;
-      expect(tabs.whereType<DashboardTab>(), hasLength(1));
-      expect(tabs.whereType<ServerDetailTab>().single.initialTab, 2);
-      expect(
-        tabs.whereType<ServerDetailTab>().single.initialComposeProject,
-        'stack',
-      );
-      expect(
-        tabs.whereType<FileManagementTab>().single.initialPath,
-        '/home/builder/proj',
-      );
-      expect(tabs.whereType<FileEditorTab>().single.isRemote, isTrue);
+      final terminalTab = resolved.initialTabs[1];
+      expect(terminalTab.layout, isA<SessionLayoutSplit>());
+      expect(terminalTab.focusedPaneId, 'term-pane');
+      // The terminal is deferred, so its pane exists but is still empty.
+      expect(terminalTab.panes['term-pane']!.isEmpty, isTrue);
+      expect(terminalTab.panes['files-pane']!.tab, isA<FileManagementTab>());
 
       final pending = resolved.pendingTerminals.single;
-      expect(pending.paneId, 'main');
+      expect(pending.paneId, 'term-pane');
       expect(pending.serverId, 1);
       expect(pending.cwd, '/home/builder/proj');
       expect(pending.history, 'user@host:~\$ cd /home/builder/proj\n');
       expect(pending.connectionType, ServerConnectionType.ssh);
 
-      expect(resolved.desiredPaneTabIds['main'], [
-        'dashboard',
-        'term-1',
-        'files-1',
-      ]);
-      expect(resolved.desiredPaneSelections['main'], 'term-1');
-      expect(resolved.focusedPaneId, 'main');
+      final detail = resolved.initialTabs[3].panes['detail-pane']!.tab;
+      expect(detail, isA<ServerDetailTab>());
+      expect((detail as ServerDetailTab).initialTab, 2);
+      expect(detail.initialComposeProject, 'stack');
     });
 
-    test('marks serial servers and drops tabs for deleted servers', () {
-      final snapshot = const WorkspaceSnapshot(
-        panes: {
-          'main': SessionPane(
-            id: 'main',
-            tabIds: ['term-1', 'term-2', 'term-3'],
-            selectedTabId: 'term-1',
-          ),
-        },
+    test('marks serial servers and drops content of deleted servers', () {
+      const snapshot = WorkspaceSnapshot(
         tabs: [
           WorkspaceTabSnapshot(
             id: 'term-1',
-            kind: WorkspaceTabKind.terminal,
-            serverId: 1,
+            layout: SessionLayoutLeaf('p1'),
+            focusedPaneId: 'p1',
+            panes: {
+              'p1': WorkspaceContentSnapshot(
+                id: 'term-1',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 1,
+              ),
+            },
           ),
           WorkspaceTabSnapshot(
             id: 'term-2',
-            kind: WorkspaceTabKind.terminal,
-            serverId: 2,
+            layout: SessionLayoutLeaf('p2'),
+            focusedPaneId: 'p2',
+            panes: {
+              'p2': WorkspaceContentSnapshot(
+                id: 'term-2',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 2,
+              ),
+            },
           ),
           WorkspaceTabSnapshot(
             id: 'term-3',
-            kind: WorkspaceTabKind.terminal,
-            serverId: 99,
+            layout: SessionLayoutLeaf('p3'),
+            focusedPaneId: 'p3',
+            panes: {
+              'p3': WorkspaceContentSnapshot(
+                id: 'term-3',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 99,
+              ),
+            },
           ),
         ],
+        selectedTabId: 'term-1',
       );
 
       final resolved = resolveWorkspaceSnapshot(snapshot, {
@@ -373,10 +470,10 @@ void main() {
         resolved.pendingTerminals[1].connectionType,
         ServerConnectionType.ssh,
       );
-      // All three tabs are terminals; the deleted server's tab is dropped and
-      // the survivors stay deferred, so the pane has no live tabs yet.
-      expect(resolved.panes['main']!.tabIds, isEmpty);
-      expect(resolved.desiredPaneTabIds['main'], ['term-1', 'term-2']);
+      // The deleted server's tab keeps its pane, empty, so the split
+      // arrangement the user saved survives.
+      expect(resolved.initialTabs, hasLength(3));
+      expect(resolved.initialTabs.last.panes['p3']!.isEmpty, isTrue);
     });
   });
 }

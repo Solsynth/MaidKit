@@ -11,7 +11,7 @@ import 'package:maid_kit/servers/app_theme_preferences.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_command_palette.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
-import 'package:maid_kit/servers/vault_gate.dart';
+import 'package:maid_kit/servers/workspace_shortcuts.dart';
 import 'package:maid_kit/theme.dart';
 import 'task_progress.dart';
 import 'window_chrome.dart';
@@ -66,11 +66,11 @@ class MaidKitUiScale extends StatelessWidget {
 
 /// The app's window shell.
 ///
-/// On desktop the window is borderless and the top pane tab strip *is* the
-/// title bar: the strip already draws the app's identity and its tabs, so a
-/// second bar above it only costs a row. While no strip is on screen — the
-/// locked vault, an empty workspace — the shell draws a plain title bar so the
-/// window stays draggable and closable.
+/// On desktop the window is borderless, so the shell draws the title bar band
+/// above everything else: that band is what moves the window, and on macOS it
+/// is the strip AppKit spends a pointer on before Flutter sees it. The
+/// workspace's tabs sit below it rather than inside it, so dragging a tab along
+/// the strip never competes with dragging the window.
 class MaidKitWindowScaffold extends ConsumerWidget {
   const MaidKitWindowScaffold({super.key, required this.child, this.title});
 
@@ -80,12 +80,6 @@ class MaidKitWindowScaffold extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isDesktop = ref.watch(desktopWindowProvider);
-    // The workspace renders a pane tab strip on the top edge as soon as it has
-    // a pane, and that strip *is* the title bar. Until then (locked vault, no
-    // panes) the shell owns the bar.
-    final titleBarClaimed =
-        ref.watch(vaultUnlockedProvider) &&
-        ref.watch(terminalTabsProvider).isNotEmpty;
 
     return Focus(
       // The shell holds the app-level shortcuts, so it keeps focus whenever
@@ -98,16 +92,23 @@ class MaidKitWindowScaffold extends ConsumerWidget {
           showTerminalCommandPalette(context, ref);
           return KeyEventResult.handled;
         }
-        // Cmd/Ctrl+W closes the tab the workspace is showing. The window owns
-        // the shortcut because focus can sit outside the workspace — or
-        // nowhere — when it is pressed.
+        // Cmd/Ctrl+W closes the tab the workspace is showing, every pane it is
+        // split into. The window owns the shortcut because focus can sit
+        // outside the workspace — or nowhere — when it is pressed.
         if (event.logicalKey == LogicalKeyboardKey.keyW &&
             (HardwareKeyboard.instance.isMetaPressed ||
                 HardwareKeyboard.instance.isControlPressed)) {
           final tabId = ref.read(terminalTabsProvider).selectedId;
           if (tabId == null) return KeyEventResult.ignored;
           // Closing may have to ask about work in progress, so it is async.
-          unawaited(ref.read(terminalTabsProvider.notifier).close(tabId));
+          unawaited(ref.read(terminalTabsProvider.notifier).closeTab(tabId));
+          return KeyEventResult.handled;
+        }
+        // Cmd/Ctrl+D splits the focused pane to the right, Shift below. The
+        // terminal asks the same helper before its renderer claims the chord,
+        // so this branch covers every other focused surface.
+        if (splitShortcutAxis(event) case final axis?) {
+          ref.read(terminalTabsProvider.notifier).splitSelectedTab(axis);
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
@@ -131,22 +132,15 @@ class MaidKitWindowScaffold extends ConsumerWidget {
             // Flutter SDK Material ancestor required by legacy controls.
             type: flutter.MaterialType.transparency,
             child: ColoredBox(
-              color: Theme.of(context).colorScheme.surface,
+              color: Theme.of(context).colorScheme.surfaceContainerLowest,
               child: Column(
                 children: [
-                  if (isDesktop && !titleBarClaimed)
+                  // The band owns the window drag; the workspace's tabs live
+                  // below it so a tab drag never moves the window.
+                  if (isDesktop)
                     MaidKitTitleBar(title: Text(title ?? 'MaidKit')),
-                  Expanded(
-                    // Routes own their safe areas. Consuming mobile insets here
-                    // prevents page scaffolds from participating correctly in
-                    // gesture-back.
-                    child: Column(
-                      children: [
-                        Expanded(child: child),
-                        const TaskProgressBar(),
-                      ],
-                    ),
-                  ),
+                  Expanded(child: child),
+                  const TaskProgressBar(),
                 ],
               ),
             ),

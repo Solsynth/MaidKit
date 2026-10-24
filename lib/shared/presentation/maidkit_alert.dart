@@ -72,12 +72,12 @@ MaidKitLoadingHandle showMaidKitLoadingModal(
           child: AlertDialog(
             content: Row(
               children: [
-                // Island explicitly uses the 2024 Material spinner here.
-                CircularProgressIndicator(
-                  // ignore: deprecated_member_use
-                  year2023: false,
-                  padding: EdgeInsets.zero,
-                ).width(28).height(28).padding(horizontal: 8),
+                // The theme's ring: 28 px, sized here rather than by the
+                // indicator, so the message's line box stays 24 px.
+                CircularProgressIndicator()
+                    .width(28)
+                    .height(28)
+                    .padding(horizontal: 8),
                 const SizedBox(width: 16),
                 Flexible(child: Text(message)),
               ],

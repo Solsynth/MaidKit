@@ -615,7 +615,7 @@ void main() {
     expect(
       container
           .read(terminalTabsProvider)
-          .tabs
+          .allTabs
           .whereType<MaidCafePayloadSessionTab>(),
       hasLength(1),
     );

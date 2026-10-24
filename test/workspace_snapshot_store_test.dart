@@ -33,29 +33,34 @@ void main() {
 
   test('saves, loads, and watches the last snapshot', () async {
     const snapshot = WorkspaceSnapshot(
-      layout: SessionLayoutLeaf('main'),
-      panes: {
-        'main': SessionPane(
-          id: 'main',
-          tabIds: ['dashboard', 'term-1'],
-          selectedTabId: 'term-1',
-        ),
-      },
       tabs: [
         WorkspaceTabSnapshot(
           id: 'dashboard',
-          kind: WorkspaceTabKind.dashboard,
-          serverId: -1,
+          layout: SessionLayoutLeaf('main'),
+          focusedPaneId: 'main',
+          panes: {
+            'main': WorkspaceContentSnapshot(
+              id: 'dashboard',
+              kind: WorkspaceTabKind.dashboard,
+            ),
+          },
         ),
         WorkspaceTabSnapshot(
           id: 'term-1',
-          kind: WorkspaceTabKind.terminal,
-          serverId: 3,
-          cwd: '/srv/app',
-          history: 'history line\n',
+          layout: SessionLayoutLeaf('pane-2'),
+          focusedPaneId: 'pane-2',
+          panes: {
+            'pane-2': WorkspaceContentSnapshot(
+              id: 'term-1',
+              kind: WorkspaceTabKind.terminal,
+              serverId: 3,
+              cwd: '/srv/app',
+              history: 'history line\n',
+            ),
+          },
         ),
       ],
-      focusedPaneId: 'main',
+      selectedTabId: 'term-1',
     );
 
     final emitted = <StoredWorkspaceSnapshot?>[];
@@ -68,43 +73,48 @@ void main() {
 
     expect(emitted.last, isNotNull);
     expect(emitted.last!.snapshot.tabs, hasLength(2));
-    expect(emitted.last!.snapshot.tabById('term-1')!.cwd, '/srv/app');
-    expect(emitted.last!.snapshot.tabById('term-1')!.history, 'history line\n');
+    final terminal = emitted.last!.snapshot.tabs
+        .firstWhere((tab) => tab.id == 'term-1')
+        .panes['pane-2']!;
+    expect(terminal.cwd, '/srv/app');
+    expect(terminal.history, 'history line\n');
     // The dashboard identifies a snapshot by its save time, so the row's
     // timestamp must reach consumers.
     expect(emitted.last!.updatedAt.isAfter(beforeSave), isTrue);
 
     final loaded = await store.load();
     expect(loaded, isNotNull);
-    expect(loaded!.snapshot.focusedPaneId, 'main');
-    expect(loaded.snapshot.panes['main']!.selectedTabId, 'term-1');
+    expect(loaded!.snapshot.selectedTabId, 'term-1');
+    expect(loaded.snapshot.tabs.last.layout, const SessionLayoutLeaf('pane-2'));
   });
 
   test('overwrites the previous snapshot on save', () async {
     await store.save(const WorkspaceSnapshot(tabs: []));
     const replacement = WorkspaceSnapshot(
-      layout: SessionLayoutLeaf('main'),
-      panes: {
-        'main': SessionPane(
-          id: 'main',
-          tabIds: ['dashboard'],
-          selectedTabId: 'dashboard',
-        ),
-      },
       tabs: [
         WorkspaceTabSnapshot(
           id: 'dashboard',
-          kind: WorkspaceTabKind.dashboard,
-          serverId: -1,
+          layout: SessionLayoutLeaf('main'),
+          focusedPaneId: 'main',
+          panes: {
+            'main': WorkspaceContentSnapshot(
+              id: 'dashboard',
+              kind: WorkspaceTabKind.dashboard,
+            ),
+          },
         ),
       ],
+      selectedTabId: 'dashboard',
     );
     await store.save(replacement);
 
     final loaded = await store.load();
     expect(loaded, isNotNull);
     expect(loaded!.snapshot.tabs, hasLength(1));
-    expect(loaded.snapshot.tabs.single.kind, WorkspaceTabKind.dashboard);
+    expect(
+      loaded.snapshot.tabs.single.panes['main']!.kind,
+      WorkspaceTabKind.dashboard,
+    );
   });
 
   test('returns null before any save and after clear', () async {

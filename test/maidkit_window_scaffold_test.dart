@@ -46,20 +46,20 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('draws a title bar only while no workspace strip owns it', (
+  testWidgets('draws the title bar band on desktop regardless of the strip', (
     tester,
   ) async {
     await pumpDesktopShell(tester, vaultUnlocked: false);
     expect(
       find.byType(MaidKitTitleBar),
       findsOneWidget,
-      reason: 'the locked vault has no tab strip to merge into the title bar',
+      reason: 'the locked vault has no tab strip, but still needs a drag band',
     );
 
     // The workspace is unlocked and has its dashboard tab, so its pane tab
-    // strip is the title bar and the shell must not draw a second one.
+    // strip is drawn below the band; the band still owns the window drag.
     await pumpDesktopShell(tester, vaultUnlocked: true);
-    expect(find.byType(MaidKitTitleBar), findsNothing);
+    expect(find.byType(MaidKitTitleBar), findsOneWidget);
   });
 
   testWidgets('bridges the app theme to the window chrome', (tester) async {

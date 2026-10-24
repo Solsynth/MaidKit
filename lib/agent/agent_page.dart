@@ -1466,7 +1466,9 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
             minWideSidebarWidth: 300,
             maxWideSidebarWidth: 400,
             minMainContentWidth: 480,
-            sidebarBackgroundColor: scheme.surface,
+            // The pane's sheet, not the window paper: this chat lives inside a
+            // panel, and the sidebar is a quiet edge of that same surface.
+            sidebarBackgroundColor: Theme.of(context).scaffoldBackgroundColor,
             sidebarElevation: 0,
             sidebarContent: _buildConversationSidebar(
               conversations: conversations,

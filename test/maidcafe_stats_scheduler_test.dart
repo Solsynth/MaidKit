@@ -122,4 +122,75 @@ void main() {
       expect(published[2], isNotNull);
     },
   );
+
+  test(
+    'update publishes after the build that armed it, not during it',
+    () async {
+      final published = <int>[];
+      final scheduler = MaidCafeStatsScheduler(
+        collect: (_) async => _snapshot(),
+        onSnapshot: (id, _) => published.add(id),
+      );
+      addTearDown(scheduler.dispose);
+
+      // A scheduler provider's build calls update; publishing there would modify
+      // another provider during initialisation and Riverpod rejects it.
+      scheduler.update(
+        interval: const Duration(seconds: 30),
+        servers: [_server(id: 1)],
+      );
+      expect(published, isEmpty);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(published, [1]);
+    },
+  );
+
+  test(
+    'a failing route backs off instead of being dialled every tick',
+    () async {
+      var dialled = 0;
+      final scheduler = MaidCafeStatsScheduler(
+        collect: (_) async {
+          dialled++;
+          return null;
+        },
+        onSnapshot: (_, _) {},
+      );
+      addTearDown(scheduler.dispose);
+      final server = _server(id: 3);
+
+      await scheduler.refreshServer(server);
+      await scheduler.refreshServer(server);
+      await scheduler.refresh();
+      expect(dialled, 1, reason: 'the retry is not due yet');
+
+      // A manual refresh is the user asking, so it ignores the backoff.
+      await scheduler.refreshServer(server, force: true);
+      expect(dialled, 2);
+    },
+  );
+
+  test('a route that recovers is served again', () async {
+    var answering = false;
+    final published = <int, MaidCafeServerStats?>{};
+    final scheduler = MaidCafeStatsScheduler(
+      collect: (_) async => answering ? _snapshot() : null,
+      onSnapshot: (id, snapshot) => published[id] = snapshot,
+    );
+    addTearDown(scheduler.dispose);
+    final server = _server(id: 4);
+
+    await scheduler.refreshServer(server);
+    expect(published[4], isNull);
+
+    answering = true;
+    await scheduler.refreshServer(server, force: true);
+    expect(published[4], isNotNull);
+    // A recovered route is polled on the normal cadence again, with no
+    // backoff left to skip it.
+    answering = false;
+    await scheduler.refreshServer(server);
+    expect(published[4], isNull);
+  });
 }

@@ -4,7 +4,7 @@ import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 
-/// The kind of workspace tab captured in a [WorkspaceTabSnapshot].
+/// The kind of content captured in a [WorkspaceContentSnapshot].
 enum WorkspaceTabKind {
   dashboard,
   serverDetail,
@@ -17,151 +17,113 @@ enum WorkspaceTabKind {
   maidCafeCloud,
   settings;
 
-  /// Whether this tab is bound to a saved server. A global destination tab
-  /// restores even when the server catalog changed; a server-scoped tab is
-  /// dropped when its server is gone.
   bool get isServerScoped => switch (this) {
-    WorkspaceTabKind.dashboard ||
-    WorkspaceTabKind.assets ||
-    WorkspaceTabKind.projects ||
-    WorkspaceTabKind.maidCafeCloud ||
-    WorkspaceTabKind.settings => false,
-    WorkspaceTabKind.serverDetail ||
-    WorkspaceTabKind.maidCafePayload ||
-    WorkspaceTabKind.terminal ||
-    WorkspaceTabKind.fileManagement ||
-    WorkspaceTabKind.fileEditor => true,
+    dashboard || assets || projects || maidCafeCloud || settings => false,
+    serverDetail ||
+    maidCafePayload ||
+    terminal ||
+    fileManagement ||
+    fileEditor => true,
   };
-
-  static WorkspaceTabKind? tryParse(String? raw) {
-    for (final kind in WorkspaceTabKind.values) {
-      if (kind.name == raw) return kind;
-    }
-    return null;
-  }
 }
 
-/// One tab captured in a [WorkspaceSnapshot].
+/// One mounted instance captured in a [WorkspaceSnapshot].
 ///
-/// A single flat shape (kind + optional fields) keeps the codec and the
-/// restore switch small. Terminal tabs carry their OSC 7 working directory
-/// and plain-text scrollback history; everything else is reconstructed from
-/// the server id alone.
-class WorkspaceTabSnapshot {
-  const WorkspaceTabSnapshot({
+/// A single flat shape (kind + optional fields) keeps the codec and the restore
+/// switch small. Terminal tabs carry their OSC 7 working directory and
+/// plain-text scrollback history; everything else is reconstructed from the
+/// server id alone.
+class WorkspaceContentSnapshot {
+  const WorkspaceContentSnapshot({
     required this.id,
     required this.kind,
-    required this.serverId,
+    this.serverId = -1,
+    this.initialTab = 0,
+    this.initialComposeProject,
     this.cwd,
     this.history,
     this.path,
     this.fileName,
     this.isRemote = false,
-    this.initialTab = 0,
-    this.initialComposeProject,
   });
 
   final String id;
   final WorkspaceTabKind kind;
   final int serverId;
-
-  /// Terminal: last OSC 7 working directory, if the shell reported one.
-  final String? cwd;
-
-  /// Terminal: plain-text scrollback history.
-  final String? history;
-
-  /// File-management / file-editor remote path.
-  final String? path;
-
-  /// File-editor file name.
-  final String? fileName;
-
-  /// File-editor side.
-  final bool isRemote;
-
-  /// Server-detail initial tab index, or the assets page for an assets tab.
   final int initialTab;
-
-  /// Server-detail initial compose project.
   final String? initialComposeProject;
+  final String? cwd;
+  final String? history;
+  final String? path;
+  final String? fileName;
+  final bool isRemote;
 
   Map<String, Object?> toJson() => {
     'id': id,
     'kind': kind.name,
     'serverId': serverId,
+    if (initialTab != 0) 'initialTab': initialTab,
+    if (initialComposeProject != null)
+      'initialComposeProject': initialComposeProject,
     if (cwd != null) 'cwd': cwd,
     if (history != null) 'history': history,
     if (path != null) 'path': path,
     if (fileName != null) 'fileName': fileName,
     if (isRemote) 'isRemote': isRemote,
-    if (initialTab != 0) 'initialTab': initialTab,
-    if (initialComposeProject != null)
-      'initialComposeProject': initialComposeProject,
   };
 
-  static WorkspaceTabSnapshot? fromJson(Map<String, dynamic> json) {
-    final kind = WorkspaceTabKind.tryParse(json['kind'] as String?);
+  static WorkspaceContentSnapshot? fromJson(Map<String, dynamic> json) {
     final id = json['id'] as String?;
-    final serverId = json['serverId'] as int?;
-    if (kind == null || id == null || serverId == null) return null;
-    return WorkspaceTabSnapshot(
+    final kind = WorkspaceTabKind.values
+        .where((kind) => kind.name == json['kind'])
+        .firstOrNull;
+    if (id == null || kind == null) return null;
+    return WorkspaceContentSnapshot(
       id: id,
       kind: kind,
-      serverId: serverId,
+      serverId: (json['serverId'] as num?)?.toInt() ?? -1,
+      initialTab: (json['initialTab'] as num?)?.toInt() ?? 0,
+      initialComposeProject: json['initialComposeProject'] as String?,
       cwd: json['cwd'] as String?,
       history: json['history'] as String?,
       path: json['path'] as String?,
       fileName: json['fileName'] as String?,
       isRemote: json['isRemote'] as bool? ?? false,
-      initialTab: json['initialTab'] as int? ?? 0,
-      initialComposeProject: json['initialComposeProject'] as String?,
     );
   }
 }
 
-/// A serializable snapshot of the terminal workspace, for the "restore last
-/// session" feature.
+/// A serializable snapshot of the workspace, for the "restore last session"
+/// feature.
 ///
-/// Mirrors [TerminalTabsState]: a binary [SessionLayout] tree of panes, each
-/// owning an ordered tab strip with a selection. Credentials never appear —
-/// tabs reference servers by id and rehydrate credentials on restore.
+/// Mirrors [TerminalTabsState]: a list of workspace tabs, each owning its own
+/// binary [SessionLayout] tree and the content its panes mount. Credentials
+/// never appear — tabs reference servers by id and rehydrate credentials on
+/// restore.
 class WorkspaceSnapshot {
   const WorkspaceSnapshot({
     this.version = currentVersion,
-    this.layout,
-    this.panes = const {},
     this.tabs = const [],
-    this.focusedPaneId,
+    this.selectedTabId,
   });
 
-  static const int currentVersion = 1;
+  /// Version 2 stores layout per tab. Version 1 stored one layout for the whole
+  /// workspace and tab lists inside each pane; [fromJson] converts it.
+  static const int currentVersion = 2;
 
   final int version;
-  final SessionLayout? layout;
-  final Map<String, SessionPane> panes;
   final List<WorkspaceTabSnapshot> tabs;
-  final String? focusedPaneId;
+  final String? selectedTabId;
 
-  bool get isEmpty => panes.isEmpty;
+  bool get isEmpty => tabs.isEmpty;
 
   /// Whether this is the pristine single-dashboard default, which must never
   /// overwrite a real snapshot on disk.
   bool get isPristineDefault =>
-      panes.length == 1 &&
-      panes.values.first.id == 'main' &&
-      panes.values.first.tabIds.length == 1 &&
-      panes.values.first.tabIds.first == 'dashboard' &&
       tabs.length == 1 &&
-      tabs.first.kind == WorkspaceTabKind.dashboard &&
-      layout is SessionLayoutLeaf;
-
-  WorkspaceTabSnapshot? tabById(String id) {
-    for (final tab in tabs) {
-      if (tab.id == id) return tab;
-    }
-    return null;
-  }
+      tabs.first.id == 'dashboard' &&
+      tabs.first.panes.length == 1 &&
+      tabs.first.panes.values.first?.kind == WorkspaceTabKind.dashboard;
 
   /// Captures [state], invoking [historyFor] to obtain each terminal's
   /// plain-text scrollback (cached by the caller when possible).
@@ -169,80 +131,81 @@ class WorkspaceSnapshot {
     TerminalTabsState state, {
     required String Function(TerminalTab tab) historyFor,
   }) {
-    final tabs = <WorkspaceTabSnapshot>[];
-    for (final tab in state.tabs) {
-      final captured = switch (tab) {
-        // An agent chat tab only means something together with its
-        // conversation, which the workspace snapshot does not carry, so it is
-        // not restored.
-        AgentChatSessionTab() => null,
-        DashboardTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.dashboard,
-          serverId: tab.serverId,
-        ),
-        AssetsSessionTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.assets,
-          serverId: tab.serverId,
-          initialTab: tab.section.index,
-        ),
-        ProjectsSessionTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.projects,
-          serverId: tab.serverId,
-        ),
-        MaidCafeCloudSessionTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.maidCafeCloud,
-          serverId: tab.serverId,
-        ),
-        SettingsSessionTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.settings,
-          serverId: tab.serverId,
-        ),
-        ServerDetailTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.serverDetail,
-          serverId: tab.serverId,
-          initialTab: tab.initialTab,
-          initialComposeProject: tab.initialComposeProject,
-        ),
-        MaidCafePayloadSessionTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.maidCafePayload,
-          serverId: tab.serverId,
-        ),
-        TerminalTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.terminal,
-          serverId: tab.serverId,
-          cwd: tab.terminal.currentDirectory,
-          history: historyFor(tab),
-        ),
-        FileManagementTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.fileManagement,
-          serverId: tab.serverId,
-          path: tab.initialPath,
-        ),
-        FileEditorTab() => WorkspaceTabSnapshot(
-          id: tab.id,
-          kind: WorkspaceTabKind.fileEditor,
-          serverId: tab.serverId,
-          fileName: tab.fileName,
-          path: tab.path,
-          isRemote: tab.isRemote,
-        ),
-      };
-      if (captured != null) tabs.add(captured);
-    }
     return WorkspaceSnapshot(
-      layout: state.layout,
-      panes: state.panes,
-      tabs: tabs,
-      focusedPaneId: state.focusedPaneId,
+      tabs: [
+        for (final tab in state.tabs)
+          WorkspaceTabSnapshot(
+            id: tab.id,
+            layout: tab.layout,
+            focusedPaneId: tab.focusedPaneId,
+            panes: {
+              for (final pane in tab.panes.values)
+                pane.id: switch (pane.tab) {
+                  null => null,
+                  // An agent chat only means something together with its
+                  // conversation, which the snapshot does not carry.
+                  AgentChatSessionTab() => null,
+                  final DashboardTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.dashboard,
+                  ),
+                  final AssetsSessionTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.assets,
+                    initialTab: content.section.index,
+                  ),
+                  final ProjectsSessionTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.projects,
+                  ),
+                  final MaidCafeCloudSessionTab content =>
+                    WorkspaceContentSnapshot(
+                      id: content.id,
+                      kind: WorkspaceTabKind.maidCafeCloud,
+                    ),
+                  final SettingsSessionTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.settings,
+                  ),
+                  final ServerDetailTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.serverDetail,
+                    serverId: content.serverId,
+                    initialTab: content.initialTab,
+                    initialComposeProject: content.initialComposeProject,
+                  ),
+                  final MaidCafePayloadSessionTab content =>
+                    WorkspaceContentSnapshot(
+                      id: content.id,
+                      kind: WorkspaceTabKind.maidCafePayload,
+                      serverId: content.serverId,
+                    ),
+                  final TerminalTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.terminal,
+                    serverId: content.serverId,
+                    cwd: content.terminal.currentDirectory,
+                    history: historyFor(content),
+                  ),
+                  final FileManagementTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.fileManagement,
+                    serverId: content.serverId,
+                    path: content.initialPath,
+                  ),
+                  final FileEditorTab content => WorkspaceContentSnapshot(
+                    id: content.id,
+                    kind: WorkspaceTabKind.fileEditor,
+                    serverId: content.serverId,
+                    fileName: content.fileName,
+                    path: content.path,
+                    isRemote: content.isRemote,
+                  ),
+                },
+            },
+          ),
+      ],
+      selectedTabId: state.selectedTabId,
     );
   }
 
@@ -260,59 +223,77 @@ class WorkspaceSnapshot {
 
   Map<String, Object?> toJson() => {
     'version': version,
-    'layout': _layoutToJson(layout),
-    'panes': {
-      for (final entry in panes.entries)
-        entry.key: {
-          'tabIds': entry.value.tabIds,
-          if (entry.value.selectedTabId != null)
-            'selectedTabId': entry.value.selectedTabId,
-        },
-    },
     'tabs': [for (final tab in tabs) tab.toJson()],
-    if (focusedPaneId != null) 'focusedPaneId': focusedPaneId,
+    if (selectedTabId != null) 'selectedTabId': selectedTabId,
   };
 
   static WorkspaceSnapshot? fromJson(Map<String, dynamic> json) {
-    final version = json['version'] as int? ?? currentVersion;
+    final version = json['version'] as int? ?? 1;
     if (version > currentVersion) return null;
-    final layoutRaw = json['layout'];
-    final layout = layoutRaw == null
-        ? null
-        : _layoutFromJson(layoutRaw as Map<String, dynamic>);
-    final panesRaw = json['panes'];
-    if (panesRaw is! Map<String, dynamic>) return null;
-    final panes = <String, SessionPane>{};
-    for (final entry in panesRaw.entries) {
-      final pane = entry.value;
-      if (pane is! Map<String, dynamic>) return null;
-      final tabIds = pane['tabIds'];
-      if (tabIds is! List) return null;
-      panes[entry.key] = SessionPane(
-        id: entry.key,
-        tabIds: [for (final id in tabIds) id.toString()],
-        selectedTabId: pane['selectedTabId'] as String?,
-      );
-    }
+    if (version < 2) return _fromLegacyJson(json);
     final tabsRaw = json['tabs'];
+    if (tabsRaw is! List) return null;
     final tabs = <WorkspaceTabSnapshot>[];
-    if (tabsRaw is List) {
-      for (final raw in tabsRaw) {
-        if (raw is! Map<String, dynamic>) continue;
-        final tab = WorkspaceTabSnapshot.fromJson(raw);
-        if (tab != null) tabs.add(tab);
-      }
+    for (final raw in tabsRaw) {
+      if (raw is! Map<String, dynamic>) continue;
+      final tab = WorkspaceTabSnapshot.fromJson(raw);
+      if (tab != null) tabs.add(tab);
     }
     return WorkspaceSnapshot(
-      version: version,
-      layout: layout,
-      panes: panes,
       tabs: tabs,
-      focusedPaneId: json['focusedPaneId'] as String?,
+      selectedTabId: json['selectedTabId'] as String?,
     );
   }
 
-  static Map<String, Object?>? _layoutToJson(SessionLayout? layout) {
+  /// Converts the version 1 shape: one layout for the whole workspace, panes
+  /// holding ordered tab lists. Each of those tabs becomes a workspace tab with
+  /// a single pane, because a workspace tab now owns its own layout and a pane
+  /// shows one thing.
+  static WorkspaceSnapshot? _fromLegacyJson(Map<String, dynamic> json) {
+    final panesRaw = json['panes'];
+    final tabsRaw = json['tabs'];
+    if (panesRaw is! Map<String, dynamic>) return null;
+    final contents = <String, WorkspaceContentSnapshot>{};
+    if (tabsRaw is List) {
+      for (final raw in tabsRaw) {
+        if (raw is! Map<String, dynamic>) continue;
+        final content = WorkspaceContentSnapshot.fromJson(raw);
+        if (content != null) contents[content.id] = content;
+      }
+    }
+    final focusedPaneId = json['focusedPaneId'] as String?;
+    final tabs = <WorkspaceTabSnapshot>[];
+    String? selectedTabId;
+    for (final entry in panesRaw.entries) {
+      final pane = entry.value;
+      if (pane is! Map<String, dynamic>) continue;
+      final tabIds = pane['tabIds'];
+      if (tabIds is! List) continue;
+      final selectedTab = pane['selectedTabId'] as String?;
+      for (final rawId in tabIds) {
+        final content = contents[rawId.toString()];
+        if (content == null) continue;
+        final paneId = '${entry.key}:${content.id}';
+        tabs.add(
+          WorkspaceTabSnapshot(
+            id: content.id,
+            layout: SessionLayoutLeaf(paneId),
+            focusedPaneId: paneId,
+            panes: {paneId: content},
+          ),
+        );
+        if (entry.key == focusedPaneId &&
+            (selectedTab == content.id || selectedTab == null)) {
+          selectedTabId = content.id;
+        }
+      }
+    }
+    // A legacy save without a focused pane still selected something.
+    selectedTabId ??= tabs.firstOrNull?.id;
+    return WorkspaceSnapshot(tabs: tabs, selectedTabId: selectedTabId);
+  }
+
+  static Map<String, Object?>? layoutToJson(SessionLayout? layout) {
     return switch (layout) {
       null => null,
       SessionLayoutLeaf leaf => {'type': 'leaf', 'paneId': leaf.paneId},
@@ -321,44 +302,97 @@ class WorkspaceSnapshot {
         'axis': split.axis.name,
         'ratio': split.ratio,
         'id': split.id,
-        'first': _layoutToJson(split.first),
-        'second': _layoutToJson(split.second),
+        'first': layoutToJson(split.first),
+        'second': layoutToJson(split.second),
       },
     };
   }
 
-  static SessionLayout? _layoutFromJson(Map<String, dynamic> json) {
-    switch (json['type']) {
+  static SessionLayout? layoutFromJson(Object? raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    switch (raw['type']) {
       case 'leaf':
-        final paneId = json['paneId'] as String?;
+        final paneId = raw['paneId'] as String?;
         if (paneId == null) return null;
         return SessionLayoutLeaf(paneId);
       case 'split':
-        final first = json['first'];
-        final second = json['second'];
-        final id = json['id'] as String?;
+        final first = raw['first'];
+        final second = raw['second'];
+        final id = raw['id'] as String?;
         if (id == null ||
             first is! Map<String, dynamic> ||
             second is! Map<String, dynamic>) {
           return null;
         }
         final axis = SessionSplitAxis.values
-            .where((axis) => axis.name == json['axis'])
+            .where((axis) => axis.name == raw['axis'])
             .firstOrNull;
         if (axis == null) return null;
-        final left = _layoutFromJson(first);
-        final right = _layoutFromJson(second);
+        final left = layoutFromJson(first);
+        final right = layoutFromJson(second);
         if (left == null || right == null) return null;
         return SessionLayoutSplit(
           id: id,
           axis: axis,
           first: left,
           second: right,
-          ratio: (json['ratio'] as num?)?.toDouble() ?? 0.5,
+          ratio: (raw['ratio'] as num?)?.toDouble() ?? 0.5,
         );
       default:
         return null;
     }
+  }
+}
+
+/// One workspace tab captured in a [WorkspaceSnapshot]: its pane arrangement,
+/// plus what each pane shows (nothing while a pane waits for a session).
+class WorkspaceTabSnapshot {
+  const WorkspaceTabSnapshot({
+    required this.id,
+    required this.layout,
+    required this.focusedPaneId,
+    this.panes = const {},
+  });
+
+  final String id;
+  final SessionLayout layout;
+  final String focusedPaneId;
+
+  /// Pane id → mounted content. A null value is an empty pane.
+  final Map<String, WorkspaceContentSnapshot?> panes;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'layout': WorkspaceSnapshot.layoutToJson(layout),
+    'focusedPaneId': focusedPaneId,
+    'panes': {
+      for (final entry in panes.entries) entry.key: entry.value?.toJson(),
+    },
+  };
+
+  static WorkspaceTabSnapshot? fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as String?;
+    final layout = WorkspaceSnapshot.layoutFromJson(json['layout']);
+    final panesRaw = json['panes'];
+    if (id == null || layout == null || panesRaw is! Map<String, dynamic>) {
+      return null;
+    }
+    final panes = <String, WorkspaceContentSnapshot?>{};
+    for (final entry in panesRaw.entries) {
+      final raw = entry.value;
+      panes[entry.key] = raw is Map<String, dynamic>
+          ? WorkspaceContentSnapshot.fromJson(raw)
+          : null;
+    }
+    final focusedPaneId = json['focusedPaneId'] as String?;
+    return WorkspaceTabSnapshot(
+      id: id,
+      layout: layout,
+      focusedPaneId: focusedPaneId != null && panes.containsKey(focusedPaneId)
+          ? focusedPaneId
+          : (panes.keys.firstOrNull ?? layout.paneIds.first),
+      panes: panes,
+    );
   }
 }
 
@@ -390,7 +424,7 @@ bool shouldOfferWorkspaceRestore({
       !dismissedSnapshotAt.isAtSameMomentAs(stored.updatedAt);
 }
 
-/// A terminal tab that needs a live session before it can be opened.
+/// A terminal that needs a live session before its pane can show anything.
 class PendingTerminalRestore {
   const PendingTerminalRestore({
     required this.paneId,
@@ -409,159 +443,121 @@ class PendingTerminalRestore {
   final ServerConnectionType connectionType;
 }
 
-/// A [WorkspaceSnapshot] resolved against the current server catalog: which
-/// tabs can be opened immediately and which terminals need connections.
+/// A [WorkspaceSnapshot] resolved against the current server catalog: the tabs
+/// that can be shown immediately, and the terminals that need a connection.
 class ResolvedWorkspace {
   const ResolvedWorkspace({
-    this.layout,
-    this.panes = const {},
     this.initialTabs = const [],
     this.pendingTerminals = const [],
-    this.desiredPaneTabIds = const {},
-    this.desiredPaneSelections = const {},
-    this.focusedPaneId,
+    this.selectedTabId,
   });
 
-  final SessionLayout? layout;
-  final Map<String, SessionPane> panes;
-  final List<SessionTab> initialTabs;
+  final List<WorkspaceTab> initialTabs;
   final List<PendingTerminalRestore> pendingTerminals;
-
-  /// Complete desired tab order per pane (including already-placed tabs).
-  final Map<String, List<String>> desiredPaneTabIds;
-
-  /// Desired selection per pane after restoration.
-  final Map<String, String?> desiredPaneSelections;
-
-  final String? focusedPaneId;
+  final String? selectedTabId;
 }
 
 /// Resolves [snapshot] against [serversById].
 ///
-/// Tabs whose server no longer exists are dropped. Every other tab is mapped
-/// to a live [SessionTab]; terminals become [PendingTerminalRestore]s that
-/// the caller opens once connections are available.
+/// Content whose server no longer exists is dropped, which leaves its pane
+/// empty rather than dropping the whole tab. Terminals become
+/// [PendingTerminalRestore]s that the caller opens once connections are
+/// available; their panes exist already and take the session when it lands.
 ResolvedWorkspace resolveWorkspaceSnapshot(
   WorkspaceSnapshot snapshot,
   Map<int, Server> serversById,
 ) {
-  final panes = <String, SessionPane>{};
-  final initialTabs = <SessionTab>[];
+  final tabs = <WorkspaceTab>[];
   final pendingTerminals = <PendingTerminalRestore>[];
-  final desiredTabIds = <String, List<String>>{};
-  final desiredSelections = <String, String?>{};
+  String? selectedTabId;
 
-  for (final paneEntry in snapshot.panes.entries) {
-    final pane = paneEntry.value;
-    final resolvedIds = <String>[];
-    final desiredIds = <String>[];
-    for (final tabId in pane.tabIds) {
-      final spec = snapshot.tabById(tabId);
-      if (spec == null) continue;
-      final server = serversById[spec.serverId];
-      if (spec.kind.isServerScoped && server == null) continue;
-      // Full desired order, including deferred terminals: the restore flow
-      // moves terminals into these slots once they connect.
-      desiredIds.add(tabId);
-
-      switch (spec.kind) {
-        case WorkspaceTabKind.dashboard:
-          initialTabs.add(DashboardTab());
-          resolvedIds.add(DashboardTab().id);
-        case WorkspaceTabKind.assets:
-          initialTabs.add(
-            AssetsSessionTab(
-              section:
-                  AssetsSection.values[spec.initialTab.clamp(
-                    0,
-                    AssetsSection.values.length - 1,
-                  )],
-            ),
-          );
-          resolvedIds.add(const AssetsSessionTab().id);
-        case WorkspaceTabKind.projects:
-          initialTabs.add(const ProjectsSessionTab());
-          resolvedIds.add(const ProjectsSessionTab().id);
-        case WorkspaceTabKind.maidCafeCloud:
-          initialTabs.add(const MaidCafeCloudSessionTab());
-          resolvedIds.add(const MaidCafeCloudSessionTab().id);
-        case WorkspaceTabKind.settings:
-          initialTabs.add(const SettingsSessionTab());
-          resolvedIds.add(const SettingsSessionTab().id);
-        case WorkspaceTabKind.serverDetail:
-          initialTabs.add(
-            ServerDetailTab(
-              id: spec.id,
-              server: server!,
-              initialTab: spec.initialTab,
-              initialComposeProject: spec.initialComposeProject,
-            ),
-          );
-          resolvedIds.add(spec.id);
-        case WorkspaceTabKind.maidCafePayload:
-          initialTabs.add(
-            MaidCafePayloadSessionTab(id: spec.id, server: server!),
-          );
-          resolvedIds.add(spec.id);
-        case WorkspaceTabKind.terminal:
-          pendingTerminals.add(
-            PendingTerminalRestore(
-              paneId: pane.id,
-              serverId: spec.serverId,
-              cwd: spec.cwd,
-              history: spec.history,
-              connectionType: serverConnectionTypeFromName(
-                server!.connectionType,
-              ),
-            ),
-          );
-        // The tab id is reserved in [desiredPaneTabIds] and re-inserted by
-        // the caller once the terminal connects; it must not appear in the
-        // pane before a live tab exists for it.
-        case WorkspaceTabKind.fileManagement:
-          initialTabs.add(
-            FileManagementTab(
-              id: spec.id,
-              serverId: spec.serverId,
-              serverName: server!.name,
-              initialPath: spec.path,
-            ),
-          );
-          resolvedIds.add(spec.id);
-        case WorkspaceTabKind.fileEditor:
-          initialTabs.add(
-            FileEditorTab(
-              id: spec.id,
-              serverId: spec.serverId,
-              serverName: server!.name,
-              fileName: spec.fileName ?? '',
-              path: spec.path ?? '',
-              isRemote: spec.isRemote,
-            ),
-          );
-          resolvedIds.add(spec.id);
+  for (final spec in snapshot.tabs) {
+    final panes = <String, TabPane>{};
+    for (final paneId in spec.layout.paneIds) {
+      final content = spec.panes[paneId];
+      if (content == null) {
+        panes[paneId] = TabPane(id: paneId);
+        continue;
       }
+      final server = serversById[content.serverId];
+      if (content.kind.isServerScoped && server == null) {
+        panes[paneId] = TabPane(id: paneId);
+        continue;
+      }
+      if (content.kind == WorkspaceTabKind.terminal) {
+        // The pane stays empty until the session connects; the terminal is
+        // opened into it below, in snapshot order.
+        panes[paneId] = TabPane(id: paneId);
+        pendingTerminals.add(
+          PendingTerminalRestore(
+            paneId: paneId,
+            serverId: content.serverId,
+            cwd: content.cwd,
+            history: content.history,
+            connectionType: serverConnectionTypeFromName(
+              server!.connectionType,
+            ),
+          ),
+        );
+        continue;
+      }
+      panes[paneId] = TabPane(
+        id: paneId,
+        tab: _contentFromSnapshot(content, server),
+      );
     }
-    panes[pane.id] = SessionPane(
-      id: pane.id,
-      tabIds: resolvedIds,
-      selectedTabId: resolvedIds.contains(pane.selectedTabId)
-          ? pane.selectedTabId
-          : (resolvedIds.isEmpty ? null : resolvedIds.last),
+    final tab = WorkspaceTab(
+      id: spec.id,
+      panes: panes,
+      layout: spec.layout,
+      focusedPaneId: spec.focusedPaneId,
     );
-    desiredTabIds[pane.id] = desiredIds;
-    // The snapshot selection may name a deferred terminal; [select] ignores
-    // ids without a live tab, so restoring it after connections is safe.
-    desiredSelections[pane.id] = pane.selectedTabId;
+    tabs.add(tab);
+    if (spec.id == snapshot.selectedTabId) selectedTabId = tab.id;
   }
 
   return ResolvedWorkspace(
-    layout: snapshot.layout,
-    panes: panes,
-    initialTabs: initialTabs,
+    initialTabs: tabs,
     pendingTerminals: pendingTerminals,
-    desiredPaneTabIds: desiredTabIds,
-    desiredPaneSelections: desiredSelections,
-    focusedPaneId: snapshot.focusedPaneId,
+    selectedTabId: selectedTabId ?? tabs.firstOrNull?.id,
   );
+}
+
+SessionTab _contentFromSnapshot(WorkspaceContentSnapshot spec, Server? server) {
+  return switch (spec.kind) {
+    WorkspaceTabKind.dashboard => const DashboardTab(),
+    WorkspaceTabKind.assets => AssetsSessionTab(
+      section: AssetsSection
+          .values[spec.initialTab.clamp(0, AssetsSection.values.length - 1)],
+    ),
+    WorkspaceTabKind.projects => const ProjectsSessionTab(),
+    WorkspaceTabKind.maidCafeCloud => const MaidCafeCloudSessionTab(),
+    WorkspaceTabKind.settings => const SettingsSessionTab(),
+    WorkspaceTabKind.serverDetail => ServerDetailTab(
+      id: spec.id,
+      server: server!,
+      initialTab: spec.initialTab,
+      initialComposeProject: spec.initialComposeProject,
+    ),
+    WorkspaceTabKind.maidCafePayload => MaidCafePayloadSessionTab(
+      id: spec.id,
+      server: server!,
+    ),
+    WorkspaceTabKind.fileManagement => FileManagementTab(
+      id: spec.id,
+      serverId: spec.serverId,
+      serverName: server!.name,
+      initialPath: spec.path,
+    ),
+    WorkspaceTabKind.fileEditor => FileEditorTab(
+      id: spec.id,
+      serverId: spec.serverId,
+      serverName: server!.name,
+      fileName: spec.fileName ?? '',
+      path: spec.path ?? '',
+      isRemote: spec.isRemote,
+    ),
+    // Terminals need a live session, so they never reach this both.
+    WorkspaceTabKind.terminal => throw StateError('terminal needs a session'),
+  };
 }

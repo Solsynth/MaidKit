@@ -224,8 +224,12 @@ class MaidKitAppScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final pageColor = backgroundColor ?? scheme.surface;
+    // The page paper is the theme's own paper: the workspace tab strip's tone
+    // at the top level, and the pane panel's tone inside a pane, where
+    // `MaidKitPanel` republishes it. A page therefore never paints a second
+    // off-white over the surface it was mounted on.
+    final pageColor =
+        backgroundColor ?? Theme.of(context).colorScheme.surfaceContainerLowest;
     final bodyContent = body == null
         ? const SizedBox.shrink()
         : MaidKitAppBackground(
