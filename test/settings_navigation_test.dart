@@ -193,6 +193,36 @@ void main() {
     expect(find.text('settingsTerminalFont'.tr()), findsWidgets);
   });
 
+  testWidgets('connections settings own the global metrics switch', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1200, 2400));
+
+    final container = containerOf(tester);
+    container.read(terminalTabsProvider.notifier).openSettings();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('settingsConnections'.tr()).first);
+    await tester.pumpAndSettle();
+
+    final tile = find.widgetWithText(
+      SwitchListTile,
+      'settingsServerMetrics'.tr(),
+    );
+    expect(tile, findsOneWidget);
+    expect(container.read(serverMetricsEnabledProvider), isTrue);
+
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+
+    expect(container.read(serverMetricsEnabledProvider), isFalse);
+    expect(
+      container.read(metricsRefreshSettingsProvider).serverMetricsEnabled,
+      isFalse,
+      reason: 'the choice has to outlive the session',
+    );
+  });
+
   testWidgets('opens Assets from the desktop navigation rail', (
     WidgetTester tester,
   ) async {

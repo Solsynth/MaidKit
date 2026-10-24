@@ -392,18 +392,24 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
 
   Future<void> _refresh() async {
     if (_refreshing) return;
+    final metricsEnabled = ref.read(serverMetricsEnabledProvider);
     final manager = ref.read(connectionManagerProvider);
     if (manager.clientFor(widget.server.id) == null) {
       // No SSH session: the daemon route is the only statistics source this
-      // host has, so refresh it instead of doing nothing.
-      await ref
-          .read(maidCafeStatsSchedulerProvider)
-          .refreshServer(widget.server, force: true);
+      // host has, so refresh it instead of doing nothing. With metrics turned
+      // off there is nothing to read on either route.
+      if (metricsEnabled) {
+        await ref
+            .read(maidCafeStatsSchedulerProvider)
+            .refreshServer(widget.server, force: true);
+      }
       return;
     }
     _refreshing = true;
     try {
-      await manager.refreshServerInfo(widget.server);
+      // Process listing is a tab the user opened, not a metric: it keeps its
+      // cadence. Statistics and system information stand down with the switch.
+      if (metricsEnabled) await manager.refreshServerInfo(widget.server);
       if (_activeTabIndex == _processesTabIndex) {
         if (_sshPreferred) {
           // The session owns the table: drop any stream opened before it, and
@@ -557,8 +563,12 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     // the host no exec, and it is the only statistics route a browser has.
     // The connected session still owns the connection itself; its readings
     // are the fallback for a host whose daemon does not answer. The label
-    // names the route the numbers actually came from.
-    final daemonStats = ref.watch(maidCafeStatsProvider)[widget.server.id];
+    // names the route the numbers actually came from. With the app-wide
+    // switch off nothing is collected, so no reading is shown either.
+    final metricsEnabled = ref.watch(serverMetricsEnabledProvider);
+    final daemonStats = metricsEnabled
+        ? ref.watch(maidCafeStatsProvider)[widget.server.id]
+        : null;
     final statsFromDaemon = daemonStats != null;
     final refreshInterval = ref.watch(focusedServerRefreshIntervalProvider);
 
@@ -566,8 +576,11 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
       server: widget.server,
       session: session,
       connected: connected,
-      stats: daemonStats?.stats ?? (connected ? session?.stats : null),
-      systemInfo: session?.systemInfo,
+      metricsEnabled: metricsEnabled,
+      stats: metricsEnabled
+          ? daemonStats?.stats ?? (connected ? session?.stats : null)
+          : null,
+      systemInfo: metricsEnabled ? session?.systemInfo : null,
       statsSourceLabel: statsFromDaemon
           ? 'serversStatsSourceDaemon'.tr()
           : null,
@@ -654,6 +667,7 @@ class _DetailWorkspace extends StatelessWidget {
     required this.onTabChanged,
     required this.initialTab,
     required this.initialComposeProject,
+    required this.metricsEnabled,
     this.stats,
     this.systemInfo,
     this.statsSourceLabel,
@@ -673,6 +687,10 @@ class _DetailWorkspace extends StatelessWidget {
   final int initialTab;
   final String? initialComposeProject;
 
+  /// Whether the app-wide metrics switch is on. Off means the overview shows
+  /// no readings, since none are collected.
+  final bool metricsEnabled;
+
   /// Host figures for the overview, already resolved to whichever route
   /// answered: the daemon when the server runs one on a reachable address, the
   /// SSH session otherwise. Passed in rather than read off [session] so the
@@ -688,6 +706,7 @@ class _DetailWorkspace extends StatelessWidget {
     final overview = _OverviewPanel(
       server: server,
       session: session,
+      metricsEnabled: metricsEnabled,
       stats: stats,
       systemInfo: systemInfo,
       statsSourceLabel: statsSourceLabel,
@@ -752,6 +771,7 @@ class _OverviewPanel extends StatelessWidget {
   const _OverviewPanel({
     required this.server,
     required this.session,
+    required this.metricsEnabled,
     this.stats,
     this.systemInfo,
     this.statsSourceLabel,
@@ -759,6 +779,10 @@ class _OverviewPanel extends StatelessWidget {
 
   final Server server;
   final SshSessionInfo? session;
+
+  /// Off hides both the specification row and the performance grid: those
+  /// numbers are not collected, so the panel says that instead.
+  final bool metricsEnabled;
   final ServerStats? stats;
   final ServerSystemInfo? systemInfo;
   final String? statsSourceLabel;
@@ -772,20 +796,28 @@ class _OverviewPanel extends StatelessWidget {
         const SizedBox(height: 12),
         _ServerIdentity(server: server, session: session),
         const SizedBox(height: 16),
-        _ServerSpecifications(stats: stats, systemInfo: systemInfo),
-        const SizedBox(height: 24),
-        if (statsSourceLabel != null) ...[
-          Text(
-            statsSourceLabel!,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+        if (!metricsEnabled)
+          MaidKitEmptyState(
+            icon: Symbols.visibility_off,
+            title: 'serversMetricsDisabled'.tr(),
+            compact: true,
+          )
+        else ...[
+          _ServerSpecifications(stats: stats, systemInfo: systemInfo),
+          const SizedBox(height: 24),
+          if (statsSourceLabel != null) ...[
+            Text(
+              statsSourceLabel!,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
+            const SizedBox(height: 8),
+          ],
+          const _SectionLabel('detailPerformance'),
+          const SizedBox(height: 12),
+          _MetricGrid(stats: stats),
         ],
-        const _SectionLabel('detailPerformance'),
-        const SizedBox(height: 12),
-        _MetricGrid(stats: stats),
       ],
     );
   }
@@ -1168,6 +1200,7 @@ class _ServerIdentity extends ConsumerWidget {
     final scheme = theme.colorScheme;
     final connected = session?.status == SessionStatus.connected;
     final hideAddresses = ref.watch(hideServerAddressesProvider);
+    final metricsEnabled = ref.watch(serverMetricsEnabledProvider);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1193,7 +1226,7 @@ class _ServerIdentity extends ConsumerWidget {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   _StatusChip(connected: connected, status: session?.status),
-                  if (session?.stats?.updatedAt != null)
+                  if (metricsEnabled && session?.stats?.updatedAt != null)
                     Text(
                       'detailUpdated'.tr(
                         args: [_formatTimestamp(session!.stats!.updatedAt)],

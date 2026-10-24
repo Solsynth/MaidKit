@@ -67,10 +67,32 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     super.initState();
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
     _sessionRegistry.retain(widget.server);
-    if (widget.connected) {
+    final metricsEnabled = ref.read(serverMetricsEnabledProvider);
+    if (widget.connected && metricsEnabled) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _poll());
     }
     _startTimer();
+    // Turning metrics back on re-arms polling immediately; turning them off
+    // stops it and drops the charts, so no sample outlives the switch.
+    ref.listenManual<bool>(serverMetricsEnabledProvider, (_, enabled) {
+      if (!enabled) {
+        _timer?.cancel();
+        _timer = null;
+        _closeMaidCafeSse();
+        if (mounted) {
+          setState(() {
+            _history.clear();
+            _previous = null;
+            _hasSample = false;
+            _source = null;
+            _error = null;
+          });
+        }
+        return;
+      }
+      _startTimer();
+      if (widget.connected) _poll();
+    });
   }
 
   @override
@@ -115,12 +137,20 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
 
   void _startTimer() {
     _timer?.cancel();
+    _timer = null;
+    // The app-wide switch stops the timer outright: no probe runs while
+    // metrics are off, and turning them back on re-arms polling at once.
+    if (!ref.read(serverMetricsEnabledProvider)) return;
     _timer = Timer.periodic(widget.refreshInterval, (_) => _poll());
   }
 
   Future<void> _poll() async {
-    if (!mounted || !widget.connected || _loading) return;
-    _loading = true;
+    if (!mounted ||
+        !widget.connected ||
+        _loading ||
+        !ref.read(serverMetricsEnabledProvider)) {
+      return;
+    }
     try {
       if (_sseActive) {
         final silence = DateTime.now().difference(_lastMetricEvent);
@@ -337,6 +367,12 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
           icon: const Icon(Symbols.link, size: 18),
           label: Text('detailConnectForMetrics'.tr()),
         ),
+      );
+    }
+    if (!ref.watch(serverMetricsEnabledProvider)) {
+      return MaidKitEmptyState(
+        icon: Symbols.visibility_off,
+        title: 'serversMetricsDisabled'.tr(),
       );
     }
     if (_error != null && _history.isEmpty) {

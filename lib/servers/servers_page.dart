@@ -1171,14 +1171,22 @@ class _ServerCard extends ConsumerWidget {
     // Connect, the status line and its round trip — it just no longer decides
     // where the numbers come from; SSH readings are the fallback for a host
     // whose daemon does not answer.
-    final daemonStats = ref.watch(maidCafeStatsProvider)[server.id];
+    // The app-wide switch wins over both routes: with metrics off nothing is
+    // collected, so a snapshot that is still in memory is never shown as if
+    // it were live.
+    final metricsEnabled = ref.watch(serverMetricsEnabledProvider);
+    final daemonStats = metricsEnabled
+        ? ref.watch(maidCafeStatsProvider)[server.id]
+        : null;
     final sessionStatus = session?.status;
     // The feed also carries a daemon terminal for this server, and that is
     // `connected` too: only an SSH session is a connection this card can read
     // numbers from or reach SSH work through.
     final sshConnected = isLiveSshSession(session);
-    final stats = daemonStats?.stats ?? (sshConnected ? session?.stats : null);
-    final systemInfo = session?.systemInfo;
+    final stats = metricsEnabled
+        ? daemonStats?.stats ?? (sshConnected ? session?.stats : null)
+        : null;
+    final systemInfo = metricsEnabled ? session?.systemInfo : null;
     final statsFromDaemon = daemonStats != null;
     // A card with daemon statistics is live without an SSH session: that is the
     // point of the direct route, and the only statistics route in a browser. A
@@ -1286,8 +1294,9 @@ class _ServerCard extends ConsumerWidget {
                       tooltip: 'serversRefreshStatistics'.tr(),
                       visualDensity: VisualDensity.compact,
                       // A daemon-backed card refreshes the daemon; an SSH card
-                      // refreshes the session it already holds.
-                      onPressed: !connected
+                      // refreshes the session it already holds. With metrics
+                      // turned off there is nothing for either route to do.
+                      onPressed: !connected || !metricsEnabled
                           ? null
                           : statsFromDaemon
                           ? () => unawaited(
@@ -1309,7 +1318,16 @@ class _ServerCard extends ConsumerWidget {
                   // shows the transport instead of a stats grid — unless a
                   // MaidCafe daemon already answered with real numbers, which
                   // is exactly what makes those cards useful on the web.
-                  child: isTerminalOnly && stats == null
+                  // The switch hides every reading on every card, whatever
+                  // the transport: the footer still says whether a session is
+                  // up, so the card explains the empty grid rather than
+                  // pretending the host has nothing to report.
+                  child: !metricsEnabled
+                      ? _StatsMessage(
+                          icon: Symbols.visibility_off,
+                          message: 'serversMetricsDisabled'.tr(),
+                        )
+                      : isTerminalOnly && stats == null
                       ? _StatsMessage(
                           icon: connectionType == ServerConnectionType.serial
                               ? Symbols.usb

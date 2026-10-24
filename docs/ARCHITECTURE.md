@@ -23,6 +23,13 @@ MaidKit is a desktop-first Flutter application for managing SSH servers.
   session. Features SSH has no implementation for keep the daemon outright: the
   daemon console, container update checks, the compose stack registry,
   watched-process history, and the daemon's health score.
+- **Host metrics have one app-wide switch.** `serverMetricsEnabledProvider`
+  (`lib/servers/server_providers.dart`, persisted by
+  `MetricsRefreshPreferences`) turns collection off for every server at once.
+  Off means no scheduler serves a host, `SshConnectionManager` skips its metric
+  and system-information commands and refuses the Activity tab's probe, and
+  every surface shows a "metrics are turned off" placeholder instead of a
+  reading — connections, terminals and process listings keep working.
 - **Server rows are independent of transports.** `connectionType` names what the
   row *is* — `ssh`, `serial`, or `maidcafe` — and a daemon route can sit on any
   of them as a second way in. Only a row typed `maidcafe` is daemon-only; a row

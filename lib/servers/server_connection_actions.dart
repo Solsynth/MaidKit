@@ -73,6 +73,17 @@ Future<bool> refreshMaidCafeStatistics(
   WidgetRef ref,
   Server server,
 ) async {
+  if (!ref.read(serverMetricsEnabledProvider)) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: 'serversMetricsDisabled'.tr(),
+        title: 'serverCannotConnect'.tr(),
+        icon: Symbols.visibility_off,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+    return false;
+  }
   final collector = ref.read(maidCafeStatsCollectorProvider);
   final blocker = await collector.blockerFor(server);
   if (blocker != null) {

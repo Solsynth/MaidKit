@@ -45,15 +45,22 @@ class SshConnectionManager {
     this._terminalAdapterFactory, {
     bool Function()? brandingEnvironmentEnabled,
     bool Function()? sudoAutofillEnabled,
+    bool Function()? metricsEnabled,
     ServerMetricsCollector? metricsCollector,
     this.onConnected,
   }) : _brandingEnvironmentEnabled = brandingEnvironmentEnabled ?? (() => true),
        _sudoAutofillEnabled = sudoAutofillEnabled ?? (() => true),
+       _metricsEnabled = metricsEnabled ?? (() => true),
        _metricsCollector = metricsCollector ?? AutoServerMetricsCollector();
 
   final TerminalSessionAdapterFactory Function() _terminalAdapterFactory;
   final bool Function() _brandingEnvironmentEnabled;
   final bool Function() _sudoAutofillEnabled;
+
+  /// The app-wide metrics switch. Off means no statistics or system
+  /// information command ever runs, so a host that keeps dropping its session
+  /// under metric probes stays connected.
+  final bool Function() _metricsEnabled;
   final ServerMetricsCollector _metricsCollector;
 
   /// Fired after a server's SSH session becomes connected. Used to start
@@ -721,6 +728,7 @@ class SshConnectionManager {
     final state = _states[server.id];
     if (client == null || client.isClosed || state == null) return;
     await _refreshNetworkLatency(server, state);
+    if (!_metricsEnabled()) return;
     if (server.collectStats) {
       await _refreshStats(client, _states[server.id] ?? state);
     }
@@ -736,6 +744,7 @@ class SshConnectionManager {
     final state = _states[server.id];
     if (client == null || client.isClosed || state == null) return;
     await _refreshNetworkLatency(server, state);
+    if (!_metricsEnabled()) return;
     if (server.collectStats) {
       await _refreshStats(client, _states[server.id] ?? state);
     }
@@ -1103,7 +1112,13 @@ id -nu "\$uid" 2>/dev/null || printf '%s\\n' "\$uid"
 
   /// Collects raw host counters for the Activity tab in a single SSH
   /// round-trip.
+  ///
+  /// Throws when the app-wide metrics switch is off, so the Activity tab
+  /// never runs a host probe behind the user's back.
   Future<ActivityCounters> collectActivityCounters(int serverId) async {
+    if (!_metricsEnabled()) {
+      throw StateError('Host metrics are turned off.');
+    }
     return withClient(serverId, (client) async {
       final result = await _execute(client, r'''
 sh -c '
@@ -4803,6 +4818,7 @@ uname -r
   ) async {
     final state = _states[server.id];
     if (!identical(_sessions[server.id], client) || state == null) return;
+    if (!_metricsEnabled()) return;
     if (server.collectStats) await _refreshStats(client, state);
     if (server.collectSystemInfo) {
       await _refreshSystemInfo(client, _states[server.id] ?? state);

@@ -961,6 +961,27 @@ final metricsRefreshSettingsProvider = Provider<MetricsRefreshSettings>(
   (ref) => InMemoryMetricsRefreshSettings(),
 );
 
+/// The app-wide switch for host metrics: while it is off, no statistics are
+/// collected from any server — neither the SSH metric commands nor the
+/// MaidCafe daemon poll — and every surface says so instead of showing
+/// numbers.
+final serverMetricsEnabledProvider =
+    NotifierProvider<ServerMetricsEnabledNotifier, bool>(
+      ServerMetricsEnabledNotifier.new,
+    );
+
+class ServerMetricsEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.read(metricsRefreshSettingsProvider).serverMetricsEnabled;
+
+  Future<void> setEnabled(bool value) async {
+    await ref
+        .read(metricsRefreshSettingsProvider)
+        .saveServerMetricsEnabled(value);
+    state = value;
+  }
+}
+
 final privacySettingsProvider = Provider<PrivacySettings>(
   (ref) => InMemoryPrivacySettings(),
 );
@@ -1417,6 +1438,7 @@ final connectionManagerProvider = Provider<SshConnectionManager>((ref) {
     brandingEnvironmentEnabled: () =>
         ref.read(terminalBrandingEnvironmentEnabledProvider),
     sudoAutofillEnabled: () => ref.read(sudoAutofillEnabledProvider),
+    metricsEnabled: () => ref.read(serverMetricsEnabledProvider),
     onConnected: (server) => unawaited(_startAutoPortForwards(ref, server)),
   );
   ref.onDispose(manager.dispose);
@@ -1658,10 +1680,17 @@ final serverMetricsRefreshSchedulerProvider =
       // against hosts nobody is looking at. Coming back into focus re-arms
       // the timer and fills the cards in immediately, so they are never
       // stale for a whole interval.
+      final metricsEnabled = ref.watch(serverMetricsEnabledProvider);
       final dashboardFocused = ref.watch(dashboardFocusedProvider);
+      // The switch turns the whole schedule off, not just the numbers: no
+      // metric command runs while it is off. Servers whose collection is
+      // already disabled per row are dropped here too, so the scheduler never
+      // arms a timer that would do nothing.
       scheduler.update(
         interval: interval,
-        servers: dashboardFocused ? servers : const <Server>[],
+        servers: metricsEnabled && dashboardFocused
+            ? servers
+            : const <Server>[],
         sessions: sessions,
         focusedServerId: focusedServerId,
         // Hosts whose daemon currently answers have their numbers from it;
@@ -1725,15 +1754,17 @@ final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
     releaseRoutes: collector.closeAll,
   );
   final dashboardFocused = ref.watch(dashboardFocusedProvider);
+  final metricsEnabled = ref.watch(serverMetricsEnabledProvider);
   final interval = ref.watch(serverMetricsRefreshIntervalProvider);
   final servers = ref.watch(serversProvider).asData?.value ?? const <Server>[];
   // Only the dashboard's cards read these snapshots: no daemon is dialled
   // while the dashboard sits behind another tab. Coming back re-arms the
   // scheduler, whose refresh fires at once so the cards are not stale for a
-  // whole interval.
+  // whole interval. The metrics switch empties the served set too, so a
+  // daemon is not polled while the user has metrics turned off.
   scheduler.update(
     interval: interval,
-    servers: dashboardFocused ? servers : const <Server>[],
+    servers: metricsEnabled && dashboardFocused ? servers : const <Server>[],
   );
   ref.onDispose(scheduler.dispose);
   return scheduler;

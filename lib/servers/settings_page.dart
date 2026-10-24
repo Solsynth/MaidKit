@@ -121,6 +121,7 @@ class SettingsPage extends HookConsumerWidget {
       workspaceRestoreOnStartupProvider,
     );
     final hideServerAddresses = ref.watch(hideServerAddressesProvider);
+    final serverMetricsEnabled = ref.watch(serverMetricsEnabledProvider);
     final transferConflictMode = ref.watch(transferConflictModeProvider);
     final refreshInterval = ref.watch(serverMetricsRefreshIntervalProvider);
     final focusedRefreshInterval = ref.watch(
@@ -578,6 +579,17 @@ class SettingsPage extends HookConsumerWidget {
                             value: hideServerAddresses,
                             onChanged: (value) => ref
                                 .read(hideServerAddressesProvider.notifier)
+                                .setEnabled(value),
+                          ),
+                          SwitchListTile(
+                            contentPadding: _sectionTilePadding,
+                            title: const Text('settingsServerMetrics').tr(),
+                            subtitle: const Text(
+                              'settingsServerMetricsHint',
+                            ).tr(),
+                            value: serverMetricsEnabled,
+                            onChanged: (value) => ref
+                                .read(serverMetricsEnabledProvider.notifier)
                                 .setEnabled(value),
                           ),
                           Padding(
