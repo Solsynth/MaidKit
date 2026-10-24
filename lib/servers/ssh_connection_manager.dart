@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/data/local/app_database.dart';
@@ -322,18 +324,12 @@ class SshConnectionManager {
     // Servers commonly reject TERM_PROGRAM unless it is listed in
     // AcceptEnv; the dialect command below sets it inside the shell instead.
     final shellEnvironment = <String, String>{...?environment};
-    late SSHSession shell;
-    try {
-      shell = await client.shell(
-        pty: const SSHPtyConfig(type: 'xterm-256color', width: 120, height: 36),
-        environment: shellEnvironment.isEmpty ? null : shellEnvironment,
-      );
-    } catch (_) {
-      client.close();
-      rethrow;
-    }
+    final shell = await _openShell(client, shellEnvironment);
     final terminal = _terminalAdapterFactory().create();
     final terminalId = 'terminal-${_nextTerminalId++}';
+    // Completed on a normal shell exit or an explicit close; left open across
+    // unexpected disconnects so the pane survives to reconnect.
+    final doneCompleter = Completer<void>();
     final binding = TerminalSessionBinding(
       adapter: terminal,
       stdout: shell.stdout,
@@ -360,6 +356,17 @@ class SshConnectionManager {
     _terminals[terminalId] = _TerminalConnection(
       serverId: server.id,
       jumpHostServerId: server.jumpHostServerId,
+      reconnect: _TerminalReconnect(
+        server: server,
+        credential: credential,
+        approve: approve,
+        knownHostKeyFingerprint: knownHostKeyFingerprint,
+        proxy: proxy,
+        approveAuth: approveAuth,
+        initialDirectory: initialDirectory,
+        environment: shellEnvironment,
+      ),
+      doneCompleter: doneCompleter,
       client: client,
       shell: shell,
       binding: binding,
@@ -371,14 +378,7 @@ class SshConnectionManager {
     if (initialOutput != null && initialOutput.isNotEmpty) {
       terminal.replayHistory(initialOutput);
     }
-    // A remote shell ending is normal (`exit`, a logout, or a network drop).
-    // Do not use `whenComplete` here: its returned future re-emits an SSH
-    // channel error and, because this is fire-and-forget cleanup, would become
-    // an unhandled application error.
-    shell.done.then<void>(
-      (_) => _closeTerminalAfterShellEnds(terminalId, shell),
-      onError: (_, _) => _closeTerminalAfterShellEnds(terminalId, shell),
-    );
+    _watchShellEnded(terminalId, client, shell);
     if (brandingDialect != null) {
       // Neofetch prioritizes SSH_CONNECTION/SSH_TTY over TERM_PROGRAM. Keep
       // this scoped to the interactive shell so it can identify MaidKit
@@ -401,7 +401,7 @@ class SshConnectionManager {
     return TerminalSessionHandle(
       id: terminalId,
       adapter: terminal,
-      done: shell.done,
+      done: doneCompleter.future,
     );
   }
 
@@ -479,6 +479,9 @@ class SshConnectionManager {
   Future<void> closeTerminal(String terminalId) async {
     final terminal = _terminals.remove(terminalId);
     if (terminal == null) return;
+    if (!terminal.doneCompleter.isCompleted) terminal.doneCompleter.complete();
+    terminal.reconnectInput?.cancel();
+    terminal.reconnectInput = null;
     // The remote shell may already have closed its channel by the time this
     // runs. Treat those close races as successful cleanup rather than letting
     // an `exit` command escape as an unhandled error.
@@ -488,7 +491,32 @@ class SshConnectionManager {
     try {
       await terminal.binding.close();
     } catch (_) {}
+    // `binding.close()` disposes the adapter only while the session is live.
+    // A terminal retained after a disconnect closed its binding with the
+    // adapter kept; release it here regardless (dispose is idempotent).
+    try {
+      await terminal.binding.adapter.dispose();
+    } catch (_) {}
     terminal.client.close();
+  }
+
+  /// Opens an interactive shell on [client] with the given environment.
+  ///
+  /// Closing the client on failure mirrors [openTerminal]'s original behavior:
+  /// a shell request that cannot be answered must not leak the connection.
+  Future<SSHSession> _openShell(
+    SSHClient client,
+    Map<String, String> environment,
+  ) async {
+    try {
+      return await client.shell(
+        pty: const SSHPtyConfig(type: 'xterm-256color', width: 120, height: 36),
+        environment: environment.isEmpty ? null : environment,
+      );
+    } catch (_) {
+      client.close();
+      rethrow;
+    }
   }
 
   /// Measures an SSH command round trip for an open terminal connection.
@@ -506,9 +534,186 @@ class SshConnectionManager {
         : null;
   }
 
-  void _closeTerminalAfterShellEnds(String terminalId, SSHSession shell) {
-    if (!identical(_terminals[terminalId]?.shell, shell)) return;
-    unawaited(closeTerminal(terminalId).catchError((_) {}));
+  /// Watches one shell for its end and routes it to the normal or reconnect
+  /// path.
+  ///
+  /// The client's transport completes with an error when the network drops out
+  /// from under the shell; a clean transport close (the peer, or our own
+  /// teardown after an `exit`) does not. The flag is set by the client's own
+  /// close handler before [SSHSession.done] completes, so it is authoritative
+  /// by the time the shell ends.
+  void _watchShellEnded(String terminalId, SSHClient client, SSHSession shell) {
+    var transportFailed = false;
+    client.done.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) => transportFailed = true,
+    );
+    // A remote shell ending is normal (`exit`, a logout, or a network drop).
+    // Do not use `whenComplete` here: its returned future re-emits an SSH
+    // channel error and, because this is fire-and-forget cleanup, would become
+    // an unhandled application error.
+    shell.done.then<void>(
+      (_) => _handleShellEnded(terminalId, shell, unexpected: transportFailed),
+      onError: (_, _) => _handleShellEnded(terminalId, shell, unexpected: true),
+    );
+  }
+
+  void _handleShellEnded(
+    String terminalId,
+    SSHSession shell, {
+    required bool unexpected,
+  }) {
+    final connection = _terminals[terminalId];
+    if (connection == null || !identical(connection.shell, shell)) return;
+    if (unexpected) {
+      _markDisconnected(terminalId, connection);
+    } else {
+      unawaited(closeTerminal(terminalId).catchError((_) {}));
+    }
+  }
+
+  /// Retains the terminal after an unexpected disconnect: keeps the adapter
+  /// and its scrollback, prints the reconnect hint, and watches offline input
+  /// for the `reconnect` command.
+  void _markDisconnected(String terminalId, _TerminalConnection connection) {
+    if (connection.disconnected) return;
+    connection.disconnected = true;
+    // The shell streams have already closed; release the wiring without
+    // disposing the adapter so the pane keeps its scrollback while it waits.
+    unawaited(
+      connection.binding.close(disposeAdapter: false).catchError((_) {}),
+    );
+    connection.binding.adapter.write(
+      utf8.encode('\r\n\r\n${'sessionsUnexpectedDisconnect'.tr()}\r\n'),
+    );
+    connection.reconnectInput = _armReconnectInput(terminalId, connection);
+  }
+
+  /// Listens to offline keystrokes, echoing them locally and firing
+  /// [_reconnect] when the user submits the `reconnect` command.
+  StreamSubscription<Uint8List> _armReconnectInput(
+    String terminalId,
+    _TerminalConnection connection,
+  ) {
+    final adapter = connection.binding.adapter;
+    final line = BytesBuilder(copy: false);
+    return adapter.outgoingBytes.listen((bytes) {
+      if (connection.reconnecting) return;
+      final echo = BytesBuilder(copy: false);
+      for (final byte in bytes) {
+        if (byte == 0x0d || byte == 0x0a) {
+          // Normalize line endings so the offline echo reads as a newline.
+          echo.add(const [0x0d, 0x0a]);
+          final command = utf8
+              .decode(line.takeBytes(), allowMalformed: true)
+              .trim();
+          if (command == 'reconnect') {
+            unawaited(_reconnect(terminalId, connection));
+          } else if (command.isNotEmpty) {
+            adapter.write(
+              utf8.encode('${'sessionsUnexpectedDisconnect'.tr()}\r\n'),
+            );
+          }
+        } else {
+          line.addByte(byte);
+          echo.addByte(byte);
+        }
+      }
+      if (echo.length > 0) adapter.write(echo.takeBytes());
+    });
+  }
+
+  /// Re-dials the same host and rewires the retained adapter to a fresh shell.
+  ///
+  /// On success the pane stays put and the new shell picks up where the old
+  /// one left off; on failure the pane stays disconnected and re-arms the
+  /// `reconnect` command so the user can retry.
+  Future<void> _reconnect(
+    String terminalId,
+    _TerminalConnection connection,
+  ) async {
+    if (connection.reconnecting) return;
+    connection.reconnecting = true;
+    connection.reconnectInput?.cancel();
+    connection.reconnectInput = null;
+    final adapter = connection.binding.adapter;
+    adapter.write(utf8.encode('${'sessionsReconnecting'.tr()}\r\n'));
+    try {
+      final reconnect = connection.reconnect;
+      final client = await _createClient(
+        reconnect.server,
+        reconnect.credential,
+        reconnect.approve,
+        knownHostKeyFingerprint: reconnect.knownHostKeyFingerprint,
+        approveAuth: reconnect.approveAuth,
+        proxy: reconnect.proxy,
+      );
+      // The pane may have been closed while the dial was in flight.
+      if (!identical(_terminals[terminalId], connection)) {
+        client.close();
+        return;
+      }
+      final shell = await _openShell(client, reconnect.environment);
+      if (!identical(_terminals[terminalId], connection)) {
+        client.close();
+        return;
+      }
+      RemoteShellDialect? brandingDialect;
+      if (_brandingEnvironmentEnabled()) {
+        try {
+          brandingDialect = await _detectRemoteShellDialect(
+            client,
+            reconnect.server,
+          );
+        } catch (_) {
+          brandingDialect = null;
+        }
+      }
+      final binding = TerminalSessionBinding(
+        adapter: adapter,
+        stdout: shell.stdout,
+        stderr: shell.stderr,
+        send: shell.write,
+        resize: (event) => shell.resizeTerminal(
+          event.columns,
+          event.rows,
+          event.pixelWidth,
+          event.pixelHeight,
+        ),
+        autoFillSecret:
+            _sudoAutofillEnabled() &&
+                reconnect.credential.type == CredentialType.password
+            ? reconnect.credential.password
+            : null,
+      );
+      adapter.bindSudoAutofill(binding.autofillReady);
+      connection.client = client;
+      connection.shell = shell;
+      connection.binding = binding;
+      connection.disconnected = false;
+      connection.reconnecting = false;
+      _watchShellEnded(terminalId, client, shell);
+      if (brandingDialect != null) {
+        shell.write(utf8.encode(terminalBrandingCommand(brandingDialect)));
+      }
+      // Return to where the user was: the live OSC 7 directory when known,
+      // else the directory the session originally opened in.
+      final directory = adapter.currentDirectory ?? reconnect.initialDirectory;
+      if (directory != null && directory.isNotEmpty) {
+        shell.write(utf8.encode('cd ${_shellSingleQuote(directory)}\n'));
+      }
+      adapter.write(utf8.encode('${'sessionsReconnected'.tr()}\r\n'));
+    } catch (error) {
+      connection.reconnecting = false;
+      if (!identical(_terminals[terminalId], connection)) return;
+      adapter.write(
+        utf8.encode(
+          '\r\n${'sessionsReconnectFailed'.tr(args: [error.toString()])}\r\n',
+        ),
+      );
+      adapter.write(utf8.encode('${'sessionsUnexpectedDisconnect'.tr()}\r\n'));
+      connection.reconnectInput = _armReconnectInput(terminalId, connection);
+    }
   }
 
   Future<void> refreshServerInfo(Server server) async {
@@ -4579,7 +4784,6 @@ uname -r
     _sessions.remove(server.id);
     _sessionJumpHosts.remove(server.id);
     unawaited(_closeDependentSessions(server.id));
-    unawaited(_closeTerminalsFor(server.id));
     unawaited(_closeTerminalsForJumpHost(server.id));
     unawaited(_stopPortForwardsFor(server.id));
     final state = _states[server.id];
@@ -4656,16 +4860,6 @@ uname -r
         .toList();
     for (final id in ids) {
       await _stopPortForward(id, allowManaged: true);
-    }
-  }
-
-  Future<void> _closeTerminalsFor(int serverId) async {
-    final terminalIds = _terminals.entries
-        .where((entry) => entry.value.serverId == serverId)
-        .map((entry) => entry.key)
-        .toList();
-    for (final terminalId in terminalIds) {
-      await closeTerminal(terminalId);
     }
   }
 
@@ -5001,9 +5195,11 @@ class TerminalSessionHandle {
 }
 
 class _TerminalConnection {
-  const _TerminalConnection({
+  _TerminalConnection({
     required this.serverId,
     required this.jumpHostServerId,
+    required this.reconnect,
+    required this.doneCompleter,
     required this.client,
     required this.shell,
     required this.binding,
@@ -5011,9 +5207,53 @@ class _TerminalConnection {
 
   final int serverId;
   final int? jumpHostServerId;
-  final SSHClient client;
-  final SSHSession shell;
-  final TerminalSessionBinding binding;
+
+  /// Everything needed to dial the same host again after an unexpected
+  /// disconnect.
+  final _TerminalReconnect reconnect;
+
+  /// Completed when the terminal is truly done — a normal shell exit at any
+  /// point in its reconnect history, or an explicit close. Never completed by
+  /// an unexpected disconnect, so the pane survives to reconnect.
+  final Completer<void> doneCompleter;
+
+  SSHClient client;
+  SSHSession shell;
+  TerminalSessionBinding binding;
+
+  /// True while the transport dropped and the pane waits for `reconnect`.
+  bool disconnected = false;
+
+  /// True while a reconnect attempt is in flight, suppressing re-entry.
+  bool reconnecting = false;
+
+  /// Offline input watcher looking for the `reconnect` command.
+  StreamSubscription<Uint8List>? reconnectInput;
+}
+
+/// The connection parameters [openTerminal] received, retained so a
+/// disconnected terminal can dial the same host again without re-prompting for
+/// its credential.
+class _TerminalReconnect {
+  const _TerminalReconnect({
+    required this.server,
+    required this.credential,
+    required this.approve,
+    required this.knownHostKeyFingerprint,
+    required this.proxy,
+    required this.approveAuth,
+    required this.initialDirectory,
+    required this.environment,
+  });
+
+  final Server server;
+  final ServerCredential credential;
+  final HostKeyApproval approve;
+  final String? knownHostKeyFingerprint;
+  final ServerProxy? proxy;
+  final AuthChallengeApproval? approveAuth;
+  final String? initialDirectory;
+  final Map<String, String> environment;
 }
 
 /// Handle for a live `logs -f` stream. Call [cancel] to stop the remote process.

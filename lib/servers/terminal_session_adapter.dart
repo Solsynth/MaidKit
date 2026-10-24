@@ -750,7 +750,10 @@ class TerminalSessionBinding {
     adapter.write(_outputBuffer.takeBytes());
   }
 
-  Future<void> close() async {
+  /// Releases the shell wiring. [disposeAdapter] keeps the terminal renderer
+  /// alive when the transport dropped unexpectedly and the pane is retained
+  /// for reconnect — the adapter must outlive the binding in that case.
+  Future<void> close({bool disposeAdapter = true}) async {
     if (_closed) return;
     _flushTerminalOutput();
     _closed = true;
@@ -759,6 +762,6 @@ class TerminalSessionBinding {
       _subscriptions.map((subscription) => subscription.cancel()),
     );
     await _autofillReady.close();
-    await adapter.dispose();
+    if (disposeAdapter) await adapter.dispose();
   }
 }
