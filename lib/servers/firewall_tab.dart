@@ -5,6 +5,8 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
+import 'package:maid_kit/theme.dart';
 import 'firewall_models.dart';
 import 'maidcafe_session_registry.dart';
 import 'maidcafe_stream.dart';
@@ -379,22 +381,27 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
   @override
   Widget build(BuildContext context) {
     if (!widget.connected) {
-      return _FirewallEmpty(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: widget.connectionError ?? 'firewallConnectToManage'.tr(),
-        actionLabel: 'commonConnect'.tr(),
-        onAction: widget.onConnect,
-        filled: true,
+        title: widget.connectionError ?? 'firewallConnectToManage'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: widget.onConnect,
+          icon: const Icon(Symbols.link, size: 18),
+          label: Text('commonConnect'.tr()),
+        ),
       );
     }
 
     return _status.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => _FirewallEmpty(
+      error: (error, _) => MaidKitEmptyState(
         icon: Symbols.error_outline,
-        message: 'firewallLoadError'.tr(args: [error.toString()]),
-        actionLabel: 'commonRefresh'.tr(),
-        onAction: _load,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        title: 'firewallLoadError'.tr(args: [error.toString()]),
+        action: OutlinedButton(
+          onPressed: _load,
+          child: Text('commonRefresh'.tr()),
+        ),
       ),
       data: (status) {
         final theme = Theme.of(context);
@@ -501,22 +508,28 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
             Divider(height: 1, color: scheme.outlineVariant),
             Expanded(
               child: status.backend == FirewallBackend.none
-                  ? _FirewallEmpty(
+                  ? MaidKitEmptyState(
                       icon: Symbols.shield,
-                      message: status.error ?? 'firewallNoToolFound'.tr(),
-                      actionLabel: 'commonRefresh'.tr(),
-                      onAction: _load,
+                      title: status.error ?? 'firewallNoToolFound'.tr(),
+                      action: OutlinedButton(
+                        onPressed: _load,
+                        child: Text('commonRefresh'.tr()),
+                      ),
                     )
                   : status.rules.isEmpty
-                  ? _FirewallEmpty(
+                  ? MaidKitEmptyState(
                       icon: Symbols.shield,
-                      message: status.active
+                      title: status.active
                           ? 'firewallNoRules'.tr(args: [status.backend.label])
                           : 'firewallInactive'.tr(args: [status.backend.label]),
-                      actionLabel: editable && status.active
-                          ? 'firewallAddRule'.tr()
-                          : 'commonRefresh'.tr(),
-                      onAction: editable && status.active ? _addRule : _load,
+                      action: OutlinedButton(
+                        onPressed: editable && status.active ? _addRule : _load,
+                        child: Text(
+                          editable && status.active
+                              ? 'firewallAddRule'.tr()
+                              : 'commonRefresh'.tr(),
+                        ),
+                      ),
                     )
                   : ListView.separated(
                       itemCount: status.rules.length,
@@ -602,7 +615,7 @@ class _ActiveChip extends StatelessWidget {
         color: active
             ? scheme.secondaryContainer
             : scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Text(
         active ? 'firewallActive'.tr() : 'firewallInactiveLabel'.tr(),
@@ -758,58 +771,6 @@ class _AddFirewallRuleSheetState extends State<_AddFirewallRuleSheet> {
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FirewallEmpty extends StatelessWidget {
-  const _FirewallEmpty({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.filled = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 32, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
-              if (filled)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: const Icon(Symbols.link),
-                  label: Text(actionLabel!),
-                )
-              else
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-            ],
           ],
         ),
       ),

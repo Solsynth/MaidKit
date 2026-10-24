@@ -16,6 +16,7 @@ import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/presentation/window_chrome.dart';
 import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'package:maid_kit/theme.dart';
 import 'assets_page.dart';
 import 'maidcafe_cloud_page.dart';
 import 'server_connection_actions.dart';
@@ -478,8 +479,11 @@ class _PaneTabBar extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final topInset = MediaQuery.paddingOf(context).top;
 
+    // The strip is the paper the tabs are cut from: the focused pane gets the
+    // lighter tone so the selected chip (painted `surface`) lifts off it, and
+    // an unfocused pane steps one tone deeper and recedes.
     return Material(
-      color: focused ? scheme.surfaceContainerHigh : scheme.surfaceContainerLow,
+      color: focused ? scheme.surfaceContainerLow : scheme.surfaceContainer,
       child: LayoutBuilder(
         builder: (context, constraints) {
           // A narrow pane keeps one title — the tab the user is on — and lets
@@ -697,8 +701,15 @@ class _TabDropTail extends StatelessWidget {
           width: 28,
           height: _paneTabBarHeight,
           child: active
-              ? Align(
-                  child: Container(width: 2, height: 20, color: scheme.primary),
+              ? Center(
+                  child: Container(
+                    width: 2,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: BorderRadius.circular(MaidKitRadius.xs),
+                    ),
+                  ),
                 )
               : null,
         );
@@ -744,11 +755,14 @@ class _DraggablePaneTab extends StatelessWidget {
       onClose: onClose,
     );
     final dragData = _TabDragData(tabId: tab.id, fromPaneId: paneId);
+    // The chip under the pointer keeps the tab's own shape, so the drag reads
+    // as moving this tab rather than a floating tooltip.
     final feedback = Material(
       elevation: 4,
-      color: scheme.surfaceContainerHighest,
+      color: scheme.surface,
+      borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       child: SizedBox(
-        height: _paneTabBarHeight,
+        height: 32,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
           child: Row(
@@ -803,7 +817,10 @@ class _DraggablePaneTab extends StatelessWidget {
                 Container(
                   width: 2,
                   margin: const EdgeInsets.symmetric(vertical: 8),
-                  color: scheme.primary,
+                  decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(MaidKitRadius.xs),
+                  ),
                 ),
               draggable,
             ],
@@ -831,7 +848,8 @@ class _PaneTabChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return SizedBox(
       height: _paneTabBarHeight,
       child: Listener(
@@ -840,71 +858,94 @@ class _PaneTabChip extends StatelessWidget {
             onClose();
           }
         },
-        child: InkWell(
-          onTap: onSelect,
-          child: DecoratedBox(
+        // The selected tab is a tonal capsule sitting on the strip rather than
+        // a tab glued to a bottom rule: it keeps the strip's single row height
+        // while still reading as the active surface. The fill steps to the
+        // raised container tone — darker than the strip in light mode and
+        // lighter in dark mode — so selection stays legible either way.
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+          // `Ink` paints the selected tab's tonal surface onto the strip's own
+          // Material, so the strip stays the only Material in the row and the
+          // chip's splash still lands above its fill.
+          child: Ink(
             decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: selected ? scheme.primary : Colors.transparent,
-                  width: 2,
-                ),
-              ),
+              color: selected
+                  ? scheme.surfaceContainerHigh
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
             ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _TabActivityIcon(
-                    tab: tab,
-                    color: selected ? scheme.primary : null,
-                  ),
-                  // Growing the label's width out of the icon is what reads as
-                  // the title expanding; the clip keeps the text hidden while
-                  // the width is still on its way to zero.
-                  ClipRect(
-                    child: AnimatedAlign(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: showTitle ? 1 : 0,
-                      duration: _paneTabTitleDuration,
-                      curve: Curves.easeOutCubic,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(width: 6),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: _paneTabTitleMaxWidth,
+            child: InkWell(
+              onTap: onSelect,
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 10, right: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _TabActivityIcon(
+                      tab: tab,
+                      color: selected ? scheme.primary : null,
+                    ),
+                    // Growing the label's width out of the icon is what reads
+                    // as the title expanding; the clip keeps the text hidden
+                    // while the width is still on its way to zero.
+                    ClipRect(
+                      child: AnimatedAlign(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: showTitle ? 1 : 0,
+                        duration: _paneTabTitleDuration,
+                        curve: Curves.easeOutCubic,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(width: 6),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                maxWidth: _paneTabTitleMaxWidth,
+                              ),
+                              child: Text(
+                                _tabLabel(tab),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
+                                  color: selected
+                                      ? scheme.onSurface
+                                      : scheme.onSurfaceVariant,
+                                ),
+                              ),
                             ),
-                            child: Text(
-                              _tabLabel(tab),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelMedium
-                                  ?.copyWith(
-                                    color: selected ? scheme.primary : null,
-                                  ),
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 2),
-                  if (tab is! DashboardTab)
-                    IconButton(
-                      tooltip: 'sessionsCloseTab'.tr(),
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 28,
-                        minHeight: 28,
+                    // The title gets its own air before the close affordance
+                    // so the button never reads as punctuation on the tab's
+                    // name. The button is a 24px cell rather than the padded
+                    // 48px tap target the theme would give it, which is what
+                    // used to swallow the gap and crowd the title.
+                    const SizedBox(width: 12),
+                    if (tab is! DashboardTab)
+                      IconButton(
+                        tooltip: 'sessionsCloseTab'.tr(),
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(24, 24),
+                          maximumSize: const Size(24, 24),
+                          padding: EdgeInsets.zero,
+                          // The theme's padded tap target inflates this button
+                          // to 40px wide inside a 32px chip, which is what used
+                          // to crowd the title; shrink-wrap lets the 24px cell
+                          // stand.
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: onClose,
+                        icon: const Icon(Symbols.close, size: 15),
                       ),
-                      onPressed: onClose,
-                      icon: const Icon(Symbols.close, size: 16),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

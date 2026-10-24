@@ -595,7 +595,7 @@ class _GuideCodeBlock extends StatelessWidget {
           decoration: BoxDecoration(
             color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
             border: Border.all(color: scheme.outlineVariant),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           ),
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxHeight),

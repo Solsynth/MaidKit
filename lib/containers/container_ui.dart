@@ -1,6 +1,5 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/theme.dart';
 
@@ -229,12 +228,12 @@ class ContainerGroup extends StatelessWidget {
       ],
     ];
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(MaidKitRadius.md),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: containerCardColor(scheme),
           border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(MaidKitRadius.md),
         ),
         child: Theme(
           // The expansion divider is drawn by the theme, and this card already
@@ -350,63 +349,6 @@ List<Widget> spacedContainerGroups(List<Widget> groups) => [
     if (i != groups.length - 1) const SizedBox(height: 12),
   ],
 ];
-
-/// The empty, not-installed and failed states, in one place so the container
-/// and image lists cannot drift apart.
-class ContainerEmptyPanel extends StatelessWidget {
-  const ContainerEmptyPanel({
-    super.key,
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.actionIcon,
-    this.filledAction = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final IconData? actionIcon;
-  final bool filledAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 32, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
-              if (filledAction)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: Icon(actionIcon ?? Symbols.refresh),
-                  label: Text(actionLabel!),
-                )
-              else
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 /// The mono face for machine facts, at the sizes this surface uses.
 TextStyle containerMono(ThemeData theme, {double size = 12}) => theme

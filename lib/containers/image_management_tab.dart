@@ -21,6 +21,7 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
 
@@ -356,22 +357,26 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
       return Center(child: Text('commonUnavailable'.tr()));
     }
     if (!widget.connected) {
-      return ContainerEmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: widget.connectionError ?? 'imagesConnectToManage'.tr(),
-        actionLabel: 'commonConnect'.tr(),
-        onAction: widget.onConnect,
-        filledAction: true,
-        actionIcon: Symbols.link,
+        title: widget.connectionError ?? 'imagesConnectToManage'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: widget.onConnect,
+          icon: const Icon(Symbols.link, size: 18),
+          label: Text('commonConnect'.tr()),
+        ),
       );
     }
     return _environments.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => ContainerEmptyPanel(
+      error: (error, _) => MaidKitEmptyState(
         icon: Symbols.error_outline,
-        message: 'imagesLoadError'.tr(args: [error.toString()]),
-        actionLabel: 'imagesTryAgain'.tr(),
-        onAction: _load,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        title: 'imagesLoadError'.tr(args: [error.toString()]),
+        action: OutlinedButton(
+          onPressed: _load,
+          child: Text('imagesTryAgain'.tr()),
+        ),
       ),
       data: (environments) => _ImageEnvironments(
         environments: environments,
@@ -505,7 +510,7 @@ class _PruneImagesSheetState extends State<_PruneImagesSheet> {
           DecoratedBox(
             decoration: BoxDecoration(
               border: Border.all(color: scheme.outlineVariant),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
               color: scheme.surfaceContainerLowest,
             ),
             child: Padding(
@@ -555,7 +560,7 @@ class _CountChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Text(
@@ -600,13 +605,14 @@ class _ImageEnvironments extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (environments.isEmpty) {
-      return ContainerEmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.image,
-        message: 'containersNotInstalled'.tr(),
-        actionLabel: 'containersInstallRuntimeShort'.tr(),
-        onAction: onInstallRuntime,
-        filledAction: true,
-        actionIcon: Symbols.download,
+        title: 'containersNotInstalled'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: onInstallRuntime,
+          icon: const Icon(Symbols.download, size: 18),
+          label: Text('containersInstallRuntimeShort'.tr()),
+        ),
       );
     }
 

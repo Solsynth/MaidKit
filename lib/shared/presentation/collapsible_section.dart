@@ -1,7 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
-/// A bordered, compact disclosure section used across the workspace.
+import 'package:maid_kit/theme.dart';
+
+/// A tonal, compact disclosure section used across the workspace.
 class MaidKitCollapsibleSection extends StatefulWidget {
   const MaidKitCollapsibleSection({
     super.key,
@@ -32,27 +34,34 @@ class _MaidKitCollapsibleSectionState extends State<MaidKitCollapsibleSection> {
 
   @override
   Widget build(BuildContext context) {
-    final outline = Theme.of(context).colorScheme.outlineVariant;
-    return ExpansionTile(
-      initiallyExpanded: _expanded,
-      onExpansionChanged: (expanded) => setState(() => _expanded = expanded),
-      tilePadding: widget.tilePadding,
-      childrenPadding: widget.childrenPadding,
-      leading: widget.icon == null ? null : Icon(widget.icon),
-      title: widget.title,
-      subtitle: widget.subtitle,
-      trailing: Icon(
-        _expanded ? Symbols.keyboard_arrow_up : Symbols.keyboard_arrow_down,
+    final scheme = Theme.of(context).colorScheme;
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(MaidKitRadius.lg),
+    );
+    // Separation comes from tone, not an outline: the section is a slightly
+    // deeper sheet of the page's paper, matching `CardThemeData`.
+    return Material(
+      color: scheme.surfaceContainer,
+      shape: shape,
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        initiallyExpanded: _expanded,
+        onExpansionChanged: (expanded) => setState(() => _expanded = expanded),
+        tilePadding: widget.tilePadding,
+        childrenPadding: widget.childrenPadding,
+        leading: widget.icon == null
+            ? null
+            : Icon(widget.icon, color: scheme.onSurfaceVariant),
+        title: widget.title,
+        subtitle: widget.subtitle,
+        trailing: Icon(
+          _expanded ? Symbols.keyboard_arrow_up : Symbols.keyboard_arrow_down,
+          color: scheme.onSurfaceVariant,
+        ),
+        shape: shape,
+        collapsedShape: shape,
+        children: widget.children,
       ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: outline),
-      ),
-      collapsedShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: outline),
-      ),
-      children: widget.children,
     );
   }
 }

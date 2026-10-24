@@ -8,6 +8,8 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
+import 'package:maid_kit/theme.dart';
 import 'activity_models.dart';
 import 'server_providers.dart';
 import 'server_models.dart';
@@ -351,20 +353,26 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   @override
   Widget build(BuildContext context) {
     if (!widget.connected) {
-      return _ActivityEmpty(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: widget.connectionError ?? 'activityConnectToStream'.tr(),
-        actionLabel: 'detailConnectForMetrics'.tr(),
-        onAction: widget.onConnect,
-        filled: true,
+        title: widget.connectionError ?? 'activityConnectToStream'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: widget.onConnect,
+          icon: const Icon(Symbols.link, size: 18),
+          label: Text('detailConnectForMetrics'.tr()),
+        ),
       );
     }
     if (_error != null && _history.isEmpty) {
-      return _ActivityEmpty(
+      return MaidKitEmptyState(
         icon: Symbols.error_outline,
-        message: 'activityError'.tr(args: [_error!]),
-        actionLabel: 'commonRetry'.tr(),
-        onAction: _poll,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        title: 'activityError'.tr(args: [_error!]),
+        action: FilledButton.tonalIcon(
+          onPressed: _poll,
+          icon: const Icon(Symbols.refresh, size: 18),
+          label: Text('commonRetry'.tr()),
+        ),
       );
     }
     if (_history.isEmpty) {
@@ -657,7 +665,7 @@ class _StatTile extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -728,7 +736,7 @@ class _ChartCard extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
@@ -785,7 +793,7 @@ class _DiskCard extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -830,7 +838,7 @@ class _DiskCard extends StatelessWidget {
               ]
             else
               ClipRRect(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(MaidKitRadius.xs),
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 8,
@@ -897,7 +905,7 @@ class _DiskUsageRow extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(MaidKitRadius.xs),
           child: LinearProgressIndicator(
             value: progress,
             minHeight: 6,
@@ -1227,58 +1235,6 @@ class _NetworkLineChart extends StatelessWidget {
     if (bps < 1024) return '${bps.toStringAsFixed(0)}B';
     if (bps < 1024 * 1024) return '${(bps / 1024).toStringAsFixed(0)}K';
     return '${(bps / (1024 * 1024)).toStringAsFixed(1)}M';
-  }
-}
-
-class _ActivityEmpty extends StatelessWidget {
-  const _ActivityEmpty({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.filled = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 32, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
-              if (filled)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: const Icon(Symbols.link),
-                  label: Text(actionLabel!),
-                )
-              else
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-            ],
-          ],
-        ),
-      ),
-    );
   }
 }
 

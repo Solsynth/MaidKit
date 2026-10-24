@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:maid_kit/servers/window_state_preferences.dart';
+import 'package:maid_kit/theme.dart';
 
 /// Whether the app runs inside a native desktop window.
 bool get isMaidKitDesktop =>
@@ -126,7 +127,9 @@ class MaidKitTitleBar extends StatelessWidget {
     if (!isMaidKitDesktop) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: scheme.surface,
+      // Same paper as a pane tab strip, so the bar does not change tone when
+      // the workspace takes the title bar over.
+      color: scheme.surfaceContainerLow,
       child: MaidKitWindowDragArea(
         child: SizedBox(
           height: kMaidKitTitleBarHeight,
@@ -243,9 +246,9 @@ class _MaidKitWindowButtonsState extends State<MaidKitWindowButtons>
         _WindowButton(
           icon: Symbols.close,
           tooltip: 'windowClose'.tr(),
-          // The one place the strip may raise its voice: the close button
-          // turns into the platform's danger color under the pointer.
-          hoverColor: scheme.error,
+          // The one place the strip may raise its voice: the glyph turns into
+          // the danger color under the pointer while the surface stays quiet.
+          iconHoverColor: scheme.error,
           onPressed: () => unawaited(closeMaidKitWindow()),
         ),
       ],
@@ -253,34 +256,45 @@ class _MaidKitWindowButtonsState extends State<MaidKitWindowButtons>
   }
 }
 
+/// One window control: a rounded 32×28 hit area centered in the title bar.
+///
+/// The buttons no longer fill the strip edge to edge, so they read as controls
+/// on the bar instead of segments of it, and their hover surface is the same
+/// quiet tonal step the rest of the chrome uses.
 class _WindowButton extends StatelessWidget {
   const _WindowButton({
     required this.icon,
     required this.tooltip,
     required this.onPressed,
-    this.hoverColor,
+    this.iconHoverColor,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
-  final Color? hoverColor;
+
+  /// Ink the glyph takes while the pointer is over the button.
+  final Color? iconHoverColor;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onPressed,
-        hoverColor: hoverColor,
-        child: SizedBox(
-          width: 44,
-          height: kMaidKitTitleBarHeight,
-          child: Icon(
-            icon,
-            size: 16,
-            color: hoverColor == null ? scheme.onSurfaceVariant : null,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+          hoverColor: scheme.surfaceContainerHighest,
+          child: SizedBox(
+            width: 32,
+            height: 28,
+            child: Icon(
+              icon,
+              size: 16,
+              color: iconHoverColor == null ? scheme.onSurfaceVariant : null,
+            ),
           ),
         ),
       ),

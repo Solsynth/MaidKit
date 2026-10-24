@@ -6,7 +6,9 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
@@ -102,12 +104,23 @@ class NotificationModal extends HookConsumerWidget {
           Expanded(
             child: list.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, _) => _NotificationsError(
-                error: error,
-                onRetry: () => _refreshFeeds(ref),
+              error: (error, _) => MaidKitEmptyState(
+                icon: Symbols.error,
+                iconColor: Theme.of(
+                  context,
+                ).colorScheme.error.withValues(alpha: 0.7),
+                title: _errorMessage(error),
+                action: FilledButton.tonal(
+                  onPressed: () => _refreshFeeds(ref),
+                  child: Text('maidCafeRetry'.tr()),
+                ),
               ),
               data: (items) => items.isEmpty
-                  ? const _NotificationsEmpty()
+                  ? MaidKitEmptyState(
+                      icon: Symbols.notifications_none,
+                      title: 'maidCafeNoNotifications'.tr(),
+                      compact: true,
+                    )
                   : RefreshIndicator(
                       onRefresh: () async {
                         _refreshFeeds(ref);
@@ -140,72 +153,6 @@ class NotificationModal extends HookConsumerWidget {
 void _refreshFeeds(WidgetRef ref) {
   ref.invalidate(maidCafeMetoerNotificationsProvider);
   ref.invalidate(maidCafeMetoerUnreadCountProvider);
-}
-
-class _NotificationsEmpty extends StatelessWidget {
-  const _NotificationsEmpty();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Symbols.notifications_none,
-              size: 32,
-              color: scheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'maidCafeNoNotifications'.tr(),
-              textAlign: TextAlign.center,
-              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NotificationsError extends StatelessWidget {
-  const _NotificationsError({required this.error, required this.onRetry});
-
-  final Object error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Symbols.error, size: 32, color: scheme.error),
-            const SizedBox(height: 12),
-            Text(
-              _errorMessage(error),
-              textAlign: TextAlign.center,
-              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.tonal(
-              onPressed: onRetry,
-              child: Text('maidCafeRetry'.tr()),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// One row of the feed. An unread row carries its dot and a stronger title so
@@ -242,7 +189,7 @@ class NotificationTile extends StatelessWidget {
                 color: unread
                     ? colors.primaryContainer
                     : colors.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(MaidKitRadius.md),
               ),
               child: Icon(
                 _notificationIcon(notification.topic),

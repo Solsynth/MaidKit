@@ -14,7 +14,9 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'deployment_project_models.dart';
 import 'project_detail_page.dart';
@@ -426,7 +428,26 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
               Divider(height: 1, color: theme.colorScheme.outlineVariant),
               Expanded(
                 child: items.isEmpty
-                    ? _EmptyState(onCreate: _create, onImport: _import)
+                    ? MaidKitEmptyState(
+                        icon: Symbols.deployed_code,
+                        title: 'deploymentEmptyTitle'.tr(),
+                        description: 'deploymentEmptyHint'.tr(),
+                        action: Wrap(
+                          spacing: 8,
+                          children: [
+                            FilledButton.icon(
+                              onPressed: _create,
+                              icon: const Icon(Symbols.add, size: 18),
+                              label: Text('deploymentNewProject'.tr()),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: _import,
+                              icon: const Icon(Symbols.upload, size: 18),
+                              label: Text('deploymentImportToml'.tr()),
+                            ),
+                          ],
+                        ),
+                      )
                     : filtered.isEmpty
                     ? Center(
                         child: Column(
@@ -681,11 +702,11 @@ class _ProjectCard extends StatelessWidget {
     return Material(
       color: scheme.surfaceContainerLowest,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         side: BorderSide(color: scheme.outlineVariant),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         onTap: onOpen,
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -835,7 +856,7 @@ class _KindChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -851,61 +872,6 @@ class _KindChip extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onCreate, required this.onImport});
-  final VoidCallback onCreate;
-  final VoidCallback onImport;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Symbols.deployed_code,
-              size: 40,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'deploymentEmptyTitle'.tr(),
-              style: theme.textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'deploymentEmptyHint'.tr(),
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: onCreate,
-                  icon: const Icon(Symbols.add, size: 18),
-                  label: Text('deploymentNewProject'.tr()),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onImport,
-                  icon: const Icon(Symbols.upload, size: 18),
-                  label: Text('deploymentImportToml'.tr()),
-                ),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }

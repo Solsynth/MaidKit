@@ -146,22 +146,28 @@ class MaidKitAppBackground extends ConsumerWidget {
     final isEnabled =
         ref.watch(maidKitBackgroundImageEnabledProvider).asData?.value ?? true;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color,
-        image: !showBackgroundImage || !isEnabled || image == null
-            ? null
-            : DecorationImage(
-                image: FileImage(image),
-                fit: BoxFit.cover,
-                opacity: 0.18,
-                colorFilter: ColorFilter.mode(
-                  color.withValues(alpha: 0.48),
-                  BlendMode.srcOver,
+    // The base colour is painted by a [Material] and the optional user image
+    // decorates it. Painting the colour on the [DecoratedBox] instead would put
+    // an opaque widget between the page and any [ListTile] inside it, which
+    // hides the tile's own background and ink.
+    return Material(
+      color: color,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          image: !showBackgroundImage || !isEnabled || image == null
+              ? null
+              : DecorationImage(
+                  image: FileImage(image),
+                  fit: BoxFit.cover,
+                  opacity: 0.18,
+                  colorFilter: ColorFilter.mode(
+                    color.withValues(alpha: 0.48),
+                    BlendMode.srcOver,
+                  ),
                 ),
-              ),
+        ),
+        child: child,
       ),
-      child: child,
     );
   }
 }

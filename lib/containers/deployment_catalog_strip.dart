@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/theme.dart';
 import 'deployment_project_models.dart';
 
 /// Compact overview of the portable deployment catalog. The Compose workspace
@@ -43,7 +44,7 @@ class DeploymentCatalogStrip extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               border: Border.all(color: scheme.outlineVariant),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
             ),
             child: Row(
               children: [

@@ -1699,7 +1699,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                 decoration: BoxDecoration(
                   color: scheme.primary.withValues(alpha: 0.08),
                   border: Border.all(color: scheme.primary, width: 2),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.md),
                 ),
                 child: Center(
                   child: Column(
@@ -1871,7 +1871,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     return Material(
       color: scheme.surfaceContainerHighest,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         side: BorderSide(color: scheme.outlineVariant),
       ),
       child: ConstrainedBox(
@@ -2243,14 +2243,14 @@ class _AppBarDropdown extends StatelessWidget {
         ),
         decoration: BoxDecoration(
           border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         ),
         child: DropdownButton<int>(
           value: selected,
           isDense: true,
           itemHeight: null,
           underline: const SizedBox.shrink(),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           menuWidth: compact ? 220 : null,
           style: theme.textTheme.bodyMedium,
           icon: const Icon(Symbols.expand_more, size: 18),
@@ -2358,9 +2358,9 @@ class _ConversationTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Material(
       color: selected ? scheme.surfaceContainerHighest : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(MaidKitRadius.md),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
@@ -2726,7 +2726,7 @@ class _MessageCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: color,
           border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(MaidKitRadius.md),
         ),
         child: message.kind == _MessageKind.assistant
             // This follows Island's MarkdownTextContent implementation while
@@ -2766,7 +2766,7 @@ class _MessageCard extends StatelessWidget {
             margin: const EdgeInsets.symmetric(vertical: 4),
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(MaidKitRadius.md),
             ),
           ),
           CodeConfig(
@@ -2871,7 +2871,7 @@ class _LiveToolCardState extends State<_LiveToolCard> {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest,
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2918,7 +2918,7 @@ class _LiveToolCardState extends State<_LiveToolCard> {
                 child: AnsiLogView(
                   text: content,
                   streaming: true,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                 ),
               ),
             ),
@@ -3001,7 +3001,7 @@ class _AutoApprovedBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: scheme.primaryContainer,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Text(
         'agentAutoApproved'.tr(),
@@ -3032,11 +3032,11 @@ class _ToolCallCard extends StatelessWidget {
       tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         side: BorderSide(color: scheme.outlineVariant),
       ),
       collapsedShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         side: BorderSide(color: scheme.outlineVariant),
       ),
       backgroundColor: scheme.surfaceContainerHighest,
@@ -3103,7 +3103,7 @@ class _ProposalCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest,
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3276,7 +3276,7 @@ class _AgentEmptyState extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest,
                     border: Border.all(color: scheme.outlineVariant),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -4478,7 +4478,7 @@ class _SkillRegistrySheetState extends ConsumerState<_SkillRegistrySheet> {
                       ),
                 isDense: true,
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                 ),
               ),
             ),

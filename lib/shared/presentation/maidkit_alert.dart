@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
+import 'package:maid_kit/theme.dart';
 
 /// Matches Island's dialog max width for app-level prompts.
 const kMaidKitDialogMaxWidth = 480.0;
@@ -63,8 +64,10 @@ MaidKitLoadingHandle showMaidKitLoadingModal(
   entry = OverlayEntry(
     builder: (context) => _FadeOverlay(
       key: key,
+      // The scrim is the theme's own, so it tracks dark mode and the paper
+      // ramp instead of a fixed 54% black.
       child: Material(
-        color: Colors.black54,
+        color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.45),
         child: Center(
           child: AlertDialog(
             content: Row(
@@ -139,7 +142,13 @@ Future<T?> showMaidKitOverlayDialog<T>({
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: barrierDismissible ? () => close(null) : null,
-            child: const ColoredBox(color: Colors.black54),
+            // Same scrim the theme paints for route dialogs, so an overlay
+            // prompt and a route prompt do not dim the page differently.
+            child: ColoredBox(
+              color: Theme.of(
+                context,
+              ).colorScheme.scrim.withValues(alpha: 0.45),
+            ),
           ),
         ),
         Center(
@@ -465,7 +474,9 @@ Future<T?> showMaidKitCommandPalette<T>({
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
         child: ColoredBox(
-          color: Colors.black.withValues(alpha: 0.5),
+          // The scrim is the theme's, so it tracks the paper ramp instead of
+          // a fixed black.
+          color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.5),
           child: Align(
             alignment: Alignment.topCenter,
             child: Padding(
@@ -493,10 +504,12 @@ Future<T?> showMaidKitCommandPalette<T>({
                     ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(28),
+                      borderRadius: MaidKitRadius.dialogRadius,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.shadow.withValues(alpha: 0.2),
                           blurRadius: 10,
                           spreadRadius: 2,
                         ),
@@ -504,7 +517,7 @@ Future<T?> showMaidKitCommandPalette<T>({
                     ),
                     child: Material(
                       color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(28),
+                      borderRadius: MaidKitRadius.dialogRadius,
                       child: builder(context, close),
                     ),
                   ),

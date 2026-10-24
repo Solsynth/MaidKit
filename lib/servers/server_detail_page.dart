@@ -13,8 +13,10 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/containers/container_management_tab.dart';
 import 'package:maid_kit/containers/image_management_tab.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 import 'activity_tab.dart';
 import 'maidcafe_server_tab.dart';
 import 'maidcafe_service.dart';
@@ -612,7 +614,7 @@ class _PanelSurface extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: padding == null ? child : Padding(padding: padding!, child: child),
     );
@@ -830,7 +832,7 @@ class _ServerSpecifications extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1244,7 +1246,7 @@ class _StatusChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1277,13 +1279,14 @@ class _ConnectionPrompt extends StatelessWidget {
   final Future<void> Function() onConnect;
 
   @override
-  Widget build(BuildContext context) => _EmptyPanel(
+  Widget build(BuildContext context) => MaidKitEmptyState(
     icon: Symbols.link_off,
-    message: message,
-    actionLabel: 'detailConnectForMetrics'.tr(),
-    onAction: onConnect,
-    actionIcon: Symbols.link,
-    filledAction: true,
+    title: message,
+    action: FilledButton.tonalIcon(
+      onPressed: onConnect,
+      icon: const Icon(Symbols.link, size: 18),
+      label: Text('detailConnectForMetrics'.tr()),
+    ),
   );
 }
 
@@ -1295,9 +1298,9 @@ class _MetricGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (stats == null) {
-      return _EmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.monitoring,
-        message: 'detailMetricsCollecting'.tr(),
+        title: 'detailMetricsCollecting'.tr(),
         compact: true,
       );
     }
@@ -1435,7 +1438,7 @@ class _MetricCard extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1498,18 +1501,23 @@ class _ProcessTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) => processes.when(
     loading: () => const Center(child: CircularProgressIndicator()),
-    error: (error, _) => _EmptyPanel(
+    error: (error, _) => MaidKitEmptyState(
       icon: Symbols.error_outline,
-      message: 'detailCouldNotRetrieveProcesses'.tr(args: ['$error']),
-      actionLabel: 'commonRetry'.tr(),
-      onAction: onRefresh,
+      iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+      title: 'detailCouldNotRetrieveProcesses'.tr(args: ['$error']),
+      action: OutlinedButton(
+        onPressed: onRefresh,
+        child: Text('commonRetry'.tr()),
+      ),
     ),
     data: (items) => items.isEmpty
-        ? _EmptyPanel(
+        ? MaidKitEmptyState(
             icon: Symbols.terminal,
-            message: 'detailNoProcessesAvailable'.tr(),
-            actionLabel: 'commonRefresh'.tr(),
-            onAction: onRefresh,
+            title: 'detailNoProcessesAvailable'.tr(),
+            action: OutlinedButton(
+              onPressed: onRefresh,
+              child: Text('commonRefresh'.tr()),
+            ),
           )
         : _ProcessList(server: server, items: items, onRefresh: onRefresh),
   );
@@ -1732,11 +1740,11 @@ class _ProcessListState extends ConsumerState<_ProcessList> {
                             )
                           : null,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                         borderSide: BorderSide(color: scheme.outlineVariant),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                         borderSide: BorderSide(color: scheme.outlineVariant),
                       ),
                     ),
@@ -1901,7 +1909,7 @@ class _SortHeader extends StatelessWidget {
     final style = theme.textTheme.labelMedium?.copyWith(color: color);
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(MaidKitRadius.xs),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
@@ -2038,66 +2046,6 @@ class _ProcessRow extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _EmptyPanel extends StatelessWidget {
-  const _EmptyPanel({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.actionIcon,
-    this.filledAction = false,
-    this.compact = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final IconData? actionIcon;
-  final bool filledAction;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final content = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: compact ? 24 : 32, color: scheme.onSurfaceVariant),
-        SizedBox(height: compact ? 8 : 12),
-        Text(
-          message,
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        if (actionLabel != null && onAction != null) ...[
-          const SizedBox(height: 16),
-          if (filledAction)
-            FilledButton.icon(
-              onPressed: onAction,
-              icon: Icon(actionIcon ?? Symbols.refresh),
-              label: Text(actionLabel!),
-            )
-          else
-            OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-        ],
-      ],
-    );
-    if (compact) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: content,
-      );
-    }
-    return Center(
-      child: Padding(padding: const EdgeInsets.all(24), child: content),
     );
   }
 }

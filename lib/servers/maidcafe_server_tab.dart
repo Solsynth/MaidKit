@@ -1969,7 +1969,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3107,7 +3107,7 @@ class MaidCafeInstallSheetState extends State<MaidCafeInstallSheet>
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: SelectableText(
                     snapshot.data ?? '',
@@ -3417,7 +3417,7 @@ class _MaidCafeActionCardState extends State<_MaidCafeActionCard> {
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -3640,7 +3640,7 @@ class _MaidCafeExecutionSectionState extends State<_MaidCafeExecutionSection> {
       children: [
         InkWell(
           onTap: () => setState(() => _expanded = !_expanded),
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(MaidKitRadius.xs),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
@@ -3904,10 +3904,10 @@ class _MaidCafeScriptField extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border.all(color: scheme.outlineVariant),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           child: CodeTheme(
             data: CodeThemeData(
               styles: {
@@ -3968,7 +3968,7 @@ class _MaidCafeAuditRow extends StatelessWidget {
     final invokedBy = entry.invokedBy;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         child: Row(
@@ -4080,7 +4080,7 @@ class _MaidCafeActionResultView extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -4211,7 +4211,9 @@ class _MaidCafeAuditLogSheet extends StatelessWidget {
                           Expanded(
                             child: AnsiLogView(
                               text: entry.stdout,
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(
+                                MaidKitRadius.sm,
+                              ),
                             ),
                           ),
                         ],
@@ -4227,7 +4229,9 @@ class _MaidCafeAuditLogSheet extends StatelessWidget {
                           Expanded(
                             child: AnsiLogView(
                               text: entry.stderr,
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(
+                                MaidKitRadius.sm,
+                              ),
                             ),
                           ),
                         ],
@@ -4283,7 +4287,7 @@ class _MaidCafeLogsSheet extends StatelessWidget {
                 }
                 return AnsiLogView(
                   text: snapshot.data ?? '',
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                 );
               },
             ),

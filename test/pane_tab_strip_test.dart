@@ -110,7 +110,9 @@ void main() {
   /// The strip's tab list. Pane tab bodies are keyed by tab id too, so a chip
   /// has to be matched inside the strip rather than by key alone.
   final strip = find.byWidgetPredicate(
-    (widget) => widget is ListView && widget.scrollDirection == Axis.horizontal,
+    (widget) =>
+        widget is SingleChildScrollView &&
+        widget.scrollDirection == Axis.horizontal,
   );
 
   Finder chip(String tabId) =>
@@ -230,7 +232,7 @@ void main() {
     expect(find.text('A'), findsOneWidget);
     expect(
       find.byTooltip(
-        'settingsCloudSignedInAs'.tr(args: ['Ada Lovelace (@ada)']),
+        'settingsCloudSignedInAs'.tr(args: ['Ada Lovelace (ada)']),
       ),
       findsOneWidget,
     );

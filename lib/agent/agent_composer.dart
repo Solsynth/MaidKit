@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:maid_kit/theme.dart';
+
 import 'agent_attachment.dart';
 import 'agent_reasoning.dart';
 
@@ -317,7 +319,7 @@ class _ReasoningPill extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.surface,
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(MaidKitRadius.pill),
         ),
         child: Padding(
           padding: const EdgeInsets.all(2),
@@ -373,7 +375,7 @@ class _ReasoningChip extends StatelessWidget {
       button: true,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(MaidKitRadius.pill),
         child: AnimatedContainer(
           duration: reduceMotion
               ? Duration.zero
@@ -382,7 +384,7 @@ class _ReasoningChip extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
           decoration: BoxDecoration(
             color: selected ? scheme.primaryContainer : Colors.transparent,
-            borderRadius: BorderRadius.circular(999),
+            borderRadius: BorderRadius.circular(MaidKitRadius.pill),
           ),
           child: Text(
             label,
@@ -472,10 +474,10 @@ class _AgentAttachmentTile extends StatelessWidget {
 
   Widget _buildFailure(ColorScheme scheme) => Material(
     color: scheme.surfaceContainerHighest,
-    borderRadius: BorderRadius.circular(12),
+    borderRadius: BorderRadius.circular(MaidKitRadius.md),
     child: DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         border: Border.all(color: scheme.error),
       ),
       child: Center(
@@ -489,7 +491,7 @@ class _AgentAttachmentTile extends StatelessWidget {
     final bytes = attachment.bytes;
     return Material(
       color: scheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(MaidKitRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onPreview,
@@ -511,7 +513,7 @@ class _AgentAttachmentTile extends StatelessWidget {
     final scheme = theme.colorScheme;
     return Material(
       color: scheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(MaidKitRadius.md),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onEdit,
@@ -680,7 +682,7 @@ class AgentAttachmentChips extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(8, 4, 10, 4),
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(MaidKitRadius.md),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,

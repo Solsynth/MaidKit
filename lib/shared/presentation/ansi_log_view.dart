@@ -6,6 +6,7 @@ import 'dart:ui' show PointerDeviceKind;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
+import 'package:maid_kit/theme.dart';
 import 'app_scaffold.dart';
 import '../../servers/server_providers.dart';
 import '../../servers/terminal_find_host.dart';
@@ -32,7 +33,7 @@ class AnsiLogView extends ConsumerStatefulWidget {
     /// Only bottom corners are rounded by default — the log pane sits under a
     /// tab bar that already provides the top edge of the panel.
     this.borderRadius = const BorderRadius.vertical(
-      bottom: Radius.circular(12),
+      bottom: Radius.circular(MaidKitRadius.md),
     ),
   });
 

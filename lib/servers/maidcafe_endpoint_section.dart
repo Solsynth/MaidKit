@@ -6,6 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/theme.dart';
 
 /// The endpoint override for a server, plus the reverse-proxy recipe that makes
 /// one worth having.
@@ -228,7 +229,7 @@ class _ProxyRecipe extends StatelessWidget {
         border: Border.all(
           color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
         ),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
@@ -276,7 +277,7 @@ class _ProxyRecipe extends StatelessWidget {
                   color: theme.colorScheme.surfaceContainerHighest.withValues(
                     alpha: 0.5,
                   ),
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                 ),
                 child: SelectableText(
                   recipe,

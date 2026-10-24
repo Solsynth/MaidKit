@@ -14,6 +14,7 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/services/analytics_service.dart';
+import 'package:maid_kit/theme.dart';
 import 'package:styled_widget/styled_widget.dart';
 
 import 'cloud_sync_service.dart';
@@ -555,7 +556,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
                   border: Border.all(
                     color: Theme.of(context).colorScheme.outlineVariant,
                   ),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                 ),
                 child: SelectableText(
                   snippet,
@@ -1075,7 +1076,7 @@ class _DaemonFleetCard extends ConsumerWidget {
                     border: Border(
                       left: BorderSide(color: colors.error, width: 3),
                     ),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -1188,7 +1189,7 @@ class _MetricHistoryChart extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         ),
         child: Text(
           'maidCafeHistoryUnavailable'.tr(),
@@ -1203,7 +1204,7 @@ class _MetricHistoryChart extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         ),
         child: Text(
           'maidCafeHistoryUnavailable'.tr(),
@@ -1218,7 +1219,7 @@ class _MetricHistoryChart extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1647,7 +1648,14 @@ class _DaemonLoadingCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          const SizedBox(height: 88, child: ColoredBox(color: Colors.white)),
+          // Skeletonizer paints the bone over this block; a themed fill keeps
+          // it neutral if the skeleton is ever disabled.
+          SizedBox(
+            height: 88,
+            child: ColoredBox(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+          ),
           const SizedBox(height: 10),
           const Text('Enabled · Last seen 2026-08-21 12:00'),
         ],
@@ -1923,7 +1931,7 @@ class _ScopeMultiSelectFieldState extends State<_ScopeMultiSelectField> {
       controller: _menuController,
       builder: (context, controller, child) => InkWell(
         onTap: () => controller.isOpen ? controller.close() : controller.open(),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(MaidKitRadius.xs),
         child: InputDecorator(
           decoration: InputDecoration(
             labelText: widget.label,
@@ -1998,7 +2006,7 @@ class _CredentialTokenSheet extends StatelessWidget {
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(MaidKitRadius.sm),
     ),
     child: SelectableText(
       text,

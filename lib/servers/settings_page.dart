@@ -28,6 +28,7 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/presentation/update_settings_section.dart';
 import 'package:maid_kit/shared/services/app_icon_service.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'about_page.dart';
 import 'database_backup_service.dart';
@@ -927,7 +928,7 @@ class SettingsPage extends HookConsumerWidget {
                                             context,
                                           ).colorScheme.errorContainer,
                                           borderRadius: BorderRadius.circular(
-                                            8,
+                                            MaidKitRadius.sm,
                                           ),
                                         ),
                                         child: Row(
@@ -2325,7 +2326,9 @@ class _UsageRing extends StatelessWidget {
 }
 
 BorderRadius _sectionTileBorderRadius(_SettingsTilePosition position) {
-  const radius = Radius.circular(12);
+  // The section's own card supplies the outer radius; a tile only rounds the
+  // corners it owns.
+  const radius = Radius.circular(MaidKitRadius.md);
   return BorderRadius.only(
     topLeft:
         position == _SettingsTilePosition.only ||
@@ -2882,7 +2885,7 @@ class _SettingsCategoryRail extends StatelessWidget {
                   alpha: 0.45,
                 ),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.md),
                 ),
                 leading: Icon(
                   category.icon,
@@ -3951,7 +3954,7 @@ class _MaidCafeQuotaSection extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(MaidKitRadius.xs),
                 child: LinearProgressIndicator(
                   value: (daemonCount / maxDaemons).clamp(0.0, 1.0),
                   minHeight: 4,
@@ -4102,7 +4105,7 @@ class _MaidCafeCloudConnectionSectionState
                       decoration: BoxDecoration(
                         color: colors.surfaceContainerHighest,
                         border: Border.all(color: colors.outlineVariant),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.md),
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4167,7 +4170,7 @@ class _MaidCafeCloudConnectionSectionState
       decoration: BoxDecoration(
         color: isHealthy ? colors.secondaryContainer : colors.errorContainer,
         border: Border.all(color: isHealthy ? colors.secondary : colors.error),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(MaidKitRadius.xl),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -4401,7 +4404,7 @@ class _LocalMcpServerSectionState
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: SelectableText(
                     '"mcpServers": {\n'
@@ -4951,7 +4954,7 @@ class _SeedColorTile extends StatelessWidget {
         height: 36,
         decoration: BoxDecoration(
           color: seedColor,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           border: Border.all(color: colorScheme.outlineVariant),
         ),
       ),
@@ -5033,6 +5036,10 @@ class _AppIconSheet extends HookConsumerWidget {
       final selected = name == currentIcon.value;
       return InkWell(
         onTap: () => select(name),
+        // Concentric by construction: the 18/17/13 values below are a
+        // 1px-inset border ring and a 2px-padded image clip derived from the
+        // outer 18, not picks from the radius scale. Tokenizing them would
+        // break that inset relationship.
         borderRadius: BorderRadius.circular(18),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -5158,7 +5165,7 @@ class _TerminalPalettePreview extends StatelessWidget {
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: theme.background,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Column(
@@ -5401,7 +5408,7 @@ class _TerminalColorRow extends StatelessWidget {
         height: 28,
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           border: Border.all(
             color: Theme.of(context).colorScheme.outlineVariant,
           ),
@@ -5499,7 +5506,7 @@ class _ColorEditDialogState extends State<_ColorEditDialog> {
                     height: 48,
                     decoration: BoxDecoration(
                       color: _color,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                     ),
                   ),
                   const SizedBox(width: 12),

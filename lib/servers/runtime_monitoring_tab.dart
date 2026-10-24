@@ -7,6 +7,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/theme.dart';
 import 'maidcafe_service.dart';
 import 'maidcafe_stream.dart';
 import 'server_models.dart';
@@ -394,7 +395,7 @@ class _RuntimeCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -839,7 +840,7 @@ class _WatchedCardState extends State<_WatchedCard> {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1198,7 +1199,7 @@ class _JvmRow extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1299,7 +1300,7 @@ class _RuntimeStatTile extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: EdgeInsets.fromLTRB(
@@ -1333,7 +1334,7 @@ class _RuntimeStatTile extends StatelessWidget {
             if (progress != null) ...[
               SizedBox(height: compact ? 4 : 8),
               ClipRRect(
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(MaidKitRadius.pill),
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 4,
@@ -1350,7 +1351,7 @@ class _RuntimeStatTile extends StatelessWidget {
   }
 }
 
-/// Connection/empty/error placeholder, mirroring the page's `_EmptyPanel`.
+/// Connection/empty/error placeholder, mirroring the page's empty state.
 class _RuntimeEmptyPanel extends StatelessWidget {
   const _RuntimeEmptyPanel({
     required this.icon,

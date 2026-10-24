@@ -5358,7 +5358,7 @@ class _DraggableFileRow extends StatelessWidget {
       dragAnchorStrategy: pointerDragAnchorStrategy,
       feedback: Material(
         elevation: 4,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         color: Theme.of(context).colorScheme.surfaceContainerHigh,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

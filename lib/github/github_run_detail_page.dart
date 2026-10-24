@@ -5,6 +5,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'github_models.dart';
 import 'github_providers.dart';
@@ -72,7 +73,7 @@ class GitHubRunDetailPage extends ConsumerWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               border: Border.all(color: scheme.outlineVariant),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(MaidKitRadius.md),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,7 +86,7 @@ class GitHubRunDetailPage extends ConsumerWidget {
                     ),
                     const SizedBox(width: 8),
                     if (run.conclusion != null)
-                      _ConclusionChip(conclusion: run.conclusion!),
+                      GithubConclusionChip(conclusion: run.conclusion!),
                     const Spacer(),
                     Text(
                       run.status.name,
@@ -202,7 +203,7 @@ class _JobCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -215,7 +216,7 @@ class _JobCard extends StatelessWidget {
                 child: Text(job.name, style: theme.textTheme.titleSmall),
               ),
               if (job.conclusion != null)
-                _ConclusionChip(conclusion: job.conclusion!),
+                GithubConclusionChip(conclusion: job.conclusion!),
             ],
           ),
           const SizedBox(height: 8),
@@ -236,10 +237,10 @@ class _JobCard extends StatelessWidget {
                     },
                     size: 15,
                     color: switch (step.status) {
-                      WorkflowRunStatus.completed =>
-                        step.conclusion == WorkflowRunConclusion.success
-                            ? const Color(0xFF2E7D32)
-                            : scheme.error,
+                      WorkflowRunStatus.completed => githubConclusionTone(
+                        scheme,
+                        step.conclusion,
+                      ),
                       WorkflowRunStatus.inProgress => scheme.primary,
                       _ => scheme.onSurfaceVariant,
                     },
@@ -274,59 +275,5 @@ class _RunStatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (:icon, :color) = githubRunStatusVisual(context, status, conclusion);
     return Icon(icon, size: 20, color: color);
-  }
-}
-
-class _ConclusionChip extends StatelessWidget {
-  const _ConclusionChip({required this.conclusion});
-
-  final WorkflowRunConclusion conclusion;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final (background, foreground, label) = switch (conclusion) {
-      WorkflowRunConclusion.success => (
-        const Color(0xFF2E7D32),
-        Colors.white,
-        'githubConclusionSuccess',
-      ),
-      WorkflowRunConclusion.failure => (
-        theme.colorScheme.error,
-        theme.colorScheme.onError,
-        'githubConclusionFailure',
-      ),
-      WorkflowRunConclusion.timedOut => (
-        const Color(0xFFE65100),
-        Colors.white,
-        'githubConclusionTimedOut',
-      ),
-      WorkflowRunConclusion.cancelled => (
-        theme.colorScheme.surfaceContainerHighest,
-        theme.colorScheme.onSurfaceVariant,
-        'githubConclusionCancelled',
-      ),
-      WorkflowRunConclusion.actionRequired => (
-        const Color(0xFF6A1B9A),
-        Colors.white,
-        'githubConclusionActionRequired',
-      ),
-      _ => (
-        theme.colorScheme.surfaceContainerHighest,
-        theme.colorScheme.onSurfaceVariant,
-        'githubConclusionUnknown',
-      ),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label.tr(),
-        style: theme.textTheme.labelSmall?.copyWith(color: foreground),
-      ),
-    );
   }
 }

@@ -9,6 +9,7 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/services/package_info_provider.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'server_providers.dart';
 import 'cloud_sync_service.dart';
@@ -446,7 +447,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                         Center(
                                           child: ClipRRect(
                                             borderRadius: BorderRadius.circular(
-                                              16,
+                                              MaidKitRadius.lg,
                                             ),
                                             child: Image.asset(
                                               'assets/icons/icon.png',

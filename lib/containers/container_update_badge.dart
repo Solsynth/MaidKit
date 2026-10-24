@@ -2,6 +2,8 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:maid_kit/theme.dart';
+
 import 'container_models.dart';
 
 /// The update badge for one container.
@@ -89,7 +91,7 @@ class ContainerUpdateBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -113,7 +115,7 @@ class ContainerUpdateBadge extends StatelessWidget {
       message: detail,
       child: InkWell(
         onTap: () => _askAndRun(context),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         child: badge,
       ),
     );

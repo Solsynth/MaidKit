@@ -22,6 +22,7 @@ import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/github/github_mcp_tools.dart';
 import 'package:maid_kit/github/github_providers.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'package:maid_kit/theme.dart';
 
 /// Lifecycle of the in-app MCP server exposed to other local agents.
 enum LocalMcpServerStatus { stopped, running, failed }
@@ -1021,7 +1022,7 @@ class LocalMcpToolExecutor implements LocalMcpToolInvoker {
             constraints: const BoxConstraints(maxWidth: kMaidKitDialogMaxWidth),
             child: Material(
               color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(MaidKitRadius.md),
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(
@@ -1128,7 +1129,7 @@ class _McpApprovalCard extends StatelessWidget {
       constraints: const BoxConstraints(maxWidth: kMaidKitDialogMaxWidth),
       child: Material(
         color: scheme.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(

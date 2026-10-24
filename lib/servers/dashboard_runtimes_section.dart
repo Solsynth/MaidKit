@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/theme.dart';
 import 'maidcafe_service.dart';
 import 'maidcafe_session_registry.dart';
 import 'maidcafe_stream.dart';
@@ -326,7 +327,7 @@ class _DashboardRuntimeTile extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: const EdgeInsets.all(10),

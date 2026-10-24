@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'github_models.dart';
 import 'github_providers.dart';
@@ -123,7 +124,7 @@ class _SignedOutView extends ConsumerWidget {
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: scheme.errorContainer,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: Text(
                     'githubAuthFailed'.tr(args: [signIn.error ?? '']),
@@ -172,7 +173,7 @@ class _DeviceCodeCard extends ConsumerWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Column(
         children: [
@@ -187,7 +188,7 @@ class _DeviceCodeCard extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -537,7 +538,7 @@ class _RunTile extends StatelessWidget {
       type: MaterialType.transparency,
       child: ListTile(
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           side: BorderSide(color: theme.colorScheme.outlineVariant),
         ),
         leading: _RunStatusIcon(status: run.status, conclusion: run.conclusion),
@@ -562,7 +563,7 @@ class _RunTile extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (run.conclusion != null)
-              _ConclusionChip(conclusion: run.conclusion!),
+              GithubConclusionChip(conclusion: run.conclusion!),
             const SizedBox(width: 4),
             const Icon(Symbols.chevron_right, size: 20),
           ],
@@ -690,59 +691,5 @@ class _RunStatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (:icon, :color) = githubRunStatusVisual(context, status, conclusion);
     return Icon(icon, size: 22, color: color);
-  }
-}
-
-class _ConclusionChip extends StatelessWidget {
-  const _ConclusionChip({required this.conclusion});
-
-  final WorkflowRunConclusion conclusion;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final (background, foreground, label) = switch (conclusion) {
-      WorkflowRunConclusion.success => (
-        const Color(0xFF2E7D32),
-        Colors.white,
-        'githubConclusionSuccess',
-      ),
-      WorkflowRunConclusion.failure => (
-        theme.colorScheme.error,
-        theme.colorScheme.onError,
-        'githubConclusionFailure',
-      ),
-      WorkflowRunConclusion.timedOut => (
-        const Color(0xFFE65100),
-        Colors.white,
-        'githubConclusionTimedOut',
-      ),
-      WorkflowRunConclusion.cancelled => (
-        theme.colorScheme.surfaceContainerHighest,
-        theme.colorScheme.onSurfaceVariant,
-        'githubConclusionCancelled',
-      ),
-      WorkflowRunConclusion.actionRequired => (
-        const Color(0xFF6A1B9A),
-        Colors.white,
-        'githubConclusionActionRequired',
-      ),
-      _ => (
-        theme.colorScheme.surfaceContainerHighest,
-        theme.colorScheme.onSurfaceVariant,
-        'githubConclusionUnknown',
-      ),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label.tr(),
-        style: theme.textTheme.labelSmall?.copyWith(color: foreground),
-      ),
-    );
   }
 }

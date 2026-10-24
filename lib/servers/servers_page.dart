@@ -18,7 +18,9 @@ import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/collapsible_section.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'package:maid_kit/theme.dart';
 import 'maidcafe_service.dart';
 import 'port_forward_sheet.dart';
 import 'port_forwarding_models.dart';
@@ -912,7 +914,7 @@ class _ReorderableServerTile extends StatelessWidget {
                   : Colors.transparent,
               width: 2,
             ),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(MaidKitRadius.lg),
           ),
           child: Stack(
             fit: StackFit.expand,
@@ -956,7 +958,7 @@ class _ServerDragHandle extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: const Padding(
         padding: EdgeInsets.all(8),
@@ -1397,7 +1399,7 @@ class _BadgeChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(MaidKitRadius.pill),
       ),
       child: Text(
         label,
@@ -1617,7 +1619,7 @@ class _DisconnectedStats extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
@@ -1871,7 +1873,7 @@ class _StatsMessage extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
@@ -1925,7 +1927,7 @@ class _StatTile extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
       ),
       child: Padding(
         padding: EdgeInsets.fromLTRB(
@@ -1959,7 +1961,7 @@ class _StatTile extends StatelessWidget {
             SizedBox(height: compact ? 4 : 8),
             if (progress != null)
               ClipRRect(
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(MaidKitRadius.pill),
                 child: LinearProgressIndicator(
                   value: progress,
                   minHeight: 4,
@@ -2020,33 +2022,14 @@ class _EmptyServers extends StatelessWidget {
   const _EmptyServers({required this.onAdd});
   final VoidCallback onAdd;
   @override
-  Widget build(BuildContext context) => Center(
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 420),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Symbols.dns,
-            size: 36,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'serversEmpty'.tr(),
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 8),
-          Text('serversEmptyHint'.tr()),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: onAdd,
-            icon: const Icon(Symbols.add),
-            label: Text('serversAddServer'.tr()),
-          ),
-        ],
-      ),
+  Widget build(BuildContext context) => MaidKitEmptyState(
+    icon: Symbols.dns,
+    title: 'serversEmpty'.tr(),
+    description: 'serversEmptyHint'.tr(),
+    action: FilledButton.icon(
+      onPressed: onAdd,
+      icon: const Icon(Symbols.add, size: 18),
+      label: Text('serversAddServer'.tr()),
     ),
   );
 }

@@ -5,6 +5,8 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:maid_kit/theme.dart';
+
 import 'cloud_sync_service.dart';
 
 /// Runs [action] with a callback that puts a device-flow code on screen.
@@ -114,7 +116,7 @@ class _DeviceCodeDialogState extends State<_DeviceCodeDialog> {
                   ),
                   decoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: Row(
                     children: [

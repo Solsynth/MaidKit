@@ -9,7 +9,9 @@ import 'package:styled_widget/styled_widget.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 import 'database_models.dart';
 import 'maidcafe_service.dart';
 import 'maidcafe_session_registry.dart';
@@ -749,27 +751,37 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
   @override
   Widget build(BuildContext context) {
     if (!widget.connected) {
-      return _DbEmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: widget.connectionError ?? 'dbConnectToManage'.tr(),
-        actionLabel: 'commonConnect'.tr(),
-        onAction: widget.onConnect,
+        title: widget.connectionError ?? 'dbConnectToManage'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: widget.onConnect,
+          icon: const Icon(Symbols.refresh, size: 16),
+          label: Text('commonConnect'.tr()),
+        ),
       );
     }
     return _result.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => _DbEmptyPanel(
+      error: (error, _) => MaidKitEmptyState(
         icon: Symbols.error_outline,
-        message: 'dbInspectError'.tr(args: ['$error']),
-        actionLabel: 'commonRetry'.tr(),
-        onAction: _load,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        title: 'dbInspectError'.tr(args: ['$error']),
+        action: FilledButton.tonalIcon(
+          onPressed: _load,
+          icon: const Icon(Symbols.refresh, size: 16),
+          label: Text('commonRetry'.tr()),
+        ),
       ),
       data: (result) => result.instances.isEmpty
-          ? _DbEmptyPanel(
+          ? MaidKitEmptyState(
               icon: Symbols.database,
-              message: 'dbNoEngines'.tr(),
-              actionLabel: 'commonRefresh'.tr(),
-              onAction: _load,
+              title: 'dbNoEngines'.tr(),
+              action: FilledButton.tonalIcon(
+                onPressed: _load,
+                icon: const Icon(Symbols.refresh, size: 16),
+                label: Text('commonRefresh'.tr()),
+              ),
             )
           : _buildContent(result),
     );
@@ -1213,7 +1225,7 @@ class _MetricsBody extends StatelessWidget {
                     color: scheme.surfaceContainerHighest.withValues(
                       alpha: 0.5,
                     ),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: Text(
                     '${db.name}: ${db.connections ?? 0}',
@@ -1319,7 +1331,7 @@ class _InstanceCard extends StatelessWidget {
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: scheme.errorContainer.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(MaidKitRadius.sm),
               ),
               child: Text(
                 instance.error!,
@@ -1379,7 +1391,7 @@ class _RunningChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2438,7 +2450,7 @@ class _DbSection extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Padding(
@@ -2458,50 +2470,6 @@ class _DbSection extends StatelessWidget {
             child,
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _DbEmptyPanel extends StatelessWidget {
-  const _DbEmptyPanel({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: scheme.onSurfaceVariant),
-          const SizedBox(height: 12),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-          if (actionLabel != null) ...[
-            const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              onPressed: onAction,
-              icon: const Icon(Symbols.refresh, size: 16),
-              label: Text(actionLabel!),
-            ),
-          ],
-        ],
       ),
     );
   }

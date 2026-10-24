@@ -5,6 +5,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'crontab_models.dart';
 import 'server_connection_actions.dart';
 import 'server_providers.dart';
@@ -229,22 +230,27 @@ class _CrontabTabState extends ConsumerState<CrontabTab> {
   @override
   Widget build(BuildContext context) {
     if (!widget.connected) {
-      return _CrontabEmpty(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: widget.connectionError ?? 'crontabConnectToManage'.tr(),
-        actionLabel: 'commonConnect'.tr(),
-        onAction: widget.onConnect,
-        filled: true,
+        title: widget.connectionError ?? 'crontabConnectToManage'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: widget.onConnect,
+          icon: const Icon(Symbols.link, size: 18),
+          label: Text('commonConnect'.tr()),
+        ),
       );
     }
 
     return _document.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => _CrontabEmpty(
+      error: (error, _) => MaidKitEmptyState(
         icon: Symbols.error_outline,
-        message: 'crontabLoadError'.tr(args: [error.toString()]),
-        actionLabel: 'commonRetry'.tr(),
-        onAction: _load,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        title: 'crontabLoadError'.tr(args: [error.toString()]),
+        action: OutlinedButton(
+          onPressed: _load,
+          child: Text('commonRetry'.tr()),
+        ),
       ),
       data: (document) {
         final jobs = document.jobs;
@@ -296,13 +302,15 @@ class _CrontabTabState extends ConsumerState<CrontabTab> {
             Divider(height: 1, color: scheme.outlineVariant),
             Expanded(
               child: jobs.isEmpty
-                  ? _CrontabEmpty(
+                  ? MaidKitEmptyState(
                       icon: Symbols.schedule,
-                      message: document.exists
+                      title: document.exists
                           ? 'crontabEmptyNoJobs'.tr()
                           : 'crontabEmptyNotInstalled'.tr(),
-                      actionLabel: 'crontabAddJob'.tr(),
-                      onAction: _addJob,
+                      action: OutlinedButton(
+                        onPressed: _addJob,
+                        child: Text('crontabAddJob'.tr()),
+                      ),
                     )
                   : ListView.separated(
                       itemCount: jobs.length,
@@ -590,58 +598,6 @@ class _CronField extends StatelessWidget {
         if (value == null || value.trim().isEmpty) return 'commonRequired'.tr();
         return null;
       },
-    );
-  }
-}
-
-class _CrontabEmpty extends StatelessWidget {
-  const _CrontabEmpty({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-    this.filled = false,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final Future<void> Function()? onAction;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 32, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 16),
-              if (filled)
-                FilledButton.icon(
-                  onPressed: onAction,
-                  icon: const Icon(Symbols.link),
-                  label: Text(actionLabel!),
-                )
-              else
-                OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
-            ],
-          ],
-        ),
-      ),
     );
   }
 }

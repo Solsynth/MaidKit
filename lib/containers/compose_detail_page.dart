@@ -676,7 +676,7 @@ class _PanelSurface extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
 
-  static const _radius = BorderRadius.all(Radius.circular(12));
+  static const _radius = BorderRadius.all(Radius.circular(MaidKitRadius.md));
 
   @override
   Widget build(BuildContext context) {
@@ -804,7 +804,7 @@ class _ComposeOverviewPanel extends StatelessWidget {
                         color: runningCount > 0
                             ? scheme.secondaryContainer
                             : scheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                       ),
                       child: Text(
                         runningCount > 0
@@ -1386,7 +1386,7 @@ class _ComposeFilePane extends StatelessWidget {
                     DecoratedBox(
                       decoration: BoxDecoration(
                         color: scheme.surfaceContainerLowest,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                         border: Border.all(color: scheme.outlineVariant),
                       ),
                       child: Padding(

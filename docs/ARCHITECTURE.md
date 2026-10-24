@@ -92,6 +92,38 @@ When changing pages:
 3. Run `dart run build_runner build` if routes changed.
 4. Never hand-edit `*.g.dart` or `*.gr.dart` files.
 
+## Theming
+
+`lib/theme.dart` is the single source of design decisions, ported from Island's
+`lib/core/theme.dart`. Feature widgets must depend on it rather than inventing
+local colour schemes or chrome.
+
+- **Tokens.** `MaidKitSpace` (spacing), `MaidKitRadius` (corner radii) and
+  `MaidKitInsets` (reusable insets) are the scales. If a value is not on a
+  scale it is a one-off, not a system decision — prefer the nearest token.
+- **Surfaces.** `createMaidKitTheme` rebuilds only the *neutral ramp* from the
+  seed (`_seedPaper`), keeping accent roles as `ColorScheme.fromSeed` produced
+  them. Neutrals are tinted toward the seed's own hue, so a teal seed reads as
+  cool paper and a clay seed as warm paper.
+- **Tone over outlines.** Cards, sections and the pane tab strip separate
+  themselves with a deeper surface tone, not borders or shadows. The focused
+  pane tab strip is `surfaceContainerLow` and its selected tab paints
+  `surfaceContainerHigh` on it, so the active tab steps one tone further and
+  stays legible in both modes; an unfocused pane steps one tone deeper and
+  recedes.
+- **Inputs are tonal first.** A soft fill (`surfaceContainerHigh` at 70%)
+  defines a field; only focus and error draw an edge.
+- **Placeholders.** Every empty or failed surface renders through
+  `MaidKitEmptyState` (`lib/shared/presentation/empty_state.dart`). One shape
+  everywhere: `compact: true` inside panels, sheets and overlays, and
+  `iconColor` when the placeholder is an error.
+
+`material_ui` and Flutter's own Material library expose separate `Theme`
+inherited widgets, so the window chrome — which reads the Flutter SDK theme —
+would otherwise fall back to Flutter defaults. `maidkit_window_scaffold.dart`
+therefore copies the app's colour scheme into a `flutter.ThemeData` (rather
+than regenerating one from the seed) so both libraries agree on the paper ramp.
+
 ## Persistence
 
 `AppDatabase` in `lib/data/local/app_database.dart` is the single Drift database. Keep database tables and migrations there. Feature repositories should expose feature-focused queries, while Riverpod providers construct repositories and expose UI-friendly streams or async values.

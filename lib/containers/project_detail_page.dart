@@ -576,7 +576,7 @@ class _SummaryPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         color: scheme.surfaceContainerLowest,
       ),
       child: Row(
@@ -1293,14 +1293,14 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         side: BorderSide(color: scheme.outlineVariant),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(MaidKitRadius.sm),
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
@@ -1974,7 +1974,7 @@ class _EmptyResources extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         color: theme.colorScheme.surfaceContainerLowest,
       ),
       child: Column(

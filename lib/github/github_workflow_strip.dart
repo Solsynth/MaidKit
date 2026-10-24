@@ -4,6 +4,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
+import 'package:maid_kit/theme.dart';
 
 import 'github_models.dart';
 import 'github_providers.dart';
@@ -125,7 +126,7 @@ class _WorkflowStatusTile extends StatelessWidget {
     return Material(
       type: MaterialType.transparency,
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         onTap: () => TabNavigator.of(context).push(
           GitHubRunDetailPage(
             owner: owner,
@@ -138,7 +139,7 @@ class _WorkflowStatusTile extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
             border: Border.all(color: scheme.outlineVariant),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(MaidKitRadius.md),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

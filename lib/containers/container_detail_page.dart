@@ -1212,7 +1212,7 @@ class _PanelSurface extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
 
-  static const _radius = BorderRadius.all(Radius.circular(12));
+  static const _radius = BorderRadius.all(Radius.circular(MaidKitRadius.md));
 
   @override
   Widget build(BuildContext context) {
@@ -1466,7 +1466,7 @@ class _IdentityBlock extends StatelessWidget {
                   color: running
                       ? scheme.secondaryContainer
                       : scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                 ),
                 child: Text(
                   status.isEmpty ? state : status,
@@ -1580,7 +1580,7 @@ class _StatChip extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Column(
@@ -1874,7 +1874,7 @@ class _RerunPane extends StatelessWidget {
         DecoratedBox(
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLowest,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(MaidKitRadius.sm),
             border: Border.all(color: scheme.outlineVariant),
           ),
           child: Padding(
@@ -2138,7 +2138,7 @@ class _DetailsPane extends StatelessWidget {
         DecoratedBox(
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLowest,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(MaidKitRadius.sm),
             border: Border.all(color: scheme.outlineVariant),
           ),
           child: Padding(

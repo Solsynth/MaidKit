@@ -3,6 +3,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 import 'server_models.dart';
 
 /// Asks the user for the answers to a keyboard-interactive challenge, such as
@@ -73,7 +74,7 @@ class _AuthChallengeDialogState extends State<_AuthChallengeDialog> {
       constraints: const BoxConstraints(maxWidth: kMaidKitDialogMaxWidth),
       child: Material(
         color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(

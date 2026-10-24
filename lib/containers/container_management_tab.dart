@@ -25,6 +25,7 @@ import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
+import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 
@@ -755,13 +756,14 @@ class _ContainerManagementTabState
   @override
   Widget build(BuildContext context) {
     if (!widget.connected && !_daemonAllowed) {
-      return ContainerEmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: widget.connectionError ?? 'containersConnectToManage'.tr(),
-        actionLabel: 'commonConnect'.tr(),
-        onAction: widget.onConnect,
-        filledAction: true,
-        actionIcon: Symbols.link,
+        title: widget.connectionError ?? 'containersConnectToManage'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: widget.onConnect,
+          icon: const Icon(Symbols.link, size: 18),
+          label: Text('commonConnect'.tr()),
+        ),
       );
     }
     if (!widget.connected &&
@@ -769,20 +771,25 @@ class _ContainerManagementTabState
         _maidCafeStream == null) {
       // A browser with no route to the server's daemon: there is no second
       // transport to offer, so the tab names the missing route instead.
-      return ContainerEmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.link_off,
-        message: 'containersNoDaemonRoute'.tr(),
-        actionLabel: 'commonRetry'.tr(),
-        onAction: _refreshManually,
+        title: 'containersNoDaemonRoute'.tr(),
+        action: OutlinedButton(
+          onPressed: _refreshManually,
+          child: Text('commonRetry'.tr()),
+        ),
       );
     }
     return _environments.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => ContainerEmptyPanel(
+      error: (error, _) => MaidKitEmptyState(
         icon: Symbols.error_outline,
-        message: 'containersLoadError'.tr(args: [error.toString()]),
-        actionLabel: 'commonRetry'.tr(),
-        onAction: _load,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        title: 'containersLoadError'.tr(args: [error.toString()]),
+        action: OutlinedButton(
+          onPressed: _load,
+          child: Text('commonRetry'.tr()),
+        ),
       ),
       data: (environments) => _ContainerEnvironments(
         server: widget.server,
@@ -1038,13 +1045,14 @@ class _ContainerEnvironments extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (environments.isEmpty) {
-      return ContainerEmptyPanel(
+      return MaidKitEmptyState(
         icon: Symbols.deployed_code,
-        message: 'containersNotInstalled'.tr(),
-        actionLabel: 'containersInstallRuntimeShort'.tr(),
-        onAction: onInstallRuntime,
-        filledAction: true,
-        actionIcon: Symbols.download,
+        title: 'containersNotInstalled'.tr(),
+        action: FilledButton.tonalIcon(
+          onPressed: onInstallRuntime,
+          icon: const Icon(Symbols.download, size: 18),
+          label: Text('containersInstallRuntimeShort'.tr()),
+        ),
       );
     }
 

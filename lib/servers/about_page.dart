@@ -6,6 +6,7 @@ import 'package:styled_widget/styled_widget.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:maid_kit/shared/services/package_info_provider.dart';
+import 'package:maid_kit/theme.dart';
 
 /// Opens the Solar Network product page in the default browser.
 Future<void> _openSolarNetwork() async {
@@ -47,7 +48,7 @@ class AboutPage extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.xl),
                         child: Image.asset(
                           'assets/icons/icon.png',
                           width: 112,
@@ -135,7 +136,7 @@ class AboutPage extends ConsumerWidget {
                     clipBehavior: Clip.antiAlias,
                     child: ListTile(
                       leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                         child: Image.asset(
                           'assets/icons/solian-icon.webp',
                           width: 40,

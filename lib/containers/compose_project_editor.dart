@@ -233,7 +233,7 @@ class _ComposeProjectEditorState extends State<ComposeProjectEditor> {
     child: DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),

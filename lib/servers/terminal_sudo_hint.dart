@@ -4,6 +4,8 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:maid_kit/theme.dart';
+
 import 'terminal_session_adapter.dart';
 
 /// Overlays a small hint above the terminal cursor when the session can
@@ -90,7 +92,7 @@ class _HintChip extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.inverseSurface.withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
           border: Border.all(color: scheme.outlineVariant),
           boxShadow: const [
             BoxShadow(

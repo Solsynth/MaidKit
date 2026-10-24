@@ -8,6 +8,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/cloud_file_picker.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 import 'auth_challenge_dialog.dart';
 import 'maidcafe_connectivity.dart';
 import 'maidcafe_debug.dart';
@@ -1091,7 +1092,7 @@ Future<bool> _approveHostKey(BuildContext context, HostKeyPrompt prompt) async {
           constraints: const BoxConstraints(maxWidth: 480),
           child: Material(
             color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(MaidKitRadius.md),
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Column(

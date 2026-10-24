@@ -443,7 +443,7 @@ class _DeployTerminalModalState extends ConsumerState<_DeployTerminalModal> {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: const Color(0xFF111315),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(MaidKitRadius.md),
                   border: Border.all(color: scheme.outlineVariant),
                 ),
                 child: session.log.isEmpty
@@ -459,7 +459,7 @@ class _DeployTerminalModalState extends ConsumerState<_DeployTerminalModal> {
                     : AnsiLogView(
                         text: session.log,
                         streaming: true,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(MaidKitRadius.md),
                       ),
               ),
             ),
@@ -533,7 +533,7 @@ class _SessionProgressBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(MaidKitRadius.xs),
           child: LinearProgressIndicator(
             // Indeterminate while running without a parsed percentage;
             // determinate once docker/podman reports % or layer sizes.

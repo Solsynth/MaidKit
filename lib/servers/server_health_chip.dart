@@ -2,6 +2,8 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:maid_kit/theme.dart';
+
 import 'server_models.dart';
 
 /// The color a health band reads in, using the app's existing status
@@ -63,7 +65,7 @@ class ServerHealthChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.12),
           border: Border.all(color: color.withValues(alpha: 0.4)),
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(MaidKitRadius.pill),
         ),
         child: Padding(
           padding: EdgeInsets.symmetric(

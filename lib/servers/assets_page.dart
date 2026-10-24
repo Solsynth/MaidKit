@@ -13,7 +13,7 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/snippets/snippet_confirmation.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
-
+import 'package:maid_kit/theme.dart';
 import 'credentials_page.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -546,7 +546,7 @@ class SnippetsSection extends ConsumerWidget {
                     for (final item in items)
                       ListTile(
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                           side: BorderSide(
                             color: Theme.of(context).colorScheme.outlineVariant,
                           ),

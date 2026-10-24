@@ -632,7 +632,7 @@ class _LastTaskBanner extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         border: Border.all(
           color: ok
               ? scheme.outlineVariant.withValues(alpha: 0.5)
@@ -704,7 +704,7 @@ class _StepChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: scheme.surface.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -899,7 +899,7 @@ class _StateChip extends StatelessWidget {
         color: running
             ? scheme.secondaryContainer
             : scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: Text(
         running ? 'webServerRunning'.tr() : 'webServerStoppedLabel'.tr(),
@@ -1208,10 +1208,10 @@ class _WebServerConfigEditorState extends State<_WebServerConfigEditor> {
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
         child: CodeTheme(
           data: CodeThemeData(
             styles: {
