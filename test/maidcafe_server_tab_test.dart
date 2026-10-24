@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -204,6 +206,35 @@ class _FakeSessionRegistry extends MaidCafeSessionRegistry {
   }) async => session;
 }
 
+/// A registry whose daemon open is gated by the test: the first request
+/// stays in flight until the test completes it, later ones answer at once.
+/// This is how a probe whose open outlives a reconnect is staged.
+class _GatedSessionRegistry extends MaidCafeSessionRegistry {
+  _GatedSessionRegistry({
+    required this.onSessionFor,
+    required super.manager,
+    required super.serverRepository,
+  });
+
+  final Future<MaidCafeStreamSession?> Function() onSessionFor;
+
+  @override
+  void retain(Server server) {}
+
+  @override
+  void release(Server server) {}
+
+  @override
+  void invalidate(Server server) {}
+
+  @override
+  Future<MaidCafeStreamSession?> sessionFor(
+    Server server, {
+    int? port,
+    bool force = false,
+  }) => onSessionFor();
+}
+
 String _hexEncode(String text) => utf8
     .encode(text)
     .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
@@ -254,6 +285,9 @@ Future<void> pumpRunningPayloadTab(
   WidgetTester tester, {
   bool daemonReachable = true,
   MaidCafeTabMode mode = MaidCafeTabMode.payload,
+  MaidCafeSessionRegistry Function(SshConnectionManager, ServerRepository)?
+  buildRegistry,
+  ValueNotifier<bool>? connection,
 }) async {
   // testWidgets bodies run in a FakeAsync zone where real I/O futures never
   // complete; the temp dir and the (lazily opened) drift database must be
@@ -282,13 +316,15 @@ Future<void> pumpRunningPayloadTab(
   addTearDown(database.close);
   final manager = _FakeSshManager(_fakeRemoteCommand);
   final repository = _FakeRepository(database);
-  final registry = _FakeSessionRegistry(
-    session: daemonReachable
-        ? _FakeStreamSession(auditEntries: const [])
-        : null,
-    manager: manager,
-    serverRepository: repository,
-  );
+  final registry =
+      buildRegistry?.call(manager, repository) ??
+      _FakeSessionRegistry(
+        session: daemonReachable
+            ? _FakeStreamSession(auditEntries: const [])
+            : null,
+        manager: manager,
+        serverRepository: repository,
+      );
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -332,13 +368,24 @@ Future<void> pumpRunningPayloadTab(
                   // switch. A page-local Material mirrors the real detail
                   // page and keeps the inner TabBar's lookup satisfied.
                   Material(
-                    child: MaidCafeServerTab(
-                      server: server,
-                      connected: true,
-                      connectionError: null,
-                      onConnect: () async {},
-                      mode: mode,
-                    ),
+                    child: connection == null
+                        ? MaidCafeServerTab(
+                            server: server,
+                            connected: true,
+                            connectionError: null,
+                            onConnect: () async {},
+                            mode: mode,
+                          )
+                        : ValueListenableBuilder<bool>(
+                            valueListenable: connection,
+                            builder: (_, value, _) => MaidCafeServerTab(
+                              server: server,
+                              connected: value,
+                              connectionError: null,
+                              onConnect: () async {},
+                              mode: mode,
+                            ),
+                          ),
                   ),
                   const SizedBox.shrink(),
                 ],
@@ -584,14 +631,74 @@ void main() {
     (WidgetTester tester) async {
       // A null shared session means the registry could not open the stream
       // (e.g. the daemon refuses to start); the probe must leave `checking`
-      // and explain the state instead of spinning forever.
+      // and explain the state instead of spinning forever — and it must
+      // never claim the daemon is not installed, which only a completed
+      // check may say.
       await pumpRunningPayloadTab(tester, daemonReachable: false);
 
       expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(find.text('maidCafeNotInstalledTitle'.tr()), findsNothing);
+      expect(find.text('maidCafeUnavailableTitle'.tr()), findsOneWidget);
       expect(find.text('maidCafeInstallationUnavailable'.tr()), findsOneWidget);
       expect(find.text('maidCafeInstallApplication'.tr()), findsOneWidget);
+
+      // The one automatic re-probe fires after three seconds; let it run so
+      // no timer outlives the test.
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text('maidCafeUnavailableTitle'.tr()), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'a stale probe cannot flip a live installation back to a failure',
+    (WidgetTester tester) async {
+      // A probe whose daemon open stays in flight across a reconnect that
+      // runs a second, successful probe must not write state when it finally
+      // resolves: the stale run used to land on `not installed` and close
+      // the stream the newer run had opened (issue #109 — a reopened tab
+      // reporting MaidCafe as not installed while the daemon runs).
+      final connection = ValueNotifier<bool>(true);
+      addTearDown(connection.dispose);
+      final staleOpen = Completer<MaidCafeStreamSession?>();
+      var opens = 0;
+
+      await pumpRunningPayloadTab(
+        tester,
+        connection: connection,
+        buildRegistry: (manager, repository) => _GatedSessionRegistry(
+          manager: manager,
+          serverRepository: repository,
+          onSessionFor: () {
+            opens += 1;
+            // The first open stays in flight across the reconnect; the rest
+            // answer immediately.
+            return opens == 1
+                ? staleOpen.future
+                : Future.value(_FakeStreamSession(auditEntries: const []));
+          },
+        ),
+      );
+
+      // A reconnect while the first probe's open is still in flight: the tab
+      // drops and regains its connection, and the second probe succeeds.
+      connection.value = false;
+      await tester.pump();
+      connection.value = true;
+      await tester.pumpAndSettle();
+      expect(find.text('maidCafeConfigTab'.tr()), findsOneWidget);
+
+      // The stale open resolves now. It must leave the running workspace
+      // alone.
+      staleOpen.complete(_FakeStreamSession(auditEntries: const []));
+      await tester.pumpAndSettle();
+
+      expect(find.text('maidCafeConfigTab'.tr()), findsOneWidget);
+      expect(find.text('maidCafeNotInstalledTitle'.tr()), findsNothing);
+      expect(find.text('maidCafeUnavailableTitle'.tr()), findsNothing);
+    },
+  );
+
   testWidgets('running installation exposes the payload workspace action', (
     WidgetTester tester,
   ) async {

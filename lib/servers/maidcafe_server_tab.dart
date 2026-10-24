@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:easy_localization/easy_localization.dart';
@@ -50,7 +51,7 @@ class MaidCafeActionsNotifier
 
 enum MaidCafeTabMode { installation, payload }
 
-enum _MaidCafeState { checking, notInstalled, running, conflict }
+enum _MaidCafeState { checking, notInstalled, unavailable, running, conflict }
 
 /// Selects one download channel without dismissing the parent sheet.
 class MaidCafeInstallChannelPicker extends StatelessWidget {
@@ -165,6 +166,18 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
   late final MaidCafeSessionRegistry _sessionRegistry;
   MaidCafeStreamSession? _stream;
   var _streamGeneration = 0;
+
+  /// Identifies the probe run that owns the state now. A reconnect can start
+  /// a second probe while an earlier one is still working; the stale run must
+  /// neither flip a live installation back to a failure nor close the stream
+  /// the newer run opened.
+  var _probeGeneration = 0;
+
+  /// Whether the one automatic re-probe for this connection has been spent.
+  /// A transient failure right after a tab reopens — the SSH transport still
+  /// settling — heals on its own; anything later is retried by hand.
+  var _autoProbeSpent = false;
+  Timer? _autoRetry;
   var _portEdited = false;
   var _busy = false;
   var _transport = 'http';
@@ -250,8 +263,10 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     super.didUpdateWidget(oldWidget);
     if (!widget.connected && oldWidget.connected) {
       _closeStream();
+      _autoRetry?.cancel();
       setState(() => _state = _MaidCafeState.checking);
     } else if (widget.connected && !oldWidget.connected) {
+      _autoProbeSpent = false;
       Future<void>.microtask(_probeInstallation);
     }
   }
@@ -281,6 +296,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _scriptTimeoutController.dispose();
     _maxBodyBytesController.dispose();
     _maxConcurrentRunsController.dispose();
+    _autoRetry?.cancel();
     _closeStream();
     _sessionRegistry.release(widget.server);
     super.dispose();
@@ -428,8 +444,20 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     _alarms = List.unmodifiable(config.alarms);
   }
 
+  /// Re-derives the installation state from the server.
+  ///
+  /// Only the newest run may write state: a reconnect can start a second
+  /// probe while an earlier one is still working, and the stale run must
+  /// neither flip a live installation back to a failure nor close the
+  /// stream the newer run opened. Only a completed check that saw no managed
+  /// marker may claim "not installed"; every other failure lands on the
+  /// unavailable prompt, because an unreachable daemon is not an uninstalled
+  /// one.
   Future<void> _probeInstallation() async {
     if (!mounted || !widget.connected || _busy) return;
+    final generation = ++_probeGeneration;
+    bool stillCurrent() =>
+        mounted && generation == _probeGeneration && widget.connected;
     setState(() {
       _state = _MaidCafeState.checking;
       _message = null;
@@ -440,27 +468,28 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         manager: ref.read(connectionManagerProvider),
         serverId: widget.server.id,
       ).timeout(const Duration(seconds: 20));
+      if (!stillCurrent()) return;
       managed = existing.contains('managed');
       final conflicts = managed
           ? const <String>[]
           : existing.where((entry) => entry != 'managed').toList();
       if (!managed && conflicts.isNotEmpty) {
-        if (mounted) {
-          setState(() {
-            _state = _MaidCafeState.conflict;
-            _message =
-                '${'maidCafeExistingInstallation'.tr()}\n'
-                '${conflicts.join('\n')}';
-          });
-        }
+        setState(() {
+          _state = _MaidCafeState.conflict;
+          _message =
+              '${'maidCafeExistingInstallation'.tr()}\n'
+              '${conflicts.join('\n')}';
+        });
         return;
       }
       if (!managed) {
-        if (mounted) setState(() => _state = _MaidCafeState.notInstalled);
+        setState(() => _state = _MaidCafeState.notInstalled);
         return;
       }
       await _loadDaemonConfig();
+      if (!stillCurrent()) return;
       final port = await _resolveMaidCafePort(refreshRemote: true);
+      if (!stillCurrent()) return;
       // The session registry swallows open failures into a null session, so
       // a down daemon makes _openStream return false instead of throwing;
       // without this branch the tab would stay on `checking` forever. The
@@ -469,29 +498,39 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
         port: port,
         force: true,
       ).timeout(const Duration(seconds: 45));
-      if (opened && mounted) {
+      if (!stillCurrent()) return;
+      if (opened) {
         setState(() => _state = _MaidCafeState.running);
         Future<void>.microtask(_refreshMetrics);
-      } else if (mounted) {
+      } else {
         _closeStream();
-        setState(() {
-          _state = _MaidCafeState.notInstalled;
-          _message = managed
-              ? 'maidCafeInstallationUnavailable'.tr()
-              : 'maidCafeInstallationCheckFailed'.tr();
-        });
+        _failProbe(managed);
       }
     } catch (error) {
+      if (!stillCurrent()) return;
       _closeStream();
-      if (mounted) {
-        setState(() {
-          _state = _MaidCafeState.notInstalled;
-          _message = managed
-              ? 'maidCafeInstallationUnavailable'.tr()
-              : 'maidCafeInstallationCheckFailed'.tr();
-        });
-      }
+      _failProbe(managed);
     }
+  }
+
+  /// Lands the probe on `unavailable` rather than a false "not installed":
+  /// the check failed, or the detected daemon did not answer, and either way
+  /// the service may well be running. One automatic re-probe is allowed per
+  /// connection so a transport that was still settling when the tab opened
+  /// heals without the user having to notice.
+  void _failProbe(bool managed) {
+    setState(() {
+      _state = _MaidCafeState.unavailable;
+      _message = managed
+          ? 'maidCafeInstallationUnavailable'.tr()
+          : 'maidCafeInstallationCheckFailed'.tr();
+    });
+    if (_autoProbeSpent) return;
+    _autoProbeSpent = true;
+    _autoRetry?.cancel();
+    _autoRetry = Timer(const Duration(seconds: 3), () {
+      if (mounted && widget.connected) _probeInstallation();
+    });
   }
 
   void _stageAction(MaidCafeActionDefinition action) {
@@ -1052,7 +1091,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     } catch (error) {
       if (mounted) {
         setState(() {
-          _state = _MaidCafeState.notInstalled;
+          _state = _MaidCafeState.unavailable;
           _message = error.toString();
         });
       }
@@ -1184,7 +1223,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     } catch (error) {
       if (mounted) {
         setState(() {
-          _state = _MaidCafeState.notInstalled;
+          _state = _MaidCafeState.unavailable;
           _message = error.toString();
         });
       }
@@ -1516,6 +1555,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
             _conflictPrompt()
           else if (_state == _MaidCafeState.notInstalled)
             _notInstalledPrompt(context)
+          else if (_state == _MaidCafeState.unavailable)
+            _unavailablePrompt(context)
           else if (_state == _MaidCafeState.running) ...[
             // The daemon's own overview of how the host is doing, before the
             // operations that act on it.
@@ -1551,6 +1592,8 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
                       ? _checkingPrompt()
                       : _state == _MaidCafeState.conflict
                       ? _conflictPrompt()
+                      : _state == _MaidCafeState.unavailable
+                      ? _unavailablePrompt(context)
                       : _notInstalledPrompt(context),
                 ),
         ),
@@ -2213,6 +2256,52 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     );
   }
 
+  /// The probe could not confirm a running daemon: the check itself failed,
+  /// or a detected install did not answer. Never the same claim as "not
+  /// installed", which only a completed check may make.
+  Widget _unavailablePrompt(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card.outlined(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'maidCafeUnavailableTitle'.tr(),
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text('maidCafeUnavailableLead'.tr()),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: _busy ? null : _probeInstallation,
+                  icon: const Icon(Symbols.refresh),
+                  label: Text('maidCafeRetry'.tr()),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy ? null : _install,
+                  icon: const Icon(Symbols.download),
+                  label: Text('maidCafeInstallApplication'.tr()),
+                ),
+                if (_message != null)
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _showDaemonLogs,
+                    icon: const Icon(Symbols.article),
+                    label: Text('maidCafeViewDaemonLogs'.tr()),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _sectionLabel(ThemeData theme, String text) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: Text(
@@ -2646,7 +2735,7 @@ class _MaidCafeServerTabState extends ConsumerState<MaidCafeServerTab>
     } catch (error) {
       if (mounted) {
         setState(() {
-          _state = _MaidCafeState.notInstalled;
+          _state = _MaidCafeState.unavailable;
           _message = error.toString();
         });
       }
