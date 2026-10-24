@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
@@ -47,17 +46,6 @@ enum _ArchiveFormat { zip, tarGzip }
 /// height) so keyboard navigation can scroll items into view precisely.
 const double _kFileRowExtent = 44.0;
 
-class _TransferCancelled implements Exception {
-  const _TransferCancelled();
-}
-
-/// Thrown inside a queued transfer action when the user chose to skip the
-/// conflicting entry in ask mode. The transfer completes quietly instead of
-/// failing.
-class _TransferSkipped implements Exception {
-  const _TransferSkipped();
-}
-
 /// Per-conflict choice when the transfer conflict mode is [ask].
 enum _TransferConflictChoice { overwrite, keepBoth, skip }
 
@@ -65,71 +53,6 @@ enum _TransferConflictChoice { overwrite, keepBoth, skip }
 /// one-off action, so it always offers the overwrite choice instead of
 /// silently renaming or overwriting the way the saved transfer mode would.
 const TransferConflictMode _kDropConflictMode = TransferConflictMode.ask;
-
-class _TransferController {
-  var _isPaused = false;
-  var _isCancelled = false;
-  Completer<void>? _resumeCompleter;
-
-  bool get isCancelled => _isCancelled;
-
-  void pause() {
-    if (_isCancelled || _isPaused) return;
-    _isPaused = true;
-    _resumeCompleter = Completer<void>();
-  }
-
-  void resume() {
-    if (!_isPaused) return;
-    _isPaused = false;
-    final completer = _resumeCompleter;
-    _resumeCompleter = null;
-    if (completer != null && !completer.isCompleted) {
-      completer.complete();
-    }
-  }
-
-  void cancel() {
-    if (_isCancelled) return;
-    _isCancelled = true;
-    resume();
-  }
-
-  Future<void> waitIfPaused() async {
-    throwIfCancelled();
-    final completer = _resumeCompleter;
-    if (_isPaused && completer != null) {
-      await completer.future;
-    }
-    throwIfCancelled();
-  }
-
-  void throwIfCancelled() {
-    if (_isCancelled) throw const _TransferCancelled();
-  }
-}
-
-class _QueuedTransfer {
-  const _QueuedTransfer({
-    required this.id,
-    required this.title,
-    required this.totalBytes,
-    required this.controller,
-    required this.notify,
-    required this.action,
-    this.onSuccess,
-    this.onFinish,
-  });
-
-  final String id;
-  final String title;
-  final int? totalBytes;
-  final _TransferController controller;
-  final bool notify;
-  final Future<void> Function(_TransferController, void Function(int)) action;
-  final Future<void> Function()? onSuccess;
-  final Future<void> Function()? onFinish;
-}
 
 class _ClipboardEntry {
   const _ClipboardEntry({
@@ -188,9 +111,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   var _loadingRemote = true;
   String? _localError;
   String? _remoteError;
+
+  /// Ids of the transfers this tab submitted to the app-wide task queue.
+  ///
+  /// The queue outlives the tab, but the work it runs — SSH file handles, this
+  /// tab's directory state — belongs to the tab. Closing the tab cancels its
+  /// transfers instead of letting them run against a disposed State.
+  final _transferIds = <String>{};
   String? _workingPath;
-  final Queue<_QueuedTransfer> _transferQueue = Queue<_QueuedTransfer>();
-  var _processingTransferQueue = false;
   var _draggingFiles = false;
   _FileSide? _dropTargetSide;
   Future<RemoteFileClient>? _fileClient;
@@ -509,12 +437,19 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     await _refreshLeftRemote();
   }
 
+  /// Whether this tab has a transfer queued or running.
+  ///
+  /// A queued transfer already holds its destination directory, so renaming or
+  /// creating an entry there would race it.
+  bool get _busy => _workingPath != null || _transferIds.isNotEmpty;
+
   @override
   void dispose() {
-    for (final transfer in _transferQueue) {
-      transfer.controller.cancel();
+    final tasks = ref.read(taskProgressProvider.notifier);
+    for (final id in _transferIds) {
+      unawaited(tasks.cancel(id));
     }
-    _transferQueue.clear();
+    _transferIds.clear();
     unawaited(_closeFileSessions());
     _leftRemotePathController.dispose();
     _leftRemotePathFocusNode.dispose();
@@ -1230,7 +1165,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<void> _renameEntry(_ClipboardEntry entry) async {
-    if (_workingPath != null) return;
+    if (_busy) return;
     final name = await _showFileNameSheet(
       context,
       title: 'fileManagerRename'.tr(),
@@ -1289,7 +1224,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<void> _createFolder(_FileSide side) async {
-    if (_workingPath != null) return;
+    if (_busy) return;
     final name = await _showFileNameSheet(
       context,
       title: 'fileManagerCreateFolder'.tr(),
@@ -1551,7 +1486,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final transferPaste = clipboard.entries.any(
       (entry) => entry.side != targetSide,
     );
-    return transferPaste || _workingPath == null;
+    return transferPaste || !_busy;
   }
 
   Future<void> _transferBetweenServers(
@@ -1567,7 +1502,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final size = entry.isDirectory
         ? null
         : (await source.stat(entry.path)).size;
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerTransferring'.tr(args: [entry.name]),
       totalBytes: size,
       notify: notify,
@@ -1578,7 +1513,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           targetDirectory,
           entry.name,
         );
-        if (target == null) throw const _TransferSkipped();
+        if (target == null) throw const TaskSkipped();
         try {
           if (entry.isDirectory) {
             await _removeRemoteEntry(destination, target);
@@ -1671,7 +1606,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     RemoteFileClient destination,
     String sourcePath,
     String targetPath,
-    _TransferController controller,
+    TaskControl controller,
     void Function(int) reportProgress, {
     int transferredBytes = 0,
   }) async {
@@ -1708,7 +1643,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     RemoteFileClient destination,
     String sourcePath,
     String targetPath,
-    _TransferController controller,
+    TaskControl controller,
     void Function(int) reportProgress, {
     int transferredBytes = 0,
   }) async {
@@ -1817,7 +1752,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     required String title,
     required String command,
   }) async {
-    if (_workingPath != null) return;
+    if (_busy) return;
     final owner = ref.read(connectionManagerProvider).clientFor(serverId);
     if (owner == null) {
       showStyledSnackBar(
@@ -2179,7 +2114,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     if (!isLocalFile(entry)) return;
     final file = File(entry.path);
     final totalBytes = await file.length();
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerUploading'.tr(args: [_entityName(entry)]),
       totalBytes: totalBytes,
       notify: notify,
@@ -2191,7 +2126,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           _entityName(entry),
           conflictMode: conflictMode,
         );
-        if (remotePath == null) throw const _TransferSkipped();
+        if (remotePath == null) throw const TaskSkipped();
         final remoteFile = await files.open(
           remotePath,
           mode:
@@ -2230,7 +2165,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerUploading'.tr(args: [name]),
       totalBytes: null,
       notify: notify,
@@ -2242,7 +2177,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           name,
           conflictMode: conflictMode,
         );
-        if (remoteRoot == null) throw const _TransferSkipped();
+        if (remoteRoot == null) throw const TaskSkipped();
         try {
           await _removeRemoteEntry(files, remoteRoot);
           await _uploadLocalDirectory(
@@ -2270,7 +2205,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     RemoteFileClient files,
     Directory local,
     String remotePath, {
-    _TransferController? controller,
+    TaskControl? controller,
     void Function(int)? reportProgress,
     int transferredBytes = 0,
     Set<String>? visitedDirectories,
@@ -2361,7 +2296,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerUploading'.tr(args: [name]),
       totalBytes: bytes.length,
       notify: notify,
@@ -2373,7 +2308,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           name,
           conflictMode: conflictMode,
         );
-        if (remotePath == null) throw const _TransferSkipped();
+        if (remotePath == null) throw const TaskSkipped();
         final remoteFile = await files.open(
           remotePath,
           mode:
@@ -2447,7 +2382,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       await onFinish?.call();
       return;
     }
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [filename]),
       totalBytes: totalBytes,
       notify: notify,
@@ -2457,7 +2392,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           _localDirectory.path,
           filename,
         );
-        if (destinationPath == null) throw const _TransferSkipped();
+        if (destinationPath == null) throw const TaskSkipped();
         final destination = File(destinationPath);
         final remoteFile = await files.open(
           remotePath,
@@ -2514,7 +2449,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final temporaryFile = staging == null
         ? null
         : File('${staging.path}$platformPathSeparator$filename');
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [filename]),
       totalBytes: null,
       notify: notify,
@@ -2588,7 +2523,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     final archiveFile = staging == null
         ? null
         : File('${staging.path}/$name.zip');
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [name]),
       totalBytes: null,
       notify: notify,
@@ -2652,7 +2587,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     String remotePath,
     Archive archive, {
     required String prefix,
-    _TransferController? controller,
+    TaskControl? controller,
     void Function(int)? reportProgress,
   }) async {
     await controller?.waitIfPaused();
@@ -2695,7 +2630,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
   }) async {
-    await _runTransfer(
+    _runTransfer(
       title: 'fileManagerDownloading'.tr(args: [name]),
       totalBytes: null,
       notify: notify,
@@ -2705,7 +2640,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           _localDirectory.path,
           name,
         );
-        if (localRoot == null) throw const _TransferSkipped();
+        if (localRoot == null) throw const TaskSkipped();
         final localDirectory = Directory(localRoot);
         try {
           await _removeLocalEntry(localRoot);
@@ -2734,7 +2669,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     RemoteFileClient files,
     String remotePath,
     Directory local, {
-    _TransferController? controller,
+    TaskControl? controller,
     void Function(int)? reportProgress,
     int transferredBytes = 0,
   }) async {
@@ -3038,141 +2973,56 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     }
   }
 
-  Future<void> _runTransfer({
+  /// Hands a transfer to the app-wide task queue and returns immediately.
+  ///
+  /// The one-at-a-time drain, the 250 ms progress throttle, speed sampling and
+  /// the pause/cancel control all live in [TaskProgressNotifier], so a file
+  /// copy is just an [AppTaskRequest] there — the same machinery the window's
+  /// progress bar and sheet already render.
+  void _runTransfer({
     required String title,
     required int? totalBytes,
-    required Future<void> Function(_TransferController, void Function(int))
-    action,
+    required Future<void> Function(TaskControl, TaskProgressReport) action,
     bool notify = true,
     Future<void> Function()? onSuccess,
     Future<void> Function()? onFinish,
-  }) async {
-    final controller = _TransferController();
-    final taskId = ref
+  }) {
+    // The queue defers its drain, so `id` is assigned before any callback can
+    // read it, and the tab is marked busy before the action starts.
+    late final String id;
+    id = ref
         .read(taskProgressProvider.notifier)
-        .start(
-          title: title,
-          totalBytes: totalBytes,
-          status: TaskProgressStatus.queued,
-          onCancel: controller.cancel,
+        .run(
+          AppTaskRequest(title: title, totalBytes: totalBytes, action: action),
+          onSuccess: onSuccess,
+          onComplete: () {
+            if (notify && mounted) {
+              showStyledSnackBar(
+                message: title,
+                title: 'fileManagerTransferComplete'.tr(),
+                icon: Symbols.check_circle,
+                accentColor: Theme.of(context).colorScheme.primary,
+              );
+            }
+          },
+          onError: (error) {
+            if (!notify || !mounted) return;
+            showStyledSnackBar(
+              message: error.toString(),
+              title: 'fileManagerTransferFailed'.tr(),
+              icon: Symbols.error,
+              accentColor: Theme.of(context).colorScheme.error,
+            );
+          },
+          onFinish: () async {
+            if (mounted) setState(() => _transferIds.remove(id));
+            await onFinish?.call();
+          },
         );
-    _transferQueue.add(
-      _QueuedTransfer(
-        id: taskId,
-        title: title,
-        totalBytes: totalBytes,
-        controller: controller,
-        notify: notify,
-        action: action,
-        onSuccess: onSuccess,
-        onFinish: onFinish,
-      ),
-    );
-    _processTransferQueue();
-  }
-
-  void _processTransferQueue() {
-    if (_processingTransferQueue) return;
-    _processingTransferQueue = true;
-    unawaited(_drainTransferQueue());
-  }
-
-  Future<void> _drainTransferQueue() async {
-    try {
-      while (_transferQueue.isNotEmpty) {
-        final transfer = _transferQueue.removeFirst();
-        if (transfer.controller.isCancelled) continue;
-        await _executeQueuedTransfer(transfer);
-      }
-    } finally {
-      _processingTransferQueue = false;
-      if (_transferQueue.isNotEmpty) _processTransferQueue();
-    }
-  }
-
-  Future<void> _executeQueuedTransfer(_QueuedTransfer transfer) async {
-    final controller = transfer.controller;
-    ref
-        .read(taskProgressProvider.notifier)
-        .startRunning(
-          transfer.id,
-          onPause: controller.pause,
-          onResume: controller.resume,
-          onCancel: controller.cancel,
-        );
-    Timer? progressTimer;
-    var pendingBytes = 0;
-    var hasPendingProgress = false;
-    var lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
-
-    void flushProgress() {
-      progressTimer?.cancel();
-      progressTimer = null;
-      if (!hasPendingProgress) return;
-      hasPendingProgress = false;
-      lastProgressAt = DateTime.now();
-      ref.read(taskProgressProvider.notifier).update(transfer.id, pendingBytes);
-    }
-
-    void reportProgress(int transferredBytes) {
-      pendingBytes = transferredBytes;
-      hasPendingProgress = true;
-      final elapsed = DateTime.now().difference(lastProgressAt);
-      if (elapsed >= const Duration(milliseconds: 250)) {
-        flushProgress();
-        return;
-      }
-      progressTimer ??= Timer(
-        const Duration(milliseconds: 250) - elapsed,
-        flushProgress,
-      );
-    }
-
-    if (mounted) setState(() => _workingPath = transfer.title);
-    try {
-      await transfer.action(controller, reportProgress);
-      controller.throwIfCancelled();
-      flushProgress();
-      if (transfer.onSuccess != null) {
-        await transfer.onSuccess!();
-      }
-      ref.read(taskProgressProvider.notifier).complete(transfer.id);
-      if (transfer.notify && mounted) {
-        showStyledSnackBar(
-          message: transfer.title,
-          title: 'fileManagerTransferComplete'.tr(),
-          icon: Symbols.check_circle,
-          accentColor: Theme.of(context).colorScheme.primary,
-        );
-      }
-    } on _TransferCancelled {
-      flushProgress();
-      await ref.read(taskProgressProvider.notifier).cancel(transfer.id);
-    } on _TransferSkipped {
-      // User declined the conflicting entry; finish quietly without the
-      // completion snackbar or a failure state.
-      flushProgress();
-      ref.read(taskProgressProvider.notifier).complete(transfer.id);
-    } catch (error) {
-      flushProgress();
-      ref.read(taskProgressProvider.notifier).fail(transfer.id);
-      if (transfer.notify && mounted) {
-        showStyledSnackBar(
-          message: error.toString(),
-          title: 'fileManagerTransferFailed'.tr(),
-          icon: Symbols.error,
-          accentColor: Theme.of(context).colorScheme.error,
-        );
-      }
-      // Re-throw for compound ops (paste) that silence notifications and
-      // handle failures themselves. Direct upload/download already notified.
-    } finally {
-      progressTimer?.cancel();
-      if (transfer.onFinish != null) {
-        await transfer.onFinish!();
-      }
-      if (mounted) setState(() => _workingPath = null);
-    }
+    // Transfers signal busy through [_transferIds] — the queue is shared, so a
+    // transfer still queued behind another one must already block a rename in
+    // this tab's directory.
+    setState(() => _transferIds.add(id));
   }
 
   Future<RemoteFileClient> _files() {
@@ -3259,7 +3109,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         : selected;
     final onlyThis = entries.length == 1 && entries.first.path == entry.path;
     final isDirectory = isLocalDirectory(entry);
-    final busy = _workingPath != null;
+    final busy = _busy;
     final canPaste = _canPasteInto(_FileSide.local);
     final transferLabel = entries.length == 1
         ? 'Upload to remote'
@@ -3340,7 +3190,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         : selected;
     final onlyThis = entries.length == 1 && entries.first.path == path;
     final isDirectory = entry.attr.isDirectory;
-    final busy = _workingPath != null;
+    final busy = _busy;
     final canPaste = _canPasteInto(_FileSide.remote);
     final transferLabel = entries.length == 1
         ? 'Download to local'
@@ -3454,7 +3304,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         ? [_clipboardEntryForLeftRemote(entry)]
         : selected;
     final onlyThis = entries.length == 1 && entries.first.path == path;
-    final busy = _workingPath != null;
+    final busy = _busy;
     return Menu(
       children: [
         if (onlyThis && entry.attr.isDirectory)
@@ -3582,7 +3432,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       children: [
         MenuAction(
           title: 'fileManagerCreateFolder'.tr(),
-          attributes: MenuActionAttributes(disabled: _workingPath != null),
+          attributes: MenuActionAttributes(disabled: _busy),
           callback: () => _createFolder(side),
         ),
         MenuAction(
@@ -4130,9 +3980,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           visualDensity: VisualDensity.compact,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: _workingPath == null
-              ? () => _createFolder(_FileSide.remote)
-              : null,
+          onPressed: _busy ? null : () => _createFolder(_FileSide.remote),
           icon: const Icon(Symbols.create_new_folder, size: 18),
         ),
       ],
@@ -4348,9 +4196,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           visualDensity: VisualDensity.compact,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: _workingPath == null
-              ? () => _createFolder(_FileSide.local)
-              : null,
+          onPressed: _busy ? null : () => _createFolder(_FileSide.local),
           icon: const Icon(Symbols.create_new_folder, size: 18),
         ),
         IconButton(
@@ -4461,9 +4307,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           visualDensity: VisualDensity.compact,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: _workingPath == null
-              ? () => _createFolder(_FileSide.local)
-              : null,
+          onPressed: _busy ? null : () => _createFolder(_FileSide.local),
           icon: const Icon(Symbols.create_new_folder, size: 18),
         ),
         IconButton(

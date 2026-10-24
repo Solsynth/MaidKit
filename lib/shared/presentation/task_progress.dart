@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -84,54 +85,258 @@ final taskProgressProvider =
       TaskProgressNotifier.new,
     );
 
+/// A task the user started that must run one at a time — a file transfer, an
+/// archive write, a deploy step. The notifier owns the queue, the progress
+/// sampling and the pause/cancel plumbing; the caller only supplies the work.
+///
+/// [action] reports bytes as it goes and must call [TaskControl.waitIfPaused]
+/// where it can block, so pausing a task stops it at the next chunk instead of
+/// after the whole file.
+class AppTaskRequest {
+  const AppTaskRequest({
+    required this.title,
+    required this.action,
+    this.totalBytes,
+  });
+
+  final String title;
+
+  /// Total size in bytes, or null when the work has no known size (a recursive
+  /// directory, a stream) — the bar then shows an indeterminate sweep.
+  final int? totalBytes;
+
+  final Future<void> Function(TaskControl control, TaskProgressReport report)
+  action;
+}
+
+/// Bytes transferred so far for the running task.
+typedef TaskProgressReport = void Function(int transferredBytes);
+
+/// Cooperative pause/cancel handle handed to a running [AppTaskRequest].
+///
+/// A transfer can only stop where it checks: [waitIfPaused] suspends the action
+/// until the user resumes, [throwIfCancelled] aborts it so the queue can clean
+/// up the half-written destination.
+class TaskControl {
+  var _isPaused = false;
+  var _isCancelled = false;
+  Completer<void>? _resumeCompleter;
+
+  bool get isCancelled => _isCancelled;
+
+  void pause() {
+    if (_isCancelled || _isPaused) return;
+    _isPaused = true;
+    _resumeCompleter = Completer<void>();
+  }
+
+  void resume() {
+    if (!_isPaused) return;
+    _isPaused = false;
+    final completer = _resumeCompleter;
+    _resumeCompleter = null;
+    if (completer != null && !completer.isCompleted) completer.complete();
+  }
+
+  void cancel() {
+    if (_isCancelled) return;
+    _isCancelled = true;
+    resume();
+  }
+
+  Future<void> waitIfPaused() async {
+    throwIfCancelled();
+    final completer = _resumeCompleter;
+    if (_isPaused && completer != null) await completer.future;
+    throwIfCancelled();
+  }
+
+  void throwIfCancelled() {
+    if (_isCancelled) throw const TaskCancelled();
+  }
+}
+
+/// Thrown inside a running task once the user cancelled it.
+class TaskCancelled implements Exception {
+  const TaskCancelled();
+}
+
+/// Thrown inside a running task when the work decided to do nothing — a user
+/// skipping a conflicting destination, for instance. The task settles as
+/// complete without running its success callback, because nothing succeeded.
+class TaskSkipped implements Exception {
+  const TaskSkipped();
+}
+
 class TaskProgressNotifier extends Notifier<List<AppTaskProgress>> {
   final _handlers = <String, _TaskControlHandlers>{};
   final _samples = <String, _TaskProgressSample>{};
   final _pendingRemovalTimers = <String, Timer>{};
+  final _queue = Queue<_QueuedTask>();
+  var _isDraining = false;
 
   @override
-  List<AppTaskProgress> build() => const [];
+  List<AppTaskProgress> build() {
+    ref.onDispose(() {
+      for (final task in _queue) {
+        task.control.cancel();
+      }
+      _queue.clear();
+      // A task that is already running owns its own loop; cancelling its
+      // control makes it throw at its next checkpoint.
+      for (final handler in _handlers.values.toList()) {
+        handler.onCancel?.call();
+      }
+    });
+    return const [];
+  }
 
-  String start({
-    required String title,
-    int? totalBytes,
-    TaskProgressStatus status = TaskProgressStatus.inProgress,
-    FutureOr<void> Function()? onPause,
-    FutureOr<void> Function()? onResume,
-    FutureOr<void> Function()? onCancel,
+  /// Queues [request] and returns the id its progress is reported under.
+  ///
+  /// Tasks run strictly one at a time: a second file dropped while the first
+  /// transfers sits in the queue with [TaskProgressStatus.queued] until the
+  /// running one settles.
+  String run(
+    AppTaskRequest request, {
+    bool pauseable = true,
+    FutureOr<void> Function()? onSuccess,
+    FutureOr<void> Function()? onComplete,
+    FutureOr<void> Function()? onFinish,
+    void Function(Object error)? onError,
   }) {
+    final control = TaskControl();
     final id = 'task-${DateTime.now().microsecondsSinceEpoch}';
-    final now = DateTime.now();
     _handlers[id] = _TaskControlHandlers(
-      onPause: onPause,
-      onResume: onResume,
-      onCancel: onCancel,
+      onPause: control.pause,
+      onResume: control.resume,
+      onCancel: control.cancel,
     );
-    _samples[id] = _TaskProgressSample(bytes: 0, timestamp: now);
-    state = [
-      ...state,
+    _publish([
+      ..._current,
       AppTaskProgress(
         id: id,
-        title: title,
-        totalBytes: totalBytes,
+        title: request.title,
+        totalBytes: request.totalBytes,
         transferredBytes: 0,
         speedBytesPerSecond: null,
-        canPause:
-            status == TaskProgressStatus.inProgress &&
-            onPause != null &&
-            onResume != null,
-        canCancel: onCancel != null,
-        status: status,
+        // A queued task cannot be paused: nothing is running to hold. It gains
+        // the control when the queue starts it.
+        canPause: false,
+        canCancel: true,
+        status: TaskProgressStatus.queued,
       ),
-    ];
+    ]);
+    _queue.add(
+      _QueuedTask(
+        id: id,
+        request: request,
+        control: control,
+        pauseable: pauseable,
+        onSuccess: onSuccess,
+        onComplete: onComplete,
+        onFinish: onFinish,
+        onError: onError,
+      ),
+    );
+    _drain();
     return id;
   }
 
-  void startRunning(
+  void _drain() {
+    if (_isDraining) return;
+    _isDraining = true;
+    // Starting in a microtask lets [run] return its id before the task begins,
+    // so a caller that keys its own bookkeeping on that id (a file browser
+    // marking itself busy) is registered first — even for work that would
+    // otherwise settle synchronously and finish before the caller saw the id.
+    unawaited(Future.microtask(_runQueue));
+  }
+
+  Future<void> _runQueue() async {
+    try {
+      while (_queue.isNotEmpty) {
+        final task = _queue.removeFirst();
+        if (task.control.isCancelled) {
+          // Cancelled while queued: it never ran, so `_execute` never settles
+          // it or calls its finish hook. Do both here.
+          _finish(task.id, TaskProgressStatus.canceled);
+          await task.onFinish?.call();
+          continue;
+        }
+        await _execute(task);
+      }
+    } finally {
+      _isDraining = false;
+      if (_queue.isNotEmpty) _drain();
+    }
+  }
+
+  Future<void> _execute(_QueuedTask task) async {
+    final id = task.id;
+    _startRunning(
+      id,
+      onPause: task.control.pause,
+      onResume: task.control.resume,
+      onCancel: task.control.cancel,
+      canPause: task.pauseable,
+    );
+    Timer? flushTimer;
+    var pendingBytes = 0;
+    var hasPendingProgress = false;
+    var lastFlushAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+    void flush() {
+      flushTimer?.cancel();
+      flushTimer = null;
+      if (!hasPendingProgress) return;
+      hasPendingProgress = false;
+      lastFlushAt = DateTime.now();
+      _update(id, pendingBytes);
+    }
+
+    // A 64 KB chunk makes an SFTP copy emit hundreds of updates a second;
+    // rebuilding the task list that often would repaint the bar per chunk.
+    void report(int transferredBytes) {
+      pendingBytes = transferredBytes;
+      hasPendingProgress = true;
+      final elapsed = DateTime.now().difference(lastFlushAt);
+      if (elapsed >= const Duration(milliseconds: 250)) {
+        flush();
+        return;
+      }
+      flushTimer ??= Timer(const Duration(milliseconds: 250) - elapsed, flush);
+    }
+
+    try {
+      await task.request.action(task.control, report);
+      task.control.throwIfCancelled();
+      flush();
+      await task.onSuccess?.call();
+      await task.onComplete?.call();
+      _complete(id);
+    } on TaskSkipped {
+      // Nothing ran: settle quietly, without the success callback.
+      flush();
+      _complete(id);
+    } on TaskCancelled {
+      flush();
+      cancel(id);
+    } catch (error) {
+      flush();
+      _fail(id);
+      task.onError?.call(error);
+    } finally {
+      flushTimer?.cancel();
+      await task.onFinish?.call();
+    }
+  }
+
+  void _startRunning(
     String id, {
     FutureOr<void> Function()? onPause,
     FutureOr<void> Function()? onResume,
     FutureOr<void> Function()? onCancel,
+    bool canPause = true,
   }) {
     _handlers[id] = _TaskControlHandlers(
       onPause: onPause,
@@ -140,44 +345,53 @@ class TaskProgressNotifier extends Notifier<List<AppTaskProgress>> {
     );
     _samples[id] = _TaskProgressSample(
       bytes:
-          state.where((task) => task.id == id).firstOrNull?.transferredBytes ??
+          _current
+              .where((task) => task.id == id)
+              .firstOrNull
+              ?.transferredBytes ??
           0,
       timestamp: DateTime.now(),
     );
-    state = state.map((task) {
-      if (task.id != id || !task.isActive) return task;
-      return task.copyWith(
-        status: TaskProgressStatus.inProgress,
-        canPause: onPause != null && onResume != null,
-        canCancel: onCancel != null,
-      );
-    }).toList();
+    _publish(
+      _current.map((task) {
+        if (task.id != id || !task.isActive) return task;
+        return task.copyWith(
+          status: TaskProgressStatus.inProgress,
+          canPause: canPause && onPause != null && onResume != null,
+          canCancel: onCancel != null,
+        );
+      }).toList(),
+    );
   }
 
-  void update(String id, int transferredBytes) {
+  void _update(String id, int transferredBytes) {
     final now = DateTime.now();
     final previous = _samples[id];
     var speed = previous == null
         ? null
         : _speed(previous, transferredBytes, now);
     _samples[id] = _TaskProgressSample(bytes: transferredBytes, timestamp: now);
-    state = state.map((task) {
-      if (task.id != id || !task.isActive) return task;
-      speed ??= task.speedBytesPerSecond;
-      return task.copyWith(
-        transferredBytes: transferredBytes,
-        speedBytesPerSecond: speed,
-      );
-    }).toList();
+    _publish(
+      _current.map((task) {
+        if (task.id != id || !task.isActive) return task;
+        speed ??= task.speedBytesPerSecond;
+        return task.copyWith(
+          transferredBytes: transferredBytes,
+          speedBytesPerSecond: speed,
+        );
+      }).toList(),
+    );
   }
 
   Future<void> pause(String id) async {
     final handler = _handlers[id]?.onPause;
     if (handler == null) return;
-    state = state.map((task) {
-      if (task.id != id || !task.isActive) return task;
-      return task.copyWith(status: TaskProgressStatus.paused);
-    }).toList();
+    _publish(
+      _current.map((task) {
+        if (task.id != id || !task.isActive) return task;
+        return task.copyWith(status: TaskProgressStatus.paused);
+      }).toList(),
+    );
     await handler();
   }
 
@@ -187,31 +401,37 @@ class TaskProgressNotifier extends Notifier<List<AppTaskProgress>> {
     await handler();
     _samples[id] = _TaskProgressSample(
       bytes:
-          state.where((task) => task.id == id).firstOrNull?.transferredBytes ??
+          _current
+              .where((task) => task.id == id)
+              .firstOrNull
+              ?.transferredBytes ??
           0,
       timestamp: DateTime.now(),
     );
-    state = state.map((task) {
-      if (task.id != id || task.status != TaskProgressStatus.paused) {
-        return task;
-      }
-      return task.copyWith(status: TaskProgressStatus.inProgress);
-    }).toList();
+    _publish(
+      _current.map((task) {
+        if (task.id != id || task.status != TaskProgressStatus.paused) {
+          return task;
+        }
+        return task.copyWith(status: TaskProgressStatus.inProgress);
+      }).toList(),
+    );
   }
 
+  /// Cancels a queued or running task. A queued one never starts; a running one
+  /// aborts at its next checkpoint, then settles as cancelled.
   Future<void> cancel(String id) async {
     final handler = _handlers[id]?.onCancel;
-    if (handler == null) return;
-    await handler();
+    handler?.call();
     _finish(id, TaskProgressStatus.canceled);
   }
 
-  void complete(String id) => _finish(id, TaskProgressStatus.completed);
+  void _complete(String id) => _finish(id, TaskProgressStatus.completed);
 
-  void fail(String id) => _finish(id, TaskProgressStatus.failed);
+  void _fail(String id) => _finish(id, TaskProgressStatus.failed);
 
   void _finish(String id, TaskProgressStatus status) {
-    final task = state.where((task) => task.id == id).firstOrNull;
+    final task = _current.where((task) => task.id == id).firstOrNull;
     if (task == null ||
         task.status == TaskProgressStatus.completed ||
         task.status == TaskProgressStatus.failed ||
@@ -221,22 +441,23 @@ class TaskProgressNotifier extends Notifier<List<AppTaskProgress>> {
     _handlers.remove(id);
     _samples.remove(id);
     _pendingRemovalTimers.remove(id)?.cancel();
-    state = state.map((task) {
-      if (task.id != id) return task;
-      return task.copyWith(
-        status: status,
-        transferredBytes: status == TaskProgressStatus.completed
-            ? (task.totalBytes ?? task.transferredBytes)
-            : task.transferredBytes,
-        canPause: false,
-        canCancel: false,
-      );
-    }).toList();
+    _publish(
+      _current.map((task) {
+        if (task.id != id) return task;
+        return task.copyWith(
+          status: status,
+          transferredBytes: status == TaskProgressStatus.completed
+              ? (task.totalBytes ?? task.transferredBytes)
+              : task.transferredBytes,
+          canPause: false,
+          canCancel: false,
+        );
+      }).toList(),
+    );
     _pendingRemovalTimers[id] = Timer(const Duration(seconds: 3), () {
       _pendingRemovalTimers.remove(id);
-      if (ref.mounted) {
-        state = state.where((task) => task.id != id).toList();
-      }
+      if (!ref.mounted) return;
+      _publish(_current.where((task) => task.id != id).toList());
     });
   }
 
@@ -250,6 +471,40 @@ class TaskProgressNotifier extends Notifier<List<AppTaskProgress>> {
     if (elapsedMs <= 0 || delta <= 0) return null;
     return delta * 1000 / elapsedMs;
   }
+
+  /// Publishes a task list unless the provider is already disposed.
+  ///
+  /// Work that outlives the container — a transfer that is mid-copy when the
+  /// app shuts down — still tries to settle, and writing `state` then throws.
+  /// The committed task list, or an empty one once the provider is disposed.
+  List<AppTaskProgress> get _current => ref.mounted ? state : const [];
+
+  /// Publishes a task list unless the provider is already disposed.
+  void _publish(List<AppTaskProgress> next) {
+    if (ref.mounted) state = next;
+  }
+}
+
+class _QueuedTask {
+  const _QueuedTask({
+    required this.id,
+    required this.request,
+    required this.control,
+    required this.pauseable,
+    this.onSuccess,
+    this.onComplete,
+    this.onFinish,
+    this.onError,
+  });
+
+  final String id;
+  final AppTaskRequest request;
+  final TaskControl control;
+  final bool pauseable;
+  final FutureOr<void> Function()? onSuccess;
+  final FutureOr<void> Function()? onFinish;
+  final FutureOr<void> Function()? onComplete;
+  final void Function(Object error)? onError;
 }
 
 class _TaskControlHandlers {
@@ -376,10 +631,14 @@ class _TaskProgressBarContent extends StatelessWidget {
                 )
               else if (task.status == TaskProgressStatus.inProgress ||
                   task.status == TaskProgressStatus.queued)
+                // The wash is the bar's own paper, not a rounded control: the
+                // theme's pill radius would carve 18 px off each end of a
+                // 36 px-high bar and turn the sweep into a floating capsule.
                 LinearProgressIndicator(
                   minHeight: TaskProgressBar._barHeight,
                   color: fillColor,
                   backgroundColor: Colors.transparent,
+                  borderRadius: BorderRadius.zero,
                 ),
               // Thin accent track along the top edge for hierarchy.
               Align(

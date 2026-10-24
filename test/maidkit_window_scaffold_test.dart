@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -160,15 +161,24 @@ void main() {
     final container = ProviderContainer(
       overrides: [desktopWindowProvider.overrideWithValue(false)],
     );
-    addTearDown(container.dispose);
+    // The action stays pending so the task is still active while the sheet is
+    // open; the teardown releases it so the container disposes cleanly.
+    final gate = Completer<void>();
+    addTearDown(() {
+      if (!gate.isCompleted) gate.complete();
+      container.dispose();
+    });
     container
         .read(taskProgressProvider.notifier)
-        .start(
-          title: 'Upload build.tar.gz',
-          totalBytes: 10 * 1024 * 1024,
-          onPause: () async {},
-          onResume: () async {},
-          onCancel: () async {},
+        .run(
+          AppTaskRequest(
+            title: 'Upload build.tar.gz',
+            totalBytes: 10 * 1024 * 1024,
+            action: (control, report) async {
+              report(1024 * 1024);
+              await gate.future;
+            },
+          ),
         );
 
     await tester.pumpWidget(
