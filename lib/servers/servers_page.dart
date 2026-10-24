@@ -1165,22 +1165,21 @@ class _ServerCard extends ConsumerWidget {
     // statistics; serial and daemon hosts have no SSH route at all, so their
     // card names the transport instead of offering an SSH-shaped action.
     final isTerminalOnly = connectionType != ServerConnectionType.ssh;
-    // Statistics come from the MaidCafe daemon while no SSH session is up: the
-    // daemon is the *no-session* route, and the only statistics route a browser
-    // has. A session opened by hand owns the card instead — it is the
-    // connection the user asked for, and the only one that measures a round
-    // trip. Letting the snapshot outrank it reports a connection nobody made:
-    // on a native build that hides Connect behind a live daemon, so the SSH
-    // route becomes unreachable on a host whose daemon answers.
+    // Statistics come from the MaidCafe daemon whenever it answers: it is the
+    // route that costs the host no exec, and the only statistics route a
+    // browser has. A live SSH session still owns the connection itself —
+    // Connect, the status line and its round trip — it just no longer decides
+    // where the numbers come from; SSH readings are the fallback for a host
+    // whose daemon does not answer.
     final daemonStats = ref.watch(maidCafeStatsProvider)[server.id];
     final sessionStatus = session?.status;
     // The feed also carries a daemon terminal for this server, and that is
     // `connected` too: only an SSH session is a connection this card can read
     // numbers from or reach SSH work through.
     final sshConnected = isLiveSshSession(session);
-    final stats = (sshConnected ? session?.stats : null) ?? daemonStats?.stats;
+    final stats = daemonStats?.stats ?? (sshConnected ? session?.stats : null);
     final systemInfo = session?.systemInfo;
-    final statsFromDaemon = !sshConnected && daemonStats != null;
+    final statsFromDaemon = daemonStats != null;
     // A card with daemon statistics is live without an SSH session: that is the
     // point of the direct route, and the only statistics route in a browser. A
     // serial console and a daemon terminal are the transport of a row that has
@@ -1349,9 +1348,10 @@ class _ServerCard extends ConsumerWidget {
                         connecting: connecting,
                         failed: failed,
                         networkLatency: session?.networkLatency,
-                        // Only an SSH session measures a round trip; a card fed
-                        // by the daemon has no ping to report.
-                        measuresLatency: !statsFromDaemon,
+                        // Only an SSH session measures a round trip, so a card
+                        // with no session reports no ping even while the
+                        // daemon feeds it numbers.
+                        measuresLatency: sshConnected || !statsFromDaemon,
                       ),
                     ),
                     const Spacer(),

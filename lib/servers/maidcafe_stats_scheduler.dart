@@ -22,37 +22,28 @@ class MaidCafeStatsScheduler {
     required Future<MaidCafeServerStats?> Function(Server server) collect,
     required void Function(int serverId, MaidCafeServerStats? snapshot)
     onSnapshot,
-    bool Function(Server server) sshOwnsServer = _neverSsh,
     Future<void> Function(int serverId)? releaseRoute,
     Future<void> Function()? releaseRoutes,
-  }) : this._(collect, onSnapshot, sshOwnsServer, releaseRoute, releaseRoutes);
+  }) : this._(collect, onSnapshot, releaseRoute, releaseRoutes);
 
   MaidCafeStatsScheduler._(
     this._collect,
     this._onSnapshot,
-    this._sshOwnsServer,
     this._releaseRoute,
     this._releaseRoutes,
   );
 
-  static bool _neverSsh(Server server) => false;
-
   final Future<MaidCafeServerStats?> Function(Server server) _collect;
   final void Function(int serverId, MaidCafeServerStats? snapshot) _onSnapshot;
 
-  /// Drops whatever the collector keeps alive for one host: called when SSH
-  /// takes the host over, so the daemon socket does not outlive the readings.
+  /// Drops whatever the collector keeps alive for one host: called when the
+  /// host leaves the served set, so the daemon socket does not outlive the
+  /// readings.
   final Future<void> Function(int serverId)? _releaseRoute;
 
   /// Drops every cached route. Called when the dashboard stops watching, so no
   /// idle daemon socket outlives the cards that read it.
   final Future<void> Function()? _releaseRoutes;
-
-  /// Whether SSH has taken [server] over on this client. A refresh for such a
-  /// server withdraws any snapshot instead of publishing one: the numbers on
-  /// screen belong to the session, and the daemon is not to be dialled while a
-  /// session covers the host.
-  final bool Function(Server server) _sshOwnsServer;
 
   Timer? _timer;
   Duration _interval = const Duration(seconds: 30);
@@ -148,15 +139,6 @@ class MaidCafeStatsScheduler {
   Future<void> refreshServer(Server server, {bool force = false}) async {
     final failure = _failures[server.id];
     if (!force && !_due(server.id)) return;
-    if (_sshOwnsServer(server)) {
-      // SSH is the route for this host right now: withdraw the daemon's numbers
-      // rather than keep a second, silently dialled source alive, and close the
-      // socket the daemon route left open.
-      _failures.remove(server.id);
-      _onSnapshot(server.id, null);
-      await _releaseRoute?.call(server.id);
-      return;
-    }
     MaidCafeServerStats? snapshot;
     try {
       snapshot = await _collect(server);

@@ -23,11 +23,12 @@ import 'package:maid_kit/theme.dart';
 
 /// Pins which route a server card's numbers come from.
 ///
-/// The MaidCafe daemon snapshot is the *no-session* route: it fills a card
-/// while nothing is connected, and a browser has nothing else. It must never
-/// outrank a session the user opened, because that reads as a connection they
-/// did not make — and, on a native build, it used to hide Connect behind a live
-/// daemon, leaving the SSH route unreachable on a host whose daemon answers.
+/// The MaidCafe daemon owns the numbers whenever it answers: it costs the host
+/// no exec, and it is the only statistics route a browser has. A live SSH
+/// session keeps the connection itself — Connect stays offered while no
+/// session the user opened is up, because hiding it behind a live daemon once
+/// made the SSH route unreachable — and its round trip still shows. The SSH
+/// readings are the fallback for a host whose daemon does not answer.
 class _FakeStatsNotifier extends MaidCafeStatsNotifier {
   _FakeStatsNotifier(this._initial);
 
@@ -159,12 +160,13 @@ void main() {
 
   final connectButton = find.widgetWithText(TextButton, 'Connect');
 
-  testWidgets('a connected session owns the card over a daemon snapshot', (
+  testWidgets('the daemon owns the card numbers even while a session is live', (
     tester,
   ) async {
     // Both routes answer at once, which is the normal case on a native build
-    // with a daemon installed. The session is the connection the user made and
-    // the only one that measures a round trip, so the card reports it.
+    // with a daemon installed. The daemon's numbers win — they cost the host
+    // no exec — while the session still owns the connection itself: its
+    // round trip is shown, and Connect stays governed by the session.
     await pumpDashboard(
       tester,
       sessions: [
@@ -176,6 +178,8 @@ void main() {
       daemonStats: {1: _daemonSnapshot},
     );
 
+    expect(find.text('4.50'), findsOneWidget);
+    expect(find.text('0.20'), findsNothing);
     expect(find.text('12 ms'), findsOneWidget);
     expect(connectButton, findsNothing);
   });
@@ -226,11 +230,12 @@ void main() {
     expect(find.text('serversStatsSourceDaemon'.tr()), findsOneWidget);
   });
 
-  testWidgets('the detail page never names the daemon over a live session', (
+  testWidgets('the detail page names the daemon even while a session is live', (
     tester,
   ) async {
-    // The label is the detail page's own statement of where the numbers came
-    // from, so it follows the card's rule: a live session is not the daemon's.
+    // The label is the detail page's own statement of where the numbers
+    // came from, so it follows the card's rule: the daemon owns the
+    // readings whenever it answers.
     await pumpDashboard(
       tester,
       sessions: [
@@ -247,6 +252,6 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('serversStatsSourceDaemon'.tr()), findsNothing);
+    expect(find.text('serversStatsSourceDaemon'.tr()), findsOneWidget);
   });
 }

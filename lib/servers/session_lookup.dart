@@ -45,12 +45,13 @@ bool isLiveSshSession(SshSessionInfo? session, [int? serverId]) =>
 ///
 /// A daemon is a second way into a host that also answers over SSH. On a native
 /// build SSH is preferred for a server that can do SSH, so a connected session
-/// owns statistics, activity and the actions a page runs; the daemon still
-/// answers while no session is live, which is the case it exists for — a
-/// browser build, which has no raw socket to prefer, keeps it outright, as does
-/// a `maidcafe` or `serial` row, which has no SSH route at all. Features with no
-/// SSH implementation (the daemon console, container updates, the stack
-/// registry, watched-process history, the health report) keep it regardless.
+/// owns the actions a page runs; a browser build, which has no raw socket to
+/// prefer, keeps the daemon outright, as does a `maidcafe` or `serial` row,
+/// which has no SSH route at all. Host statistics are the deliberate exception:
+/// the daemon owns the numbers whenever it answers and the SSH collectors are
+/// only its fallback. Features with no SSH implementation (the daemon console,
+/// container updates, the stack registry, watched-process history, the health
+/// report) keep it regardless.
 bool sshPreferredOverDaemon(Server server, List<SshSessionInfo> sessions) =>
     !kIsWeb &&
     server.connectionType == ServerConnectionType.ssh.name &&

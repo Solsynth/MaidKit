@@ -13,7 +13,6 @@ import 'package:maid_kit/theme.dart';
 import 'activity_models.dart';
 import 'server_providers.dart';
 import 'server_models.dart';
-import 'session_lookup.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
 
@@ -119,75 +118,52 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
     _timer = Timer.periodic(widget.refreshInterval, (_) => _poll());
   }
 
-  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
-  /// server's readings.
-  bool get _sshPreferred => sshPreferredOverDaemon(
-    widget.server,
-    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
-  );
-
   Future<void> _poll() async {
     if (!mounted || !widget.connected || _loading) return;
     _loading = true;
     try {
-      final preferSsh = _sshPreferred;
       if (_sseActive) {
-        if (preferSsh) {
-          // A live session owns the readings now: stop the daemon stream this
-          // tab may have opened before the session appeared.
+        final silence = DateTime.now().difference(_lastMetricEvent);
+        final timeoutSeconds = _metricSseIntervalSeconds * 3 >= 10
+            ? _metricSseIntervalSeconds * 3
+            : 10;
+        if (silence > Duration(seconds: timeoutSeconds)) {
+          // The stream stays connected (heartbeats) but stopped delivering
+          // metrics — the daemon collector may be disabled or failing. Fall
+          // back to HTTP polling instead of freezing the charts.
+          _sseAttempted = true;
           _closeMaidCafeSse();
         } else {
-          final silence = DateTime.now().difference(_lastMetricEvent);
-          final timeoutSeconds = _metricSseIntervalSeconds * 3 >= 10
-              ? _metricSseIntervalSeconds * 3
-              : 10;
-          if (silence > Duration(seconds: timeoutSeconds)) {
-            // The stream stays connected (heartbeats) but stopped delivering
-            // metrics — the daemon collector may be disabled or failing. Fall
-            // back to HTTP polling instead of freezing the charts.
-            _sseAttempted = true;
-            _closeMaidCafeSse();
-          } else {
-            return; // Per-second data flows from the stream.
-          }
+          return; // Per-second data flows from the stream.
         }
       }
+      // The daemon owns the readings whenever it answers: its stream costs
+      // the host no exec, so SSH commands are the fallback route for a host
+      // whose daemon is not there — not the other way round.
       ActivityCounters? counters;
-      var source = _ActivityMetricSource.ssh;
-      if (preferSsh) {
+      var source = _ActivityMetricSource.maidCafe;
+      final maidCafe = await _ensureMaidCafeStream();
+      if (maidCafe != null) {
+        if (_metricSubscription == null && !_sseAttempted) {
+          // One attempt per tick until it fails once; a failed stream is not
+          // retried automatically (only manual refresh or a fresh session).
+          _startMaidCafeSse(maidCafe);
+        }
+        if (_sseActive) return;
         try {
-          counters = await _collectSshCounters();
+          if (!_maidCafeHistoryLoaded) {
+            await _loadMaidCafeHistory(maidCafe);
+          }
+          counters =
+              parseMaidCafeMetrics(await maidCafe.metrics()) ??
+              (throw StateError('MaidCafe metrics response was empty.'));
         } catch (_) {
-          // The session dropped between the guard and the reading: the daemon
-          // answers, exactly as it does on a build with no session.
+          _closeMaidCafeStream();
         }
       }
       if (counters == null) {
-        source = _ActivityMetricSource.maidCafe;
-        final maidCafe = await _ensureMaidCafeStream();
-        if (maidCafe != null) {
-          if (_metricSubscription == null && !_sseAttempted) {
-            // One attempt per tick until it fails once; a failed stream is not
-            // retried automatically (only manual refresh or a fresh session).
-            _startMaidCafeSse(maidCafe);
-          }
-          if (_sseActive) return;
-          try {
-            if (!_maidCafeHistoryLoaded) {
-              await _loadMaidCafeHistory(maidCafe);
-            }
-            counters =
-                parseMaidCafeMetrics(await maidCafe.metrics()) ??
-                (throw StateError('MaidCafe metrics response was empty.'));
-          } catch (_) {
-            _closeMaidCafeStream();
-            source = _ActivityMetricSource.ssh;
-            counters = await _collectSshCounters();
-          }
-        } else {
-          source = _ActivityMetricSource.ssh;
-          counters = await _collectSshCounters();
-        }
+        source = _ActivityMetricSource.ssh;
+        counters = await _collectSshCounters();
       }
       final sourceChanged = _source != null && _source != source;
       final sample = counters.toSample(

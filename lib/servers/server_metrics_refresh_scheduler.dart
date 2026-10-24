@@ -8,6 +8,10 @@ import 'ssh_connection_manager.dart';
 
 /// Refreshes lightweight metrics for connected servers when no detail page is
 /// actively requesting its fuller data set.
+///
+/// Hosts whose MaidCafe daemon currently answers are skipped: their numbers
+/// come from the daemon route, and running SSH metric commands for them would
+/// collect a second copy of readings nothing reads.
 class ServerMetricsRefreshScheduler {
   ServerMetricsRefreshScheduler(this._connectionManager);
 
@@ -23,6 +27,7 @@ class ServerMetricsRefreshScheduler {
     required List<Server> servers,
     required Iterable<SshSessionInfo> sessions,
     required int? focusedServerId,
+    required Set<int> daemonBackedServerIds,
   }) {
     // Refreshing metrics runs SSH commands; a browser has no SSH transport,
     // and a daemon terminal session must not be probed that way.
@@ -31,6 +36,7 @@ class ServerMetricsRefreshScheduler {
     _connectedServerIds = sessions
         .where((session) => session.status == SessionStatus.connected)
         .map((session) => session.serverId)
+        .where((id) => !daemonBackedServerIds.contains(id))
         .toSet();
     if (focusedServerId != null) {
       _connectedServerIds = _connectedServerIds

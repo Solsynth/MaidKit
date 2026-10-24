@@ -553,19 +553,20 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     final sessions = ref.watch(sessionsProvider).asData?.value ?? const [];
     final session = sessionForServer(sessions, widget.server.id);
     final connected = session?.status == SessionStatus.connected;
-    // A daemon snapshot feeds the overview while no SSH session is up: on a
-    // browser build that snapshot is the only statistics route there is. A
-    // connected session outranks it, so the label names the route the numbers
-    // actually came from instead of attributing a live session to the daemon.
+    // Statistics come from the MaidCafe daemon whenever it answers: it costs
+    // the host no exec, and it is the only statistics route a browser has.
+    // The connected session still owns the connection itself; its readings
+    // are the fallback for a host whose daemon does not answer. The label
+    // names the route the numbers actually came from.
     final daemonStats = ref.watch(maidCafeStatsProvider)[widget.server.id];
-    final statsFromDaemon = !connected && daemonStats != null;
+    final statsFromDaemon = daemonStats != null;
     final refreshInterval = ref.watch(focusedServerRefreshIntervalProvider);
 
     final workspace = _DetailWorkspace(
       server: widget.server,
       session: session,
       connected: connected,
-      stats: (connected ? session?.stats : null) ?? daemonStats?.stats,
+      stats: daemonStats?.stats ?? (connected ? session?.stats : null),
       systemInfo: session?.systemInfo,
       statsSourceLabel: statsFromDaemon
           ? 'serversStatsSourceDaemon'.tr()

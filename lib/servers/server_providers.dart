@@ -41,7 +41,6 @@ import 'metrics_refresh_preferences.dart';
 import 'port_forwarding_models.dart';
 import 'privacy_preferences.dart';
 import 'server_repository.dart';
-import 'session_lookup.dart';
 import 'server_metrics_refresh_scheduler.dart';
 import 'serial_port_client.dart';
 import 'serial_connection_manager.dart';
@@ -1665,6 +1664,10 @@ final serverMetricsRefreshSchedulerProvider =
         servers: dashboardFocused ? servers : const <Server>[],
         sessions: sessions,
         focusedServerId: focusedServerId,
+        // Hosts whose daemon currently answers have their numbers from it;
+        // running SSH metric commands for them as well would collect a second
+        // copy of readings nothing reads.
+        daemonBackedServerIds: ref.watch(maidCafeStatsProvider).keys.toSet(),
       );
       ref.onDispose(scheduler.dispose);
       return scheduler;
@@ -1716,13 +1719,6 @@ final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
   final scheduler = MaidCafeStatsScheduler(
     collect: collector.collect,
     onSnapshot: notifier.set,
-    // Read per refresh rather than watched: a session coming and going must not
-    // rebuild the scheduler and its timer, and the answer only matters at the
-    // moment a request would be dialled.
-    sshOwnsServer: (server) => sshPreferredOverDaemon(
-      server,
-      ref.read(sessionsProvider).asData?.value ?? const [],
-    ),
     // The collector keeps each daemon's session open between polls; the
     // scheduler is the only thing that knows when a host stops being watched.
     releaseRoute: collector.closeSession,
