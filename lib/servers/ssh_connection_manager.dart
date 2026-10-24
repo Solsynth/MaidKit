@@ -40,6 +40,19 @@ typedef HostKeyApproval = Future<bool> Function(HostKeyPrompt prompt);
 typedef AuthChallengeApproval =
     Future<List<String>?> Function(AuthChallenge challenge);
 
+/// Dials and authenticates one SSH client. Tests inject a fake to observe the
+/// session requests a terminal makes, in order.
+typedef SshClientConnector =
+    Future<SSHClient> Function(
+      Server server,
+      ServerCredential credential,
+      HostKeyApproval approve, {
+      String? knownHostKeyFingerprint,
+      void Function(String? methods)? onAuthMethods,
+      AuthChallengeApproval? approveAuth,
+      ServerProxy? proxy,
+    });
+
 class SshConnectionManager {
   SshConnectionManager(
     this._terminalAdapterFactory, {
@@ -47,6 +60,7 @@ class SshConnectionManager {
     bool Function()? sudoAutofillEnabled,
     bool Function()? metricsEnabled,
     ServerMetricsCollector? metricsCollector,
+    this._connect,
     this.onConnected,
   }) : _brandingEnvironmentEnabled = brandingEnvironmentEnabled ?? (() => true),
        _sudoAutofillEnabled = sudoAutofillEnabled ?? (() => true),
@@ -54,6 +68,9 @@ class SshConnectionManager {
        _metricsCollector = metricsCollector ?? AutoServerMetricsCollector();
 
   final TerminalSessionAdapterFactory Function() _terminalAdapterFactory;
+
+  /// Overrides dialing for tests. When null, [_createClient] dials itself.
+  final SshClientConnector? _connect;
   final bool Function() _brandingEnvironmentEnabled;
   final bool Function() _sudoAutofillEnabled;
 
@@ -323,13 +340,15 @@ class SshConnectionManager {
       approveAuth: approveAuth,
       proxy: proxy,
     );
-    final brandingEnabled = _brandingEnvironmentEnabled();
-    final brandingDialect = brandingEnabled
-        ? await _detectRemoteShellDialect(client, server)
-        : null;
-    // Do not send the branding variable as an SSH environment request.
-    // Servers commonly reject TERM_PROGRAM unless it is listed in
-    // AcceptEnv; the dialect command below sets it inside the shell instead.
+    // The shell must be opened before the branding dialect is probed. PAM
+    // prints the login banner (pam_motd and friends) only for the first
+    // session on a connection, so a dialect probe issued ahead of the shell
+    // silently swallows the motd, the distribution welcome, and any auto-run
+    // login output (issue #105).
+    //
+    // Do not send the branding variable as an SSH environment request either:
+    // servers commonly reject TERM_PROGRAM unless it is listed in AcceptEnv,
+    // so the dialect command below sets it inside the shell instead.
     final shellEnvironment = <String, String>{...?environment};
     final shell = await _openShell(client, shellEnvironment);
     final terminal = _terminalAdapterFactory().create();
@@ -386,6 +405,9 @@ class SshConnectionManager {
       terminal.replayHistory(initialOutput);
     }
     _watchShellEnded(terminalId, client, shell);
+    final brandingDialect = _brandingEnvironmentEnabled()
+        ? await _detectRemoteShellDialect(client, server)
+        : null;
     if (brandingDialect != null) {
       // Neofetch prioritizes SSH_CONNECTION/SSH_TTY over TERM_PROGRAM. Keep
       // this scoped to the interactive shell so it can identify MaidKit
@@ -4921,6 +4943,18 @@ uname -r
     AuthChallengeApproval? approveAuth,
     ServerProxy? proxy,
   }) async {
+    final connect = _connect;
+    if (connect != null) {
+      return connect(
+        server,
+        credential,
+        approve,
+        knownHostKeyFingerprint: knownHostKeyFingerprint,
+        onAuthMethods: onAuthMethods,
+        approveAuth: approveAuth,
+        proxy: proxy,
+      );
+    }
     final identities = credential.type == CredentialType.privateKey
         ? SSHKeyPair.fromPem(credential.privateKey!, credential.keyPassphrase)
         : null;
