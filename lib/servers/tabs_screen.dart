@@ -12,6 +12,7 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/agent/agent_page.dart';
 import 'package:maid_kit/containers/projects_page.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/panel.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/presentation/window_chrome.dart';
 import 'package:maid_kit/snippets/snippet_confirmation.dart';
@@ -40,9 +41,12 @@ import 'terminal_tabs_provider.dart';
 
 /// Unified server workspace with dashboard, terminal, and file-management tabs.
 ///
-/// On desktop the top pane tab strip doubles as the window title bar: it is the
-/// row that already names the app's work, so it claims the shell's title bar
-/// slot instead of leaving a second, mostly empty bar above it.
+/// One tab strip runs across the top of the workspace and lists every tab in
+/// the session, whichever pane owns it. On desktop that strip also *is* the
+/// window title bar: it is the row that already names the app's work, so it
+/// claims the shell's title bar slot instead of leaving a second, mostly empty
+/// bar above it. Panes below it carry their own body and, for a terminal, its
+/// own status bar — never a strip of their own.
 class SessionsWorkspace extends ConsumerWidget {
   const SessionsWorkspace({super.key});
 
@@ -51,48 +55,40 @@ class SessionsWorkspace extends ConsumerWidget {
     final tabs = ref.watch(terminalTabsProvider);
     final sessions = ref.watch(sessionsProvider);
     final servers = ref.watch(serversProvider);
-    final focusedTerminal = switch (tabs.selectedTab) {
-      final TerminalTab terminal => terminal,
-      _ => null,
-    };
-    final focusedSession = _sessionForTab(sessions, tabs.selectedTab);
 
     return MaidKitAppScaffold(
-      // The workspace paints edge to edge. The top inset is owned by the pane
-      // tab bar (and by the intro when no tabs are open); the bottom inset is
-      // owned by whatever ends up on the bottom edge — the terminal status bar
-      // pads itself, and a pane with nothing below it reaches the screen bottom
-      // instead of leaving a dead band where the old navigation bar used to be.
+      // The workspace paints edge to edge. The top inset is owned by the tab
+      // bar (and by the intro when no tabs are open); the bottom inset is
+      // owned by whatever ends up on the bottom edge — a pane's terminal
+      // status bar pads itself, and a pane with nothing below it reaches the
+      // screen bottom instead of leaving a dead band where the old navigation
+      // bar used to be.
       useSafeArea: false,
-      body: Column(
-        children: [
-          Expanded(
-            child: tabs.isEmpty
-                ? SafeArea(
-                    top: true,
-                    bottom: false,
-                    child: SessionIntro(
-                      servers: servers,
-                      tabs: tabs,
-                      // Full-workspace intro (no pane chrome / no top tab strip).
-                      onOpenTerminal: (server) =>
-                          openTerminalFor(context, ref, server),
-                      onOpenFiles: (server) => _openFiles(context, ref, server),
-                    ),
-                  )
-                : _SessionLayoutView(tabs: tabs, servers: servers),
-          ),
-          // Keyed on the terminal id: a dashboard behind the strip keeps its
-          // own exit animation instead of the bar swapping to a stale readout.
-          AnimatedTerminalStatusBar(
-            key: ValueKey(focusedTerminal?.id),
-            session: focusedSession,
-            terminal: focusedTerminal?.terminal,
-            terminalId: focusedTerminal?.id,
-            transport: focusedTerminal?.transport,
-          ),
-        ],
-      ),
+      body: tabs.isEmpty
+          ? SafeArea(
+              top: true,
+              bottom: false,
+              child: SessionIntro(
+                servers: servers,
+                tabs: tabs,
+                // Full-workspace intro (no tab bar / no panes).
+                onOpenTerminal: (server) =>
+                    openTerminalFor(context, ref, server),
+                onOpenFiles: (server) => _openFiles(context, ref, server),
+              ),
+            )
+          : Column(
+              children: [
+                _WorkspaceTabBar(tabs: tabs),
+                Expanded(
+                  child: _SessionLayoutView(
+                    tabs: tabs,
+                    servers: servers,
+                    sessions: sessions,
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
@@ -147,13 +143,33 @@ Future<void> _openFilesForTerminal(
 }
 
 class _SessionLayoutView extends ConsumerWidget {
-  const _SessionLayoutView({required this.tabs, required this.servers});
+  const _SessionLayoutView({
+    required this.tabs,
+    required this.servers,
+    required this.sessions,
+  });
 
   final TerminalTabsState tabs;
   final AsyncValue<List<Server>> servers;
+  final AsyncValue<List<SshSessionInfo>> sessions;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // One gutter around the whole pane area: the workspace paper shows through
+    // it, and the split's own gutter shows between two panes. Cards therefore
+    // sit flush inside their slots and never double the gap.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        MaidKitSpace.sm,
+        MaidKitSpace.xs,
+        MaidKitSpace.sm,
+        MaidKitSpace.sm,
+      ),
+      child: _buildPanes(),
+    );
+  }
+
+  Widget _buildPanes() {
     final root = tabs.layout;
     if (root == null) {
       final pane = tabs.focusedPane;
@@ -162,16 +178,14 @@ class _SessionLayoutView extends ConsumerWidget {
         paneId: pane.id,
         tabs: tabs,
         servers: servers,
-        atTop: true,
-        titleBarSlot: true,
+        sessions: sessions,
       );
     }
     return _LayoutNode(
       node: root,
       tabs: tabs,
       servers: servers,
-      atTop: true,
-      titleBarSlot: true,
+      sessions: sessions,
     );
   }
 }
@@ -181,21 +195,13 @@ class _LayoutNode extends ConsumerWidget {
     required this.node,
     required this.tabs,
     required this.servers,
-    required this.atTop,
-    required this.titleBarSlot,
+    required this.sessions,
   });
 
   final SessionLayout node;
   final TerminalTabsState tabs;
   final AsyncValue<List<Server>> servers;
-
-  /// Whether this subtree's tab bar sits on the top edge of the workspace and
-  /// should therefore paint the top safe area with the tab-bar color.
-  final bool atTop;
-
-  /// Whether this subtree owns the merged window title bar. Only the first
-  /// child of a split can: it is the strip at the top-left of the window.
-  final bool titleBarSlot;
+  final AsyncValue<List<SshSessionInfo>> sessions;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -205,8 +211,10 @@ class _LayoutNode extends ConsumerWidget {
           paneId: paneId,
           tabs: tabs,
           servers: servers,
-          atTop: atTop,
-          titleBarSlot: titleBarSlot,
+          sessions: sessions,
+          // Only a split has a pane that can be closed on its own; the single
+          // pane *is* the workspace.
+          showClosePane: tabs.hasSplits,
         );
       case SessionLayoutSplit(
         :final id,
@@ -220,21 +228,17 @@ class _LayoutNode extends ConsumerWidget {
           ratio: ratio,
           onRatioChanged: (value) =>
               ref.read(terminalTabsProvider.notifier).setSplitRatio(id, value),
-          // Horizontal splits (side-by-side) keep both children at the top
-          // edge; vertical splits (stacked) only keep the first child there.
           first: _LayoutNode(
             node: first,
             tabs: tabs,
             servers: servers,
-            atTop: atTop,
-            titleBarSlot: titleBarSlot,
+            sessions: sessions,
           ),
           second: _LayoutNode(
             node: second,
             tabs: tabs,
             servers: servers,
-            atTop: axis == SessionSplitAxis.horizontal ? atTop : false,
-            titleBarSlot: false,
+            sessions: sessions,
           ),
         );
     }
@@ -261,7 +265,13 @@ class _ResizableSplit extends StatefulWidget {
 }
 
 class _ResizableSplitState extends State<_ResizableSplit> {
-  static const _dividerThickness = 4.0;
+  /// Width of the grab band between two panes.
+  ///
+  /// Panes are cards floating on the workspace paper, so the separation is the
+  /// gutter itself: no rule is drawn between them. The band is still a drag
+  /// target, which is the only thing that makes the split adjustable.
+  static const _gutter = MaidKitSpace.lg;
+
   double? _dragRatio;
 
   double get _ratio => _dragRatio ?? widget.ratio;
@@ -285,7 +295,6 @@ class _ResizableSplitState extends State<_ResizableSplit> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final isHorizontal = widget.axis == SessionSplitAxis.horizontal;
 
     return LayoutBuilder(
@@ -293,7 +302,7 @@ class _ResizableSplitState extends State<_ResizableSplit> {
         final maxExtent = isHorizontal
             ? constraints.maxWidth
             : constraints.maxHeight;
-        final available = maxExtent - _dividerThickness;
+        final available = maxExtent - _gutter;
         final firstExtent = available * _ratio;
         final secondExtent = available - firstExtent;
 
@@ -317,12 +326,9 @@ class _ResizableSplitState extends State<_ResizableSplit> {
                   ? null
                   : (d) => _onDragUpdate(d, available),
               onVerticalDragEnd: isHorizontal ? null : (_) => _onDragEnd(),
-              child: ColoredBox(
-                color: scheme.outlineVariant.withValues(alpha: 0.6),
-                child: SizedBox(
-                  width: isHorizontal ? _dividerThickness : double.infinity,
-                  height: isHorizontal ? double.infinity : _dividerThickness,
-                ),
+              child: SizedBox(
+                width: isHorizontal ? _gutter : double.infinity,
+                height: isHorizontal ? double.infinity : _gutter,
               ),
             ),
           ),
@@ -341,164 +347,208 @@ class _ResizableSplitState extends State<_ResizableSplit> {
   }
 }
 
+/// One pane: exactly one tab's content in its own panel, plus the status band
+/// that content needs.
+///
+/// A pane never hosts a strip of tabs — tabs live in the workspace bar, and a
+/// pane is one viewport of one of them. Its panel is the unit of separation
+/// between panes: the gutter around it is what divides the workspace, so no
+/// rule is drawn between panes.
 class _SessionPaneView extends ConsumerWidget {
   const _SessionPaneView({
     required this.paneId,
     required this.tabs,
     required this.servers,
-    this.atTop = false,
-    this.titleBarSlot = false,
+    required this.sessions,
+    this.showClosePane = false,
   });
 
   final String paneId;
   final TerminalTabsState tabs;
   final AsyncValue<List<Server>> servers;
+  final AsyncValue<List<SshSessionInfo>> sessions;
 
-  /// Whether this pane's tab bar sits on the top edge of the workspace.
-  final bool atTop;
-
-  /// Whether this pane's strip is the one merged into the window title bar.
-  /// Only the top-left strip of the layout owns that slot.
-  final bool titleBarSlot;
+  /// Whether this pane offers its own close control in the corner.
+  final bool showClosePane;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pane = tabs.panes[paneId];
     if (pane == null) return const SizedBox.shrink();
 
-    final paneTabs = tabs.tabsInPane(paneId);
     final focused = tabs.focusedPaneId == paneId;
-    final isEmptyPane = pane.isEmpty;
+    final selectedTab = tabs.selectedTabInPane(paneId);
+    final terminal = switch (selectedTab) {
+      final TerminalTab terminal => terminal,
+      _ => null,
+    };
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () => ref.read(terminalTabsProvider.notifier).focusPane(paneId),
-      child: Column(
+      child: Stack(
         children: [
-          // Only the pane's own tab strip — never a workspace-wide bar. On
-          // desktop the topmost strip is also the window title bar.
-          _PaneTabBar(
-            paneId: paneId,
-            paneTabs: paneTabs,
-            selectedTabId: pane.selectedTabId,
-            focused: focused,
-            showClosePane: tabs.hasSplits || isEmptyPane,
-            fillTopSafeArea: atTop,
-            isTitleBar: titleBarSlot && ref.watch(desktopWindowProvider),
-          ),
-          Expanded(
-            // The pane tab bar owns the top safe area; strip it here so tab
-            // bodies (dashboard, server detail, editors) don't re-apply the
-            // status-bar inset and leave a gap below the tab bar. The bottom
-            // inset is stripped for the same reason: a tab body reaches the
-            // screen bottom (its own content padding keeps rows clear of the
-            // home indicator) unless the terminal status bar occupies the band.
-            child: MediaQuery.removePadding(
-              context: context,
-              removeTop: true,
-              removeBottom: true,
-              child: isEmptyPane
-                  ? SessionIntro(
-                      servers: servers,
-                      tabs: tabs,
-                      compact: true,
-                      onOpenTerminal: (server) =>
-                          openTerminalFor(context, ref, server, paneId: paneId),
-                      onOpenFiles: (server) =>
-                          _openFiles(context, ref, server, paneId: paneId),
-                    )
-                  : _PaneTabStack(
-                      paneTabs: paneTabs,
-                      selectedTabId: pane.selectedTabId,
-                      paneFocused: focused,
-                    ),
+          MaidKitPanel(
+            margin: EdgeInsets.zero,
+            // The focused pane reads as the live one; the others recede by
+            // tone, the same way an unfocused window does.
+            emphasized: focused,
+            child: Column(
+              children: [
+                Expanded(
+                  // The workspace bar owns the top safe area; strip it here so
+                  // tab bodies don't re-apply the status-bar inset and leave a
+                  // gap below the bar. The bottom inset belongs to the status
+                  // band below, so the body does not double it.
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: true,
+                    removeBottom: true,
+                    child: selectedTab == null
+                        ? SessionIntro(
+                            servers: servers,
+                            tabs: tabs,
+                            compact: true,
+                            onOpenTerminal: (server) => openTerminalFor(
+                              context,
+                              ref,
+                              server,
+                              paneId: paneId,
+                            ),
+                            onOpenFiles: (server) => _openFiles(
+                              context,
+                              ref,
+                              server,
+                              paneId: paneId,
+                            ),
+                          )
+                        : _PaneTabStack(
+                            paneTabs: tabs.tabsInPane(paneId),
+                            selectedTabId: pane.selectedTabId,
+                            paneFocused: focused,
+                          ),
+                  ),
+                ),
+                // The status band belongs to the pane, not the window: in a
+                // split every terminal pane reads out its own terminal instead
+                // of only the focused one. Keyed on the terminal id, a pane
+                // that shows something else collapses it in place.
+                AnimatedTerminalStatusBar(
+                  key: ValueKey(terminal?.id),
+                  session: _sessionForTab(sessions, selectedTab),
+                  terminal: terminal?.terminal,
+                  terminalId: terminal?.id,
+                  transport: terminal?.transport,
+                ),
+              ],
             ),
           ),
+          if (showClosePane && focused)
+            Positioned(
+              top: MaidKitSpace.sm,
+              right: MaidKitSpace.sm,
+              child: _PaneCloseButton(paneId: paneId),
+            ),
         ],
       ),
     );
   }
 }
 
-/// Shared height for each pane tab strip and its tab chips.
+/// Closes [paneId] from inside the pane it belongs to.
 ///
-/// On desktop the topmost strip is the window title bar, so the height is the
-/// title bar height and the two rows collapse into one.
-const _paneTabBarHeight = kMaidKitTitleBarHeight;
-
-/// Pane width below which a strip keeps the title of the focused tab only.
-///
-/// On a narrow pane every title would crowd out the tabs themselves, but icons
-/// alone make it hard to tell what is open, so the focused tab keeps its title.
-const _paneTabTitleBreakpoint = 768.0;
-
-/// Widest a tab title may draw before it is ellipsized.
-const _paneTabTitleMaxWidth = 240.0;
-
-/// How long a tab title takes to expand out of its icon, and collapse back.
-const _paneTabTitleDuration = Duration(milliseconds: 160);
-
-class _TabDragData {
-  const _TabDragData({required this.tabId, required this.fromPaneId});
-
-  final String tabId;
-  final String fromPaneId;
-}
-
-class _PaneTabBar extends ConsumerWidget {
-  const _PaneTabBar({
-    required this.paneId,
-    required this.paneTabs,
-    required this.selectedTabId,
-    required this.focused,
-    required this.showClosePane,
-    this.fillTopSafeArea = false,
-    this.isTitleBar = false,
-  });
+/// A split's panes have no strip of their own, so the focused one carries a
+/// small control in its corner — the only place a user can aim at *this* pane
+/// rather than at the shared bar.
+class _PaneCloseButton extends ConsumerWidget {
+  const _PaneCloseButton({required this.paneId});
 
   final String paneId;
-  final List<SessionTab> paneTabs;
-  final String? selectedTabId;
-  final bool focused;
-  final bool showClosePane;
 
-  /// Whether this tab bar sits on the top edge and should extend its color
-  /// into the top safe area instead of leaving a background-colored strip.
-  final bool fillTopSafeArea;
-
-  /// Whether this strip is merged into the window title bar: it reserves the
-  /// macOS traffic-light inset, drags the window from its empty space, and
-  /// carries the window buttons where the OS does not draw them.
-  final bool isTitleBar;
-
-  void _acceptTab(WidgetRef ref, _TabDragData data, {int? toIndex}) {
-    ref
-        .read(terminalTabsProvider.notifier)
-        .moveTab(data.tabId, paneId, toIndex: toIndex);
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.9),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: IconButton(
+        tooltip: 'sessionsClosePane'.tr(),
+        visualDensity: VisualDensity.compact,
+        style: IconButton.styleFrom(
+          minimumSize: const Size(24, 24),
+          maximumSize: const Size(24, 24),
+          padding: EdgeInsets.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        onPressed: () =>
+            ref.read(terminalTabsProvider.notifier).closePane(paneId),
+        icon: const Icon(Symbols.close, size: 14),
+      ),
+    );
   }
+}
+
+/// Shared height of the workspace tab bar and its tab chips.
+///
+/// On desktop the bar is the window title bar, so the height is the title bar
+/// height and the two rows collapse into one.
+const _tabBarHeight = kMaidKitTitleBarHeight;
+
+/// Bar width below which the strip keeps the title of the selected tab only.
+///
+/// On a narrow window every title would crowd out the tabs themselves, but
+/// icons alone make it hard to tell what is open, so the selected tab keeps
+/// its title.
+const _tabTitleBreakpoint = 768.0;
+
+/// Widest a tab title may draw before it is ellipsized.
+const _tabTitleMaxWidth = 240.0;
+
+/// How long a tab title takes to expand out of its icon, and collapse back.
+const _tabTitleDuration = Duration(milliseconds: 160);
+
+class _TabDragData {
+  const _TabDragData({required this.tabId, this.groupId});
+
+  final String tabId;
+
+  /// The bar entry the dragged tab belongs to, when it is already mounted.
+  final String? groupId;
+}
+
+/// The workspace's single tab strip.
+///
+/// It lists every tab in the session in one row, whichever pane owns it, so
+/// the workspace reads as one set of documents rather than one strip per pane.
+/// On desktop the strip is merged into the window title bar.
+class _WorkspaceTabBar extends ConsumerWidget {
+  const _WorkspaceTabBar({required this.tabs});
+
+  final TerminalTabsState tabs;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
     final topInset = MediaQuery.paddingOf(context).top;
+    final isTitleBar = ref.watch(desktopWindowProvider);
 
-    // The strip is the paper the tabs are cut from: the focused pane gets the
-    // lighter tone so the selected chip (painted `surface`) lifts off it, and
-    // an unfocused pane steps one tone deeper and recedes.
+    // The bar is the paper the tabs are cut from; the selected chip paints a
+    // raised tone on it so the active document steps out of the row.
     return Material(
-      color: focused ? scheme.surfaceContainerLow : scheme.surfaceContainer,
+      color: scheme.surfaceContainerLow,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // A narrow pane keeps one title — the tab the user is on — and lets
-          // the others shrink to their icon, so the strip stays scannable
+          // A narrow window keeps one title — the tab the user is on — and
+          // lets the others shrink to their icon, so the strip stays scannable
           // instead of hiding tabs behind a scroll.
-          final compact = constraints.maxWidth < _paneTabTitleBreakpoint;
+          final compact = constraints.maxWidth < _tabTitleBreakpoint;
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (fillTopSafeArea && topInset > 0) SizedBox(height: topInset),
+              if (topInset > 0) SizedBox(height: topInset),
               SizedBox(
-                height: _paneTabBarHeight,
+                height: _tabBarHeight,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -507,30 +557,16 @@ class _PaneTabBar extends ConsumerWidget {
                     if (isTitleBar && usesNativeWindowButtons)
                       const SizedBox(width: kMaidKitTrafficLightInset),
                     Expanded(
-                      child: _PaneTabStrip(
-                        paneId: paneId,
-                        paneTabs: paneTabs,
-                        selectedTabId: selectedTabId,
+                      child: _WorkspaceTabStrip(
+                        tabs: tabs,
                         compact: compact,
                         dragsWindow: isTitleBar,
-                        onSelect: (tab) {
-                          final notifier = ref.read(
-                            terminalTabsProvider.notifier,
-                          );
-                          notifier.focusPane(paneId);
-                          notifier.select(tab.id);
-                        },
-                        onClose: (tab) => ref
-                            .read(terminalTabsProvider.notifier)
-                            .close(tab.id),
-                        onAccept: (data, insertIndex) =>
-                            _acceptTab(ref, data, toIndex: insertIndex),
                       ),
                     ),
                     // Pane splitting lives in the command palette (Shift+Tab,
-                    // or the actions button beside this one), which leaves the
-                    // strip one scanning row of tabs plus the workspace's own
-                    // notifications and account.
+                    // or this button), which leaves the strip one scanning row
+                    // of tabs plus the workspace's own notifications, account
+                    // and window controls.
                     const NotificationsBellButton(),
                     const CloudAccountButton(),
                     IconButton(
@@ -538,31 +574,16 @@ class _PaneTabBar extends ConsumerWidget {
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(
-                        minWidth: _paneTabBarHeight,
-                        minHeight: _paneTabBarHeight,
+                        minWidth: _tabBarHeight,
+                        minHeight: _tabBarHeight,
                       ),
-                      onPressed: () {
-                        ref
-                            .read(terminalTabsProvider.notifier)
-                            .focusPane(paneId);
-                        showTerminalCommandPalette(context, ref);
-                      },
+                      onPressed: () => showTerminalCommandPalette(context, ref),
                       icon: const Icon(Symbols.add, size: 20),
                     ),
-                    if (showClosePane)
-                      IconButton(
-                        tooltip: 'sessionsClosePane'.tr(),
-                        visualDensity: VisualDensity.compact,
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: _paneTabBarHeight,
-                          minHeight: _paneTabBarHeight,
-                        ),
-                        onPressed: () => ref
-                            .read(terminalTabsProvider.notifier)
-                            .closePane(paneId),
-                        icon: const Icon(Symbols.close, size: 18),
-                      ),
+                    // Closing a pane is the pane's own control: it sits in
+                    // the focused pane's corner, where it names one pane
+                    // instead of the shared bar. With a single pane there is
+                    // nothing to close — that pane *is* the workspace.
                     if (!isTitleBar) const SizedBox(width: 4),
                     if (isTitleBar && !usesNativeWindowButtons)
                       // Keep the workspace's own close control apart from the
@@ -585,103 +606,156 @@ class _PaneTabBar extends ConsumerWidget {
   }
 }
 
-/// The tabs of one strip, with the strip's empty space beneath them.
+/// The workspace's tabs, with the bar's empty space beneath them.
 ///
-/// The empty space is the window's drag surface when the strip is the title
-/// bar, and the drop target for tabs dragged out of other panes. It sits
+/// The empty space is the window's drag surface when the bar is the title bar,
+/// and the drop target for a tab dragged to the end of the row. It sits
 /// *under* the tabs so a drag that starts on a tab still drags that tab; the
 /// tab row is shrink-wrapped, so space to its right is not part of it.
-class _PaneTabStrip extends StatelessWidget {
-  const _PaneTabStrip({
-    required this.paneId,
-    required this.paneTabs,
-    required this.selectedTabId,
+class _WorkspaceTabStrip extends ConsumerWidget {
+  const _WorkspaceTabStrip({
+    required this.tabs,
     required this.compact,
     required this.dragsWindow,
-    required this.onSelect,
-    required this.onClose,
-    required this.onAccept,
   });
 
-  final String paneId;
-  final List<SessionTab> paneTabs;
-  final String? selectedTabId;
+  final TerminalTabsState tabs;
   final bool compact;
   final bool dragsWindow;
-  final void Function(SessionTab tab) onSelect;
-  final void Function(SessionTab tab) onClose;
-  final void Function(_TabDragData data, int insertIndex) onAccept;
+
+  void _move(WidgetRef ref, String tabId, String toPaneId, {int? toIndex}) {
+    ref
+        .read(terminalTabsProvider.notifier)
+        .moveTab(tabId, toPaneId, toIndex: toIndex);
+  }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
-    // The tabs shrink-wrap, so whatever space is left of the strip belongs to
-    // the window: dragging there moves it, and dropping a tab there appends.
-    return Row(
-      children: [
-        Flexible(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: EdgeInsets.zero,
-            child: Row(
-              children: [
-                if (paneTabs.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: Text(
-                      'sessionsNewPane'.tr(),
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
+    final notifier = ref.read(terminalTabsProvider.notifier);
+    final focusedPaneId = tabs.focusedPaneId;
+
+    // One entry per tab, not per tab instance: a tab split across panes is
+    // several mounted sessions under one entry, with a count saying how many
+    // panes show it. Entries follow the panes, and inside a pane that pane's
+    // own tab order, so the row reads exactly like the workspace does and
+    // opening a tab appends instead of reshuffling the row around whatever is
+    // selected. An empty pane keeps a slot of its own, so a freshly split pane
+    // is visible — and droppable — before it owns a tab.
+    final entries = <Widget>[];
+    final placed = <String>{};
+
+    void addEntry(SessionTab tab, {String? paneId}) {
+      final groupId = tabs.groupIdFor(tab);
+      if (!placed.add(groupId)) return;
+      final lead = tabs.groupLead(groupId) ?? tab;
+      entries.add(
+        _TabGroupChip(
+          key: ValueKey('group-$groupId'),
+          groupId: groupId,
+          lead: lead,
+          paneCount: tabs.paneCountForGroup(groupId),
+          selected: tabs.isGroupActive(groupId),
+          // A narrow bar keeps the selected entry's title and lets the rest
+          // fall back to their icon plus count.
+          showTitle: !compact || tabs.isGroupActive(groupId),
+          onSelect: () {
+            final target = tabs.groupSelectable(groupId) ?? tab;
+            notifier.select(target.id);
+          },
+          onClose: () => notifier.closeGroup(groupId),
+          onAccept: (data) => _move(
+            ref,
+            data.tabId,
+            tabs.paneIdForGroup(groupId) ?? paneId ?? focusedPaneId ?? 'main',
+          ),
+        ),
+      );
+    }
+
+    for (final paneId in tabs.layout?.paneIds ?? tabs.panes.keys) {
+      final pane = tabs.panes[paneId];
+      if (pane == null) continue;
+      if (pane.isEmpty) {
+        entries.add(
+          _EmptyPaneChip(
+            paneId: paneId,
+            focused: paneId == focusedPaneId,
+            onAccept: (data) => _move(ref, data.tabId, paneId),
+          ),
+        );
+        continue;
+      }
+      for (final tabId in pane.tabIds) {
+        final tab = tabs.tabs.where((t) => t.id == tabId).firstOrNull;
+        if (tab != null) addEntry(tab, paneId: paneId);
+      }
+    }
+    // A tab left in a pane the layout no longer describes still gets an entry.
+    for (final tab in tabs.tabs) {
+      addEntry(tab);
+    }
+
+    // The tabs take the width they need and no more. The row is measured from
+    // its intrinsic width and clamped to the strip, so it fills the bar while
+    // there is room and scrolls inside its own width when there is not; the
+    // slot is a flex, and a `flex: 1` pair would hand the tabs half the strip
+    // for ever instead. Whatever the tabs leave over stays the window's own
+    // surface: dragging there moves it, dropping a tab there appends.
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+            child: IntrinsicWidth(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ...entries,
+                    // Trailing slot so tabs can be dropped after the last item.
+                    if (focusedPaneId != null)
+                      _TabDropTail(
+                        hovering: false,
+                        onAccept: (data) =>
+                            _move(ref, data.tabId, focusedPaneId),
                       ),
-                    ),
-                  )
-                else ...[
-                  for (var index = 0; index < paneTabs.length; index++)
-                    _DraggablePaneTab(
-                      key: ValueKey(paneTabs[index].id),
-                      tab: paneTabs[index],
-                      paneId: paneId,
-                      selected: paneTabs[index].id == selectedTabId,
-                      showTitle:
-                          !compact || paneTabs[index].id == selectedTabId,
-                      index: index,
-                      onSelect: () => onSelect(paneTabs[index]),
-                      onClose: () => onClose(paneTabs[index]),
-                      onAccept: onAccept,
-                    ),
-                  // Trailing slot so tabs can be dropped after the last item.
-                  _TabDropTail(
-                    hovering: false,
-                    onAccept: (data) => onAccept(data, paneTabs.length),
-                  ),
-                ],
-              ],
+                  ],
+                ),
+              ),
             ),
           ),
-        ),
-        Expanded(
-          child: DragTarget<_TabDragData>(
-            onWillAcceptWithDetails: (details) => details.data.tabId.isNotEmpty,
-            onAcceptWithDetails: (details) =>
-                onAccept(details.data, paneTabs.length),
-            builder: (context, candidate, rejected) {
-              final surface = DecoratedBox(
-                decoration: BoxDecoration(
-                  color: candidate.isEmpty
-                      ? null
-                      : scheme.primary.withValues(alpha: 0.08),
-                ),
-                child: const SizedBox.expand(),
-              );
-              // Only the title bar strip moves the window; a split's lower
-              // strips just host the drop target.
-              return dragsWindow
-                  ? MaidKitWindowDragArea(child: surface)
-                  : surface;
-            },
+          // Whatever the tabs do not need stays the window's own surface.
+          Expanded(
+            child: DragTarget<_TabDragData>(
+              onWillAcceptWithDetails: (details) =>
+                  details.data.tabId.isNotEmpty,
+              onAcceptWithDetails: (details) {
+                if (focusedPaneId != null) {
+                  _move(ref, details.data.tabId, focusedPaneId);
+                }
+              },
+              builder: (context, candidate, rejected) {
+                final surface = DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: candidate.isEmpty
+                        ? null
+                        : scheme.primary.withValues(alpha: 0.08),
+                  ),
+                  child: const SizedBox.expand(),
+                );
+                // Only the title bar drags the window; a non-desktop bar just
+                // hosts the drop target.
+                return dragsWindow
+                    ? MaidKitWindowDragArea(child: surface)
+                    : surface;
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -702,7 +776,7 @@ class _TabDropTail extends StatelessWidget {
         final active = candidate.isNotEmpty || hovering;
         return SizedBox(
           width: 28,
-          height: _paneTabBarHeight,
+          height: _tabBarHeight,
           child: active
               ? Center(
                   child: Container(
@@ -721,45 +795,121 @@ class _TabDropTail extends StatelessWidget {
   }
 }
 
-class _DraggablePaneTab extends StatelessWidget {
-  const _DraggablePaneTab({
-    super.key,
-    required this.tab,
+/// The strip slot of a pane that owns no tab yet.
+///
+/// A split creates an empty pane, and the workspace bar is the only place that
+/// can say so: without this slot the new pane has no handle in the one row the
+/// user reads, and no target to drag a tab onto. It names the pane instead of
+/// wearing a tab's chrome, because it is a destination waiting for a document.
+class _EmptyPaneChip extends StatelessWidget {
+  const _EmptyPaneChip({
     required this.paneId,
+    required this.focused,
+    required this.onAccept,
+  });
+
+  final String paneId;
+  final bool focused;
+  final void Function(_TabDragData data) onAccept;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return DragTarget<_TabDragData>(
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) => onAccept(details.data),
+      builder: (context, candidate, rejected) {
+        final hovering = candidate.isNotEmpty;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: hovering
+                  ? scheme.primary.withValues(alpha: 0.12)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+              border: Border.all(
+                color: focused
+                    ? scheme.outline
+                    : scheme.outlineVariant.withValues(alpha: 0.6),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Symbols.add, size: 14, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Text(
+                    'sessionsNewPane'.tr(),
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// One bar entry: a tab, plus how many panes currently show it.
+///
+/// A tab split across panes mounts one session per pane, but the workspace is
+/// still working on one thing, so the bar shows the group once and prints the
+/// pane count beside the title. Closing the entry closes every session in it.
+class _TabGroupChip extends StatelessWidget {
+  const _TabGroupChip({
+    super.key,
+    required this.groupId,
+    required this.lead,
+    required this.paneCount,
     required this.selected,
     required this.showTitle,
-    required this.index,
     required this.onSelect,
     required this.onClose,
     required this.onAccept,
   });
 
-  final SessionTab tab;
-  final String paneId;
+  final String groupId;
+  final SessionTab lead;
+  final int paneCount;
+
+  /// Whether the focused pane shows this group.
   final bool selected;
 
-  /// Whether this chip draws its title. Narrow panes only expand the focused
-  /// tab, so the rest stay icon-sized.
+  /// Whether this entry draws its title. A narrow bar only expands the title of
+  /// the selected entry, so the rest stay icon-sized with their count.
   final bool showTitle;
 
-  final int index;
   final VoidCallback onSelect;
   final VoidCallback onClose;
-  final void Function(_TabDragData data, int insertIndex) onAccept;
+  final void Function(_TabDragData data) onAccept;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final chip = _PaneTabChip(
-      tab: tab,
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final chip = _TabChip(
+      lead: lead,
+      paneCount: paneCount,
       selected: selected,
       showTitle: showTitle,
       onSelect: onSelect,
       onClose: onClose,
     );
-    final dragData = _TabDragData(tabId: tab.id, fromPaneId: paneId);
-    // The chip under the pointer keeps the tab's own shape, so the drag reads
-    // as moving this tab rather than a floating tooltip.
+    final dragData = _TabDragData(tabId: lead.id, groupId: groupId);
+    final isMobile = switch (theme.platform) {
+      TargetPlatform.android || TargetPlatform.iOS => true,
+      _ => false,
+    };
+    // The chip under the pointer keeps the entry's own shape, so the drag reads
+    // as moving this tab rather than as a floating tooltip.
     final feedback = Material(
       elevation: 4,
       color: scheme.surface,
@@ -771,21 +921,18 @@ class _DraggablePaneTab extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _TabActivityIcon(tab: tab),
+              _TabActivityIcon(tab: lead),
               const SizedBox(width: 6),
-              Text(
-                _tabLabel(tab),
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
+              Text(_tabLabel(lead), style: theme.textTheme.labelMedium),
+              if (paneCount > 1) ...[
+                const SizedBox(width: 6),
+                _PaneCountBadge(count: paneCount),
+              ],
             ],
           ),
         ),
       ),
     );
-    final isMobile = switch (Theme.of(context).platform) {
-      TargetPlatform.android || TargetPlatform.iOS => true,
-      _ => false,
-    };
     final draggable = isMobile
         ? LongPressDraggable<_TabDragData>(
             data: dragData,
@@ -803,20 +950,17 @@ class _DraggablePaneTab extends StatelessWidget {
           );
 
     return DragTarget<_TabDragData>(
-      onWillAcceptWithDetails: (details) => details.data.tabId != tab.id,
-      onAcceptWithDetails: (details) {
-        // Insert before this tab for stable reordering.
-        onAccept(details.data, index);
-      },
+      onWillAcceptWithDetails: (details) =>
+          (details.data.groupId ?? details.data.tabId) != groupId,
+      onAcceptWithDetails: (details) => onAccept(details.data),
       builder: (context, candidate, rejected) {
-        final showInsert = candidate.isNotEmpty;
         return SizedBox(
-          height: _paneTabBarHeight,
+          height: _tabBarHeight,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (showInsert)
+              if (candidate.isNotEmpty)
                 Container(
                   width: 2,
                   margin: const EdgeInsets.symmetric(vertical: 8),
@@ -834,16 +978,51 @@ class _DraggablePaneTab extends StatelessWidget {
   }
 }
 
-class _PaneTabChip extends StatelessWidget {
-  const _PaneTabChip({
-    required this.tab,
+/// How many panes a bar entry occupies, when that is more than one.
+class _PaneCountBadge extends StatelessWidget {
+  const _PaneCountBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Tooltip(
+      message: 'sessionsPaneCountTooltip'.tr(args: ['$count']),
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(MaidKitRadius.xs),
+        ),
+        child: Text(
+          '$count',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSecondaryContainer,
+            fontWeight: FontWeight.w600,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabChip extends StatelessWidget {
+  const _TabChip({
+    required this.lead,
+    required this.paneCount,
     required this.selected,
     required this.showTitle,
     required this.onSelect,
     required this.onClose,
   });
 
-  final SessionTab tab;
+  final SessionTab lead;
+  final int paneCount;
   final bool selected;
   final bool showTitle;
   final VoidCallback onSelect;
@@ -854,29 +1033,26 @@ class _PaneTabChip extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return SizedBox(
-      height: _paneTabBarHeight,
+      height: _tabBarHeight,
       child: Listener(
         onPointerDown: (event) {
           if (event.buttons & kMiddleMouseButton != 0) {
             onClose();
           }
         },
-        // The selected tab is a tonal capsule sitting on the strip rather than
-        // a tab glued to a bottom rule: it keeps the strip's single row height
-        // while still reading as the active surface. The fill steps to the
-        // raised container tone — darker than the strip in light mode and
-        // lighter in dark mode — so selection stays legible either way.
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-          // `Ink` paints the selected tab's tonal surface onto the strip's own
-          // Material, so the strip stays the only Material in the row and the
-          // chip's splash still lands above its fill.
+          // The selected entry is a raised capsule on the bar's paper, so the
+          // active document steps out of the row without a rule under it.
           child: Ink(
             decoration: BoxDecoration(
-              color: selected
-                  ? scheme.surfaceContainerHigh
-                  : Colors.transparent,
+              color: selected ? scheme.surface : Colors.transparent,
               borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+              border: Border.all(
+                color: selected
+                    ? scheme.outlineVariant.withValues(alpha: 0.7)
+                    : Colors.transparent,
+              ),
             ),
             child: InkWell(
               onTap: onSelect,
@@ -887,7 +1063,7 @@ class _PaneTabChip extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _TabActivityIcon(
-                      tab: tab,
+                      tab: lead,
                       color: selected ? scheme.primary : null,
                     ),
                     // Growing the label's width out of the icon is what reads
@@ -897,7 +1073,7 @@ class _PaneTabChip extends StatelessWidget {
                       child: AnimatedAlign(
                         alignment: Alignment.centerLeft,
                         widthFactor: showTitle ? 1 : 0,
-                        duration: _paneTabTitleDuration,
+                        duration: _tabTitleDuration,
                         curve: Curves.easeOutCubic,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -905,10 +1081,10 @@ class _PaneTabChip extends StatelessWidget {
                             const SizedBox(width: 6),
                             ConstrainedBox(
                               constraints: const BoxConstraints(
-                                maxWidth: _paneTabTitleMaxWidth,
+                                maxWidth: _tabTitleMaxWidth,
                               ),
                               child: Text(
-                                _tabLabel(tab),
+                                _tabLabel(lead),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.labelMedium?.copyWith(
@@ -925,23 +1101,22 @@ class _PaneTabChip extends StatelessWidget {
                         ),
                       ),
                     ),
-                    // The title gets its own air before the close affordance
-                    // so the button never reads as punctuation on the tab's
-                    // name. The button is a 24px cell rather than the padded
-                    // 48px tap target the theme would give it, which is what
-                    // used to swallow the gap and crowd the title.
+                    // The count stays visible when the title collapses, so a
+                    // split tab is still identifiable on a narrow bar.
+                    if (paneCount > 1) ...[
+                      const SizedBox(width: 6),
+                      _PaneCountBadge(count: paneCount),
+                    ],
+                    // The title gets its own air before the close affordance so
+                    // the button never reads as punctuation on the name.
                     const SizedBox(width: 12),
-                    if (tab is! DashboardTab)
+                    if (lead is! DashboardTab)
                       IconButton(
                         tooltip: 'sessionsCloseTab'.tr(),
                         style: IconButton.styleFrom(
                           minimumSize: const Size(24, 24),
                           maximumSize: const Size(24, 24),
                           padding: EdgeInsets.zero,
-                          // The theme's padded tap target inflates this button
-                          // to 40px wide inside a 32px chip, which is what used
-                          // to crowd the title; shrink-wrap lets the 24px cell
-                          // stand.
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
                         onPressed: onClose,
@@ -998,9 +1173,11 @@ class _TabActivityIcon extends StatelessWidget {
   }
 }
 
-/// Keeps every tab in the pane mounted so switching/splitting does not reset
-/// file-browser or terminal chrome state. [sessionTabViewKey] further preserves
-/// that state when a tab moves to another pane or the layout tree reshapes.
+/// Keeps every tab a pane holds mounted, so a tab the pane is not showing keeps
+/// its state — an unsent prompt, a scroll position, a loaded directory — and
+/// switching inside the pane is instant. Only the selected one is visible and
+/// hit-testable; the others stay transparent rather than offstage so their text
+/// fields keep their controllers and focus bookkeeping.
 class _PaneTabStack extends StatelessWidget {
   const _PaneTabStack({
     required this.paneTabs,
@@ -1015,30 +1192,28 @@ class _PaneTabStack extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (paneTabs.isEmpty) return const SizedBox.shrink();
-    final selectedIndex = paneTabs.indexWhere((tab) => tab.id == selectedTabId);
-    final index = selectedIndex < 0 ? 0 : selectedIndex;
-    final selectedTab = paneTabs[index];
+    final index = paneTabs.indexWhere((tab) => tab.id == selectedTabId);
+    final selected = paneTabs[index < 0 ? 0 : index];
     return Stack(
       fit: StackFit.expand,
       children: [
-        for (final tab in paneTabs.where((tab) => tab.id != selectedTab.id))
+        for (final tab in paneTabs.where((tab) => tab.id != selected.id))
           _AnimatedPaneTabContent(
             key: ValueKey(tab.id),
             active: false,
             child: _SessionTabBody(tab: tab, autofocus: false),
           ),
         _AnimatedPaneTabContent(
-          key: ValueKey(selectedTab.id),
+          key: ValueKey(selected.id),
           active: true,
-          child: _SessionTabBody(tab: selectedTab, autofocus: paneFocused),
+          child: _SessionTabBody(tab: selected, autofocus: paneFocused),
         ),
       ],
     );
   }
 }
 
-/// Keeps inactive views mounted while animating the visible pane tab in and
-/// the previous tab out, so terminal and file-management state is retained.
+/// Animates the pane's visible tab in and the previous one out.
 class _AnimatedPaneTabContent extends StatelessWidget {
   const _AnimatedPaneTabContent({
     required this.active,
@@ -1074,6 +1249,9 @@ class _SessionTabBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // The pane paints the card (see `_SessionPaneView`); the tab body is just
+    // its content, so a terminal and a dashboard share one surface and the
+    // status band sits inside the same card.
     // GlobalKey reparents State when this tab moves across the layout tree
     // (split creation, drag between panes, etc.).
     final key = sessionTabViewKey(tab.id);
@@ -1364,4 +1542,3 @@ String _tabLabel(SessionTab tab) {
   if (tab is SettingsSessionTab) return 'tabSettings'.tr();
   return tab.serverName;
 }
-

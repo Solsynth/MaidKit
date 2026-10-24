@@ -107,7 +107,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// The strip's tab list. Pane tab bodies are keyed by tab id too, so a chip
+  /// The strip's tab list. A pane's body is keyed by its tab id too, so a chip
   /// has to be matched inside the strip rather than by key alone.
   final strip = find.byWidgetPredicate(
     (widget) =>
@@ -115,8 +115,12 @@ void main() {
         widget.scrollDirection == Axis.horizontal,
   );
 
-  Finder chip(String tabId) =>
-      find.descendant(of: strip, matching: find.byKey(ValueKey(tabId)));
+  /// A chip is keyed by its bar entry, which is the tab's own id unless the tab
+  /// was split into a second pane.
+  Finder chip(String groupId) => find.descendant(
+    of: strip,
+    matching: find.byKey(ValueKey('group-$groupId')),
+  );
 
   /// Width of the title area inside one chip: zero while the title is
   /// collapsed into its icon, the label's own width once it is expanded.

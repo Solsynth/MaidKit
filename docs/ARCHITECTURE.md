@@ -62,23 +62,44 @@ tab that opened it and survives switching tabs and panes; pop them with
 `TabNavigator.of(context).pop()`. `context.router` is only the root navigator and
 must not be used for detail pages.
 
-The pane tab strip is the workspace's title bar, and on desktop it *is* the
-window title bar: the window is borderless, the topmost strip occupies the
-native title bar row (`kMaidKitTitleBarHeight`, 40 pt), and there is no second
-bar above it. The strip reserves the macOS traffic-light inset on its leading
-edge, moves the window when dragged from empty strip space, and draws the
+The workspace has one tab bar, not one per pane. It lists every tab in the
+session left to right in pane order, so a split reads as one set of documents
+with several viewports rather than as several independent windows. On desktop
+that bar *is* the window title bar: the window is borderless, the bar occupies
+the native title bar row (`kMaidKitTitleBarHeight`, 40 pt), and there is no
+second bar above it. The bar reserves the macOS traffic-light inset on its
+leading edge, moves the window when dragged from empty bar space, and draws the
 minimize/maximize/close buttons itself where the OS does not (Windows, Linux).
-`MainFlutterWindow.swift` re-centers the macOS traffic lights on the strip
+`MainFlutterWindow.swift` re-centers the macOS traffic lights on the bar
 whenever the Dart side reports a new effective height, so they stay aligned
-across UI-scale changes. While no strip exists — the locked vault, a workspace
+across UI-scale changes. While no bar exists — the locked vault, a workspace
 with no panes — `MaidKitWindowScaffold` draws a standalone `MaidKitTitleBar`
-instead, so the window is never draggable-less. On a pane narrower than 768
-logical pixels only the focused tab draws its title, and that title expands out
-of its icon and collapses back instead of snapping the strip's layout, so
-background tabs stay icon-sized. The window shell
+instead, so the window is never draggable-less. On a window narrower than 768
+logical pixels only the selected tab draws its title, and that title expands
+out of its icon and collapses back instead of snapping the bar's layout, so
+background tabs stay icon-sized.
+
+Panes below the bar are separate cards on the workspace paper: they are
+separated by a gutter, with no rule drawn between them, and the gutter is the
+drag band that resizes the split. Each pane ends in its own band — the
+terminal status bar (`AnimatedTerminalStatusBar`) when that pane shows a
+terminal, nothing otherwise — so a split reads out every terminal it shows, not
+just the focused one. A split's focused pane carries a close control in its
+corner, since panes no longer have strips to put one in.
+
+A pane shows exactly one tab's content. A tab that needs several viewports is a
+group: splitting mounts a second session of the same target in the new pane,
+both sessions share one bar entry, and that entry prints the number of panes it
+occupies. Terminals and agent chats each own one live renderer, so splitting
+them leaves the new pane empty for a fresh session instead of duplicating them;
+destinations with a fixed tab id behave the same way. The bar orders entries by
+their panes' position in the layout, which is why the layout tree — not the tab
+list — decides what the row reads like.
+
+The window shell
 (`shared/presentation/maidkit_window_scaffold.dart`) owns the app-level
 shortcuts — Shift+Tab opens the session-actions palette and Cmd/Ctrl+W closes
-the focused pane tab — because focus may sit outside the workspace when they are
+the focused tab — because focus may sit outside the workspace when they are
 pressed. Closing routes through `TerminalTabsNotifier.close`, which asks first
 when the tab is still working: a terminal running a task, an agent chat still
 replying, or a dirty file editor.
@@ -105,12 +126,12 @@ local colour schemes or chrome.
   seed (`_seedPaper`), keeping accent roles as `ColorScheme.fromSeed` produced
   them. Neutrals are tinted toward the seed's own hue, so a teal seed reads as
   cool paper and a clay seed as warm paper.
-- **Tone over outlines.** Cards, sections and the pane tab strip separate
-  themselves with a deeper surface tone, not borders or shadows. The focused
-  pane tab strip is `surfaceContainerLow` and its selected tab paints
-  `surfaceContainerHigh` on it, so the active tab steps one tone further and
-  stays legible in both modes; an unfocused pane steps one tone deeper and
-  recedes.
+- **Tone over outlines.** Cards, sections and the workspace tab bar separate
+  themselves with a deeper surface tone, not borders or shadows. The bar is
+  `surfaceContainerLow`; its selected entry paints `surface`. Panes are
+  `MaidKitPanel` cards: the focused pane is `surfaceContainerHigh` and an
+  unfocused one is `surfaceContainer`, so a split reads as one live card among
+  quieter neighbours without a rule between them.
 - **Inputs are tonal first.** A soft fill (`surfaceContainerHigh` at 70%)
   defines a field; only focus and error draw an edge.
 - **Placeholders.** Every empty or failed surface renders through

@@ -57,6 +57,16 @@ enum AssetsSection { connections, github, credentials, snippets }
 /// Optional close confirmation for dirty file-editor tabs.
 final Map<String, Future<bool> Function()> fileEditorCloseGuards = {};
 
+/// Tab id → bar entry, for a tab that was split into a second pane.
+///
+/// The entry id is the id of the tab that opened it. A tab absent from this map
+/// is its own entry. Splitting is the only thing that adds an entry here, so
+/// two independent chats remain two bar entries.
+final Map<String, String> _tabGroupMembership = {};
+
+/// The bar entry [tabId] belongs to.
+String tabGroupOf(String tabId) => _tabGroupMembership[tabId] ?? tabId;
+
 sealed class SessionTab {
   const SessionTab({
     required this.id,
@@ -261,7 +271,11 @@ class AgentChatSessionTab extends SessionTab {
   SessionTabType get type => SessionTabType.agentChat;
 }
 
-/// A pane owns a tab strip and shows one selected tab at a time.
+/// A pane: one tab strip's worth of tabs, showing one at a time.
+///
+/// Panes never share a tab instance — a renderer mounts once — so a tab that
+/// spans several panes is a *group*: each pane shows its own session of the
+/// same kind, and the bar lists the group once with a pane count.
 ///
 /// A pane may be empty (`tabIds` is empty); empty panes show the session intro
 /// so the user can choose what to open.
@@ -321,6 +335,8 @@ class TerminalTabsState {
     this.focusedPaneId,
   });
 
+  /// Every mounted tab. A tab renders once, so a tab that fills several panes
+  /// is several tabs of the same kind, one per pane.
   final List<SessionTab> tabs;
   final Map<String, SessionPane> panes;
 
@@ -374,6 +390,88 @@ class TerminalTabsState {
   String? paneIdForTab(String tabId) {
     for (final pane in panes.values) {
       if (pane.tabIds.contains(tabId)) return pane.id;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Tab groups: one bar entry per tab, however many panes show it.
+  //
+  // A split mounts a second session of the same target, and the bar keeps one
+  // entry for both so the user reads "this terminal, two viewports" rather
+  // than two unrelated tabs. The group key is the tab's target — its kind plus
+  // its server — so grouping follows what the tab *is* and needs no bookkeeping
+  // when tabs move between panes.
+  // ---------------------------------------------------------------------
+
+  /// The bar entry [tab] belongs to.
+  ///
+  /// A tab that was never split is its own entry. Two chats, or two shells on
+  /// one server, therefore stay separate entries: grouping is the consequence
+  /// of a split, never of what two tabs happen to look like.
+  String groupIdFor(SessionTab tab) => tabGroupOf(tab.id);
+
+  /// Group ids in bar order: the order their first tab was opened in.
+  List<String> get groupOrder {
+    final seen = <String>{};
+    return [
+      for (final tab in tabs)
+        if (seen.add(groupIdFor(tab))) groupIdFor(tab),
+    ];
+  }
+
+  /// Members of [groupId], in workspace order. The first names the entry.
+  List<SessionTab> tabsInGroup(String groupId) =>
+      tabs.where((tab) => groupIdFor(tab) == groupId).toList();
+
+  /// The tab that names [groupId] in the bar.
+  SessionTab? groupLead(String groupId) => tabsInGroup(groupId).firstOrNull;
+
+  /// How many panes currently show a tab of [groupId].
+  int paneCountForGroup(String groupId) {
+    var count = 0;
+    for (final paneId in panes.keys) {
+      final tab = selectedTabInPane(paneId);
+      if (tab != null && groupIdFor(tab) == groupId) count++;
+    }
+    return count;
+  }
+
+  /// Whether the focused pane shows [groupId].
+  bool isGroupActive(String groupId) {
+    final tab = selectedTab;
+    return tab != null && groupIdFor(tab) == groupId;
+  }
+
+  /// The member of [groupId] to select: the one in the focused pane when it
+  /// shows the group, else the first pane that does.
+  SessionTab? groupSelectable(String groupId) {
+    final focused = selectedTab;
+    if (focused != null &&
+        groupIdFor(focused) == groupId &&
+        focusedPaneId != null) {
+      return focused;
+    }
+    for (final pane in panes.values) {
+      for (final id in pane.tabIds) {
+        final tab = tabs.where((t) => t.id == id).firstOrNull;
+        if (tab != null && groupIdFor(tab) == groupId) return tab;
+      }
+    }
+    return null;
+  }
+
+  /// The pane showing [groupId]: the focused one when it does, else the first.
+  String? paneIdForGroup(String groupId) {
+    final focused = selectedTab;
+    if (focused != null &&
+        groupIdFor(focused) == groupId &&
+        focusedPaneId != null) {
+      return focusedPaneId;
+    }
+    for (final pane in panes.values) {
+      final tab = selectedTabInPane(pane.id);
+      if (tab != null && groupIdFor(tab) == groupId) return pane.id;
     }
     return null;
   }
@@ -945,14 +1043,90 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       axis: axis,
       splitId: _uuid.v4(),
     );
+    // A split gives the new pane a second viewport of what the user is looking
+    // at. A tab that owns one live session — a terminal's socket, an agent
+    // chat's conversation — cannot be mounted twice, so that pane starts empty
+    // and the user opens a session there; any other tab is duplicated and both
+    // copies group under one entry in the bar.
+    final source = state.selectedTab;
+    final clone = source == null ? null : _duplicate(source);
     final panes = Map<String, SessionPane>.from(state.panes)
-      ..[newPaneId] = SessionPane(id: newPaneId);
+      ..[newPaneId] = clone == null
+          ? SessionPane(id: newPaneId)
+          : SessionPane(
+              id: newPaneId,
+              tabIds: [clone.id],
+              selectedTabId: clone.id,
+            );
+    if (clone != null && source != null) {
+      _tabGroupMembership[clone.id] = tabGroupOf(source.id);
+    }
     state = TerminalTabsState(
-      tabs: state.tabs,
+      tabs: clone == null ? state.tabs : [...state.tabs, clone],
       panes: panes,
       layout: nextLayout,
       focusedPaneId: newPaneId,
     );
+  }
+
+  /// A second mount of [tab], or null when it cannot be shown twice.
+  ///
+  /// A terminal and an agent chat each own one live session with one renderer,
+  /// and the dashboard is the workspace's home view, so a split leaves those
+  /// panes empty for a new session. Every other tab is a view over shared data
+  /// and gets its own id, so it can appear in a second pane; both copies group
+  /// under one entry in the bar.
+  SessionTab? _duplicate(SessionTab tab) {
+    final id = '${tab.id}-pane-${DateTime.now().microsecondsSinceEpoch}';
+    return switch (tab) {
+      // A destination tab's id is fixed, so a second instance would collide
+      // with the first; the empty pane keeps its group hint instead.
+      TerminalTab() ||
+      AgentChatSessionTab() ||
+      DashboardTab() ||
+      DestinationTab() => null,
+      ServerDetailTab(
+        :final server,
+        :final initialTab,
+        :final initialComposeProject,
+      ) =>
+        ServerDetailTab(
+          id: id,
+          server: server,
+          initialTab: initialTab,
+          initialComposeProject: initialComposeProject,
+        ),
+      MaidCafePayloadSessionTab(:final server) => MaidCafePayloadSessionTab(
+        id: id,
+        server: server,
+      ),
+      FileManagementTab(
+        :final serverId,
+        :final serverName,
+        :final initialPath,
+      ) =>
+        FileManagementTab(
+          id: id,
+          serverId: serverId,
+          serverName: serverName,
+          initialPath: initialPath,
+        ),
+      FileEditorTab(
+        :final serverId,
+        :final serverName,
+        :final fileName,
+        :final path,
+        :final isRemote,
+      ) =>
+        FileEditorTab(
+          id: id,
+          serverId: serverId,
+          serverName: serverName,
+          fileName: fileName,
+          path: path,
+          isRemote: isRemote,
+        ),
+    };
   }
 
   void focusPane(String paneId) {
@@ -1100,6 +1274,21 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _removeTab(tabId);
   }
 
+  /// Closes every session behind one bar entry.
+  ///
+  /// A tab split across panes is one entry but several mounted sessions, so its
+  /// close button has to take them all; closing one would leave the entry
+  /// standing on the sibling. Cancelling any confirm (a running task, a dirty
+  /// editor) stops the rest, the same way closing a pane does.
+  Future<void> closeGroup(String groupId) async {
+    if (state.groupLead(groupId) is DashboardTab) return;
+    final tabIds = state.tabsInGroup(groupId).map((tab) => tab.id).toList();
+    for (final tabId in tabIds) {
+      await close(tabId);
+      if (state.tabs.any((tab) => tab.id == tabId)) return;
+    }
+  }
+
   /// Sends a saved shell snippet to the terminal identified by [terminalId].
   ///
   /// The script is passed as one quoted argument to the current shell. This
@@ -1234,6 +1423,12 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     releaseTabNavigator(tabId);
     _lastBufferRows.remove(tabId);
     _cachedHistory.remove(tabId);
+    // Forget the entry, and any tab that was grouped under it, so reopening a
+    // tab with the same id never inherits a dead split.
+    final entry = _tabGroupMembership.remove(tabId);
+    if (entry != null) {
+      _tabGroupMembership.removeWhere((_, group) => group == tabId);
+    }
 
     final paneId = state.paneIdForTab(tabId);
     final tabs = [...state.tabs]..removeAt(tabIndex);

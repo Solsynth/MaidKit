@@ -215,24 +215,31 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
           final showTimestamp = constraints.maxWidth >= 600;
           return Row(
             children: [
-              cloudUser.when(
-                loading: () => const _CloudUserLoading(),
-                error: (_, _) => _statusSignIn(context),
-                data: (user) => user == null
-                    ? _statusSignIn(context)
-                    : _statusAccount(context, user),
+              // The account slot gives up width first: on a narrow strip its
+              // label ellipsizes instead of pushing the refresh control off
+              // the edge.
+              Flexible(
+                child: cloudUser.when(
+                  loading: () => const _CloudUserLoading(),
+                  error: (_, _) => _statusSignIn(context),
+                  data: (user) => user == null
+                      ? _statusSignIn(context)
+                      : _statusAccount(context, user),
+                ),
               ),
               const Spacer(),
               if (_lastRefreshed != null && showTimestamp) ...[
-                Text(
-                  'maidCafeLastRefreshed'.tr(
-                    args: [DateFormat('HH:mm:ss').format(_lastRefreshed!)],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.labelMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                Flexible(
+                  child: Text(
+                    'maidCafeLastRefreshed'.tr(
+                      args: [DateFormat('HH:mm:ss').format(_lastRefreshed!)],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.labelMedium?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -258,9 +265,15 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
       children: [
         Icon(Symbols.person, size: 16, color: colors.onSurfaceVariant),
         const SizedBox(width: 8),
-        TextButton(
-          onPressed: () => _signInCloud(context),
-          child: Text('settingsCloudSignIn'.tr()),
+        Flexible(
+          child: TextButton(
+            onPressed: () => _signInCloud(context),
+            child: Text(
+              'settingsCloudSignIn'.tr(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ),
       ],
     );

@@ -1709,6 +1709,7 @@
   "sessionsCloseThisTab": "Close this tab",
   "sessionsDropTabHere": "Drop tab here",
   "sessionsNewPane": "New pane",
+  "sessionsPaneCountTooltip": "This tab is shown in {0} panes",
   "sessionsNewTerminal": "New terminal",
   "sessionsNewTerminalOn": "New terminal on {}",
   "sessionsOpenCount": "{} open",

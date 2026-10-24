@@ -1338,14 +1338,19 @@ class _ServerCard extends ConsumerWidget {
                 padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 16),
                 child: Row(
                   children: [
-                    _ConnectionStatus(
-                      connected: connected,
-                      connecting: connecting,
-                      failed: failed,
-                      networkLatency: session?.networkLatency,
-                      // Only an SSH session measures a round trip; a card fed
-                      // by the daemon has no ping to report.
-                      measuresLatency: !statsFromDaemon,
+                    // The status gives up width before the Connect action: on
+                    // a narrow card its label ellipsizes instead of pushing
+                    // the row past the card's edge.
+                    Flexible(
+                      child: _ConnectionStatus(
+                        connected: connected,
+                        connecting: connecting,
+                        failed: failed,
+                        networkLatency: session?.networkLatency,
+                        // Only an SSH session measures a round trip; a card fed
+                        // by the daemon has no ping to report.
+                        measuresLatency: !statsFromDaemon,
+                      ),
                     ),
                     const Spacer(),
                     if (offersConnect)
@@ -1562,14 +1567,20 @@ class _ConnectionStatus extends StatelessWidget {
               message: 'serversNetworkPingTooltip'.tr(),
               child: Text(
                 latency == null ? '—' : '${latency.inMilliseconds} ms',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: textTheme.labelLarge?.copyWith(color: latencyColor),
               ),
             )
           else
-            Text(
-              'serversConnected'.tr(),
-              style: textTheme.labelLarge?.copyWith(
-                color: colorScheme.onSurface,
+            Flexible(
+              child: Text(
+                'serversConnected'.tr(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onSurface,
+                ),
               ),
             ),
         ],
@@ -1583,7 +1594,6 @@ class _ConnectionStatus extends StatelessWidget {
     };
 
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 8,
@@ -1591,9 +1601,13 @@ class _ConnectionStatus extends StatelessWidget {
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 8),
-        Text(
-          label,
-          style: textTheme.labelLarge?.copyWith(color: colorScheme.onSurface),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.labelLarge?.copyWith(color: colorScheme.onSurface),
+          ),
         ),
       ],
     );

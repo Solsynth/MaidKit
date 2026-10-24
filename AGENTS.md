@@ -13,11 +13,12 @@ Read `docs/architecture.md` before making structural changes.
 
 ## Window and layout rules
 
-- Keep the app wrapped in `MaidKitWindowScaffold`. On desktop the window is borderless and the top pane tab strip is the window title bar; `shared/presentation/window_chrome.dart` owns the drag area, window buttons and macOS traffic-light alignment. Do not add a second bar above the strip.
+- Keep the app wrapped in `MaidKitWindowScaffold`. On desktop the window is borderless and the workspace's single tab bar is the window title bar; `shared/presentation/window_chrome.dart` owns the drag area, window buttons and macOS traffic-light alignment. Do not add a second bar above it.
 - Preserve desktop window initialization in `main.dart` when changing startup code.
-- The main workspace is one pane-tab shell: `SessionsWorkspace` (`lib/servers/tabs_screen.dart`) renders `terminalTabsProvider`'s panes and per-pane tab strips. Every destination — the servers dashboard, terminals, file management, file editors, agent chats, assets, projects, MaidCafe cloud, settings — is a `SessionTab` in that strip. Do not reintroduce a navigation rail, bottom bar, or `AutoTabsRouter`.
+- The main workspace is one pane-tab shell: `SessionsWorkspace` (`lib/servers/tabs_screen.dart`) renders `terminalTabsProvider`'s panes under **one** workspace tab bar. Every destination — the servers dashboard, terminals, file management, file editors, agent chats, assets, projects, MaidCafe cloud, settings — is a `SessionTab` shown in that bar. Do not reintroduce a navigation rail, bottom bar, per-pane tab strips, or `AutoTabsRouter`.
+- A pane shows exactly one tab's content and nothing else: no strip of its own, no tab stack. Each pane is one `MaidKitPanel`; the gutter between panels is what separates panes, so never draw a rule between them. A tab that needs several viewports is a *group*: a split mounts a second session of the same target in the new pane, and the bar keeps one entry for the group with a pane count. Terminals and agent chats own a single live renderer, so splitting them leaves the new pane empty for a fresh session.
 - `AppRouter` owns a single route (`ServerWorkspacePage`). Detail pages opened from a tab are pushed with `TabNavigator.of(context).push(...)` so they stay inside that tab's own stack; never call `context.router.push` from inside the workspace.
-- App-level shortcuts live in the window shell, not in the workspace: the pane tab strip and the terminal are not always the focus owner. Cmd/Ctrl+W closes the focused pane tab — route it through `TerminalTabsNotifier.close` so the close guard can ask before abandoning a running terminal task, a replying agent chat, or a dirty file editor.
+- App-level shortcuts live in the window shell, not in the workspace: the tab bar and the terminal are not always the focus owner. Cmd/Ctrl+W closes the focused tab — route it through `TerminalTabsNotifier.close` so the close guard can ask before abandoning a running terminal task, a replying agent chat, or a dirty file editor.
 - Reference `../SolarNetwork/Island/lib/shared/widgets/app_scaffold.dart` when extending window behaviour.
 
 ## UI guidelines
@@ -27,7 +28,7 @@ Read `docs/architecture.md` before making structural changes.
 - Avoid oversized rounded corners, pill-heavy navigation, large shadows, and unnecessary cards.
 - Keep spacing on a simple 4/8/12/16/24/32 scale. Use borders and contrast for hierarchy rather than effects.
 - Do not add a page-level app bar to the tab workspace unless there is a clear product requirement. The window title bar and tab navigation provide the surrounding chrome.
-- Keep responsive behavior intentional. The workspace has no rail or bottom bar any more; its breakpoint is the pane tab strip: below 768 logical pixels of pane width only the focused tab keeps its title and the others collapse to their icon, animated rather than snapped.
+- Keep responsive behavior intentional. The workspace has no rail or bottom bar any more; its breakpoint is the workspace tab bar: below 768 logical pixels only the selected entry keeps its title and the others collapse to their icon (a split tab keeps its pane count), animated rather than snapped.
 
 ## Checks
 

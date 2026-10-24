@@ -13,12 +13,13 @@ import 'server_providers.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_tabs_provider.dart';
 
-/// The workspace's bottom band: live readings for the focused terminal.
+/// A pane's bottom band: live readings for the terminal that pane shows.
 ///
-/// The pane tab workspace (tabs_screen.dart) draws it under the pane layout,
-/// keyed on the terminal id so a dashboard behind the strip keeps its own exit
-/// animation instead of the bar swapping to a stale readout. A non-terminal
-/// focus passes a null [terminal] and the bar animates out.
+/// The pane view (tabs_screen.dart) draws it under the pane's own body, so in a
+/// split every terminal pane reads out its own terminal instead of only the
+/// focused one. It is keyed on the terminal id, so a pane that switches to a
+/// non-terminal collapses the bar with its own exit animation; a null
+/// [terminal] passes a placeholder that animates out.
 class AnimatedTerminalStatusBar extends StatelessWidget {
   const AnimatedTerminalStatusBar({
     required this.session,
