@@ -28,7 +28,7 @@ bool get usesNativeWindowButtons => !kIsWeb && Platform.isMacOS;
 const double kMaidKitTitleBarHeight = 40;
 
 /// Leading room the macOS traffic lights need on the title bar.
-const double kMaidKitTrafficLightInset = 78;
+const double kMaidKitTrafficLightInset = 78 + 8;
 
 final desktopWindowProvider = Provider<bool>((ref) => isMaidKitDesktop);
 

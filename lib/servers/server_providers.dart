@@ -47,6 +47,7 @@ import 'serial_port_client.dart';
 import 'serial_connection_manager.dart';
 import 'ssh_connection_manager.dart';
 import 'server_models.dart';
+import 'terminal_tabs_provider.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
@@ -1653,9 +1654,15 @@ final serverMetricsRefreshSchedulerProvider =
           ref.watch(serversProvider).asData?.value ?? const <Server>[];
       final sessions =
           ref.watch(sessionsProvider).asData?.value ?? const <SshSessionInfo>[];
+      // The dashboard cards are the readers of these readings: a dashboard
+      // left behind in the tab strip must not keep running SSH commands
+      // against hosts nobody is looking at. Coming back into focus re-arms
+      // the timer and fills the cards in immediately, so they are never
+      // stale for a whole interval.
+      final dashboardFocused = ref.watch(dashboardFocusedProvider);
       scheduler.update(
         interval: interval,
-        servers: servers,
+        servers: dashboardFocused ? servers : const <Server>[],
         sessions: sessions,
         focusedServerId: focusedServerId,
       );
@@ -1717,9 +1724,17 @@ final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
       ref.read(sessionsProvider).asData?.value ?? const [],
     ),
   );
+  final dashboardFocused = ref.watch(dashboardFocusedProvider);
   final interval = ref.watch(serverMetricsRefreshIntervalProvider);
   final servers = ref.watch(serversProvider).asData?.value ?? const <Server>[];
-  scheduler.update(interval: interval, servers: servers);
+  // Only the dashboard's cards read these snapshots: no daemon is dialled
+  // while the dashboard sits behind another tab. Coming back re-arms the
+  // scheduler, whose refresh fires at once so the cards are not stale for a
+  // whole interval.
+  scheduler.update(
+    interval: interval,
+    servers: dashboardFocused ? servers : const <Server>[],
+  );
   ref.onDispose(scheduler.dispose);
   return scheduler;
 });

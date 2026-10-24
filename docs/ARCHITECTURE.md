@@ -48,9 +48,9 @@ lib/
 ## Navigation
 
 `AppRouter` owns a single route: `ServerWorkspacePage`, the pane-tab workspace
-(`SessionsWorkspace`). There is no tab router and no navigation rail — every
-destination is a `SessionTab` in the pane tab strip
-(`servers/terminal_tabs_provider.dart`): the servers dashboard, terminals, file
+(`SessionsWorkspace` in `servers/tabs_screen.dart`). There is no tab router
+and no navigation rail — every destination is a `SessionTab` in the pane tab
+strip (`servers/terminal_tabs_provider.dart`): the servers dashboard, terminals, file
 management, file editors, agent chats, assets, deployment projects, the MaidCafe
 cloud console and settings.
 

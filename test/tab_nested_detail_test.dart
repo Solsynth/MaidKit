@@ -9,7 +9,7 @@ import 'package:maid_kit/containers/project_repository.dart';
 import 'package:maid_kit/containers/projects_page.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/server_providers.dart';
-import 'package:maid_kit/servers/sessions_page.dart';
+import 'package:maid_kit/servers/tabs_screen.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/theme.dart';
 

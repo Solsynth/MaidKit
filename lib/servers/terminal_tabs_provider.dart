@@ -384,6 +384,17 @@ final terminalTabsProvider =
       TerminalTabsNotifier.new,
     );
 
+/// Whether the servers dashboard is the tab the user is actually looking at.
+///
+/// The dashboard owns the background statistics refresh — its cards are the
+/// readers — and a tab left behind in the strip must not keep dialling hosts
+/// nobody is watching. Selected in the focused pane, the same rule the status
+/// bar and the command palette use.
+final dashboardFocusedProvider = Provider<bool>((ref) {
+  final tabs = ref.watch(terminalTabsProvider);
+  return tabs.selectedTab is DashboardTab;
+});
+
 /// Holds live terminal tabs for the entire app lifetime.
 ///
 /// This provider deliberately is not auto-disposed, so terminals continue to

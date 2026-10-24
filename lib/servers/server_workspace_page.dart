@@ -1,7 +1,7 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 
-import 'sessions_page.dart';
+import 'tabs_screen.dart';
 
 /// The app's home route: the pane tab workspace.
 ///

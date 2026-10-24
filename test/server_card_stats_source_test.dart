@@ -16,7 +16,7 @@ import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_stats.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
-import 'package:maid_kit/servers/sessions_page.dart';
+import 'package:maid_kit/servers/tabs_screen.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';

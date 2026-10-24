@@ -13,6 +13,7 @@ import 'maidcafe_stream.dart';
 import 'runtime_monitoring_tab.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'terminal_tabs_provider.dart';
 import 'session_lookup.dart';
 
 /// Dashboard section aggregating every server's pinned runtime / watched
@@ -46,12 +47,26 @@ class _DashboardRuntimesSectionState
   void initState() {
     super.initState();
     _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
-    _timer = Timer.periodic(_fallbackInterval, (_) => _refresh());
+    // The tab body stays mounted behind the strip, so the first paint can
+    // land while the dashboard is already hidden: only collect for a reader.
+    if (ref.read(dashboardFocusedProvider)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+    }
+    _timer = Timer.periodic(_fallbackInterval, (_) {
+      // A dashboard left behind in the tab strip has nobody watching its
+      // tiles: no polling while it is hidden. Returning to it refreshes at
+      // once, so the tiles are never stale for a whole interval.
+      if (!ref.read(dashboardFocusedProvider)) return;
+      _refresh();
+    });
     ref.listenManual(pinnedRuntimeConfigsProvider, (_, _) {
       // A pin was added or removed elsewhere: re-arm subscriptions so the
       // section reflects the change without waiting for the next tick.
+      if (!ref.read(dashboardFocusedProvider)) return;
       _refresh();
+    });
+    ref.listenManual(dashboardFocusedProvider, (_, focused) {
+      if (focused) _refresh();
     });
   }
 
@@ -247,6 +262,8 @@ class _DashboardRuntimesSectionState
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
       child: Card(
+        elevation: 0,
+        color: Theme.of(context).colorScheme.surfaceContainer,
         margin: .zero,
         child: Padding(
           padding: const EdgeInsets.all(12),

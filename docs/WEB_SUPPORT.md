@@ -79,9 +79,14 @@ route, so it falls back to the SSH collectors rather than opening a forward —
 the point of the route is that it costs the server no connection at all.
 
 `MaidCafeStatsScheduler` polls on the same cadence as the SSH path, driven by
-`maidCafeStatsSchedulerProvider` from `app.dart` so a browser build collects
-statistics without any tab asking first. A card and the server detail page read
-the daemon snapshot while no SSH session is up — that is what makes a
+`maidCafeStatsSchedulerProvider` from `app.dart`. Both that scheduler and the
+SSH one are gated on `dashboardFocusedProvider`: a dashboard left behind in the
+tab strip stops dialling its hosts, so a browser build collects statistics only
+while the dashboard is the focused tab. Coming back into focus re-arms each
+timer and refreshes at once, so the cards are never stale for a whole interval.
+
+A card and the server detail page read the daemon snapshot while no SSH session
+is up — that is what makes a
 daemon-backed card live (`connected`) with no session, and what makes the
 browser's cards work at all — and the session's own numbers whenever one is: a
 connection the user opened outranks the no-session route, and it is the only

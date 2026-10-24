@@ -17,7 +17,7 @@ import 'package:maid_kit/agent/agent_selection.dart';
 import 'package:maid_kit/agent/conversation_store.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/server_providers.dart';
-import 'package:maid_kit/servers/sessions_page.dart';
+import 'package:maid_kit/servers/tabs_screen.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/servers/vault_gate.dart';
 import 'package:maid_kit/shared/presentation/maidkit_window_scaffold.dart';
