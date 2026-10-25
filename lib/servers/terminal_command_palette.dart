@@ -73,22 +73,17 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
                   .openFileManagement(activeServer);
               close(null);
             },
+      // The palette hands the keyboard back to whatever had it before, on the
+      // frame after it closes; the split therefore runs on the following frame
+      // too. Splitting first would let that restore land on the old pane and
+      // drag the live-pane marker back with it, so the new pane would open
+      // idle instead of live.
       onSplitRight: !canSplit
           ? null
-          : () {
-              ref
-                  .read(terminalTabsProvider.notifier)
-                  .splitSelectedTab(SessionSplitAxis.horizontal);
-              close(null);
-            },
+          : () => _splitAfterClose(() => close(null), ref, horizontal: true),
       onSplitDown: !canSplit
           ? null
-          : () {
-              ref
-                  .read(terminalTabsProvider.notifier)
-                  .splitSelectedTab(SessionSplitAxis.vertical);
-              close(null);
-            },
+          : () => _splitAfterClose(() => close(null), ref, horizontal: false),
       onClosePane: tabs.selectedTab == null || !tabs.selectedTab!.hasSplits
           ? null
           : () async {
@@ -118,6 +113,27 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
             },
     ),
   );
+}
+
+/// Closes the palette, then splits on the next frame.
+///
+/// The palette restores the keyboard to its previous owner as it closes, and a
+/// pane reports itself live whenever its content takes the keyboard. Splitting
+/// in the same frame would therefore let that restore re-focus the old pane and
+/// pull the live marker back off the new one.
+void _splitAfterClose(
+  void Function() close,
+  WidgetRef ref, {
+  required bool horizontal,
+}) {
+  close();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    ref
+        .read(terminalTabsProvider.notifier)
+        .splitSelectedTab(
+          horizontal ? SessionSplitAxis.horizontal : SessionSplitAxis.vertical,
+        );
+  });
 }
 
 /// Where an entry belongs in the list.

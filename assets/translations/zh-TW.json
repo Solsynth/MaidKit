@@ -791,6 +791,7 @@
   "fileManagerSaving": "儲存中…",
   "fileManagerSearch": "搜尋當前資料夾",
   "fileManagerShowLeftPane": "顯示左側面板",
+  "fileManagerShowRightPane": "顯示右側面板",
   "fileManagerSkip": "跳過",
   "fileManagerTransferComplete": "傳輸完成",
   "fileManagerTransferFailed": "傳輸失敗",

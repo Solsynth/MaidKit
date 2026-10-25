@@ -791,6 +791,7 @@
   "fileManagerSaving": "保存中…",
   "fileManagerSearch": "搜索当前文件夹",
   "fileManagerShowLeftPane": "显示左侧面板",
+  "fileManagerShowRightPane": "显示右侧面板",
   "fileManagerSkip": "跳过",
   "fileManagerTransferComplete": "传输完成",
   "fileManagerTransferFailed": "传输失败",

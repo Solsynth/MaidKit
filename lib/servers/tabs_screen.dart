@@ -491,7 +491,11 @@ class _SessionPaneView extends ConsumerWidget {
                   removeTop: true,
                   removeBottom: true,
                   child: content == null
-                      ? PaneLauncher(paneId: paneId, compact: true)
+                      ? PaneLauncher(
+                          paneId: paneId,
+                          compact: true,
+                          focused: focused,
+                        )
                       : _SessionTabBody(tab: content, autofocus: focused),
                 ),
               ),

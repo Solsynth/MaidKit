@@ -791,6 +791,7 @@
   "fileManagerSaving": "Saving…",
   "fileManagerSearch": "Search this folder",
   "fileManagerShowLeftPane": "Show left pane",
+  "fileManagerShowRightPane": "Show right pane",
   "fileManagerSkip": "Skip",
   "fileManagerTransferComplete": "Transfer complete",
   "fileManagerTransferFailed": "Transfer failed",

@@ -21,7 +21,12 @@ import 'terminal_tabs_provider.dart';
 /// when [paneId] names one, and opens a new workspace tab otherwise (the
 /// no-tabs intro).
 class PaneLauncher extends ConsumerStatefulWidget {
-  const PaneLauncher({super.key, required this.paneId, this.compact = false});
+  const PaneLauncher({
+    super.key,
+    required this.paneId,
+    this.compact = false,
+    this.focused = false,
+  });
 
   /// The empty pane to fill. Null for the whole-workspace intro, where a
   /// choice opens a tab of its own.
@@ -29,6 +34,15 @@ class PaneLauncher extends ConsumerStatefulWidget {
 
   /// Sizes the block down for a split pane rather than the whole workspace.
   final bool compact;
+
+  /// Whether this launcher's pane is the live one.
+  ///
+  /// A split leaves its new, empty pane live, and the one thing to do there is
+  /// choose what goes into it, so a live launcher owns the keyboard. The claim
+  /// waits for the frame that made the pane live: whatever closed just before
+  /// — the command palette that ran the split — restores the keyboard to its
+  /// previous owner on that frame, and the newer claim has to land after it.
+  final bool focused;
 
   @override
   ConsumerState<PaneLauncher> createState() => _PaneLauncherState();
@@ -56,6 +70,25 @@ class _PaneLauncherState extends ConsumerState<PaneLauncher> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   var _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _claimKeyboard();
+  }
+
+  @override
+  void didUpdateWidget(covariant PaneLauncher oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.focused && !oldWidget.focused) _claimKeyboard();
+  }
+
+  void _claimKeyboard() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.focused || _focusNode.hasFocus) return;
+      _focusNode.requestFocus();
+    });
+  }
 
   @override
   void dispose() {
