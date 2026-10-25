@@ -3097,7 +3097,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     // this tab is a single-pane browser.
     final leftPane = _leftIsRemote ? _buildLeftRemotePane(pathTextStyle) : null;
     final remotePane = _FilePane(
-      title: 'fileManagerRemote'.tr(),
+      // The pane is the server it browses: "Remote" says where the files live,
+      // which the path bar already shows, while a second server in the left
+      // pane makes telling the two apart the header's job.
+      title: _serverRecord()?.name ?? widget.tab.serverName,
       path: _remotePath,
       pathTextStyle: pathTextStyle,
       searchInput: _rightSearchOpen ? _searchInput(_FileSide.remote) : null,

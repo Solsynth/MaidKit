@@ -780,7 +780,6 @@
   "fileManagerOverwriteTitle": "檔案已存在",
   "fileManagerPaste": "貼上",
   "fileManagerPasteFailed": "貼上失敗",
-  "fileManagerRemote": "遠端",
   "fileManagerRemoteCommandFailed": "遠端命令執行失敗。",
   "fileManagerShellUnavailable": "封裝/解封裝需要在主機上執行命令，瀏覽器工作階段無法開啟。",
   "fileManagerRemotePath": "遠端路徑",
