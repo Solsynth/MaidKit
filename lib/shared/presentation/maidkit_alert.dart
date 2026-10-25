@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:easy_localization/easy_localization.dart';
@@ -477,53 +476,76 @@ Future<T?> showMaidKitCommandPalette<T>({
           // The scrim is the theme's, so it tracks the paper ramp instead of
           // a fixed black.
           color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.5),
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Padding(
-              padding: EdgeInsets.only(
-                top: MediaQuery.sizeOf(context).height * 0.2,
-              ),
-              child: TweenAnimationBuilder<double>(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                tween: Tween(begin: 0.8, end: 1),
-                builder: (context, scale, child) => Opacity(
-                  opacity: ((scale - 0.8) / 0.2).clamp(0, 1),
-                  child: Transform.scale(scale: scale, child: child),
-                ),
-                child: GestureDetector(
-                  onTap: () {},
-                  child: Container(
-                    width: math.max(
-                      MediaQuery.sizeOf(context).width * 0.6,
-                      320,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // A desktop palette is a fixed sheet near the top of the window,
+              // not a percentage of it: the same width on every window reads
+              // as one control, and a short window keeps the list above the
+              // bottom edge instead of letting it run off.
+              final width = (constraints.maxWidth - MaidKitSpace.xxl * 2).clamp(
+                280.0,
+                560.0,
+              );
+              final maxHeight = (constraints.maxHeight - MaidKitSpace.xxxl * 3)
+                  .clamp(240.0, 480.0);
+              return Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    top: (constraints.maxHeight * 0.16).clamp(
+                      MaidKitSpace.xxl,
+                      MaidKitSpace.xxxl * 3,
                     ),
-                    constraints: const BoxConstraints(
-                      maxWidth: 600,
-                      maxHeight: 500,
+                  ),
+                  child: TweenAnimationBuilder<double>(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    tween: Tween(begin: 0.8, end: 1),
+                    builder: (context, scale, child) => Opacity(
+                      opacity: ((scale - 0.8) / 0.2).clamp(0, 1),
+                      child: Transform.scale(
+                        scale: scale,
+                        // The sheet grows out of the top, the edge it hangs
+                        // from, rather than out of its own center.
+                        alignment: Alignment.topCenter,
+                        child: child,
+                      ),
                     ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: MaidKitRadius.dialogRadius,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.shadow.withValues(alpha: 0.2),
-                          blurRadius: 10,
-                          spreadRadius: 2,
+                    child: GestureDetector(
+                      onTap: () {},
+                      child: Container(
+                        width: width,
+                        constraints: BoxConstraints(maxHeight: maxHeight),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface,
+                          borderRadius: MaidKitRadius.cardRadius,
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.outlineVariant,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.shadow.withValues(alpha: 0.24),
+                              blurRadius: 24,
+                              spreadRadius: 2,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Material(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: MaidKitRadius.dialogRadius,
-                      child: builder(context, close),
+                        // Rows scroll inside the sheet, so the corner has to
+                        // clip them or the fill squares off at the edges.
+                        clipBehavior: Clip.antiAlias,
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: builder(context, close),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),

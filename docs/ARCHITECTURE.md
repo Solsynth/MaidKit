@@ -95,16 +95,31 @@ separated by a gutter, with no rule drawn between them, and the gutter is the
 drag band that resizes the split. Each pane ends in its own band — the
 terminal status bar (`AnimatedTerminalStatusBar`) when that pane shows a
 terminal, nothing otherwise — so a split reads out every terminal it shows, not
-just the focused one. A split's focused pane carries a close control in its
-corner, since panes no longer have strips to put one in.
+just the focused one. The band draws no rule above itself and no rules between
+its readings: each reading is a pill on the pane's sheet, so the bar groups
+itself by tone and spacing rather than by dividers. A split's focused pane
+carries a close control in its corner, since panes no longer have strips to put
+one in.
 
 A pane shows exactly one content instance. Every tab stays mounted, with only
 the selected one visible, so switching tabs keeps a terminal's scrollback, an
-editor's scroll position and a file browser's listing. Splitting duplicates what
-can be mounted twice — a file manager, a file editor, a server detail page —
-under fresh content ids so the bar still shows one entry; a terminal and an
-agent chat own a single live renderer, so their new pane starts empty for a
-fresh session instead. `forkSessionTab` holds that rule.
+editor's scroll position and a file browser's listing.
+
+A split always yields an empty pane: nothing is cloned, because a terminal and
+an agent chat own one live renderer and a second view of a page is the user's
+decision rather than a side effect of splitting. That pane shows
+`PaneLauncher` (`servers/pane_launcher.dart`) — the session-actions command
+palette inline, searchable, over everything a pane can mount: a terminal on any
+host, the file manager, a server detail page, each assets page, projects, an
+agent chat, the cloud console, settings and the dashboard. Every
+`TerminalTabsNotifier.open*` takes an optional `paneId`, so a pick mounts into
+that pane when one is named (with an id of its own, since one id is one view)
+and opens a workspace tab otherwise; the same launcher serves the no-tabs
+workspace.
+
+The home dashboard (`canSplitTab`) never splits: it is the workspace's floor
+and fills the pane area it occupies. It is also the only tab that cannot be
+closed; a dashboard mounted in a split pane closes with its pane.
 
 The window shell
 (`shared/presentation/maidkit_window_scaffold.dart`) owns the app-level
@@ -124,9 +139,9 @@ When changing pages:
 1. Add the destination or detail widget; only `ServerWorkspacePage` is a
    `@RoutePage()`.
 2. Add a `SessionTab` subclass plus an `open*` method on `TerminalTabsNotifier`
-   for a new destination, and render it in `_SessionTabBody`. Teach
-   `forkSessionTab` how a split should duplicate it, or list it among the
-   single-renderer kinds that split into an empty pane.
+   for a new destination, accept its `paneId` (see `_insertTab`), render it in
+   `_SessionTabBody`, list it in `PaneLauncher`, and give it a snapshot kind in
+   `servers/workspace_snapshot.dart`.
 3. Run `dart run build_runner build` if routes changed.
 4. Never hand-edit `*.g.dart` or `*.gr.dart` files.
 

@@ -26,6 +26,7 @@ import 'session_lookup.dart';
 import 'maidcafe_server_tab.dart';
 import 'servers_page.dart';
 import 'cloud_account_button.dart';
+import 'pane_launcher.dart';
 import 'file_editor_tab.dart';
 import 'file_management_tab.dart';
 import 'notifications_modal.dart';
@@ -66,17 +67,12 @@ class SessionsWorkspace extends ConsumerWidget {
       // bar used to be.
       useSafeArea: false,
       body: tabs.isEmpty
-          ? SafeArea(
+          ? const SafeArea(
               top: true,
               bottom: false,
-              child: SessionIntro(
-                servers: servers,
-                tabs: tabs,
-                // Full-workspace intro (no tab bar / no panes).
-                onOpenTerminal: (server) =>
-                    openTerminalFor(context, ref, server),
-                onOpenFiles: (server) => _openFiles(context, ref, server),
-              ),
+              // With no tab open there is nothing to mount into, so the same
+              // launcher opens a tab of its own.
+              child: PaneLauncher(paneId: null),
             )
           : Column(
               children: [
@@ -414,23 +410,7 @@ class _SessionPaneView extends ConsumerWidget {
                     removeTop: true,
                     removeBottom: true,
                     child: content == null
-                        ? SessionIntro(
-                            servers: servers,
-                            tabs: ref.watch(terminalTabsProvider),
-                            compact: true,
-                            onOpenTerminal: (server) => openTerminalFor(
-                              context,
-                              ref,
-                              server,
-                              paneId: paneId,
-                            ),
-                            onOpenFiles: (server) => _openFiles(
-                              context,
-                              ref,
-                              server,
-                              paneId: paneId,
-                            ),
-                          )
+                        ? PaneLauncher(paneId: paneId, compact: true)
                         : _SessionTabBody(tab: content, autofocus: focused),
                   ),
                 ),
@@ -646,7 +626,7 @@ class _WorkspaceTabStrip extends ConsumerWidget {
             child: IntrinsicWidth(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                padding: EdgeInsets.zero,
+                padding: EdgeInsets.symmetric(horizontal: 8),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -896,7 +876,9 @@ class _TabChip extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final content = tab.tab;
-    final closeable = content is! DashboardTab;
+    // The workspace floor is the home dashboard tab; a dashboard mounted in a
+    // split pane is ordinary content and closes with its pane.
+    final closeable = tab.id != 'dashboard';
     return SizedBox(
       height: _tabBarHeight,
       child: Listener(

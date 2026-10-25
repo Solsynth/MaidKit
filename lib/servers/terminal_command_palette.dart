@@ -8,6 +8,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
+import 'package:maid_kit/theme.dart';
 import 'port_forward_sheet.dart';
 import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
@@ -35,7 +36,7 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
   final activeServer = activeTab == null
       ? null
       : servers.where((server) => server.id == activeTab.serverId).firstOrNull;
-  final canSplit = tabs.isNotEmpty;
+  final canSplit = canSplitTab(tabs.selectedTab);
   final portForwards = ref.read(portForwardsProvider).asData?.value ?? const [];
   final hiddenDeploys = ref
       .read(deploySessionsProvider)
@@ -108,6 +109,13 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
   );
 }
 
+/// Where an entry belongs in the list.
+///
+/// The sections give the unfiltered palette a shape: what acts on the tab you
+/// are looking at, what opens a server, and the workspace-wide destinations.
+/// A typed query drops the headings so the matches read as one ranked list.
+enum _PaletteGroup { tab, servers, workspace }
+
 class _TerminalCommandPalette extends StatefulWidget {
   const _TerminalCommandPalette({
     required this.activeTab,
@@ -145,6 +153,13 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
 
+  /// Global keys for the rows, so the highlighted one can be scrolled into
+  /// view after a keyboard move.
+  final _rowKeys = <int, GlobalKey>{};
+
+  var _query = '';
+  var _highlighted = 0;
+
   @override
   void initState() {
     super.initState();
@@ -160,32 +175,57 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final query = _searchController.text.trim().toLowerCase();
+  void _setQuery(String value) {
+    setState(() {
+      _query = value.trim().toLowerCase();
+      _highlighted = 0;
+    });
+  }
+
+  void _moveHighlight(int delta, int count) {
+    if (count == 0) return;
+    setState(() => _highlighted = (_highlighted + delta) % count);
+    final key = _rowKeys[_highlighted];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = key?.currentContext;
+      if (context != null && context.mounted) {
+        Scrollable.ensureVisible(
+          context,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  List<_TerminalAction> _actions() {
     final activeTab = widget.activeTab;
     final activeServer = activeTab == null
         ? null
         : widget.servers
               .where((server) => server.id == activeTab.serverId)
               .firstOrNull;
-    final actions = [
+    return [
       if (activeServer != null)
         _TerminalAction(
           label: 'sessionsNewTerminalOn'.tr(args: [activeTab!.serverName]),
           icon: Symbols.add,
+          group: _PaletteGroup.tab,
           onSelect: () => widget.onOpen(activeServer),
         ),
       if (widget.onOpenFiles != null)
         _TerminalAction(
           label: 'sessionsOpenFileTransfer'.tr(args: [activeTab!.serverName]),
           icon: Symbols.folder,
+          group: _PaletteGroup.tab,
           onSelect: widget.onOpenFiles!,
         ),
       if (widget.onSplitRight != null)
         _TerminalAction(
           label: 'sessionsSplitRight'.tr(),
           icon: Symbols.vertical_split,
+          group: _PaletteGroup.tab,
           shortcut: splitShortcutLabel(SessionSplitAxis.horizontal),
           onSelect: () async => widget.onSplitRight!(),
         ),
@@ -193,6 +233,7 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
         _TerminalAction(
           label: 'sessionsSplitDown'.tr(),
           icon: Symbols.horizontal_split,
+          group: _PaletteGroup.tab,
           shortcut: splitShortcutLabel(SessionSplitAxis.vertical),
           onSelect: () async => widget.onSplitDown!(),
         ),
@@ -200,12 +241,14 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
         _TerminalAction(
           label: 'sessionsCloseThisTab'.tr(),
           icon: Symbols.close,
+          group: _PaletteGroup.tab,
           onSelect: widget.onClose!,
         ),
       if (widget.onDisconnect != null)
         _TerminalAction(
           label: 'sessionsCloseAllTabs'.tr(args: [activeTab!.serverName]),
           icon: Symbols.link_off,
+          group: _PaletteGroup.tab,
           onSelect: widget.onDisconnect!,
         ),
       for (final server in widget.servers)
@@ -213,10 +256,66 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
           _TerminalAction(
             label: 'sessionsNewTerminalOn'.tr(args: [server.name]),
             icon: Symbols.terminal,
+            group: _PaletteGroup.servers,
+            hint: server.host,
             onSelect: () => widget.onOpen(server),
           ),
       ...widget.destinationActions,
-    ].where((action) => action.label.toLowerCase().contains(query)).toList();
+    ].where((action) => action.label.toLowerCase().contains(_query)).toList();
+  }
+
+  KeyEventResult _onKey(
+    FocusNode node,
+    KeyEvent event,
+    List<_TerminalAction> actions,
+  ) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveHighlight(1, actions.length);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveHighlight(-1, actions.length);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter || LogicalKeyboardKey.numpadEnter
+          when actions.isNotEmpty:
+        actions[_highlighted.clamp(0, actions.length - 1)].onSelect();
+        return KeyEventResult.handled;
+      default:
+        return KeyEventResult.ignored;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final actions = _actions();
+    if (_highlighted >= actions.length) _highlighted = 0;
+
+    // Rows read as one ranked list while searching, and as titled sections —
+    // this tab, servers, workspace — when the query is still empty.
+    final showSections = _query.isEmpty;
+    final rows = <Widget>[];
+    _PaletteGroup? previous;
+    for (var index = 0; index < actions.length; index++) {
+      final action = actions[index];
+      if (showSections && action.group != previous) {
+        previous = action.group;
+        rows.add(_SectionLabel(group: action.group));
+      }
+      rows.add(
+        _ActionRow(
+          key: _rowKeys[index] ??= GlobalKey(),
+          action: action,
+          highlighted: index == _highlighted,
+          onTap: () => action.onSelect(),
+          onHover: () => setState(() => _highlighted = index),
+        ),
+      );
+    }
 
     return Shortcuts(
       shortcuts: const {
@@ -231,57 +330,247 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             },
           ),
         },
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SearchBar(
-              controller: _searchController,
-              focusNode: _searchFocusNode,
-              hintText: 'sessionsSearchActions'.tr(),
-              leading: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: CircleAvatar(
-                  child: const Icon(Symbols.keyboard_command_key),
+        child: Focus(
+          onKeyEvent: (node, event) => _onKey(node, event, actions),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  MaidKitSpace.md,
+                  MaidKitSpace.md,
+                  MaidKitSpace.sm,
+                  MaidKitSpace.sm,
                 ),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              child: actions.isEmpty
-                  ? const SizedBox.shrink()
-                  : ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 300),
-                      child: ListView.builder(
-                        padding: EdgeInsets.zero,
-                        shrinkWrap: true,
-                        itemCount: actions.length,
-                        itemBuilder: (context, index) {
-                          final action = actions[index];
-                          return ListTile(
-                            leading: Icon(action.icon),
-                            title: Text(action.label),
-                            trailing: action.shortcut == null
-                                ? null
-                                : Text(
-                                    action.shortcut!,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelMedium
-                                        ?.copyWith(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                            onTap: () => action.onSelect(),
-                          );
+                child: Row(
+                  children: [
+                    Icon(
+                      Symbols.search,
+                      size: 20,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: MaidKitSpace.sm),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('command-palette-search'),
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        textInputAction: TextInputAction.done,
+                        onChanged: _setQuery,
+                        // Enter runs the highlighted entry even when the field
+                        // has taken focus back from the list.
+                        onSubmitted: (_) {
+                          if (actions.isEmpty) return;
+                          actions[_highlighted.clamp(0, actions.length - 1)]
+                              .onSelect();
                         },
+                        decoration: InputDecoration(
+                          isDense: true,
+                          // The sheet's own top band is the field: no pill,
+                          // fill or outline of its own inside it.
+                          filled: false,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                          hintText: 'sessionsSearchActions'.tr(),
+                          hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        style: theme.textTheme.bodyMedium,
                       ),
                     ),
-            ),
-          ],
+                    if (_query.isNotEmpty)
+                      IconButton(
+                        tooltip: 'commonClearSearch'.tr(),
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Symbols.close, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          _setQuery('');
+                          _searchFocusNode.requestFocus();
+                        },
+                      )
+                    else
+                      const _Keycap(label: 'Esc'),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: scheme.outlineVariant),
+              Flexible(
+                child: rows.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: MaidKitSpace.xl,
+                          vertical: MaidKitSpace.xxl,
+                        ),
+                        child: Text(
+                          'sessionsNoMatchingActions'.tr(),
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(
+                          MaidKitSpace.sm,
+                          MaidKitSpace.sm,
+                          MaidKitSpace.sm,
+                          0,
+                        ),
+                        shrinkWrap: true,
+                        children: rows,
+                      ),
+              ),
+              Divider(height: 1, color: scheme.outlineVariant),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: MaidKitSpace.lg,
+                  vertical: MaidKitSpace.sm,
+                ),
+                child: Text(
+                  actions.isEmpty
+                      ? 'sessionsPaletteNoResultsHint'.tr()
+                      : 'sessionsPaletteFooterHint'.tr(),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One palette row: icon, name, optional detail and its key chord.
+///
+/// The highlighted row — typed, hovered or arrow-keyed to — takes a tonal
+/// fill so the keyboard's target is always visible, and the whole row keeps a
+/// control-sized corner instead of the list's full-bleed rectangle.
+class _ActionRow extends StatelessWidget {
+  const _ActionRow({
+    super.key,
+    required this.action,
+    required this.highlighted,
+    required this.onTap,
+    required this.onHover,
+  });
+
+  final _TerminalAction action;
+  final bool highlighted;
+  final VoidCallback onTap;
+  final VoidCallback onHover;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final titleStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+      fontWeight: highlighted ? FontWeight.w600 : FontWeight.w500,
+    );
+    final hint = action.hint;
+    final shortcut = action.shortcut;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: MaidKitSpace.xxs),
+      child: ListTile(
+        dense: true,
+        selected: highlighted,
+        selectedTileColor: scheme.secondaryContainer.withValues(alpha: 0.5),
+        shape: RoundedRectangleBorder(
+          borderRadius: MaidKitRadius.controlRadius,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: MaidKitSpace.sm),
+        leading: Icon(
+          action.icon,
+          size: 20,
+          color: highlighted ? scheme.primary : scheme.onSurfaceVariant,
+        ),
+        title: Text(
+          action.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: titleStyle,
+        ),
+        subtitle: hint == null
+            ? null
+            : Text(
+                hint,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+        trailing: shortcut == null ? null : _Keycap(label: shortcut),
+        onTap: onTap,
+        onFocusChange: (focused) {
+          if (focused) onHover();
+        },
+      ),
+    );
+  }
+}
+
+/// A quiet heading above one section of entries.
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.group});
+
+  final _PaletteGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        MaidKitSpace.sm,
+        MaidKitSpace.sm,
+        MaidKitSpace.sm,
+        MaidKitSpace.xs,
+      ),
+      child: Text(
+        switch (group) {
+          _PaletteGroup.tab => 'sessionsPaletteGroupTab'.tr(),
+          _PaletteGroup.servers => 'sessionsPaletteGroupServers'.tr(),
+          _PaletteGroup.workspace => 'sessionsPaletteGroupWorkspace'.tr(),
+        },
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+}
+
+/// A chord printed the way a keyboard draws it: a small raised key.
+class _Keycap extends StatelessWidget {
+  const _Keycap({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: MaidKitSpace.sm,
+        vertical: MaidKitSpace.xxs,
+      ),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(MaidKitRadius.xs),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: scheme.onSurfaceVariant,
         ),
       ),
     );
@@ -293,11 +582,19 @@ class _TerminalAction {
     required this.label,
     required this.icon,
     required this.onSelect,
+    this.group = _PaletteGroup.workspace,
+    this.hint,
     this.shortcut,
   });
 
   final String label;
   final IconData icon;
+
+  /// Where the entry sits in the unfiltered list.
+  final _PaletteGroup group;
+
+  /// A second line naming the target, e.g. a server's address.
+  final String? hint;
 
   /// The chord that runs this action, printed on the row. Null for actions
   /// that only exist as palette entries.

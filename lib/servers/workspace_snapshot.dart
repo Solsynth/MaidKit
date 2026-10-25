@@ -525,14 +525,17 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
 
 SessionTab _contentFromSnapshot(WorkspaceContentSnapshot spec, Server? server) {
   return switch (spec.kind) {
-    WorkspaceTabKind.dashboard => const DashboardTab(),
+    // Every destination carries the id it was mounted under: a split can hold
+    // a second assets page or dashboard, and one id is one view.
+    WorkspaceTabKind.dashboard => DashboardTab(id: spec.id),
     WorkspaceTabKind.assets => AssetsSessionTab(
+      id: spec.id,
       section: AssetsSection
           .values[spec.initialTab.clamp(0, AssetsSection.values.length - 1)],
     ),
-    WorkspaceTabKind.projects => const ProjectsSessionTab(),
-    WorkspaceTabKind.maidCafeCloud => const MaidCafeCloudSessionTab(),
-    WorkspaceTabKind.settings => const SettingsSessionTab(),
+    WorkspaceTabKind.projects => ProjectsSessionTab(id: spec.id),
+    WorkspaceTabKind.maidCafeCloud => MaidCafeCloudSessionTab(id: spec.id),
+    WorkspaceTabKind.settings => SettingsSessionTab(id: spec.id),
     WorkspaceTabKind.serverDetail => ServerDetailTab(
       id: spec.id,
       server: server!,

@@ -273,6 +273,45 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// The workspace opens on the dashboard tab, which never splits, so the
+  /// shortcut tests start on a content tab — here a terminal, the case the
+  /// chord exists for.
+  void openContentTab(ProviderContainer container, _KeyHostAdapter adapter) {
+    container.read(terminalTabsProvider.notifier).state = TerminalTabsState(
+      tabs: [
+        WorkspaceTab(
+          id: 'terminal-1',
+          panes: {
+            'pane-1': TabPane(
+              id: 'pane-1',
+              tab: TerminalTab(
+                id: 'terminal-1',
+                serverId: 1,
+                serverName: 'Test server',
+                terminal: adapter,
+                transport: TerminalTransport.ssh,
+              ),
+            ),
+          },
+          layout: const SessionLayoutLeaf('pane-1'),
+          focusedPaneId: 'pane-1',
+        ),
+      ],
+      selectedTabId: 'terminal-1',
+    );
+  }
+
+  /// Pumps the window, then selects a terminal tab — the content the split
+  /// chords exist for. The dashboard tab the workspace opens on never splits.
+  Future<ProviderContainer> pumpContentWindow(WidgetTester tester) async {
+    final adapter = _KeyHostAdapter();
+    addTearDown(adapter.dispose);
+    final container = await pumpWindow(tester);
+    openContentTab(container, adapter);
+    await tester.pumpAndSettle();
+    return container;
+  }
+
   /// Runs [body] as if the app were on [platform]. The override has to be
   /// cleared inside the test body: the binding rejects a test that leaves a
   /// debug variable behind before tear-down runs.
@@ -291,7 +330,7 @@ void main() {
   testWidgets(
     'Cmd+D splits right and Shift+Cmd+D splits below',
     (tester) => onPlatform(TargetPlatform.macOS, () async {
-      final container = await pumpWindow(tester);
+      final container = await pumpContentWindow(tester);
 
       await pressSplit(tester, shift: false);
       var tab = container.read(terminalTabsProvider).selectedTab!;
@@ -323,7 +362,7 @@ void main() {
   testWidgets(
     'Ctrl+D splits on platforms that use Ctrl as command',
     (tester) => onPlatform(TargetPlatform.linux, () async {
-      final container = await pumpWindow(tester);
+      final container = await pumpContentWindow(tester);
 
       await pressSplit(tester, shift: false, control: true);
       expect(
@@ -343,7 +382,7 @@ void main() {
   testWidgets(
     'the palette prints the split chords beside their actions',
     (tester) => onPlatform(TargetPlatform.macOS, () async {
-      await pumpWindow(tester);
+      await pumpContentWindow(tester);
 
       await tester.tap(find.byTooltip('sessionsSessionActions'.tr()));
       await tester.pumpAndSettle();
@@ -367,29 +406,7 @@ void main() {
       final adapter = _KeyHostAdapter();
       addTearDown(adapter.dispose);
       final container = await pumpWindow(tester);
-
-      container.read(terminalTabsProvider.notifier).state = TerminalTabsState(
-        tabs: [
-          WorkspaceTab(
-            id: 'terminal-1',
-            panes: {
-              'pane-1': TabPane(
-                id: 'pane-1',
-                tab: TerminalTab(
-                  id: 'terminal-1',
-                  serverId: 1,
-                  serverName: 'Test server',
-                  terminal: adapter,
-                  transport: TerminalTransport.ssh,
-                ),
-              ),
-            },
-            layout: const SessionLayoutLeaf('pane-1'),
-            focusedPaneId: 'pane-1',
-          ),
-        ],
-        selectedTabId: 'terminal-1',
-      );
+      openContentTab(container, adapter);
       await tester.pumpAndSettle();
 
       await pressSplit(tester, shift: false);

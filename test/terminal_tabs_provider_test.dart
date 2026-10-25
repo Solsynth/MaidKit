@@ -86,7 +86,7 @@ void main() {
     expect(adapter.inputs, ["eval '  echo start\n./deploy.sh'\n"]);
   });
 
-  test('a split adds a pane to the tab instead of a second tab', () {
+  test('a split adds an empty pane to the tab instead of a second tab', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     final notifier = container.read(terminalTabsProvider.notifier);
@@ -100,12 +100,46 @@ void main() {
     expect(split.hasSplits, isTrue);
     expect(split.panes, hasLength(2));
     expect(split.layout.paneIds, containsAll(split.panes.keys));
-    // The file manager is a view over shared data, so the new pane shows a
-    // second instance of it under the same bar entry.
-    expect(split.tabs, hasLength(2));
-    expect(split.tabs.map((tab) => tab.id).toSet(), hasLength(2));
-    expect(split.tabs.every((tab) => tab is FileManagementTab), isTrue);
+    // Nothing is cloned: the new pane is the launcher's, waiting for a choice.
+    expect(split.panes[split.focusedPaneId]!.isEmpty, isTrue);
+    expect(split.tabs, hasLength(1));
     expect(state.selectedTabId, split.id);
+  });
+
+  test('the dashboard tab never splits', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    notifier.splitSelectedTab(SessionSplitAxis.horizontal);
+
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(1));
+    expect(state.tabs.single.hasSplits, isFalse);
+    expect(state.tabs.single.focusedPane!.isEmpty, isFalse);
+  });
+
+  test('a pick mounts in the pane that asked, not in a new tab', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    notifier.openFileManagement(const _ServerStub());
+    notifier.splitSelectedTab(SessionSplitAxis.vertical);
+    final split = container.read(terminalTabsProvider).tabs.last;
+    final paneId = split.focusedPaneId;
+
+    notifier.openServerDetails(const _ServerStub(), paneId: paneId);
+
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(2), reason: 'no third tab is created');
+    final mounted = state.tabs.last;
+    expect(mounted.focusedPaneId, paneId);
+    // The pane gets an instance with an id of its own, so the same page can
+    // also stand in another pane under a different identity.
+    expect(mounted.panes[paneId]!.tab, isA<ServerDetailTab>());
+    expect(mounted.panes[paneId]!.tab!.id, isNot('server-1'));
+    expect(mounted.tabs, hasLength(2));
   });
 
   test('closing a pane keeps the tab and its other viewport', () async {

@@ -158,9 +158,13 @@ class FileEditorTab extends SessionTab {
 
 /// The persistent server overview, shown in the same tab system as live
 /// terminals and file-management views.
+///
+/// The workspace's home tab carries the plain `dashboard` id; a second instance
+/// mounted in a split pane gets an id of its own, because one id is one mounted
+/// view.
 class DashboardTab extends SessionTab {
-  const DashboardTab()
-    : super(id: 'dashboard', serverId: -1, serverName: 'Dashboard');
+  const DashboardTab({super.id = 'dashboard'})
+    : super(serverId: -1, serverName: 'Dashboard');
 
   @override
   SessionTabType get type => SessionTabType.dashboard;
@@ -205,15 +209,17 @@ sealed class DestinationTab extends SessionTab {
 
 /// Saved connection resources: servers, GitHub, credentials and snippets.
 class AssetsSessionTab extends DestinationTab {
-  const AssetsSessionTab({this.section = AssetsSection.connections})
-    : super(id: 'assets', serverName: 'Assets');
+  const AssetsSessionTab({
+    this.section = AssetsSection.connections,
+    super.id = 'assets',
+  }) : super(serverName: 'Assets');
 
   /// The assets page to show. Re-opening the tab on another section switches
   /// to it instead of opening a second assets tab.
   final AssetsSection section;
 
   AssetsSessionTab copyWith({AssetsSection? section}) =>
-      AssetsSessionTab(section: section ?? this.section);
+      AssetsSessionTab(section: section ?? this.section, id: id);
 
   @override
   SessionTabType get type => SessionTabType.assets;
@@ -221,7 +227,8 @@ class AssetsSessionTab extends DestinationTab {
 
 /// Managed deployment projects.
 class ProjectsSessionTab extends DestinationTab {
-  const ProjectsSessionTab() : super(id: 'projects', serverName: 'Projects');
+  const ProjectsSessionTab({super.id = 'projects'})
+    : super(serverName: 'Projects');
 
   @override
   SessionTabType get type => SessionTabType.projects;
@@ -229,8 +236,8 @@ class ProjectsSessionTab extends DestinationTab {
 
 /// Solarpass account, workspaces and registered MaidCafe daemons.
 class MaidCafeCloudSessionTab extends DestinationTab {
-  const MaidCafeCloudSessionTab()
-    : super(id: 'maidcafe-cloud', serverName: 'MaidCafe');
+  const MaidCafeCloudSessionTab({super.id = 'maidcafe-cloud'})
+    : super(serverName: 'MaidCafe');
 
   @override
   SessionTabType get type => SessionTabType.maidCafeCloud;
@@ -238,7 +245,8 @@ class MaidCafeCloudSessionTab extends DestinationTab {
 
 /// App settings.
 class SettingsSessionTab extends DestinationTab {
-  const SettingsSessionTab() : super(id: 'settings', serverName: 'Settings');
+  const SettingsSessionTab({super.id = 'settings'})
+    : super(serverName: 'Settings');
 
   @override
   SessionTabType get type => SessionTabType.settings;
@@ -445,58 +453,16 @@ final dashboardFocusedProvider = Provider<bool>((ref) {
   return tabs.selectedTabContent is DashboardTab;
 });
 
-/// A second instance of [tab] for a new pane, or null when it cannot be shown
-/// twice.
+/// Whether [tab] may grow another pane.
 ///
-/// A terminal and an agent chat each own one live session with one renderer, so
-/// a split gives those a new session instead; a destination tab is a singleton
-/// whose id the bar reads, so it stays a single entry too. Everything else is a
-/// view over shared data and is forked with its own id.
-SessionTab? forkSessionTab(SessionTab tab, {required String id}) {
-  return switch (tab) {
-    TerminalTab() ||
-    AgentChatSessionTab() ||
-    DashboardTab() ||
-    DestinationTab() => null,
-    ServerDetailTab(
-      :final server,
-      :final initialTab,
-      :final initialComposeProject,
-    ) =>
-      ServerDetailTab(
-        id: id,
-        server: server,
-        initialTab: initialTab,
-        initialComposeProject: initialComposeProject,
-      ),
-    MaidCafePayloadSessionTab(:final server) => MaidCafePayloadSessionTab(
-      id: id,
-      server: server,
-    ),
-    FileManagementTab(:final serverId, :final serverName, :final initialPath) =>
-      FileManagementTab(
-        id: id,
-        serverId: serverId,
-        serverName: serverName,
-        initialPath: initialPath,
-      ),
-    FileEditorTab(
-      :final serverId,
-      :final serverName,
-      :final fileName,
-      :final path,
-      :final isRemote,
-    ) =>
-      FileEditorTab(
-        id: id,
-        serverId: serverId,
-        serverName: serverName,
-        fileName: fileName,
-        path: path,
-        isRemote: isRemote,
-      ),
-  };
-}
+/// The home dashboard (`dashboard`) is the workspace's floor: it fills the
+/// whole pane area and never splits into an empty sibling. Every other tab is
+/// a document whose viewports can be added to.
+bool canSplitTab(WorkspaceTab? tab) => tab != null && tab.id != 'dashboard';
+
+/// A fresh, unique content id for a second instance of the same kind.
+String _instanceId(String prefix) =>
+    '$prefix-${DateTime.now().microsecondsSinceEpoch}';
 
 /// Holds live workspace tabs for the entire app lifetime.
 ///
@@ -830,23 +796,32 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     );
   }
 
+  /// Opens [server]'s detail page, or mounts it in [paneId] when that pane is
+  /// the empty one a split just made.
+  ///
+  /// A named pane is an explicit "mount here": it may hold a page the
+  /// workspace already shows elsewhere, so the instance gets an id of its own.
   void openServerDetails(
     Server server, {
     int initialTab = 0,
     String? initialComposeProject,
     String? paneId,
   }) {
-    final existing = state.allTabs
-        .whereType<ServerDetailTab>()
-        .where((tab) => tab.serverId == server.id)
-        .firstOrNull;
+    final existing = paneId == null
+        ? state.allTabs
+              .whereType<ServerDetailTab>()
+              .where((tab) => tab.serverId == server.id)
+              .firstOrNull
+        : null;
     if (existing != null) {
       select(existing.id);
       return;
     }
     _insertTab(
       ServerDetailTab(
-        id: 'server-${server.id}',
+        id: paneId == null
+            ? 'server-${server.id}'
+            : _instanceId('server-${server.id}'),
         server: server,
         initialTab: initialTab,
         initialComposeProject: initialComposeProject,
@@ -856,39 +831,58 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   }
 
   void openMaidCafePayload(Server server, {String? paneId}) {
-    final existing = state.allTabs
-        .whereType<MaidCafePayloadSessionTab>()
-        .where((tab) => tab.serverId == server.id)
-        .firstOrNull;
+    final existing = paneId == null
+        ? state.allTabs
+              .whereType<MaidCafePayloadSessionTab>()
+              .where((tab) => tab.serverId == server.id)
+              .firstOrNull
+        : null;
     if (existing != null) {
       select(existing.id);
       return;
     }
     _insertTab(
       MaidCafePayloadSessionTab(
-        id: 'maidcafe-payload-${server.id}',
+        id: paneId == null
+            ? 'maidcafe-payload-${server.id}'
+            : _instanceId('maidcafe-payload-${server.id}'),
         server: server,
       ),
       targetPaneId: paneId,
     );
   }
 
-  /// Opens [tab] unless that singleton destination is already open, in which
-  /// case its tab is selected instead.
-  void _openDestination(DestinationTab tab) {
-    final existing = state.allTabs
-        .whereType<DestinationTab>()
-        .where((candidate) => candidate.id == tab.id)
-        .firstOrNull;
+  /// Opens [tab] unless that destination is already open, in which case its
+  /// tab is selected instead. A named [paneId] takes an instance of its own.
+  void _openDestination(DestinationTab tab, {String? paneId}) {
+    final existing = paneId == null
+        ? state.allTabs
+              .whereType<DestinationTab>()
+              .where((candidate) => candidate.id == tab.id)
+              .firstOrNull
+        : null;
     if (existing != null) {
       select(existing.id);
       return;
     }
-    _insertTab(tab);
+    _insertTab(tab, targetPaneId: paneId);
   }
 
-  void openAssets({AssetsSection section = AssetsSection.connections}) {
-    final existing = state.allTabs.whereType<AssetsSessionTab>().firstOrNull;
+  void openAssets({
+    AssetsSection section = AssetsSection.connections,
+    String? paneId,
+  }) {
+    final existing = state.allTabs
+        .whereType<AssetsSessionTab>()
+        .where((tab) => paneId == null || tab.id == 'assets')
+        .firstOrNull;
+    if (paneId != null) {
+      _insertTab(
+        AssetsSessionTab(section: section, id: _instanceId('assets')),
+        targetPaneId: paneId,
+      );
+      return;
+    }
     if (existing == null) {
       _insertTab(AssetsSessionTab(section: section));
       return;
@@ -910,16 +904,38 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _replaceTab(tab.copyWith(section: section));
   }
 
-  void openProjects() => _openDestination(const ProjectsSessionTab());
+  void openProjects({String? paneId}) => _openDestination(
+    paneId == null
+        ? const ProjectsSessionTab()
+        : ProjectsSessionTab(id: _instanceId('projects')),
+    paneId: paneId,
+  );
 
-  void openMaidCafeCloud() => _openDestination(const MaidCafeCloudSessionTab());
+  void openMaidCafeCloud({String? paneId}) => _openDestination(
+    paneId == null
+        ? const MaidCafeCloudSessionTab()
+        : MaidCafeCloudSessionTab(id: _instanceId('maidcafe-cloud')),
+    paneId: paneId,
+  );
 
-  void openSettings() => _openDestination(const SettingsSessionTab());
+  void openSettings({String? paneId}) => _openDestination(
+    paneId == null
+        ? const SettingsSessionTab()
+        : SettingsSessionTab(id: _instanceId('settings')),
+    paneId: paneId,
+  );
 
   /// Shows the servers dashboard, opening it again when the workspace was
   /// emptied by closing every other tab. The dashboard is the workspace's home
-  /// tab and cannot be closed, so this only ever selects it.
-  void openDashboard() {
+  /// tab and cannot be closed, so without [paneId] this only ever selects it.
+  void openDashboard({String? paneId}) {
+    if (paneId != null) {
+      _insertTab(
+        DashboardTab(id: _instanceId('dashboard')),
+        targetPaneId: paneId,
+      );
+      return;
+    }
     final dashboard = state.allTabs.whereType<DashboardTab>().firstOrNull;
     if (dashboard != null) {
       select(dashboard.id);
@@ -928,13 +944,13 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _insertTab(const DashboardTab());
   }
 
-  /// Opens a new agent chat tab and returns it.
-  AgentChatSessionTab openAgentChat({String title = ''}) {
+  /// Opens a new agent chat tab — or mounts it in [paneId] — and returns it.
+  AgentChatSessionTab openAgentChat({String title = '', String? paneId}) {
     final tab = AgentChatSessionTab(
       id: 'agent-${DateTime.now().microsecondsSinceEpoch}',
       title: title,
     );
-    _insertTab(tab);
+    _insertTab(tab, targetPaneId: paneId);
     return tab;
   }
 
@@ -980,48 +996,26 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     state = TerminalTabsState(tabs: tabs, selectedTabId: state.selectedTabId);
   }
 
-  /// Splits the selected tab, giving it a second pane.
+  /// Splits the selected tab, giving it a second, empty pane.
   ///
   /// The new pane belongs to the same tab — it is a second viewport of it, not
-  /// another tab — and starts with a second session of the same target when
-  /// that target can be mounted twice. A terminal or an agent chat owns one
-  /// live session, so its new pane starts empty for the user to open something
-  /// in.
+  /// another tab — and always opens on the pane intro, the same picker the
+  /// workspace's command palette offers, so the user chooses what goes in it:
+  /// a terminal on any host, the file manager, a server page, a destination.
+  /// No content is cloned: a terminal and an agent chat own one live session,
+  /// and a second view of a page is a decision for the user, not a side
+  /// effect of splitting.
+  ///
+  /// The dashboard never splits: it is the workspace's home catalog and fills
+  /// whatever pane it is in.
   void splitSelectedTab(SessionSplitAxis axis) {
     final tab = state.selectedTab;
     if (tab == null) {
       splitEmpty(axis);
       return;
     }
-    final paneId = _uuid.v4();
-    final source = tab.tab;
-    final clone = source == null
-        ? null
-        : forkSessionTab(
-            source,
-            id: '${source.id}-pane-${DateTime.now().microsecondsSinceEpoch}',
-          );
-    final nextTab = tab.copyWith(
-      panes: {
-        ...tab.panes,
-        paneId: TabPane(id: paneId, tab: clone),
-      },
-      layout: splitPane(
-        layout: tab.layout,
-        focusedPaneId: tab.focusedPaneId,
-        newPaneId: paneId,
-        axis: axis,
-        splitId: _uuid.v4(),
-      ),
-      focusedPaneId: paneId,
-    );
-    state = TerminalTabsState(
-      tabs: [
-        for (final candidate in state.tabs)
-          candidate.id == tab.id ? nextTab : candidate,
-      ],
-      selectedTabId: tab.id,
-    );
+    if (!canSplitTab(tab)) return;
+    _splitTab(tab, axis);
   }
 
   /// Splits the selected tab into an empty sibling for the user to fill.
@@ -1042,19 +1036,16 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       );
       return;
     }
-    _splitTab(tab, axis, content: null);
+    _splitTab(tab, axis);
   }
 
-  void _splitTab(
-    WorkspaceTab tab,
-    SessionSplitAxis axis, {
-    SessionTab? content,
-  }) {
+  /// Adds an empty pane to [tab], beside the focused one, and focuses it.
+  void _splitTab(WorkspaceTab tab, SessionSplitAxis axis) {
     final paneId = _uuid.v4();
     final nextTab = tab.copyWith(
       panes: {
         ...tab.panes,
-        paneId: TabPane(id: paneId, tab: content),
+        paneId: TabPane(id: paneId),
       },
       layout: splitPane(
         layout: tab.layout,
@@ -1178,9 +1169,13 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   }
 
   /// Closes a whole workspace tab, every pane it owns.
+  ///
+  /// The home dashboard (`dashboard`) is the workspace's floor and stays. A
+  /// dashboard mounted in a split pane is ordinary content and closes like any
+  /// other.
   Future<void> closeTab(String tabId) async {
     final tab = state.tabById(tabId);
-    if (tab == null || tab.tab is DashboardTab) return;
+    if (tab == null || tabId == 'dashboard') return;
     for (final content in tab.tabs.toList()) {
       if (!await _confirmCloseWhileWorking(content)) return;
       if (content is FileEditorTab) {
@@ -1199,7 +1194,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     final tab = state.tabById(tabId);
     final pane = tab?.panes[paneId];
     if (tab == null || pane == null) return;
-    if (pane.tab is DashboardTab) return;
+    if (tabId == 'dashboard') return;
     if (tab.panes.length == 1) {
       await closeTab(tabId);
       return;

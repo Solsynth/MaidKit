@@ -110,10 +110,7 @@ void main() {
     // The palette list is short and scrollable, so entries are reached the way
     // a user reaches them: by typing.
     await tester.enterText(
-      find.descendant(
-        of: find.byType(SearchBar),
-        matching: find.byType(TextField),
-      ),
+      find.byKey(const ValueKey('command-palette-search')),
       query,
     );
     await tester.pumpAndSettle();
@@ -172,15 +169,31 @@ void main() {
     expect(assetsSection(tester), AssetsSection.snippets.index);
   });
 
-  testWidgets('the command palette splits the tab into a second pane', (
+  testWidgets('the command palette splits a tab into a second, empty pane', (
     tester,
   ) async {
     await pumpWorkspace(tester);
     final container = ProviderScope.containerOf(
       tester.element(find.byType(SessionsWorkspace)),
     );
+
+    // The dashboard tab is the workspace floor and does not split, so the
+    // split entry only appears on a content tab.
+    await openPalette(tester, query: 'split');
+    expect(
+      find.widgetWithText(ListTile, 'sessionsSplitDown'.tr()),
+      findsNothing,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('command-palette-search')), findsNothing);
+    expect(container.read(terminalTabsProvider).tabs.single.hasSplits, isFalse);
+
+    await openPalette(tester, query: 'conn');
+    await tester.tap(find.widgetWithText(ListTile, 'assetsConnections'.tr()));
+    await tester.pumpAndSettle();
     final before = container.read(terminalTabsProvider);
-    expect(before.tabs.single.hasSplits, isFalse);
+    expect(before.tabs.last.hasSplits, isFalse);
 
     await openPalette(tester, query: 'split');
     final splitDown = find.widgetWithText(ListTile, 'sessionsSplitDown'.tr());
@@ -189,14 +202,61 @@ void main() {
     await tester.pumpAndSettle();
 
     // The split belongs to the tab the user was on: the workspace still lists
-    // one tab, now with two panes, and the new pane waits for a session.
+    // the dashboard and the assets tab, the latter with two panes, and the new
+    // pane waits on the launcher for a choice.
     final after = container.read(terminalTabsProvider);
-    expect(after.tabs, hasLength(1));
-    expect(after.tabs.single.hasSplits, isTrue);
-    expect(after.tabs.single.panes, hasLength(2));
+    expect(after.tabs, hasLength(2));
+    final split = after.tabs.last;
+    expect(split.hasSplits, isTrue);
+    expect(split.panes, hasLength(2));
+    expect(split.panes[split.focusedPaneId]!.isEmpty, isTrue);
+    expect(after.selectedTabId, split.id);
+  });
+
+  testWidgets('the palette is driven from the keyboard and grouped by target', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SessionsWorkspace)),
+    );
+    container.read(terminalTabsProvider.notifier).openSettings();
+    await tester.pumpAndSettle();
+
+    await openPalette(tester);
+    // Untitled sections give the unfiltered list its shape.
+    expect(find.text('sessionsPaletteGroupTab'.tr()), findsOneWidget);
+    expect(find.text('sessionsPaletteGroupWorkspace'.tr()), findsOneWidget);
+    // The first row is highlighted, so a bare Enter runs it.
     expect(
-      after.tabs.single.panes[after.tabs.single.focusedPaneId]!.isEmpty,
+      tester.widget<ListTile>(find.byType(ListTile).last).selected,
+      isNot(true),
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('command-palette-search')),
+      'split',
+    );
+    await tester.pumpAndSettle();
+    // Filtering drops the headings: the matches read as one ranked list.
+    expect(find.text('sessionsPaletteGroupTab'.tr()), findsNothing);
+
+    // ↑↓ move the highlight; Enter runs whatever it is on.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ListTile>(
+            find.widgetWithText(ListTile, 'sessionsSplitDown'.tr()),
+          )
+          .selected,
       isTrue,
     );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    final split = container.read(terminalTabsProvider).selectedTab!;
+    expect(split.hasSplits, isTrue);
+    expect(split.panes[split.focusedPaneId]!.isEmpty, isTrue);
   });
 }
