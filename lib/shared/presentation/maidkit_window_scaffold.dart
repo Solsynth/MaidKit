@@ -92,16 +92,22 @@ class MaidKitWindowScaffold extends ConsumerWidget {
           showTerminalCommandPalette(context, ref);
           return KeyEventResult.handled;
         }
-        // Cmd/Ctrl+W closes the tab the workspace is showing, every pane it is
-        // split into. The window owns the shortcut because focus can sit
-        // outside the workspace — or nowhere — when it is pressed.
+        // Cmd/Ctrl+W closes the pane the workspace is showing. A split loses
+        // only its live pane; the tab's last pane *is* the tab, so the close
+        // falls through to closing the whole tab there. The window owns the
+        // shortcut because focus can sit outside the workspace — or nowhere —
+        // when it is pressed.
         if (event.logicalKey == LogicalKeyboardKey.keyW &&
             (HardwareKeyboard.instance.isMetaPressed ||
                 HardwareKeyboard.instance.isControlPressed)) {
-          final tabId = ref.read(terminalTabsProvider).selectedId;
-          if (tabId == null) return KeyEventResult.ignored;
+          final tab = ref.read(terminalTabsProvider).selectedTab;
+          if (tab == null) return KeyEventResult.ignored;
           // Closing may have to ask about work in progress, so it is async.
-          unawaited(ref.read(terminalTabsProvider.notifier).closeTab(tabId));
+          unawaited(
+            ref
+                .read(terminalTabsProvider.notifier)
+                .closePaneInTab(tab.id, tab.focusedPaneId),
+          );
           return KeyEventResult.handled;
         }
         // Cmd/Ctrl+D splits the focused pane to the right, Shift below. The

@@ -434,6 +434,12 @@ class _SessionPaneView extends ConsumerWidget {
                   paneId: paneId,
                   active: focused,
                   accepting: accepting,
+                  // The middle button is the desktop's "kill" gesture, the
+                  // same one the tab bar answers to, so the grab strip also
+                  // closes the pane it belongs to.
+                  onClose: () => ref
+                      .read(terminalTabsProvider.notifier)
+                      .closePaneInTab(tab.id, paneId),
                 ),
               ),
             ),
@@ -513,13 +519,16 @@ class _SessionPaneView extends ConsumerWidget {
 /// It replaces the corner close button, so the only thing drawn over a pane's
 /// content is the affordance that moves it. Dragging the bar carries the pane;
 /// dropping it on a sibling swaps their slots — an explicit gesture, unlike a
-/// tab bar where a drag may also be a reorder. Closing the pane stays in the
-/// workspace's command palette, next to closing the tab it belongs to.
+/// tab bar where a drag may also be a reorder. A middle click on the bar
+/// closes the pane — the same gesture the tab bar's close affordance answers
+/// to — and closing is always still listed in the workspace's command palette,
+/// next to closing the tab it belongs to.
 class _PaneDragHandle extends StatelessWidget {
   const _PaneDragHandle({
     required this.paneId,
     required this.active,
     required this.accepting,
+    required this.onClose,
   });
 
   final String paneId;
@@ -530,6 +539,9 @@ class _PaneDragHandle extends StatelessWidget {
 
   /// Whether a dragged pane is hovering this slot.
   final bool accepting;
+
+  /// Closes the pane this handle belongs to.
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -543,11 +555,20 @@ class _PaneDragHandle extends StatelessWidget {
       color: Colors.transparent,
       child: _HandleBar(color: scheme.primary, width: 40),
     );
-    final bar = MouseRegion(
-      cursor: SystemMouseCursors.grab,
-      child: _HandleBar(
-        color: accepting ? scheme.primary : color,
-        width: accepting ? 40 : 28,
+    final bar = Listener(
+      // The middle button is the desktop's "kill" gesture, the same one the
+      // workspace tab bar answers to. It is a pointer event, not a drag: the
+      // Draggable above only claims the primary button, so the two never
+      // compete.
+      onPointerDown: (event) {
+        if (event.buttons & kMiddleMouseButton != 0) onClose();
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.grab,
+        child: _HandleBar(
+          color: accepting ? scheme.primary : color,
+          width: accepting ? 40 : 28,
+        ),
       ),
     );
     return Draggable<String>(
