@@ -64,13 +64,14 @@ void main() {
     );
   });
   group('VaultFileStorage external paths', () {
-    test('imports vaults only when external storage is supported', () async {
+    test('imports vaults by copying them into managed storage', () async {
       final root = await Directory.systemTemp.createTemp(
         'maidkit-external-vault-',
       );
       addTearDown(() => root.delete(recursive: true));
       final source = File('${root.path}/shared.sqlite');
       await source.writeAsString('vault');
+      await File('${source.path}-wal').writeAsString('wal');
       final support = await Directory.systemTemp.createTemp(
         'maidkit-vault-support-',
       );
@@ -81,16 +82,39 @@ void main() {
         await support.delete(recursive: true);
       });
 
-      if (externalVaultsSupported) {
-        final resolved = await storage.importVault(source.path);
-        expect(resolved, source.absolute.path);
-        expect(await source.exists(), isTrue);
-      } else {
-        await expectLater(
-          storage.importVault(source.path),
-          throwsA(isA<FileSystemException>()),
-        );
-      }
+      final imported = await storage.importVault(source.path);
+
+      expect(
+        storage.isInDirectory(
+          imported,
+          '${support.path}${Platform.pathSeparator}vaults',
+        ),
+        isTrue,
+      );
+      expect(await File(imported).readAsString(), 'vault');
+      expect(await File('$imported-wal').readAsString(), 'wal');
+      expect(await source.exists(), isTrue);
+      expect(await File('${source.path}-wal').exists(), isTrue);
+    });
+
+    test('importing an already-managed vault keeps its path', () async {
+      final support = await Directory.systemTemp.createTemp(
+        'maidkit-vault-support-',
+      );
+      final previous = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _FakePathProvider(support);
+      addTearDown(() async {
+        PathProviderPlatform.instance = previous;
+        await support.delete(recursive: true);
+      });
+      final directory = await Directory('${support.path}/vaults').create();
+      final managed = File('${directory.path}/primary.maidkit');
+      await managed.writeAsString('vault');
+
+      final imported = await storage.importVault(managed.path);
+
+      expect(imported, managed.absolute.path);
+      expect(await storage.managedVaultPaths(), [managed.absolute.path]);
     });
 
     test('moves vaults only when external storage is supported', () async {

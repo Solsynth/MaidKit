@@ -16,6 +16,12 @@ const String webVaultPath = 'MaidKit vault';
 bool get externalVaultsSupported =>
     !kIsWeb && !Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS;
 
+/// Whether the locked vault gate can offer importing another vault file.
+///
+/// Import copies the picked file into managed storage, which every native
+/// platform supports; a browser has no filesystem to copy from.
+bool get vaultFileImportSupported => !kIsWeb;
+
 /// Owns vault database files after they have been selected or created by the
 /// user.
 ///
@@ -159,11 +165,15 @@ class VaultFileStorage {
     return normalizePath('${directory.path}/$stem-${_uuid.v4()}$_extension');
   }
 
-  /// Resolves a vault selected outside MaidKit without copying it.
+  /// Copies a vault picked outside MaidKit into managed storage and returns
+  /// its managed path.
   ///
-  /// A selected vault remains in its original folder, which makes it
-  /// available to file synchronization tools such as Syncthing or iCloud
-  /// Drive. The caller is responsible for only opening trusted vault files.
+  /// The copy lives under the application-support `vaults` folder, so the
+  /// flow works on iOS, Android, and macOS, where a user-selected location
+  /// cannot be retained as an external vault. The source file is left
+  /// untouched, and a source already inside managed storage is returned
+  /// unchanged. The caller is responsible for only opening trusted vault
+  /// files.
   ///
   /// A browser has no file picker for vault files and cannot open external
   /// databases, so this is unavailable there.
@@ -178,13 +188,15 @@ class VaultFileStorage {
       throw FileSystemException('Vault file was not found.', sourcePath);
     }
     final path = normalizePath(source.absolute.path);
-    if (!externalVaultsSupported && await isExternalPath(path)) {
-      throw FileSystemException(
-        'External managed vaults are not supported on this platform.',
-        sourcePath,
-      );
+    final directory = await _vaultDirectory();
+    if (isInDirectory(path, directory.path)) return path;
+    final target = await createVaultPath(name: fileName(path));
+    await source.copy(target);
+    for (final suffix in const ['-wal', '-shm']) {
+      final sidecar = File('${source.path}$suffix');
+      if (await sidecar.exists()) await sidecar.copy('$target$suffix');
     }
-    return path;
+    return target;
   }
 
   /// Moves a vault into [directoryPath], or private application-support

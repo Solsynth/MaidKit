@@ -261,7 +261,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
   }
 
   Future<void> _openVaultFile() async {
-    if (_busy || !externalVaultsSupported) return;
+    if (_busy || !vaultFileImportSupported) return;
     final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['sqlite', 'db', 'maidkit'],
@@ -269,9 +269,11 @@ class _VaultGateState extends ConsumerState<VaultGate>
     final path = file?.path;
     if (path == null) return;
     try {
-      final managedPath = await ref
-          .read(vaultFileStorageProvider)
-          .importVault(path);
+      final storage = ref.read(vaultFileStorageProvider);
+      final managedPath = await storage.importVault(path);
+      await ref
+          .read(vaultLabelsProvider.notifier)
+          .rename(managedPath, storage.fileName(path));
       await ref.read(activeVaultFileProvider.notifier).select(managedPath);
     } on FileSystemException catch (error) {
       if (mounted) setState(() => _error = _friendlyError(error));
@@ -637,7 +639,7 @@ class _VaultGateState extends ConsumerState<VaultGate>
                                                 ),
                                         ),
                                         const SizedBox(height: 8),
-                                        if (externalVaultsSupported)
+                                        if (vaultFileImportSupported)
                                           OutlinedButton.icon(
                                             onPressed: _busy
                                                 ? null
