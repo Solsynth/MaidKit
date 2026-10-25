@@ -5,8 +5,9 @@ import 'package:maid_kit/theme.dart';
 ///
 /// The workspace paper is the bar's tone; a panel steps up from it so every
 /// pane reads as a distinct card without a rule or a shadow between panes.
-/// [emphasized] marks the focused pane, which steps one tone further so the
-/// live pane is obvious at a glance in a split.
+/// [emphasized] marks the focused pane: it draws one hairline in the accent
+/// tone, while an idle pane has its content dimmed so a split shows exactly one
+/// live viewport.
 class MaidKitPanel extends StatelessWidget {
   final Widget? child;
 
@@ -16,9 +17,18 @@ class MaidKitPanel extends StatelessWidget {
   /// panel is normally flush; a panel used on its own keeps this margin.
   final EdgeInsetsGeometry margin;
 
-  /// Whether this is the focused pane. Only tone changes: a panel never grows
-  /// a shadow or a border for emphasis.
+  /// Whether this is the focused pane.
+  ///
+  /// Emphasis is a hairline, never a shadow: the live pane keeps full contrast
+  /// and the idle ones recede, the same way an unfocused window does.
   final bool emphasized;
+
+  /// Whether a dragged pane is hovering this slot.
+  ///
+  /// A drop target answers in the accent tone at full strength, because the
+  /// gesture is momentary and the pane it will swap with has to be
+  /// unambiguous.
+  final bool highlighted;
 
   const MaidKitPanel({
     super.key,
@@ -30,7 +40,15 @@ class MaidKitPanel extends StatelessWidget {
       MaidKitSpace.sm,
     ),
     this.emphasized = true,
+    this.highlighted = false,
   });
+
+  /// Brightness an idle panel's content keeps, as a fraction of its own.
+  ///
+  /// Emphasis subtracts light, it does not paint over the pane: the content is
+  /// scaled toward black, so text, accents and a terminal's own dark backdrop
+  /// all dim by the same amount and nothing is tinted a second colour.
+  static const _idleBrightness = 0.85;
 
   @override
   Widget build(BuildContext context) {
@@ -51,8 +69,15 @@ class MaidKitPanel extends StatelessWidget {
     final cardColor = emphasized
         ? scheme.surfaceContainer
         : scheme.surfaceContainerLow;
+    final body = child ?? const SizedBox.shrink();
     return Theme(
       data: theme.copyWith(
+        // The sheet is the page paper for everything inside the pane. Pages
+        // read the paper from the scheme (`MaidKitAppScaffold` asks for
+        // `surfaceContainerLowest`), so the tone has to be republished there
+        // rather than only on the scaffold/canvas defaults; cards inside then
+        // step one tone off the sheet, as they do on the window paper.
+        colorScheme: scheme.copyWith(surfaceContainerLowest: color),
         scaffoldBackgroundColor: color,
         canvasColor: color,
         cardTheme: theme.cardTheme.copyWith(color: cardColor),
@@ -61,10 +86,36 @@ class MaidKitPanel extends StatelessWidget {
         elevation: 0,
         margin: margin,
         color: color,
-        shape: const RoundedRectangleBorder(
+        // The sheet clips its own content, so a terminal's dark backdrop and a
+        // dimmed pane's filter both end on the card's corner.
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
           borderRadius: MaidKitRadius.cardRadius,
+          // One hairline around the live pane: enough to name it at a glance,
+          // quiet enough to stay a sheet rather than a boxed control. A drag
+          // hovering this slot takes the same hairline at full strength.
+          side: switch ((highlighted, emphasized)) {
+            (true, _) => BorderSide(color: scheme.primary),
+            (_, true) => BorderSide(
+              color: scheme.primary.withValues(alpha: 0.45),
+            ),
+            _ => BorderSide.none,
+          },
         ),
-        child: child,
+        // Dimming is a paint-time filter, not a block above the content: an
+        // idle pane keeps its own Material ancestors, its pointer events, its
+        // scrolling and its ink. Only the light it gives off changes.
+        child: emphasized
+            ? body
+            : ColorFiltered(
+                colorFilter: const ColorFilter.matrix(<double>[
+                  _idleBrightness, 0, 0, 0, 0, //
+                  0, _idleBrightness, 0, 0, 0, //
+                  0, 0, _idleBrightness, 0, 0, //
+                  0, 0, 0, 1, 0, //
+                ]),
+                child: body,
+              ),
       ),
     );
   }

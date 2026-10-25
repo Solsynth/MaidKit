@@ -99,6 +99,57 @@ double clampSplitRatio(double ratio, {double min = 0.15, double max = 0.85}) {
   return ratio;
 }
 
+/// Exchanges where two panes sit in the tree.
+///
+/// A pane keeps its id — and with it its content and state — so a drag only
+/// changes which slot the layout draws it in. Every split keeps its id, axis
+/// and ratio; only the leaves move.
+SessionLayout swapPaneSlots(
+  SessionLayout layout,
+  String firstPaneId,
+  String secondPaneId,
+) {
+  if (firstPaneId == secondPaneId) return layout;
+  // A swap names two slots that must both exist: with one of them gone — the
+  // pane was closed while the drag was in flight — the tree stays as it is.
+  if (!layout.containsPane(firstPaneId) || !layout.containsPane(secondPaneId)) {
+    return layout;
+  }
+  return _swapSlots(layout, firstPaneId, secondPaneId);
+}
+
+SessionLayout _swapSlots(
+  SessionLayout layout,
+  String firstPaneId,
+  String secondPaneId,
+) {
+  switch (layout) {
+    case SessionLayoutLeaf(paneId: final paneId):
+      if (paneId == firstPaneId) return SessionLayoutLeaf(secondPaneId);
+      if (paneId == secondPaneId) return SessionLayoutLeaf(firstPaneId);
+      return layout;
+    case SessionLayoutSplit(
+      id: final id,
+      axis: final axis,
+      first: final first,
+      second: final second,
+      ratio: final ratio,
+    ):
+      final newFirst = _swapSlots(first, firstPaneId, secondPaneId);
+      final newSecond = _swapSlots(second, firstPaneId, secondPaneId);
+      if (identical(newFirst, first) && identical(newSecond, second)) {
+        return layout;
+      }
+      return SessionLayoutSplit(
+        id: id,
+        axis: axis,
+        first: newFirst,
+        second: newSecond,
+        ratio: ratio,
+      );
+  }
+}
+
 /// Replaces the leaf for [focusedPaneId] with a split of that leaf and a new
 /// leaf for [newPaneId]. Returns the unchanged tree if the focused leaf is
 /// not found.

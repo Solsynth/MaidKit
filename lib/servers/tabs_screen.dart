@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart' show kMiddleMouseButton;
+import 'package:flutter/gestures.dart' show kMiddleMouseButton, kPrimaryButton;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -210,14 +210,18 @@ class _LayoutNode extends ConsumerWidget {
     switch (node) {
       case SessionLayoutLeaf(:final paneId):
         return _SessionPaneView(
+          // Keyed by pane, a swap moves the whole viewport between slots with
+          // its launcher and status band intact instead of trading their
+          // element state by position.
+          key: ValueKey('pane-$paneId'),
           tab: tab,
           paneId: paneId,
           focused: tab.focusedPaneId == paneId,
           servers: servers,
           sessions: sessions,
-          // Only a split has a pane that can be closed on its own; the single
-          // pane *is* the tab.
-          showClosePane: tab.hasSplits,
+          // A split's panes can be dragged into each other's slot and closed on
+          // their own; the single pane *is* the tab.
+          movable: tab.hasSplits,
         );
       case SessionLayoutSplit(
         :final id,
@@ -360,12 +364,13 @@ class _ResizableSplitState extends State<_ResizableSplit> {
 /// workspace, so no rule is drawn between panes.
 class _SessionPaneView extends ConsumerWidget {
   const _SessionPaneView({
+    super.key,
     required this.tab,
     required this.paneId,
     required this.focused,
     required this.servers,
     required this.sessions,
-    this.showClosePane = false,
+    this.movable = false,
   });
 
   final WorkspaceTab tab;
@@ -374,8 +379,11 @@ class _SessionPaneView extends ConsumerWidget {
   final AsyncValue<List<Server>> servers;
   final AsyncValue<List<SshSessionInfo>> sessions;
 
-  /// Whether this pane offers its own close control in the corner.
-  final bool showClosePane;
+  /// Whether this pane can be dragged into a sibling's slot.
+  ///
+  /// Only a split has slots to trade: with one pane there is nowhere to put
+  /// it, and the tab bar already moves whole tabs.
+  final bool movable;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -388,89 +396,187 @@ class _SessionPaneView extends ConsumerWidget {
       _ => null,
     };
 
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: () => ref.read(terminalTabsProvider.notifier).focusPane(paneId),
-      child: Stack(
-        children: [
-          MaidKitPanel(
-            margin: EdgeInsets.zero,
-            // The focused pane reads as the live one; the others recede by
-            // tone, the same way an unfocused window does.
-            emphasized: focused,
-            child: Column(
-              children: [
-                Expanded(
-                  // The workspace bar owns the top safe area; strip it here so
-                  // tab bodies don't re-apply the status-bar inset and leave a
-                  // gap below the bar. The bottom inset belongs to the status
-                  // band below, so the body does not double it.
-                  child: MediaQuery.removePadding(
-                    context: context,
-                    removeTop: true,
-                    removeBottom: true,
-                    child: content == null
-                        ? PaneLauncher(paneId: paneId, compact: true)
-                        : _SessionTabBody(tab: content, autofocus: focused),
-                  ),
-                ),
-                // The status band belongs to the pane, not the window: in a
-                // split every terminal pane reads out its own terminal instead
-                // of only the focused one. Keyed on the terminal id, a pane
-                // that shows something else collapses it in place.
-                AnimatedTerminalStatusBar(
-                  key: ValueKey(terminal?.id),
-                  session: _sessionForTab(sessions, content),
-                  terminal: terminal?.terminal,
-                  terminalId: terminal?.id,
-                  transport: terminal?.transport,
-                ),
-              ],
-            ),
-          ),
-          if (showClosePane && focused)
+    if (!movable) {
+      return _paneView(context, ref, content, terminal, highlighted: false);
+    }
+    // The handle is the pane's grab strip and any sibling is the drop target:
+    // releasing over one trades the two viewports' slots. Nothing is cloned,
+    // so a move cannot duplicate a live terminal.
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => details.data != paneId,
+      onAcceptWithDetails: (details) => ref
+          .read(terminalTabsProvider.notifier)
+          .swapPanes(tab.id, details.data, paneId),
+      builder: (context, candidate, rejected) {
+        final accepting = candidate.isNotEmpty;
+        return Stack(
+          children: [
+            _paneView(context, ref, content, terminal, highlighted: accepting),
             Positioned(
-              top: MaidKitSpace.sm,
-              right: MaidKitSpace.sm,
-              child: _PaneCloseButton(tabId: tab.id, paneId: paneId),
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: _PaneDragHandle(
+                  paneId: paneId,
+                  active: focused,
+                  accepting: accepting,
+                ),
+              ),
             ),
-        ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _paneView(
+    BuildContext context,
+    WidgetRef ref,
+    SessionTab? content,
+    TerminalTab? terminal, {
+    required bool highlighted,
+  }) {
+    // A pane becomes the live one as soon as it is touched or its content takes
+    // the keyboard. A plain tap handler is not enough: a terminal, a list and an
+    // editor all claim their own press, so the tap would be lost and the pane
+    // would keep reading as idle while its terminal already had the keyboard.
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) return;
+        ref.read(terminalTabsProvider.notifier).focusPane(paneId);
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (event) {
+          if (event.buttons & kPrimaryButton == 0) return;
+          ref.read(terminalTabsProvider.notifier).focusPane(paneId);
+        },
+        child: MaidKitPanel(
+          margin: EdgeInsets.zero,
+          // The focused pane reads as the live one; the others dim, the same
+          // way an unfocused window does.
+          emphasized: focused,
+          highlighted: highlighted,
+          child: Column(
+            children: [
+              Expanded(
+                // The workspace bar owns the top safe area; strip it here so
+                // tab bodies don't re-apply the status-bar inset and leave a
+                // gap below the bar. The bottom inset belongs to the status
+                // band below, so the body does not double it.
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeTop: true,
+                  removeBottom: true,
+                  child: content == null
+                      ? PaneLauncher(paneId: paneId, compact: true)
+                      : _SessionTabBody(tab: content, autofocus: focused),
+                ),
+              ),
+              // The status band belongs to the pane, not the window: in a
+              // split every terminal pane reads out its own terminal instead
+              // of only the focused one. Keyed on the terminal id, a pane
+              // that shows something else collapses it in place.
+              AnimatedTerminalStatusBar(
+                key: ValueKey(terminal?.id),
+                session: _sessionForTab(sessions, content),
+                terminal: terminal?.terminal,
+                terminalId: terminal?.id,
+                transport: terminal?.transport,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Closes [paneId] from inside the pane it belongs to.
+/// The pane's grab strip: a short bar at the top centre of its sheet.
 ///
-/// A split's panes have no strip of their own, so the focused one carries a
-/// small control in its corner — the only place a user can aim at *this* pane
-/// rather than at the shared bar.
-class _PaneCloseButton extends ConsumerWidget {
-  const _PaneCloseButton({required this.tabId, required this.paneId});
+/// It replaces the corner close button, so the only thing drawn over a pane's
+/// content is the affordance that moves it. Dragging the bar carries the pane;
+/// dropping it on a sibling swaps their slots — an explicit gesture, unlike a
+/// tab bar where a drag may also be a reorder. Closing the pane stays in the
+/// workspace's command palette, next to closing the tab it belongs to.
+class _PaneDragHandle extends StatelessWidget {
+  const _PaneDragHandle({
+    required this.paneId,
+    required this.active,
+    required this.accepting,
+  });
 
-  final String tabId;
   final String paneId;
 
+  /// Whether this handle belongs to the focused pane, so the live sheet names
+  /// itself with the accent the panel's hairline uses.
+  final bool active;
+
+  /// Whether a dragged pane is hovering this slot.
+  final bool accepting;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.9),
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: IconButton(
-        tooltip: 'sessionsClosePane'.tr(),
-        visualDensity: VisualDensity.compact,
-        style: IconButton.styleFrom(
-          minimumSize: const Size(24, 24),
-          maximumSize: const Size(24, 24),
-          padding: EdgeInsets.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    // The bar has to read on paper and on a terminal's own dark backdrop alike,
+    // so it uses the neutral outline ramp rather than an on-surface tone.
+    final color = accepting
+        ? scheme.primary
+        : scheme.outline.withValues(alpha: active ? 0.6 : 0.35);
+    final feedback = Material(
+      color: Colors.transparent,
+      child: _HandleBar(color: scheme.primary, width: 40),
+    );
+    final bar = MouseRegion(
+      cursor: SystemMouseCursors.grab,
+      child: _HandleBar(
+        color: accepting ? scheme.primary : color,
+        width: accepting ? 40 : 28,
+      ),
+    );
+    return Draggable<String>(
+      data: paneId,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: feedback,
+      // The handle stays in its slot while the pane is carried, dimmed, so the
+      // pane it belongs to is still named during the drag.
+      childWhenDragging: Opacity(opacity: 0.4, child: bar),
+      child: Tooltip(
+        message: 'sessionsMovePane'.tr(),
+        waitDuration: const Duration(milliseconds: 600),
+        child: bar,
+      ),
+    );
+  }
+}
+
+/// The grab bar itself: a hit target tall enough to aim at, with a short
+/// rounded line drawn inside it.
+class _HandleBar extends StatelessWidget {
+  const _HandleBar({required this.color, required this.width});
+
+  final Color color;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 56,
+      height: MaidKitSpace.lg,
+      child: Center(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          width: width,
+          height: 3,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(MaidKitRadius.pill),
+          ),
         ),
-        onPressed: () => ref
-            .read(terminalTabsProvider.notifier)
-            .closePaneInTab(tabId, paneId),
-        icon: const Icon(Symbols.close, size: 14),
       ),
     );
   }

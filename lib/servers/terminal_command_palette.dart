@@ -89,6 +89,17 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
                   .splitSelectedTab(SessionSplitAxis.vertical);
               close(null);
             },
+      onClosePane: tabs.selectedTab == null || !tabs.selectedTab!.hasSplits
+          ? null
+          : () async {
+              final tab = ref.read(terminalTabsProvider).selectedTab;
+              if (tab != null) {
+                await ref
+                    .read(terminalTabsProvider.notifier)
+                    .closePaneInTab(tab.id, tab.focusedPaneId);
+              }
+              close(null);
+            },
       onClose: tabs.selectedId == null
           ? null
           : () async {
@@ -126,6 +137,7 @@ class _TerminalCommandPalette extends StatefulWidget {
     required this.onOpenFiles,
     required this.onSplitRight,
     required this.onSplitDown,
+    required this.onClosePane,
     required this.onClose,
     required this.onDisconnect,
   });
@@ -141,6 +153,9 @@ class _TerminalCommandPalette extends StatefulWidget {
   final Future<void> Function()? onOpenFiles;
   final VoidCallback? onSplitRight;
   final VoidCallback? onSplitDown;
+
+  /// Closes the focused pane of a split, keeping its siblings.
+  final Future<void> Function()? onClosePane;
   final Future<void> Function()? onClose;
   final Future<void> Function()? onDisconnect;
 
@@ -236,6 +251,13 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
           group: _PaletteGroup.tab,
           shortcut: splitShortcutLabel(SessionSplitAxis.vertical),
           onSelect: () async => widget.onSplitDown!(),
+        ),
+      if (widget.onClosePane != null)
+        _TerminalAction(
+          label: 'sessionsClosePane'.tr(),
+          icon: Symbols.tab_close,
+          group: _PaletteGroup.tab,
+          onSelect: widget.onClosePane!,
         ),
       if (widget.onClose != null)
         _TerminalAction(

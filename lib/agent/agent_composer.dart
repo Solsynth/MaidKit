@@ -206,7 +206,18 @@ class _AgentComposerState extends State<AgentComposer> {
                   decoration: InputDecoration(
                     hintText: 'agentPromptHint'.tr(),
                     hintMaxLines: 1,
+                    // The theme fills inputs and draws a rounded outline; the
+                    // composer is the bar's own text, so every state of the
+                    // field has to drop both rather than only the resting
+                    // border that the theme's enabled/focused borders would
+                    // otherwise override.
+                    filled: false,
                     border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 8,

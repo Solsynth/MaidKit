@@ -1104,6 +1104,32 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     );
   }
 
+  /// Trades the slots of two panes of one tab.
+  ///
+  /// The pane keeps its id, content and state; only the layout leaves move, so
+  /// a drag between two viewports rearranges the split instead of recreating
+  /// its terminals. Nothing becomes focused: the user is moving a viewport,
+  /// not switching to it.
+  void swapPanes(String tabId, String fromPaneId, String toPaneId) {
+    final tab = state.tabById(tabId);
+    if (tab == null || fromPaneId == toPaneId) return;
+    if (!tab.panes.containsKey(fromPaneId) ||
+        !tab.panes.containsKey(toPaneId)) {
+      return;
+    }
+    final layout = swapPaneSlots(tab.layout, fromPaneId, toPaneId);
+    if (layout == tab.layout) return;
+    state = TerminalTabsState(
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tabId
+              ? candidate.copyWith(layout: layout)
+              : candidate,
+      ],
+      selectedTabId: state.selectedTabId,
+    );
+  }
+
   /// Moves the tab at [fromIndex] so it sits before [toIndex].
   void moveTab(int fromIndex, int toIndex) {
     if (fromIndex < 0 || fromIndex >= state.tabs.length) return;

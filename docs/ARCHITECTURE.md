@@ -97,9 +97,16 @@ terminal status bar (`AnimatedTerminalStatusBar`) when that pane shows a
 terminal, nothing otherwise — so a split reads out every terminal it shows, not
 just the focused one. The band draws no rule above itself and no rules between
 its readings: each reading is a pill on the pane's sheet, so the bar groups
-itself by tone and spacing rather than by dividers. A split's focused pane
-carries a close control in its corner, since panes no longer have strips to put
-one in.
+itself by tone and spacing rather than by dividers. A split's panes carry a
+short drag handle at the top centre of their sheet: dragging it onto a sibling
+swaps the two viewports' slots (`swapPaneSlots`), keeping each pane's id,
+content and state, so moving a terminal rearranges the split instead of
+reopening its shell. Closing one pane of a split is a command-palette action
+(`sessionsClosePane`), next to closing the tab the pane belongs to. The focused
+pane also carries a single accent hairline, and idle panes are dimmed by a
+paint-time brightness filter instead of a colour wash, so exactly one viewport
+reads as live while an idle pane keeps every pointer event, scroll and Material
+ink it had.
 
 A pane shows exactly one content instance. Every tab stays mounted, with only
 the selected one visible, so switching tabs keeps a terminal's scrollback, an
