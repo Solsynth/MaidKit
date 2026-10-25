@@ -105,6 +105,7 @@ Future<void> _openFiles(
   Server server, {
   String? paneId,
   String? initialPath,
+  bool splitRight = false,
 }) async {
   // Reached from a terminal, so this path stays SSH-only; a browser has no
   // socket to hold the SFTP session the file manager browses with.
@@ -117,9 +118,17 @@ Future<void> _openFiles(
   }
   ref
       .read(terminalTabsProvider.notifier)
-      .openFileManagement(server, initialPath: initialPath, paneId: paneId);
+      .openFileManagement(
+        server,
+        initialPath: initialPath,
+        paneId: paneId,
+        splitRight: splitRight,
+      );
 }
 
+/// Opens the terminal's directory in the file manager beside it: the context
+/// menu's entry splits the workspace tab to the right instead of pushing yet
+/// another tab, so the browser and its shell share the view.
 Future<void> _openFilesForTerminal(
   BuildContext context,
   WidgetRef ref,
@@ -132,11 +141,15 @@ Future<void> _openFilesForTerminal(
       .where((item) => item.id == tab.serverId)
       .firstOrNull;
   if (server == null || !context.mounted) return;
+  // A right-click does not focus a pane, so anchor the split to the pane that
+  // actually holds this terminal before opening beside it.
+  ref.read(terminalTabsProvider.notifier).select(tab.id);
   await _openFiles(
     context,
     ref,
     server,
     initialPath: tab.terminal.currentDirectory,
+    splitRight: true,
   );
 }
 

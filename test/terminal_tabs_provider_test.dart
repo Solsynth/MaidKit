@@ -180,6 +180,44 @@ void main() {
     expect(state.tabs.single.tab, isA<DashboardTab>());
     expect(state.selectedTabId, 'dashboard');
   });
+
+  test('opening the file manager from a terminal splits right in place', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    notifier.openFileManagement(const _ServerStub());
+    final original = container.read(terminalTabsProvider).tabs.last;
+
+    notifier.openFileManagement(const _ServerStub(), splitRight: true);
+
+    final state = container.read(terminalTabsProvider);
+    expect(
+      state.tabs,
+      hasLength(2),
+      reason: 'the split joins the workspace tab, no third tab appears',
+    );
+    final split = state.tabs.last;
+    expect(split.id, original.id);
+    expect(split.panes, hasLength(2));
+    expect(split.focusedPane!.tab, isA<FileManagementTab>());
+    expect(split.layout.paneIds, containsAll(split.panes.keys));
+  });
+
+  test('a split-right file manager falls back to a tab on the dashboard', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(terminalTabsProvider.notifier);
+
+    // The workspace starts on the dashboard, which never splits.
+    notifier.openFileManagement(const _ServerStub(), splitRight: true);
+
+    final state = container.read(terminalTabsProvider);
+    expect(state.tabs, hasLength(2));
+    final opened = state.tabs.last;
+    expect(opened.hasSplits, isFalse);
+    expect(opened.focusedPane!.tab, isA<FileManagementTab>());
+  });
 }
 
 class _ServerStub extends Server {

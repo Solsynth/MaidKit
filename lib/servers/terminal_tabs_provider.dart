@@ -743,10 +743,18 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _watchTerminalDone(handle);
   }
 
+  /// Opens [server]'s file manager.
+  ///
+  /// A named [paneId] mounts into that pane. [splitRight] instead splits the
+  /// selected workspace tab to the right of its focused pane and mounts the
+  /// file manager in the new pane — what the terminal's context menu does so
+  /// the browser appears beside the terminal it was opened from. With neither,
+  /// a new workspace tab opens.
   void openFileManagement(
     Server server, {
     String? initialPath,
     String? paneId,
+    bool splitRight = false,
   }) {
     // The file manager browses a server over SFTP or the MaidCafe daemon's
     // file API. A browser has no socket for the former, so it needs a daemon
@@ -758,6 +766,14 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       serverName: server.name,
       initialPath: initialPath ?? server.fileManagementInitialPath,
     );
+    final owner = splitRight && paneId == null ? state.selectedTab : null;
+    if (owner != null && canSplitTab(owner)) {
+      _insertTab(
+        tab,
+        targetPaneId: _splitTab(owner, SessionSplitAxis.horizontal),
+      );
+      return;
+    }
     _insertTab(tab, targetPaneId: paneId);
   }
 
@@ -1039,8 +1055,10 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _splitTab(tab, axis);
   }
 
-  /// Adds an empty pane to [tab], beside the focused one, and focuses it.
-  void _splitTab(WorkspaceTab tab, SessionSplitAxis axis) {
+  /// Adds an empty pane to [tab], beside the focused one, and focuses it,
+  /// returning the new pane's id so a caller can mount content straight into
+  /// it.
+  String _splitTab(WorkspaceTab tab, SessionSplitAxis axis) {
     final paneId = _uuid.v4();
     final nextTab = tab.copyWith(
       panes: {
@@ -1063,6 +1081,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       ],
       selectedTabId: tab.id,
     );
+    return paneId;
   }
 
   /// Selects the workspace tab that owns [contentId] and focuses its pane.
