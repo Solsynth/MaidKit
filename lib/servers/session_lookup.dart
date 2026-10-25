@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 import 'package:maid_kit/data/local/app_database.dart';
 
 import 'server_models.dart';
@@ -41,18 +39,13 @@ bool isLiveSshSession(SshSessionInfo? session, [int? serverId]) =>
     session.status == SessionStatus.connected &&
     session.transport == SessionTransport.ssh;
 
-/// Whether SSH should do [server]'s work rather than its MaidCafe daemon.
+/// Whether [server] has an SSH route a failed daemon read can fall back to.
 ///
-/// A daemon is a second way into a host that also answers over SSH. On a native
-/// build SSH is preferred for a server that can do SSH, so a connected session
-/// owns the actions a page runs; a browser build, which has no raw socket to
-/// prefer, keeps the daemon outright, as does a `maidcafe` or `serial` row,
-/// which has no SSH route at all. Host statistics are the deliberate exception:
-/// the daemon owns the numbers whenever it answers and the SSH collectors are
-/// only its fallback. Features with no SSH implementation (the daemon console,
-/// container updates, the stack registry, watched-process history, the health
-/// report) keep it regardless.
-bool sshPreferredOverDaemon(Server server, List<SshSessionInfo> sessions) =>
-    !kIsWeb &&
-    server.connectionType == ServerConnectionType.ssh.name &&
-    liveSshSession(sessions, server.id) != null;
+/// This is not a transport preference: the MaidCafe daemon leads every surface
+/// it implements, and SSH answers only when there is no daemon route or the
+/// daemon is older than the endpoint the surface asks for (see
+/// `docs/ARCHITECTURE.md`). A `serial` row has no SSH transport, so a failed
+/// daemon read has nothing to fall back to and the surface reports the daemon's
+/// own reason instead.
+bool sshFallbackAvailable(Server server) =>
+    server.connectionType == ServerConnectionType.ssh.name;

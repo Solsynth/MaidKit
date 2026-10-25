@@ -59,12 +59,14 @@ class SshConnectionManager {
     bool Function()? brandingEnvironmentEnabled,
     bool Function()? sudoAutofillEnabled,
     bool Function()? metricsEnabled,
+    bool Function(Server server)? daemonOwnsStats,
     ServerMetricsCollector? metricsCollector,
     this._connect,
     this.onConnected,
   }) : _brandingEnvironmentEnabled = brandingEnvironmentEnabled ?? (() => true),
        _sudoAutofillEnabled = sudoAutofillEnabled ?? (() => true),
        _metricsEnabled = metricsEnabled ?? (() => true),
+       _daemonOwnsStats = daemonOwnsStats ?? _neverDaemon,
        _metricsCollector = metricsCollector ?? AutoServerMetricsCollector();
 
   final TerminalSessionAdapterFactory Function() _terminalAdapterFactory;
@@ -78,6 +80,16 @@ class SshConnectionManager {
   /// information command ever runs, so a host that keeps dropping its session
   /// under metric probes stays connected.
   final bool Function() _metricsEnabled;
+
+  /// Whether the MaidCafe daemon, rather than this session, currently supplies
+  /// [server]'s statistics. Its HTTP poll costs the host no exec, so the SSH
+  /// collectors stand aside instead of collecting a second copy of readings
+  /// nothing reads; the daemon's own failure withdraws its snapshot, which is
+  /// what hands the numbers back to the collectors.
+  final bool Function(Server server) _daemonOwnsStats;
+
+  static bool _neverDaemon(Server server) => false;
+
   final ServerMetricsCollector _metricsCollector;
 
   /// Fired after a server's SSH session becomes connected. Used to start
@@ -745,13 +757,27 @@ class SshConnectionManager {
     }
   }
 
+  /// Whether a statistics probe over SSH would collect anything anyone reads.
+  ///
+  /// Three things can make it pointless: the app-wide switch is off, the row
+  /// does not collect statistics, or the MaidCafe daemon currently serves them.
+  /// The last one is the daemon-first rule: its HTTP poll costs the host no
+  /// exec, so running the collectors too would be a second copy.
+  bool collectsStatsOverSsh(Server server) =>
+      _metricsEnabled() && server.collectStats && !_daemonOwnsStats(server);
+
+  /// Refreshes a connected server's detail readings.
+  ///
+  /// Statistics are collected only while the daemon is not serving them; see
+  /// [collectsStatsOverSsh]. System information has no daemon route, so it is
+  /// read either way.
   Future<void> refreshServerInfo(Server server) async {
     final client = clientFor(server.id);
     final state = _states[server.id];
     if (client == null || client.isClosed || state == null) return;
     await _refreshNetworkLatency(server, state);
     if (!_metricsEnabled()) return;
-    if (server.collectStats) {
+    if (collectsStatsOverSsh(server)) {
       await _refreshStats(client, _states[server.id] ?? state);
     }
     if (server.collectSystemInfo) {
@@ -767,7 +793,7 @@ class SshConnectionManager {
     if (client == null || client.isClosed || state == null) return;
     await _refreshNetworkLatency(server, state);
     if (!_metricsEnabled()) return;
-    if (server.collectStats) {
+    if (collectsStatsOverSsh(server)) {
       await _refreshStats(client, _states[server.id] ?? state);
     }
   }
@@ -4841,7 +4867,9 @@ uname -r
     final state = _states[server.id];
     if (!identical(_sessions[server.id], client) || state == null) return;
     if (!_metricsEnabled()) return;
-    if (server.collectStats) await _refreshStats(client, state);
+    if (collectsStatsOverSsh(server)) {
+      await _refreshStats(client, state);
+    }
     if (server.collectSystemInfo) {
       await _refreshSystemInfo(client, _states[server.id] ?? state);
     }

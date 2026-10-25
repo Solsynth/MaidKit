@@ -7,11 +7,14 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/containers/container_management_tab.dart';
+import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/containers/container_ui.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
+import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/theme.dart';
 
@@ -225,6 +228,24 @@ class _StubRegistry implements MaidCafeSessionRegistry {
   }) async => session;
 }
 
+/// Records any SSH container read the tab attempts. The daemon leads, so a
+/// live session must not produce one.
+class _RecordingManager extends SshConnectionManager {
+  _RecordingManager() : super(() => throw UnimplementedError());
+
+  final sshReads = <String>[];
+
+  @override
+  Future<List<ContainerEnvironment>> listContainers(
+    int serverId, {
+    bool sshUserIsRoot = false,
+    String? sudoPassword,
+  }) async {
+    sshReads.add('list');
+    throw StateError('SSH listed containers the daemon owns.');
+  }
+}
+
 void main() {
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -233,10 +254,20 @@ void main() {
     EasyLocalization.logger.enableBuildModes = [];
   });
 
+  SshSessionInfo sshSession(int serverId) => SshSessionInfo(
+    serverId: serverId,
+    serverName: 'Build host',
+    connectedAt: DateTime(2026, 10, 7),
+    status: SessionStatus.connected,
+    transport: SessionTransport.ssh,
+  );
+
   Future<void> pump(
     WidgetTester tester, {
     required MaidCafeSessionRegistry registry,
     ThemeData? theme,
+    List<SshSessionInfo> sessions = const [],
+    SshConnectionManager? manager,
   }) async {
     final overlayKey = GlobalKey<OverlayState>();
     IslandUIFoundation.configureOverlay(overlayKey);
@@ -248,6 +279,9 @@ void main() {
         child: ProviderScope(
           overrides: [
             maidCafeSessionRegistryProvider.overrideWithValue(registry),
+            sessionsProvider.overrideWith((ref) => Stream.value(sessions)),
+            if (manager != null)
+              connectionManagerProvider.overrideWithValue(manager),
           ],
           child: MaterialApp(
             theme: theme,
@@ -319,6 +353,28 @@ void main() {
     expect(find.text('containerListSourceDaemon'.tr()), findsOneWidget);
     // The tab retained the shared session while it was mounted.
     expect(registry.retains, 1);
+  });
+
+  testWidgets('a live session does not take the container list over', (
+    tester,
+  ) async {
+    // Both routes answer at once, which is the normal case on a native build
+    // with a daemon installed. The daemon's list wins — its poll costs the host
+    // no exec — so the SSH reader is never asked; each recording member throws
+    // if it is.
+    final registry = _StubRegistry(_StubSession());
+    final manager = _RecordingManager();
+
+    await pump(
+      tester,
+      registry: registry,
+      sessions: [sshSession(1)],
+      manager: manager,
+    );
+
+    expect(find.text('web'), findsOneWidget);
+    expect(find.text('containerListSourceDaemon'.tr()), findsOneWidget);
+    expect(manager.sshReads, isEmpty);
   });
 
   testWidgets('a daemon with no update route draws no badge', (tester) async {

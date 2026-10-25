@@ -34,18 +34,12 @@ SshSessionInfo _session({
 void main() {
   // These run on the VM, so `kIsWeb` is false throughout: every case below is
   // the native build's rule.
-  test('SSH owns a server only while one of its sessions is connected', () {
-    expect(sshPreferredOverDaemon(_server(), const []), isFalse);
-    expect(
-      sshPreferredOverDaemon(_server(), [
-        _session(status: SessionStatus.connecting),
-      ]),
-      isFalse,
-    );
-    expect(
-      sshPreferredOverDaemon(_server(), [_session(latency: Duration.zero)]),
-      isTrue,
-    );
+  test('an SSH row can fall back to SSH', () {
+    expect(sshFallbackAvailable(_server()), isTrue);
+    // The fallback has nothing to do with whether a session is up right now:
+    // the daemon leads, and SSH answers a failed daemon read by reconnecting.
+    expect(sshFallbackAvailable(_server(connectionType: 'maidcafe')), isFalse);
+    expect(sshFallbackAvailable(_server(connectionType: 'serial')), isFalse);
   });
 
   test('a daemon terminal is not an SSH session', () {
@@ -53,35 +47,22 @@ void main() {
     // `connected` on the same feed, and reading it as SSH would hand the
     // daemon's own session the SSH route's work.
     expect(
-      sshPreferredOverDaemon(_server(), [
-        _session(transport: SessionTransport.maidcafe),
-      ]),
-      isFalse,
-    );
-    expect(
-      sshPreferredOverDaemon(_server(), [
-        _session(transport: SessionTransport.serial),
-      ]),
-      isFalse,
-    );
-    expect(
       isLiveSshSession(_session(transport: SessionTransport.maidcafe)),
       isFalse,
     );
-  });
-
-  test('a row with no SSH route never prefers SSH', () {
-    for (final type in const ['maidcafe', 'serial']) {
-      expect(
-        sshPreferredOverDaemon(_server(connectionType: type), [_session()]),
-        isFalse,
-        reason: type,
-      );
-    }
+    expect(
+      isLiveSshSession(_session(status: SessionStatus.connecting)),
+      isFalse,
+    );
+    expect(isLiveSshSession(_session(latency: Duration.zero)), isTrue);
+    expect(
+      isLiveSshSession(_session(transport: SessionTransport.serial)),
+      isFalse,
+    );
   });
 
   test('another server\'s session does not claim this one', () {
-    expect(sshPreferredOverDaemon(_server(), [_session(serverId: 2)]), isFalse);
+    expect(isLiveSshSession(_session(serverId: 2), 1), isFalse);
   });
 
   test('the pick keeps a daemon terminal from standing in for SSH', () {

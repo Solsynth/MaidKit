@@ -251,10 +251,11 @@ device's own save flow.
 
 ## Containers without SSH
 
-The container list has been daemon-first for a while: `GET /api/v1/containers`
-and its `containers` stream, over the session `MaidCafeSessionRegistry` hands
-out, with the SSH poller as the fallback. The per-container surfaces now take
-the same route:
+The container list is daemon-first: `GET /api/v1/containers` and its
+`containers` stream, over the session `MaidCafeSessionRegistry` hands out, with
+the SSH poller as the fallback. Native builds take the same route rather than
+switching to SSH when a session is up — a daemon read costs the host no exec.
+The per-container surfaces follow it:
 
 | Surface | Transport |
 | --- | --- |
@@ -268,14 +269,17 @@ the same route:
 
 Reads fall back to SSH because a read is safe to retry — the daemon may simply
 not see a container (a user-scoped runtime, or one it has no binary for), and a
-daemon older than the detail reads has no such route at all. Actions keep the
-opposite rule they already had: a daemon failure surfaces instead of being
-replayed over SSH, so nothing is performed twice by two different paths.
+daemon older than the detail reads has no such route at all. A row with no SSH
+transport (`maidcafe`, `serial`) has nothing to fall back to, so the daemon's
+failure is what the surface reports. Actions keep the opposite rule they
+already had: a daemon failure surfaces instead of being replayed over SSH, so
+nothing is performed twice by two different paths.
 
-The log follow prefers SSH because `logs -f` streams the moment the runtime
-writes, where the daemon's deltas arrive on its own capture cadence and only
-for the containers it is tailing. A browser, which has no SSH at all, gets the
-captured window followed by the `logs` stream.
+The log follow is the one read SSH leads: `logs -f` streams the moment the
+runtime writes, where the daemon's deltas arrive on its own capture cadence and
+only for the containers it is tailing. A browser, which has no SSH at all, gets
+the captured window followed by the `logs` stream. Every other surface here is
+daemon-first on a native build too — a daemon read costs the host no exec.
 
 `pull` and `update` are daemon-only: each one reads the container's own
 configuration for the runtime that holds it and the image it was created from,

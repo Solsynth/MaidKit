@@ -54,4 +54,25 @@ void main() {
     expect(manager.refreshed, isNotEmpty);
     expect(manager.refreshed.toSet(), {2});
   });
+
+  test('a daemon-served host is still polled when nothing claims it', () async {
+    // The scheduler's skip is driven by the daemon's published snapshots, not
+    // by the presence of a session: a host whose daemon stopped answering is
+    // picked up by SSH again on the same tick.
+    final manager = _RecordingManager();
+    final scheduler = ServerMetricsRefreshScheduler(manager);
+    addTearDown(scheduler.dispose);
+
+    scheduler.update(
+      interval: const Duration(milliseconds: 10),
+      servers: [_server(1)],
+      sessions: [_connected(1)],
+      focusedServerId: null,
+      daemonBackedServerIds: const {},
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(manager.refreshed, isNotEmpty);
+    expect(manager.refreshed.toSet(), {1});
+  });
 }

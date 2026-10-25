@@ -19,7 +19,6 @@ import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
-import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
@@ -127,13 +126,9 @@ class _ImageManagementTabState extends ConsumerState<ImageManagementTab> {
       setState(() => _environments = const AsyncValue.loading());
     }
     try {
-      // A live session owns the list: read it over SSH and keep the daemon for
-      // the hosts it actually covers, rather than the other way round.
-      final sshPreferred = sshPreferredOverDaemon(
-        widget.server,
-        ref.read(sessionsProvider).asData?.value ?? const [],
-      );
-      if (!sshPreferred && !_imagesUnavailable) {
+      // The daemon leads: it answers at its own cadence with no exec on the
+      // host, and SSH is what covers a host whose daemon has no route here.
+      if (!_imagesUnavailable) {
         final session = await _ensureMaidCafeStream();
         if (session != null) {
           try {

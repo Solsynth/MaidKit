@@ -1439,6 +1439,11 @@ final connectionManagerProvider = Provider<SshConnectionManager>((ref) {
         ref.read(terminalBrandingEnvironmentEnabledProvider),
     sudoAutofillEnabled: () => ref.read(sudoAutofillEnabledProvider),
     metricsEnabled: () => ref.read(serverMetricsEnabledProvider),
+    // Read per call rather than watched: the daemon's snapshots change on
+    // every poll, and watching them here would rebuild — and dispose — the
+    // manager under every live session.
+    daemonOwnsStats: (server) =>
+        ref.read(maidCafeStatsProvider)[server.id] != null,
     onConnected: (server) => unawaited(_startAutoPortForwards(ref, server)),
   );
   ref.onDispose(manager.dispose);

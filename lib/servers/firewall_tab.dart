@@ -13,7 +13,6 @@ import 'maidcafe_stream.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
-import 'session_lookup.dart';
 
 /// Host firewall management (UFW preferred; also firewalld, nftables, iptables).
 class FirewallTab extends ConsumerStatefulWidget {
@@ -41,13 +40,6 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
   MaidCafeStreamSession? _maidCafeStream;
 
   bool get _isRoot => widget.server.username == 'root';
-
-  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
-  /// server's firewall changes.
-  bool get _sshPreferred => sshPreferredOverDaemon(
-    widget.server,
-    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
-  );
 
   @override
   void initState() {
@@ -101,13 +93,12 @@ class _FirewallTabState extends ConsumerState<FirewallTab> {
   /// endpoint is a real failure, and re-running it over SSH would be a second
   /// firewall change the user did not ask for. A null [daemon] means the action
   /// has no daemon form at all (a verb the helper does not implement) and goes
-  /// straight to SSH. A live SSH session outranks the daemon outright: the SSH
-  /// form runs first, and its failure surfaces the same way.
+  /// straight to SSH.
   Future<void> _runOnPreferredRoute(
     Future<void> Function(MaidCafeStreamSession session)? daemon,
     Future<void> Function() ssh,
   ) async {
-    if (daemon == null || _sshPreferred) {
+    if (daemon == null) {
       await ssh();
       return;
     }

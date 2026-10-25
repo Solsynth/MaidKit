@@ -13,10 +13,12 @@ import 'package:maid_kit/github/github_models.dart';
 import 'package:maid_kit/github/github_providers.dart';
 import 'package:maid_kit/github/github_run_detail_page.dart';
 import 'package:maid_kit/github/github_ui.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
 import 'package:maid_kit/servers/server_detail_page.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/servers/systemd_models.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
@@ -24,7 +26,6 @@ import 'package:maid_kit/shared/presentation/cloud_file_picker.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:maid_kit/servers/session_lookup.dart';
 import 'compose_detail_page.dart';
 import 'compose_project_actions.dart';
 import 'container_detail_page.dart';
@@ -962,21 +963,14 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     );
   }
 
-  /// Whether a live SSH session owns this server, so its actions run over SSH
-  /// rather than through a daemon that happens to be installed.
-  bool _sshPreferred(Server host) => sshPreferredOverDaemon(
-    host,
-    ref.read(sessionsProvider).asData?.value ?? const [],
-  );
-
   Future<void> _runCompose(ComposeProjectAction action) async {
     final host = server!;
     if (!_composeReady) {
       throw StateError('deploymentComposeMissing'.tr());
     }
-    final session = _sshPreferred(host)
-        ? null
-        : await ref.read(maidCafeSessionRegistryProvider).sessionFor(host);
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(host);
     if (session != null) {
       // Daemon present: the daemon runs the action in the task terminal, live
       // for the actions that pull and reported at once for the rest.
@@ -1011,9 +1005,9 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (_containerRef.isEmpty) {
       throw StateError('deploymentContainerMissing'.tr());
     }
-    final session = _sshPreferred(host)
-        ? null
-        : await ref.read(maidCafeSessionRegistryProvider).sessionFor(host);
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(host);
     if (session != null) {
       final result = await session.runContainerAction(
         _containerRef,
@@ -1067,9 +1061,9 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     if (unit.isEmpty) {
       throw StateError('deploymentSystemdMissing'.tr());
     }
-    final session = _sshPreferred(host)
-        ? null
-        : await ref.read(maidCafeSessionRegistryProvider).sessionFor(host);
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(host);
     if (session != null) {
       final result = await session.runSystemdAction(
         unit,
@@ -1710,14 +1704,35 @@ class _ComposeLivePanelState extends ConsumerState<_ComposeLivePanel> {
     final credential = await ref
         .read(serverRepositoryProvider)
         .credentialFor(widget.server);
+    final sudoPassword = credential.type == CredentialType.password
+        ? credential.password
+        : null;
+    // The daemon leads, as it does on the containers tab: its list costs the
+    // host no exec, and SSH answers a route with no daemon beside it.
+    final session = await ref
+        .read(maidCafeSessionRegistryProvider)
+        .sessionFor(widget.server);
+    if (session != null) {
+      try {
+        final snapshot = parseMaidCafeContainers(await session.containers());
+        if (snapshot.hasRuntimes) {
+          return [
+            for (final runtime in snapshot.runtimes)
+              for (final container in runtime.containers)
+                if (container.composeProject == _name) container,
+          ];
+        }
+      } catch (_) {
+        // Old daemon without /api/v1/containers: fall back to SSH.
+        if (!sshFallbackAvailable(widget.server)) rethrow;
+      }
+    }
     final environments = await ref
         .read(connectionManagerProvider)
         .listContainers(
           widget.server.id,
           sshUserIsRoot: widget.server.username == 'root',
-          sudoPassword: credential.type == CredentialType.password
-              ? credential.password
-              : null,
+          sudoPassword: sudoPassword,
         );
     return [
       for (final environment in environments)

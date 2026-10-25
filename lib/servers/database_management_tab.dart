@@ -72,12 +72,10 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
 
   bool get _isRoot => widget.server.username == 'root';
 
-  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
-  /// server's performance metrics.
-  bool get _sshPreferred => sshPreferredOverDaemon(
-    widget.server,
-    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
-  );
+  /// Whether a failed daemon read can fall back to SSH here. The daemon leads
+  /// the metrics — its stream costs the host no exec — and SSH answers only
+  /// when it has no route or predates `/api/v1/database-metrics`.
+  bool get _sshFallback => sshFallbackAvailable(widget.server);
 
   DatabaseInstance? get _instance {
     final engine = _engine;
@@ -212,8 +210,8 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
   }
 
   // ---------------------------------------------------------------------
-  // Performance metrics (SSH first while a live session owns the server,
-  // daemon `databaseMetrics` otherwise)
+  // Performance metrics (daemon `databaseMetrics` first, SSH when it has no
+  // route or the endpoint predates it)
   // ---------------------------------------------------------------------
 
   void _startMetricsTimer() {
@@ -227,24 +225,18 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
   Future<void> _onMetricsTick() async {
     if (!mounted || !widget.connected) return;
     if (_metricsSseActive) {
-      if (_sshPreferred) {
-        // A live session owns the readings now: stop the daemon stream this
-        // tab may have opened before the session appeared.
+      final silence = DateTime.now().difference(_lastMetricsEvent);
+      final timeoutSeconds = _metricsSseIntervalSeconds * 3 >= 15
+          ? _metricsSseIntervalSeconds * 3
+          : 15;
+      if (silence > Duration(seconds: timeoutSeconds)) {
+        // The stream stays connected (heartbeats) but stopped delivering
+        // data — the daemon collector may be disabled or failing. Fall
+        // back to on-demand fetches instead of freezing the cards.
+        _metricsSseAttempted = true;
         _closeMetricsSse();
       } else {
-        final silence = DateTime.now().difference(_lastMetricsEvent);
-        final timeoutSeconds = _metricsSseIntervalSeconds * 3 >= 15
-            ? _metricsSseIntervalSeconds * 3
-            : 15;
-        if (silence > Duration(seconds: timeoutSeconds)) {
-          // The stream stays connected (heartbeats) but stopped delivering
-          // data — the daemon collector may be disabled or failing. Fall
-          // back to on-demand fetches instead of freezing the cards.
-          _metricsSseAttempted = true;
-          _closeMetricsSse();
-        } else {
-          return;
-        }
+        return;
       }
     }
     if (_metricsSubscription == null && !_metricsSseAttempted) {
@@ -262,15 +254,6 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
     if (!force && _metrics.asData?.value == null && !_metrics.isLoading) {
       setState(() => _metrics = const AsyncValue.loading());
     }
-    if (_sshPreferred) {
-      try {
-        await _loadMetricsOverSsh(engine);
-        return;
-      } catch (_) {
-        // The session dropped between the guard and the read: the daemon
-        // answers, exactly as it does on a build with no session.
-      }
-    }
     final session = await _ensureMaidCafeStream();
     if (session != null) {
       try {
@@ -284,6 +267,7 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
         }
       } catch (_) {
         // Old daemon without /api/v1/database-metrics: fall back to SSH.
+        if (!_sshFallback) rethrow;
       }
     }
     try {
@@ -334,9 +318,6 @@ class _DatabaseManagementTabState extends ConsumerState<DatabaseManagementTab> {
 
   Future<void> _startMetricsSse() async {
     if (_metricsSubscription != null || _metricsSseAttempted) return;
-    // A live session owns the readings, so the daemon is not asked for a
-    // stream; the one-shot daemon read stays as the failed-SSH fallback.
-    if (_sshPreferred) return;
     final session = await _ensureMaidCafeStream();
     if (session == null || !mounted) return;
     try {

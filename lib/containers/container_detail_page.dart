@@ -151,47 +151,29 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     return session;
   }
 
-  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
-  /// server's reads and actions right now.
-  ///
-  /// False on a browser, which has no raw socket to prefer, as it is for a
-  /// `maidcafe` or `serial` row, which has no SSH route at all — those keep the
-  /// daemon outright, exactly as before.
-  bool get _sshPreferred => sshPreferredOverDaemon(
-    widget.server,
-    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
-  );
+  /// Whether this server has an SSH route a failed daemon read can fall back
+  /// to. The daemon leads every read and action here; SSH is what covers a
+  /// host whose daemon has no route, or one that is too old for the
+  /// per-container reads.
+  bool get _sshFallback => sshFallbackAvailable(widget.server);
 
-  /// Runs a read on the transport this server prefers, falling back to the
-  /// other.
+  /// Runs a read on the daemon, falling back to SSH.
   ///
   /// Reads are safe to retry: the daemon may simply not see this container —
   /// a user-scoped runtime, or one it has no binary for — and a daemon older
-  /// than the detail reads has no such route at all. A connected SSH session is
-  /// the preferred transport on a native build, so the station's own answer is
-  /// the one read first there and the daemon answers only when it fails;
-  /// everywhere else the daemon leads, as it did before. Actions take the
-  /// opposite rule and surface a failure instead of replaying it over the
-  /// other transport.
+  /// than the detail reads has no such route at all. Actions take the opposite
+  /// rule and surface a failure instead of replaying it over the other
+  /// transport.
   Future<T> _daemonOrSsh<T>(
     Future<T> Function(MaidCafeStreamSession session) daemon,
     Future<T> Function() ssh,
   ) async {
-    if (_sshPreferred) {
-      try {
-        return await ssh();
-      } catch (error) {
-        final session = await _ensureDaemon();
-        if (session == null) rethrow;
-        return daemon(session);
-      }
-    }
     final session = await _ensureDaemon();
     if (session != null) {
       try {
         return await daemon(session);
       } catch (error) {
-        if (!_connected(ref.read(sessionsProvider).asData?.value)) rethrow;
+        if (!_sshFallback) rethrow;
       }
     }
     return ssh();
@@ -372,10 +354,17 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
       _loadingLogs = true;
       _followingLogs = false;
     });
-    // A live session owns the stream on a native build. The daemon's captured
-    // window takes over while no session is — a browser above all, where the
-    // feed's daemon terminal must not read as an SSH session.
-    if (!_sshPreferred) {
+    // The log follow is the one read SSH still leads: `logs -f` streams the
+    // moment the runtime writes, where the daemon's deltas arrive on its own
+    // capture cadence. Without a live SSH session the daemon's captured window
+    // is what there is, with its `logs` stream following it.
+    final liveSsh = isLiveSshSession(
+      sessionForServer(
+        ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
+        widget.server.id,
+      ),
+    );
+    if (!liveSsh) {
       final session = await _ensureDaemon();
       if (session != null) {
         try {
@@ -606,11 +595,11 @@ class _ContainerDetailPageState extends ConsumerState<ContainerDetailPage> {
     }
     setState(() => _actionBusy = true);
     try {
-      // A live session owns this server's actions on a native build: run it
-      // over SSH and let a failure surface, never replaying it through the
-      // daemon. Otherwise the daemon runs the native op, exactly as before —
-      // it validates the target and elevates through sudo -n when needed.
-      final session = _sshPreferred ? null : await _ensureDaemon();
+      // The daemon runs the native op when it has a route: it validates the
+      // target and elevates through sudo -n when needed. A failure surfaces
+      // instead of being replayed over SSH — nothing is performed twice by two
+      // different paths.
+      final session = await _ensureDaemon();
       if (session != null) {
         final result = await session.runContainerAction(
           widget.containerId,

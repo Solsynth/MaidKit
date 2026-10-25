@@ -23,7 +23,6 @@ import 'package:maid_kit/servers/maidcafe_stream.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
-import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
@@ -96,20 +95,10 @@ class _ContainerManagementTabState
   ComposeStacksSnapshot _stacks = const ComposeStacksSnapshot();
 
   /// Whether the daemon is the only transport this client can offer — a
-  /// browser, which has no SSH at all. A native client keeps its SSH default
-  /// and the connect prompt with it, the same rule the file surfaces apply.
+  /// browser, which has no SSH at all. A native client keeps the connect prompt
+  /// for a host with no session: the runtime install and the SSH-shaped actions
+  /// beside the list need one, so the tab is not offered without it.
   bool get _daemonAllowed => kIsWeb;
-
-  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
-  /// server's list and actions right now.
-  ///
-  /// False on a browser, which has no raw socket to prefer, as it is for a
-  /// `maidcafe` or `serial` row, which has no SSH route at all — those keep the
-  /// daemon outright, exactly as before.
-  bool get _sshPreferred => sshPreferredOverDaemon(
-    widget.server,
-    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
-  );
 
   @override
   void initState() {
@@ -174,22 +163,6 @@ class _ContainerManagementTabState
         // An explicit action may have changed what the daemon can see.
         _containersSseAttempted = false;
         _containersUnavailable = false;
-      }
-      // A live SSH session owns the list on a native build: the station's own
-      // answer is read first and the daemon answers only when it fails. The
-      // daemon route is still resolved by that read for the surfaces with no
-      // SSH equivalent — its managed stacks and update answers.
-      if (_sshPreferred) {
-        // A session owns the list now: stop the daemon stream this tab may
-        // have opened before one appeared.
-        _closeContainersSse();
-        try {
-          await _loadFromSsh();
-          return;
-        } catch (_) {
-          // The session dropped between the guard and the read, or the station
-          // refused: the daemon answers, exactly as it does with no session.
-        }
       }
       if (!force) {
         // SSE containers own freshness while active. When it is not, one

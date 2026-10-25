@@ -59,6 +59,10 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
   /// The stream already failed once; do not re-subscribe on later ticks.
   var _systemdSseAttempted = false;
 
+  /// Why the daemon answered no unit list, so a host with no SSH route reports
+  /// that reason instead of spinning on a read it cannot retry.
+  Object? _maidCafeError;
+
   /// Last `systemd` event timestamp and the daemon's announced cadence, used
   /// to detect a stream that stays connected but stops delivering data.
   DateTime _lastSystemdEvent = DateTime.fromMillisecondsSinceEpoch(0);
@@ -117,12 +121,10 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
         : null;
   }
 
-  /// Whether a live SSH session, rather than the MaidCafe daemon, owns this
-  /// server's unit list and service actions.
-  bool get _sshPreferred => sshPreferredOverDaemon(
-    widget.server,
-    ref.read(sessionsProvider).asData?.value ?? const <SshSessionInfo>[],
-  );
+  /// Whether a failed daemon read can fall back to SSH here. The daemon leads
+  /// the unit list and the service actions; SSH answers a host whose daemon has
+  /// no route or predates `/api/v1/systemd`.
+  bool get _sshFallback => sshFallbackAvailable(widget.server);
 
   Future<SystemdUnitsSnapshot> _listOverSsh() async => ref
       .read(connectionManagerProvider)
@@ -172,15 +174,15 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
         }
         return true;
       }
-    } catch (_) {
+    } catch (error) {
       // Old daemon without /api/v1/systemd: fall back to SSH.
+      _maidCafeError = error;
     }
     return false;
   }
 
   Future<void> _load({bool force = false}) async {
     if (!mounted || !widget.connected) return;
-    final preferSsh = _sshPreferred;
     if (force) {
       // An explicit action may have changed what the daemon can see.
       _systemdSseAttempted = false;
@@ -191,7 +193,7 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
       // is made only until it fails once — MaidCafe is not retried
       // automatically, only on manual refresh, an explicit action, or a
       // fresh session.
-      if (_systemdSseActive && !preferSsh) {
+      if (_systemdSseActive) {
         final silence = DateTime.now().difference(_lastSystemdEvent);
         final timeoutSeconds = _systemdSseIntervalSeconds * 3 >= 15
             ? _systemdSseIntervalSeconds * 3
@@ -206,35 +208,31 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
           return;
         }
       }
-      if (preferSsh) {
-        // A live session owns the unit list now: stop the daemon stream this
-        // tab may have opened before the session appeared.
-        _closeSystemdSse();
-      } else {
-        if (_systemdSubscription == null && !_systemdSseAttempted) {
-          await _startSystemdSse();
-        }
-        if (_systemdSseActive) return;
+      if (_systemdSubscription == null && !_systemdSseAttempted) {
+        await _startSystemdSse();
       }
+      if (_systemdSseActive) return;
+    }
+    if (_systemdUnavailable) {
+      // The daemon already reported that the host has no systemctl, and that
+      // verdict is the host's: neither a retry nor an SSH probe can change it.
+      return;
     }
     setState(() => _snapshot = const AsyncValue.loading());
-    if (preferSsh) {
-      try {
-        final snapshot = await _listOverSsh();
-        if (mounted) setState(() => _snapshot = AsyncValue.data(snapshot));
-        return;
-      } catch (sshError, sshStackTrace) {
-        // A live session owns the list, so the daemon is only asked when that
-        // read failed — the same fallback a build with no session would take.
-        // With neither route the error lands in the snapshot.
-        if (await _loadFromMaidCafe()) return;
-        if (mounted) {
-          setState(() => _snapshot = AsyncValue.error(sshError, sshStackTrace));
-        }
-        return;
-      }
-    }
     if (await _loadFromMaidCafe()) return;
+    if (!_sshFallback) {
+      // No SSH route to answer with, and the daemon did not: there is nothing
+      // left to try, so report what the daemon said instead of spinning.
+      if (mounted) {
+        setState(
+          () => _snapshot = AsyncValue.error(
+            _maidCafeError ?? StateError('systemdLoadError'.tr(args: [''])),
+            StackTrace.current,
+          ),
+        );
+      }
+      return;
+    }
     try {
       final snapshot = await _listOverSsh();
       if (mounted) setState(() => _snapshot = AsyncValue.data(snapshot));
@@ -476,12 +474,8 @@ class _SystemdTabState extends ConsumerState<SystemdTab> {
     }
     await _run(
       () async {
-        if (_sshPreferred) {
-          // A live session runs the change; a failure surfaces instead of the
-          // op being re-run through the daemon.
-          await _runOverSsh(unit, action);
-          return;
-        }
+        // The daemon runs the change when it has a route; a failure surfaces
+        // instead of the op being re-run through SSH.
         final session = await _ensureMaidCafeStream();
         if (session != null) {
           // Daemon present: run the native systemd op. The daemon validates

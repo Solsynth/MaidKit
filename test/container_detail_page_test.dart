@@ -9,7 +9,9 @@ import 'package:maid_kit/containers/container_models.dart';
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/servers/maidcafe_session_registry.dart';
 import 'package:maid_kit/servers/maidcafe_stream.dart';
+import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
+import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 
 /// A daemon session that answers the per-container reads with the payloads the
@@ -116,6 +118,53 @@ class _StubSession implements MaidCafeStreamSession {
   );
 }
 
+/// Records any SSH read the page attempts. The daemon leads every read here,
+/// so a live session must not produce one.
+class _RecordingManager extends SshConnectionManager {
+  _RecordingManager() : super(() => throw UnimplementedError());
+
+  final sshReads = <String>[];
+
+  @override
+  Future<ContainerInspectDetail> inspectContainer(
+    int serverId, {
+    required ContainerRuntime runtime,
+    required ContainerScope scope,
+    required String containerId,
+    String? sudoPassword,
+  }) async {
+    sshReads.add('inspect');
+    throw StateError('SSH answered a read the daemon owns.');
+  }
+
+  @override
+  Future<List<ContainerStats>> listContainerStats(
+    int serverId, {
+    required ContainerRuntime runtime,
+    required ContainerScope scope,
+    List<String> containerIds = const [],
+    String? sudoPassword,
+  }) async {
+    sshReads.add('stats');
+    throw StateError('SSH answered a read the daemon owns.');
+  }
+
+  @override
+  Future<LogFollowHandle> followContainerLogs(
+    int serverId, {
+    required ContainerRuntime runtime,
+    required ContainerScope scope,
+    required String containerId,
+    required void Function(String chunk) onChunk,
+    int tail = 300,
+    bool timestamps = false,
+    String? sudoPassword,
+  }) async {
+    sshReads.add('logs');
+    throw StateError('SSH followed logs the daemon owns.');
+  }
+}
+
 class _StubRegistry implements MaidCafeSessionRegistry {
   _StubRegistry(this.session);
 
@@ -161,7 +210,20 @@ void main() {
     maidCafeTerminalViaCloud: false,
   );
 
-  Future<void> pump(WidgetTester tester, _StubSession session) async {
+  SshSessionInfo sshSession() => SshSessionInfo(
+    serverId: server.id,
+    serverName: server.name,
+    connectedAt: DateTime(2026, 10, 7),
+    status: SessionStatus.connected,
+    transport: SessionTransport.ssh,
+  );
+
+  Future<void> pump(
+    WidgetTester tester,
+    _StubSession session, {
+    List<SshSessionInfo> sessions = const [],
+    SshConnectionManager? manager,
+  }) async {
     // A desktop-sized surface: the narrow layout stacks the overview above a
     // tall inspector panel, and a lazy list view never builds the panel that
     // sits below the fold.
@@ -178,9 +240,10 @@ void main() {
             maidCafeSessionRegistryProvider.overrideWithValue(
               _StubRegistry(session),
             ),
-            // No SSH session at all: every panel below has to come from the
-            // daemon, exactly as it must in a browser.
-            sessionsProvider.overrideWith((ref) => Stream.value(const [])),
+            sessionsProvider.overrideWith((ref) => Stream.value(sessions)),
+            connectionManagerProvider.overrideWithValue(
+              manager ?? _RecordingManager(),
+            ),
           ],
           child: MaterialApp(
             home: ContainerDetailPage(
@@ -224,6 +287,29 @@ void main() {
       expect(find.text('commonConnect'.tr()), findsNothing);
     },
   );
+
+  testWidgets('a live session does not take the per-container reads over', (
+    tester,
+  ) async {
+    // Both routes answer at once, which is the normal case on a native build
+    // with a daemon installed. The daemon's reads win — they cost the host no
+    // exec — so SSH is never asked; each recording manager member throws if it
+    // is.
+    final session = _StubSession();
+    final manager = _RecordingManager();
+
+    await pump(tester, session, sessions: [sshSession()], manager: manager);
+
+    expect(session.inspectCalls, greaterThan(0));
+    expect(session.statsCalls, greaterThan(0));
+    // Only the log follow is SSH's on purpose — `logs -f` streams the moment
+    // the runtime writes. Inspect and stats must never reach it.
+    expect(manager.sshReads, isNot(contains('inspect')));
+    expect(manager.sshReads, isNot(contains('stats')));
+    // The daemon's numbers are on screen, not a "connect" prompt.
+    expect(find.text('12.5%'), findsOneWidget);
+    expect(find.text('commonConnect'.tr()), findsNothing);
+  });
 
   testWidgets('the log pane follows the daemon tail without SSH', (
     tester,

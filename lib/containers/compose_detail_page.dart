@@ -10,6 +10,9 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:styled_widget/styled_widget.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/servers/maidcafe_service.dart';
+import 'package:maid_kit/servers/maidcafe_session_registry.dart';
+import 'package:maid_kit/servers/session_lookup.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/server_providers.dart';
@@ -18,7 +21,6 @@ import 'package:maid_kit/shared/presentation/ansi_log_view.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
-import 'package:maid_kit/servers/session_lookup.dart';
 import 'compose_project_actions.dart';
 import 'container_detail_page.dart';
 import 'container_list_tile.dart';
@@ -70,13 +72,17 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
 
   Timer? _refreshTimer;
   late final FocusedServerNotifier _focusedServerNotifier;
+  late final MaidCafeSessionRegistry _sessionRegistry;
   var _actionBusy = false;
 
   @override
   void initState() {
     super.initState();
-    // Every panel here reads container state over SSH; a browser has no such
-    // transport, so [build] shows a notice instead.
+    // The container list and its stats come from the daemon when it has a
+    // route; the compose file and the merged log follow stay on SSH, which a
+    // browser does not have.
+    _sessionRegistry = ref.read(maidCafeSessionRegistryProvider);
+    _sessionRegistry.retain(widget.server);
     if (kIsWeb) return;
     _focusedServerNotifier = ref.read(focusedServerIdProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -106,6 +112,7 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     final follow = _logFollow;
     _logFollow = null;
     unawaited(follow?.cancel() ?? Future<void>.value());
+    _sessionRegistry.release(widget.server);
     // The web branch never initialized the SSH-backed collaborators.
     if (kIsWeb) {
       super.dispose();
@@ -159,13 +166,7 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
       _containersError = null;
     });
     try {
-      final environments = await ref
-          .read(connectionManagerProvider)
-          .listContainers(
-            widget.server.id,
-            sshUserIsRoot: widget.server.username == 'root',
-            sudoPassword: await _sudoPassword(),
-          );
+      final environments = await _containersFromPreferredRoute();
       final containers = [
         for (final environment in environments)
           ...environment.containers.where(
@@ -188,6 +189,40 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     }
   }
 
+  /// The host's containers, read from the daemon when it has a route and over
+  /// SSH when it does not (or is older than `/api/v1/containers`).
+  Future<List<ContainerEnvironment>> _containersFromPreferredRoute() async {
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      try {
+        final snapshot = parseMaidCafeContainers(await session.containers());
+        if (snapshot.hasRuntimes) {
+          return [
+            for (final runtime in snapshot.runtimes)
+              ContainerEnvironment(
+                runtime: runtime.runtime == 'podman'
+                    ? ContainerRuntime.podman
+                    : ContainerRuntime.docker,
+                scope: containerScopeForStore(runtime.store),
+                containers: runtime.containers,
+                error: runtime.error,
+              ),
+          ];
+        }
+      } catch (_) {
+        // Old daemon without /api/v1/containers: fall back to SSH.
+        if (!sshFallbackAvailable(widget.server)) rethrow;
+      }
+    }
+    return ref
+        .read(connectionManagerProvider)
+        .listContainers(
+          widget.server.id,
+          sshUserIsRoot: widget.server.username == 'root',
+          sudoPassword: await _sudoPassword(),
+        );
+  }
+
   Future<void> _loadStats(List<ServerContainer> containers) async {
     final ids = [for (final container in containers) container.id];
     if (ids.isEmpty) {
@@ -195,20 +230,42 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
       return;
     }
     try {
-      final samples = await ref
-          .read(connectionManagerProvider)
-          .listContainerStats(
-            widget.server.id,
-            runtime: widget.runtime,
-            scope: widget.scope,
-            containerIds: ids,
-            sudoPassword: await _sudoPassword(),
-          );
+      final samples = await _statsFromPreferredRoute(ids);
       if (!mounted) return;
       setState(() => _stats = samples);
     } catch (_) {
       // Stats are best-effort; tiles fall back to "—" when unavailable.
     }
+  }
+
+  /// One statistic per container, the daemon first and SSH second.
+  Future<List<ContainerStats>> _statsFromPreferredRoute(
+    List<String> ids,
+  ) async {
+    final session = await _sessionRegistry.sessionFor(widget.server);
+    if (session != null) {
+      try {
+        final samples = <ContainerStats>[];
+        for (final id in ids) {
+          samples.add(
+            ContainerStats.fromDaemonJson(await session.containerStats(id)),
+          );
+        }
+        return samples;
+      } catch (_) {
+        // A daemon that cannot answer falls back to the runtime's own read.
+        if (!sshFallbackAvailable(widget.server)) rethrow;
+      }
+    }
+    return ref
+        .read(connectionManagerProvider)
+        .listContainerStats(
+          widget.server.id,
+          runtime: widget.runtime,
+          scope: widget.scope,
+          containerIds: ids,
+          sudoPassword: await _sudoPassword(),
+        );
   }
 
   /// Stats id may be the full or short container id; match either way.
@@ -349,18 +406,11 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     if (_actionBusy) return;
     setState(() => _actionBusy = true);
     try {
-      // A live session owns actions: run over SSH, in the task terminal, and
-      // let a failure be reported rather than the daemon quietly running it
-      // through a second route.
-      final sshPreferred = sshPreferredOverDaemon(
-        widget.server,
-        ref.read(sessionsProvider).asData?.value ?? const [],
-      );
-      final session = sshPreferred
-          ? null
-          : await ref
-                .read(maidCafeSessionRegistryProvider)
-                .sessionFor(widget.server);
+      // The daemon runs the action when it has a route, and a failure is
+      // reported rather than replayed over SSH — nothing runs twice.
+      final session = await ref
+          .read(maidCafeSessionRegistryProvider)
+          .sessionFor(widget.server);
       if (session != null) {
         // Daemon present: the daemon runs the action, and the app watches it
         // in the task terminal. The pulling actions are tasks, so their
@@ -417,15 +467,9 @@ class _ComposeDetailPageState extends ConsumerState<ComposeDetailPage> {
     ContainerAction action,
   ) async {
     try {
-      final sshPreferred = sshPreferredOverDaemon(
-        widget.server,
-        ref.read(sessionsProvider).asData?.value ?? const [],
-      );
-      final session = sshPreferred
-          ? null
-          : await ref
-                .read(maidCafeSessionRegistryProvider)
-                .sessionFor(widget.server);
+      final session = await ref
+          .read(maidCafeSessionRegistryProvider)
+          .sessionFor(widget.server);
       if (session != null) {
         final result = await session.runContainerAction(
           container.id,
