@@ -164,15 +164,20 @@ abstract interface class TerminalSessionAdapter {
   /// Sends text or terminal control sequences to the remote shell.
   void sendInput(String text);
 
-  /// Shows the platform software keyboard and focuses this terminal.
+  /// Focuses this terminal and raises the platform software keyboard.
   ///
   /// Must actually raise the keyboard, including when the platform dismissed
   /// it without moving focus — Android's IME hide key and back gesture do —
   /// rather than trusting the renderer's own idea of a visible keyboard.
   void showKeyboard();
 
-  /// Hides the platform software keyboard without dropping terminal focus.
-  void hideKeyboard();
+  /// Drops keyboard focus and closes the platform software keyboard.
+  ///
+  /// This is the user's "put the keyboard away" gesture, so it has to release
+  /// focus rather than only close the IME: a terminal that kept focus has no
+  /// focus gain left to re-raise the keyboard on, and tapping it again would
+  /// do nothing. Tapping the terminal's content must restore both.
+  void unfocus();
 
   /// Current cursor cell in global coordinates, when the renderer is mounted.
   Rect? get cursorGlobalRect;

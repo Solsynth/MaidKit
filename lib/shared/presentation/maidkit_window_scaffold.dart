@@ -81,9 +81,13 @@ class MaidKitWindowScaffold extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final isDesktop = ref.watch(desktopWindowProvider);
 
-    return Focus(
-      // The shell holds the app-level shortcuts, so it keeps focus whenever
-      // nothing inside the workspace has claimed it.
+    return FocusScope(
+      // A scope, not a plain node: putting the soft keyboard away releases the
+      // terminal's focus with the default `scope` disposition, which parks it
+      // on the nearest enclosing scope. As a scope, this shell is where that
+      // release lands, so the app-level shortcuts below still have a focus
+      // chain after the keyboard is gone. `autofocus` claims it when nothing
+      // inside the workspace has.
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;

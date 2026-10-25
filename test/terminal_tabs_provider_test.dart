@@ -284,7 +284,7 @@ class _RecordingTerminalAdapter implements TerminalSessionAdapter {
   void showKeyboard() {}
 
   @override
-  void hideKeyboard() {}
+  void unfocus() {}
   @override
   Rect? get cursorGlobalRect => null;
 

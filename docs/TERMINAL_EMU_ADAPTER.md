@@ -57,6 +57,9 @@ provider instead of the renderer.
   restore for session persistence.
 - `sudoAutofillReady` / `bindSudoAutofill` — the reason the terminal currently
   wants the saved password, surfaced as a hint at the cursor.
+- `showKeyboard` / `unfocus` — the soft keyboard's on/off switch: raising it
+  focuses the terminal and opens the IME, releasing it drops focus so a tap
+  can bring both back.
 - `buildView` — the renderer widget, including read-only log surfaces.
 
 Renderer-neutral inputs (`terminal_color_scheme.dart`,
@@ -77,6 +80,15 @@ translated inside each backend, so preferences apply to both.
 - **PTY pixel metrics** are reported to the transport by both backends, but in
   a browser only the MaidCafe-over-WebSocket transport and the no-op serial
   transport can consume them; SSH needs raw sockets and cannot run on web.
+- **Focus is the keyboard's switch.** Each backend owns the `FocusNode` it hands
+  its renderer, so `showKeyboard()` (request focus, then raise the IME) and
+  `unfocus()` (release focus, which closes the IME) work without a mounted view
+  state. The mobile toolbar's keyboard button calls exactly those two: putting
+  the keyboard away must release the terminal, because a hide that kept focus
+  would leave no focus gain to re-raise it on, and tapping the content would do
+  nothing. That is why the contract exposes `unfocus()` rather than a bare
+  "hide the keyboard" call: hiding the IME alone cannot be undone by a tap.
+
 - **Soft-keyboard re-raising** is a ghostty-backend concern on Android: the
   platform dismisses the IME (its hide key, the back gesture) without moving
   focus, so MaidTerm's `KeyboardState` stays `showing` and its focus-driven
@@ -85,6 +97,14 @@ translated inside each backend, so preferences apply to both.
   the arena — and `showKeyboard` drops through `hidden` whenever the platform
   reports no IME height. Other platforms move focus instead and need nothing
   extra.
+
+- **Hidden tabs leave the focus tree.** Every workspace tab stays mounted so its
+  terminal keeps its scrollback, but an unselected tab is wrapped in
+  `ExcludeFocus`: a terminal still focused under an invisible tab keeps the soft
+  keyboard raised and eats the typing meant for the visible one. When a tab
+  returns, a desktop terminal takes focus (and the hardware keyboard) back
+  through `showKeyboard()`; on mobile it waits for a tap, since focus is what
+  raises the IME.
 
 ## Adding or replacing a backend
 

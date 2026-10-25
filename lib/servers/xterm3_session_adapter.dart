@@ -112,6 +112,12 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
   final _activity = TerminalActivityTracker();
   final _decoder = _Utf8ByteDecoder();
 
+  /// The focus node the renderer's view is attached to.
+  ///
+  /// Owned here so [unfocus] can release real focus from the toolbar, whose
+  /// button the view never sees; focus gain is what raises the keyboard.
+  final _focusNode = FocusNode(debugLabel: 'xterm-terminal');
+
   final _matches = <xterm.TerminalSearchMatch>[];
   final _keywordHighlights = <xterm.TerminalHighlight>[];
   Timer? _keywordTimer;
@@ -210,12 +216,14 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
 
   @override
   void showKeyboard() {
-    if (!_disposed) _viewKey.currentState?.requestKeyboard();
+    if (_disposed) return;
+    _focusNode.requestFocus();
+    _viewKey.currentState?.requestKeyboard();
   }
 
   @override
-  void hideKeyboard() {
-    if (!_disposed) _viewKey.currentState?.closeKeyboard();
+  void unfocus() {
+    if (!_disposed) _focusNode.unfocus();
   }
 
   @override
@@ -247,6 +255,9 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
       // own, so a log surface keeps the same selection and clipboard handling
       // an interactive terminal gets.
       readOnly: readOnly,
+      // Owned by the adapter so the toolbar can release focus without a
+      // mounted view state. Read-only log surfaces keep their own host's.
+      focusNode: readOnly ? null : _focusNode,
       autofocus: autofocus && !readOnly,
       theme: _theme,
       textStyle: xterm.TerminalStyle(fontFamily: fontFamily),
@@ -321,6 +332,7 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
     await _sudoSub?.cancel();
     _terminal.removeListener(_onTerminalChanged);
     _matches.clear();
+    _focusNode.dispose();
     _controller.dispose();
     _scrollController.dispose();
     _terminal.dispose();

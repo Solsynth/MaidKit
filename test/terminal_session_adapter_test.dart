@@ -835,6 +835,54 @@ void main() {
       expect(methods, isNot(contains('TextInput.show')));
     }),
   );
+
+  testWidgets(
+    'unfocus releases the terminal and a tap takes it back',
+    (tester) => _withAndroidPlatform(() async {
+      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+      addTearDown(tester.view.resetViewInsets);
+
+      final adapter = MaidTermSessionAdapter();
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+      final terminalFocus = tester
+          .widget<maidterm.TerminalView>(find.byType(maidterm.TerminalView))
+          .focusNode!;
+      expect(terminalFocus.hasFocus, isTrue, reason: 'autofocus is in effect');
+
+      // The toolbar's "hide keyboard" gesture: closing the IME alone would
+      // leave the terminal focused with no focus gain left to re-raise it.
+      adapter.unfocus();
+      await tester.pump();
+      expect(terminalFocus.hasFocus, isFalse);
+      expect(
+        tester.testTextInput.log.map((call) => call.method),
+        contains('TextInput.clearClient'),
+        reason: 'dropping focus must close the input connection',
+      );
+
+      tester.testTextInput.log.clear();
+      await tester.tap(find.byType(maidterm.TerminalView));
+      await tester.pump();
+
+      expect(terminalFocus.hasFocus, isTrue);
+      expect(
+        tester.testTextInput.log.map((call) => call.method),
+        containsAllInOrder(const ['TextInput.setClient', 'TextInput.show']),
+        reason: 'tapping the content must bring the keyboard back',
+      );
+    }),
+  );
 }
 
 /// Runs [body] with the Android terminal path selected.
@@ -972,7 +1020,7 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
   void showKeyboard() {}
 
   @override
-  void hideKeyboard() {}
+  void unfocus() {}
   @override
   Rect? get cursorGlobalRect => null;
 }

@@ -92,6 +92,14 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   late final TerminalClipboardBridge _clipboard;
   final _terminalViewKey = GlobalKey<maidterm.TerminalViewState>();
 
+  /// The focus node the renderer's view is attached to.
+  ///
+  /// The adapter owns it so the toolbar can hand the keyboard back without
+  /// reaching into a mounted view state, and so [unfocus] releases real focus
+  /// instead of only closing the IME: focus gain is what raises the keyboard
+  /// again on the next tap.
+  final _focusNode = FocusNode(debugLabel: 'maidterm-terminal');
+
   final maidterm.TerminalScrollController _scrollController =
       maidterm.TerminalScrollController();
   final _outgoingBytes = StreamController<Uint8List>.broadcast();
@@ -201,12 +209,12 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   @override
   void showKeyboard() {
     if (_disposed) return;
-    // MaidTerm ignores `showKeyboard` while it already reports `showing`, but
-    // on Android that state outlives the IME: the platform dismisses the
-    // keyboard (the IME's hide key, the back gesture) by closing the text
-    // input connection without moving focus. Dropping through `hidden` first
-    // makes the follow-up `showKeyboard` reopen the connection and raise the
-    // IME again.
+    // Focus gain is what raises the keyboard. The platform can dismiss the IME
+    // while the terminal keeps focus (Android's hide key, the back gesture),
+    // leaving MaidTerm's `KeyboardState` stale, so dropping through `hidden`
+    // first makes the follow-up `showKeyboard` reopen the text input
+    // connection and raise the IME again.
+    _focusNode.requestFocus();
     if (_platformDismissesImeSilently &&
         _imeHeight == 0 &&
         _controller.keyboardState == maidterm.KeyboardState.showing) {
@@ -237,8 +245,12 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
       .bottom;
 
   @override
-  void hideKeyboard() {
-    if (!_disposed) _controller.hideKeyboard();
+  void unfocus() {
+    if (_disposed) return;
+    // Release focus, not only the IME: the renderer raises the keyboard again
+    // on focus gain, so a hide that kept focus would leave the terminal unable
+    // to bring it back by tapping its content.
+    _focusNode.unfocus();
   }
 
   @override
@@ -352,6 +364,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     Widget terminal = maidterm.TerminalView(
       key: _terminalViewKey,
       controller: _controller,
+      // The adapter owns the node so [unfocus] can release focus from the
+      // toolbar, whose button the renderer never sees.
+      focusNode: readOnly ? null : _focusNode,
       scrollController: _scrollController,
       autofocus: autofocus && !readOnly,
       showKeyboard: !readOnly,
@@ -587,6 +602,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     _clipboard.dispose();
     _matches.clear();
     _controller.dispose();
+    _focusNode.dispose();
     _scrollController.dispose();
     await _outgoingBytes.close();
     await _resizeEvents.close();

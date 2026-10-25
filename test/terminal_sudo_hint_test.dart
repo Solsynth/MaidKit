@@ -138,7 +138,7 @@ class _HintAdapter implements TerminalSessionAdapter {
   void showKeyboard() {}
 
   @override
-  void hideKeyboard() {}
+  void unfocus() {}
 
   @override
   Widget buildView({

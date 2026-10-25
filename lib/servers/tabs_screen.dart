@@ -195,6 +195,7 @@ class _SessionLayoutView extends ConsumerWidget {
               child: _LayoutNode(
                 tab: tab,
                 node: tab.layout,
+                active: tabs.selectedTabId == tab.id,
                 servers: servers,
                 sessions: sessions,
               ),
@@ -209,12 +210,20 @@ class _LayoutNode extends ConsumerWidget {
   const _LayoutNode({
     required this.tab,
     required this.node,
+    required this.active,
     required this.servers,
     required this.sessions,
   });
 
   final WorkspaceTab tab;
   final SessionLayout node;
+
+  /// Whether this tab is the workspace's selected one.
+  ///
+  /// A hidden tab leaves the focus tree, so its terminals can hand the
+  /// keyboard back on the way out instead of holding it under a surface the
+  /// user cannot see.
+  final bool active;
   final AsyncValue<List<Server>> servers;
   final AsyncValue<List<SshSessionInfo>> sessions;
 
@@ -231,6 +240,7 @@ class _LayoutNode extends ConsumerWidget {
           paneId: paneId,
           focused: tab.focusedPaneId == paneId,
           servers: servers,
+          active: active,
           sessions: sessions,
           // A split's panes can be dragged into each other's slot and closed on
           // their own; the single pane *is* the tab.
@@ -252,12 +262,14 @@ class _LayoutNode extends ConsumerWidget {
           first: _LayoutNode(
             tab: tab,
             node: first,
+            active: active,
             servers: servers,
             sessions: sessions,
           ),
           second: _LayoutNode(
             tab: tab,
             node: second,
+            active: active,
             servers: servers,
             sessions: sessions,
           ),
@@ -381,6 +393,7 @@ class _SessionPaneView extends ConsumerWidget {
     required this.tab,
     required this.paneId,
     required this.focused,
+    required this.active,
     required this.servers,
     required this.sessions,
     this.movable = false,
@@ -389,6 +402,12 @@ class _SessionPaneView extends ConsumerWidget {
   final WorkspaceTab tab;
   final String paneId;
   final bool focused;
+
+  /// Whether this pane's tab is the workspace's selected one.
+  ///
+  /// A pane under a hidden tab is still built — its terminal keeps running —
+  /// but it must not claim the keyboard on the user's behalf.
+  final bool active;
   final AsyncValue<List<Server>> servers;
   final AsyncValue<List<SshSessionInfo>> sessions;
 
@@ -494,9 +513,21 @@ class _SessionPaneView extends ConsumerWidget {
                       ? PaneLauncher(
                           paneId: paneId,
                           compact: true,
+                          // A hidden tab's node is excluded, so this claim is
+                          // dropped there and no switch can summon the keyboard.
                           focused: focused,
                         )
-                      : _SessionTabBody(tab: content, autofocus: focused),
+                      : _TerminalFocusRestore(
+                          adapter: terminal?.terminal,
+                          active: active && focused,
+                          child: _SessionTabBody(
+                            tab: content,
+                            // A hidden tab's node is excluded, so this claim is
+                            // dropped there; coming back restores focus through
+                            // _TerminalFocusRestore, which runs on every switch.
+                            autofocus: focused,
+                          ),
+                        ),
                 ),
               ),
               // The status band belongs to the pane, not the window: in a
@@ -1188,17 +1219,26 @@ class _AnimatedPaneTabContent extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => IgnorePointer(
-    ignoring: !active,
-    child: AnimatedOpacity(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      opacity: active ? 1 : 0,
-      child: AnimatedSlide(
+  Widget build(BuildContext context) => ExcludeFocus(
+    // A hidden tab stays mounted so its terminal keeps its scrollback, but it
+    // must not keep the focus tree: a terminal still holding focus under an
+    // invisible tab keeps the soft keyboard raised and eats the typing meant
+    // for the tab on screen. Excluding releases the focus it held; a desktop
+    // terminal takes it back when the tab returns, mobile waits for a tap
+    // because focus is what raises its keyboard.
+    excluding: !active,
+    child: IgnorePointer(
+      ignoring: !active,
+      child: AnimatedOpacity(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
-        offset: active ? Offset.zero : const Offset(0.02, 0),
-        child: child,
+        opacity: active ? 1 : 0,
+        child: AnimatedSlide(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          offset: active ? Offset.zero : const Offset(0.02, 0),
+          child: child,
+        ),
       ),
     ),
   );
@@ -1510,4 +1550,51 @@ String _tabLabel(SessionTab tab) {
   if (tab is MaidCafeCloudSessionTab) return 'maidCafeCloudTitle'.tr();
   if (tab is SettingsSessionTab) return 'tabSettings'.tr();
   return tab.serverName;
+}
+
+/// Hands the keyboard back to a terminal when its tab becomes the visible one.
+///
+/// A hidden tab leaves the focus tree (see [_AnimatedPaneTabContent]), so the
+/// terminal that owned the keyboard before the switch comes back unfocused. On
+/// desktop the keystrokes would then go to the window shell, so the terminal
+/// takes focus again. On mobile it deliberately does not: focus is what raises
+/// the soft keyboard, and switching tabs is not a request to type — tapping the
+/// content is.
+class _TerminalFocusRestore extends StatefulWidget {
+  const _TerminalFocusRestore({
+    required this.adapter,
+    required this.active,
+    required this.child,
+  });
+
+  final TerminalSessionAdapter? adapter;
+
+  /// Whether this terminal is the one the user is looking at.
+  final bool active;
+  final Widget child;
+
+  @override
+  State<_TerminalFocusRestore> createState() => _TerminalFocusRestoreState();
+}
+
+class _TerminalFocusRestoreState extends State<_TerminalFocusRestore> {
+  static bool get _keyboardIsThePoint =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
+
+  @override
+  void didUpdateWidget(_TerminalFocusRestore oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.active || oldWidget.active) return;
+    final adapter = widget.adapter;
+    if (adapter == null || _keyboardIsThePoint) return;
+    // After the frame: the exclusion lifts during this build, and a focus
+    // request made against a still-excluded node would be dropped.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.active) adapter.showKeyboard();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

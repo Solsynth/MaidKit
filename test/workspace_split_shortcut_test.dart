@@ -99,11 +99,18 @@ class _KeyHostAdapter implements TerminalSessionAdapter {
   void sendInput(String text) =>
       _outgoing.add(Uint8List.fromList(utf8.encode(text)));
 
-  @override
-  void showKeyboard() {}
+  var showKeyboardCount = 0;
 
   @override
-  void hideKeyboard() {}
+  // Mirrors the adapter contract: raising the keyboard means focusing the
+  // terminal first, so a test can observe both halves of the hand-back.
+  void showKeyboard() {
+    showKeyboardCount++;
+    focusNode.requestFocus();
+  }
+
+  @override
+  void unfocus() => focusNode.unfocus();
 
   @override
   Rect? get cursorGlobalRect => null;
@@ -417,6 +424,82 @@ void main() {
       );
       // The remote shell never saw Ctrl+D, so the terminal did not exit.
       expect(adapter.sent, isEmpty);
+    }),
+  );
+
+  testWidgets(
+    'a hidden terminal lets go of the keyboard and a desktop tab takes it back',
+    (tester) => onPlatform(TargetPlatform.macOS, () async {
+      final adapter = _KeyHostAdapter();
+      addTearDown(adapter.dispose);
+      final container = await pumpWindow(tester);
+      openContentTab(container, adapter);
+      await tester.pumpAndSettle();
+
+      adapter.focusNode.requestFocus();
+      await tester.pumpAndSettle();
+      expect(adapter.focusNode.hasFocus, isTrue);
+
+      // Every tab stays mounted so its scrollback survives, but the hidden one
+      // must not keep swallowing keys meant for the tab on screen.
+      container.read(terminalTabsProvider.notifier).openDashboard();
+      await tester.pumpAndSettle();
+      expect(adapter.focusNode.hasFocus, isFalse);
+
+      // Coming back is a desktop's cue to resume typing in the shell.
+      container.read(terminalTabsProvider.notifier).selectTab('terminal-1');
+      await tester.pumpAndSettle();
+      expect(adapter.showKeyboardCount, greaterThan(0));
+      expect(adapter.focusNode.hasFocus, isTrue);
+    }),
+  );
+
+  testWidgets(
+    'a returning tab leaves the soft keyboard down on mobile',
+    (tester) => onPlatform(TargetPlatform.android, () async {
+      final adapter = _KeyHostAdapter();
+      addTearDown(adapter.dispose);
+      final container = await pumpWindow(tester);
+      openContentTab(container, adapter);
+      await tester.pumpAndSettle();
+
+      container.read(terminalTabsProvider.notifier).openDashboard();
+      await tester.pumpAndSettle();
+      final before = adapter.showKeyboardCount;
+
+      container.read(terminalTabsProvider.notifier).selectTab('terminal-1');
+      await tester.pumpAndSettle();
+
+      // Focus is what raises the IME, so a tab switch must not claim it; the
+      // user taps the terminal when they want to type.
+      expect(adapter.showKeyboardCount, before);
+      expect(adapter.focusNode.hasFocus, isFalse);
+    }),
+  );
+
+  testWidgets(
+    'app shortcuts still reach the shell after the keyboard is released',
+    (tester) => onPlatform(TargetPlatform.macOS, () async {
+      final adapter = _KeyHostAdapter();
+      addTearDown(adapter.dispose);
+      final container = await pumpWindow(tester);
+      openContentTab(container, adapter);
+      await tester.pumpAndSettle();
+
+      adapter.focusNode.requestFocus();
+      await tester.pumpAndSettle();
+
+      // Releasing focus parks it on the enclosing scope. The shell is that
+      // scope, so its shortcuts must keep working with no terminal focused —
+      // otherwise hiding the mobile keyboard would kill Cmd+D and Cmd+W.
+      adapter.unfocus();
+      await tester.pumpAndSettle();
+      await pressSplit(tester, shift: false);
+
+      expect(
+        container.read(terminalTabsProvider).selectedTab!.panes,
+        hasLength(2),
+      );
     }),
   );
 }

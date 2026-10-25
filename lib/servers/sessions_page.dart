@@ -292,7 +292,6 @@ class _TerminalQuickKeysState extends State<_TerminalQuickKeys> {
   @override
   Widget build(BuildContext context) {
     final terminal = widget.terminal;
-    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
     final keys = _expanded ? _allKeys : _commonKeys;
 
     return SizedBox(
@@ -323,19 +322,7 @@ class _TerminalQuickKeysState extends State<_TerminalQuickKeys> {
               ),
             ),
           ),
-          IconButton(
-            tooltip: keyboardVisible
-                ? 'terminalKeyboardHide'.tr()
-                : 'terminalKeyboardShow'.tr(),
-            onPressed: keyboardVisible
-                ? terminal.hideKeyboard
-                : terminal.showKeyboard,
-            icon: Icon(
-              keyboardVisible
-                  ? Symbols.keyboard_arrow_down
-                  : Symbols.keyboard_arrow_up,
-            ),
-          ),
+          _TerminalKeyboardToggle(terminal: terminal),
           IconButton(
             tooltip: _expanded
                 ? 'terminalKeysFewer'.tr()
@@ -344,6 +331,63 @@ class _TerminalQuickKeysState extends State<_TerminalQuickKeys> {
             icon: Icon(_expanded ? Symbols.expand_less : Symbols.expand_more),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Raise-or-release button for the mobile soft keyboard.
+///
+/// The pane body sits inside a [Scaffold], which strips the bottom view insets
+/// from the media query it hands down, so `MediaQuery.viewInsetsOf` reads zero
+/// while the keyboard is up — the button would only ever show it. The platform
+/// view still reports the real inset, and its metrics callback is what redraws
+/// this button when the keyboard comes or goes.
+class _TerminalKeyboardToggle extends StatefulWidget {
+  const _TerminalKeyboardToggle({required this.terminal});
+
+  final TerminalSessionAdapter terminal;
+
+  @override
+  State<_TerminalKeyboardToggle> createState() =>
+      _TerminalKeyboardToggleState();
+}
+
+class _TerminalKeyboardToggleState extends State<_TerminalKeyboardToggle>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = View.of(context).viewInsets.bottom > 0;
+    return IconButton(
+      tooltip: visible
+          ? 'terminalKeyboardHide'.tr()
+          : 'terminalKeyboardShow'.tr(),
+      // Putting the keyboard away means releasing the terminal, not only
+      // closing the IME: the renderer raises it again on focus gain, so a hide
+      // that kept focus would leave the user unable to get it back by tapping
+      // the terminal.
+      onPressed: visible
+          ? widget.terminal.unfocus
+          : widget.terminal.showKeyboard,
+      icon: Icon(
+        visible ? Symbols.keyboard_arrow_down : Symbols.keyboard_arrow_up,
       ),
     );
   }

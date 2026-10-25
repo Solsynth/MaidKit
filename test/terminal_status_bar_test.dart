@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:easy_localization/easy_localization.dart';
@@ -8,6 +7,7 @@ import 'package:easy_localization/src/localization.dart' as ez;
 // ignore: implementation_imports
 import 'package:easy_localization/src/translations.dart' as ez_tr;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -126,9 +126,69 @@ void main() {
       expect(tester.getSize(find.byWidget(pill)).width, lessThan(400));
     }
   });
+
+  testWidgets(
+    'the mobile keyboard button reads the real IME inset and releases focus',
+    (tester) async {
+      // The pane body lives inside a Scaffold, which strips the bottom view
+      // insets before the band sees them. The button must therefore read the
+      // platform view, or it would never offer to put the keyboard away.
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        tester.view.physicalSize = const Size(900, 600);
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetViewInsets);
+
+        final terminal = _FakeAdapter();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              connectionManagerProvider.overrideWithValue(
+                SshConnectionManager(() => throw UnimplementedError()),
+              ),
+            ],
+            child: MaterialApp(
+              theme: createMaidKitTheme(Brightness.light),
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: AnimatedTerminalStatusBar(
+                    session: null,
+                    terminal: terminal,
+                    terminalId: 'terminal-1',
+                    transport: TerminalTransport.ssh,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byTooltip('terminalKeyboardHide'.tr()));
+        await tester.pump();
+        expect(terminal.unfocusCount, 1);
+        expect(terminal.showKeyboardCount, 0);
+
+        tester.view.viewInsets = const FakeViewPadding();
+        await tester.pump();
+        await tester.tap(find.byTooltip('terminalKeyboardShow'.tr()));
+        await tester.pump();
+        expect(terminal.showKeyboardCount, 1);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
 }
 
 class _FakeAdapter implements TerminalSessionAdapter {
+  var showKeyboardCount = 0;
+  var unfocusCount = 0;
+
   @override
   Stream<Uint8List> get outgoingBytes => const Stream.empty();
 
@@ -173,10 +233,10 @@ class _FakeAdapter implements TerminalSessionAdapter {
   void sendInput(String text) {}
 
   @override
-  void showKeyboard() {}
+  void showKeyboard() => showKeyboardCount++;
 
   @override
-  void hideKeyboard() {}
+  void unfocus() => unfocusCount++;
 
   @override
   Rect? get cursorGlobalRect => null;
