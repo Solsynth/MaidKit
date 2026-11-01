@@ -6,7 +6,7 @@ const kMaidKitUpdateChannelKey = 'maidkit_update_channel';
 const kMaidKitDefaultUpdateChannel = 'stable';
 const kMaidKitDistributionApiBaseUrl = String.fromEnvironment(
   'DISTRIBUTION_API_BASE_URL',
-  defaultValue: 'https://api.solian.app/dist',
+  defaultValue: 'https://dx.solsynth.dev/api',
 );
 const kMaidKitDistributionProductId = String.fromEnvironment(
   'DISTRIBUTION_PRODUCT_ID',

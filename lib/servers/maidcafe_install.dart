@@ -17,7 +17,7 @@ import 'server_providers.dart';
 
 const _maidCafeDistributionApiBaseUrl = String.fromEnvironment(
   'DISTRIBUTION_API_BASE_URL',
-  defaultValue: 'https://api.solian.app/dist',
+  defaultValue: 'https://dx.solsynth.dev/api',
 );
 const _maidCafeDistributionProductId = '36221713-7909-4132-bfca-d800bd69fdc2';
 const _maidCafeDistributionChannel = String.fromEnvironment(
