@@ -542,6 +542,7 @@ class SnippetsSection extends ConsumerWidget {
           data: (items) => items.isEmpty
               ? _EmptySnippets(onCreate: () => _edit(context, ref))
               : Column(
+                spacing: 8,
                   children: [
                     for (final item in items)
                       ListTile(
