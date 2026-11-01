@@ -28,6 +28,7 @@ import 'package:maid_kit/theme.dart';
 import 'file_editor_tab.dart';
 import 'remote_file_client_resolver.dart';
 import 'remote_file_system.dart';
+import 'remote_transfer.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
@@ -1372,6 +1373,40 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     return servers.where((server) => server.id == serverId).firstOrNull;
   }
 
+  /// Closes [file], bounded so a dead transport cannot hold the transfer open.
+  Future<void> _closeRemoteFile(RemoteFile file) async {
+    try {
+      await file.close().timeout(const Duration(seconds: 5));
+    } catch (_) {}
+  }
+
+  /// Abandons [client] and forgets every cached transport in this tab.
+  ///
+  /// A transport that had to be abandoned is dead for good, and the cache
+  /// entries cannot be matched to it cheaply — they hold futures, and the two
+  /// panes may share one client. Dropping them all costs one SFTP channel per
+  /// pane, the same price the tab already pays whenever the connection owner
+  /// changes, and it keeps the next transfer from being handed a corpse.
+  Future<void> _abandonFiles(RemoteFileClient client) async {
+    final cached = <Future<RemoteFileClient>>[
+      ?_fileClient,
+      ?_leftFileClient,
+      ..._otherFileClients.values,
+    ];
+    _fileClient = null;
+    _fileClientOwner = null;
+    _leftFileClient = null;
+    _leftFileClientOwner = null;
+    _otherFileClients.clear();
+    _otherFileClientOwners.clear();
+    try {
+      await client.abort().timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    for (final future in cached) {
+      unawaited(_closeFileClient(future));
+    }
+  }
+
   Future<void> _streamRemoteFile(
     RemoteFileClient source,
     RemoteFileClient destination,
@@ -1392,20 +1427,22 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       );
       try {
         var fileOffset = 0;
-        await for (final chunk in input.read(
-          chunkSize: 64 * 1024,
-          maxPendingRequests: 4,
-        )) {
-          await controller.waitIfPaused();
-          await output.writeBytes(chunk, offset: fileOffset);
-          fileOffset += chunk.length;
-          reportProgress(transferredBytes + fileOffset);
-        }
+        await pumpRemoteFile(
+          input,
+          controller,
+          abandon: () => _abandonFiles(source),
+          onChunk: (chunk) async {
+            await controller.waitIfPaused();
+            await output.writeBytes(chunk, offset: fileOffset);
+            fileOffset += chunk.length;
+            reportProgress(transferredBytes + fileOffset);
+          },
+        );
       } finally {
-        await output.close();
+        await _closeRemoteFile(output);
       }
     } finally {
-      await input.close();
+      await _closeRemoteFile(input);
     }
   }
 
@@ -1913,28 +1950,30 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           final sink = temporaryFile?.openWrite();
           try {
             var transferredBytes = 0;
-            await for (final chunk in remoteFile.read(
-              chunkSize: 64 * 1024,
-              maxPendingRequests: 4,
-            )) {
-              await controller.waitIfPaused();
-              if (buffer != null) {
-                buffer.add(chunk);
-              } else {
-                sink!.add(chunk);
-              }
-              transferredBytes += chunk.length;
-              reportProgress(transferredBytes);
-              if (sink != null &&
-                  transferredBytes % (1024 * 1024) < chunk.length) {
-                await sink.flush();
-              }
-            }
+            await pumpRemoteFile(
+              remoteFile,
+              controller,
+              abandon: () => _abandonFiles(files),
+              onChunk: (chunk) async {
+                await controller.waitIfPaused();
+                if (buffer != null) {
+                  buffer.add(chunk);
+                } else {
+                  sink!.add(chunk);
+                }
+                transferredBytes += chunk.length;
+                reportProgress(transferredBytes);
+                if (sink != null &&
+                    transferredBytes % (1024 * 1024) < chunk.length) {
+                  await sink.flush();
+                }
+              },
+            );
           } finally {
             await sink?.close();
           }
         } finally {
-          await remoteFile.close();
+          await _closeRemoteFile(remoteFile);
         }
         controller.throwIfCancelled();
         await FileSaver.instance.saveAs(
@@ -2108,21 +2147,23 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         try {
           final sink = File(childLocal).openWrite();
           try {
-            await for (final chunk in remoteFile.read(
+            await pumpRemoteFile(
+              remoteFile,
+              controller,
               length: entry.attr.size,
-              chunkSize: 64 * 1024,
-              maxPendingRequests: 4,
-            )) {
-              await controller?.waitIfPaused();
-              sink.add(chunk);
-              transferredBytes += chunk.length;
-              reportProgress?.call(transferredBytes);
-            }
+              abandon: () => _abandonFiles(files),
+              onChunk: (chunk) async {
+                await controller?.waitIfPaused();
+                sink.add(chunk);
+                transferredBytes += chunk.length;
+                reportProgress?.call(transferredBytes);
+              },
+            );
           } finally {
             await sink.close();
           }
         } finally {
-          await remoteFile.close();
+          await _closeRemoteFile(remoteFile);
         }
       }
     }

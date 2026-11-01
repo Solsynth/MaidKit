@@ -178,6 +178,21 @@ work when the tab closes. Throwing `TaskSkipped` settles a task quietly (no
 success callback); throwing `TaskCancelled` — normally from
 `TaskControl.throwIfCancelled` — settles it as cancelled.
 
+A queued task cannot hold the queue hostage. `TaskControl.cancelled` completes
+the moment the user cancels, and `_execute` settles the task on it instead of
+waiting for the action to unwind — an action parked on I/O that never returns
+would otherwise occupy the single slot for the rest of the session, leaving
+every later transfer stuck at "queued".
+
+Remote reads are bounded by `servers/remote_transfer.dart`. SFTP requests carry
+no timeout of their own, so `pumpRemoteFile` races each read against
+`transferStallTimeout` and against `TaskControl.cancelled`, and calls the
+caller's `abandon` callback when either wins. Closing the transport is the only
+thing that completes a pending request, so a transfer whose peer went silent
+fails with `RemoteTransferStalled` and a cancelled one aborts immediately; the
+file manager then drops its cached transport so the next transfer opens a fresh
+one. `abandon` is never called for a read that finished normally.
+
 ## Theming
 
 `lib/theme.dart` is the single source of design decisions, ported from Island's

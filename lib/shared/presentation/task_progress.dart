@@ -117,12 +117,24 @@ typedef TaskProgressReport = void Function(int transferredBytes);
 /// A transfer can only stop where it checks: [waitIfPaused] suspends the action
 /// until the user resumes, [throwIfCancelled] aborts it so the queue can clean
 /// up the half-written destination.
+///
+/// Checking is not enough on its own: an action parked on I/O that never
+/// returns — an SFTP reply the server stopped answering — never reaches a
+/// checkpoint. [cancelled] is for exactly that case. It completes the moment
+/// the user cancels, so work that can be aborted from the outside (closing the
+/// transport, racing a read against a timer) can do so, and the queue stops
+/// waiting.
 class TaskControl {
   var _isPaused = false;
   var _isCancelled = false;
   Completer<void>? _resumeCompleter;
+  final _cancelled = Completer<void>();
 
   bool get isCancelled => _isCancelled;
+
+  /// Completes once [cancel] is called. Never completes for a task that is not
+  /// cancelled, so a caller can race it against work that may not return.
+  Future<void> get cancelled => _cancelled.future;
 
   void pause() {
     if (_isCancelled || _isPaused) return;
@@ -142,6 +154,7 @@ class TaskControl {
     if (_isCancelled) return;
     _isCancelled = true;
     resume();
+    if (!_cancelled.isCompleted) _cancelled.complete();
   }
 
   Future<void> waitIfPaused() async {
@@ -307,8 +320,18 @@ class TaskProgressNotifier extends Notifier<List<AppTaskProgress>> {
       flushTimer ??= Timer(const Duration(milliseconds: 250) - elapsed, flush);
     }
 
+    final work = Future<void>.sync(
+      () => task.request.action(task.control, report),
+    );
     try {
-      await task.request.action(task.control, report);
+      // The action only unwinds where it checks [TaskControl], so work parked
+      // on a reply that never arrives would hold the queue's single slot for
+      // the rest of the session — every later transfer sits queued behind one
+      // the user already cancelled. Cancelling settles the task here instead.
+      // The abandoned action is left to unwind on its own once its transport
+      // is closed; `Future.any` has already attached a handler to it, so
+      // whatever it throws afterwards is dropped rather than escaping.
+      await Future.any<void>([work, task.control.cancelled]);
       task.control.throwIfCancelled();
       flush();
       await task.onSuccess?.call();

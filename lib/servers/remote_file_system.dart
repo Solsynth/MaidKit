@@ -49,7 +49,20 @@ abstract class RemoteFileClient {
   });
 
   /// Releases the transport. Idempotent.
+  ///
+  /// Graceful: an in-flight request is expected to finish first. A transfer
+  /// whose server stopped answering cannot wait for that, so it calls
+  /// [abort] instead.
   Future<void> close();
+
+  /// Drops the transport now, failing whatever is still waiting on it.
+  ///
+  /// A peer that stops replying leaves an SFTP read awaiting a reply that
+  /// never comes, and nothing above this layer can time it out without the
+  /// underlying handle being torn down. [abort] does exactly that, so the
+  /// waiting call reports an error instead of parking the transfer forever.
+  /// The client is unusable afterwards; open a new one to keep browsing.
+  Future<void> abort();
 }
 
 /// One open remote file.
@@ -87,6 +100,20 @@ abstract class RemoteFile {
   /// that is never closed on a transport that buffers (the daemon API) has its
   /// content discarded, so callers must close in a `finally`.
   Future<void> close();
+}
+
+/// Raised when a remote read produces nothing for too long.
+///
+/// A peer that stops answering leaves an SFTP request parked with no timeout
+/// of its own, so a transfer would wait forever instead of failing. Surfaces
+/// report this as a broken transfer rather than a failed destination.
+class RemoteTransferStalled implements Exception {
+  const RemoteTransferStalled(this.detail);
+
+  final String detail;
+
+  @override
+  String toString() => 'The server stopped sending data: $detail';
 }
 
 /// Whether a listing entry resolves to a directory.
@@ -149,6 +176,13 @@ class SftpRemoteFileClient implements RemoteFileClient {
 
   @override
   Future<void> close() => _sftp.close();
+
+  @override
+  Future<void> abort() async {
+    // Closing fails every pending request with an abort error, which is what
+    // releases a read the server stopped answering.
+    await _sftp.close();
+  }
 }
 
 /// Whether [mode] opens the file for writing, which decides whether [RemoteFile]

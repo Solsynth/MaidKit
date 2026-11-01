@@ -198,6 +198,9 @@ class MaidCafeRemoteFileClient implements RemoteFileClient {
     onClose?.call();
   }
 
+  @override
+  Future<void> abort() => close();
+
   void _throwIfClosed() {
     if (_closed) {
       throw const RemoteFileSystemException(
