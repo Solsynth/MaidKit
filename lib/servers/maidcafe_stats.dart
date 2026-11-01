@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:maid_kit/data/local/app_database.dart';
 
 import 'maidcafe_debug.dart';
@@ -298,20 +299,25 @@ enum MaidCafeStatsBlocker {
   credentialMissing,
 }
 
-/// Reads statistics straight from the daemon, over the route a client can take
-/// **without SSH**.
+/// Reads host statistics from the daemon over the route this client can take.
 ///
-/// A daemon that only listens on the server's own loopback is reached through
-/// an SSH forward by the other daemon consumers. Statistics deliberately do not
-/// take that route: the point here is to cost the server no SSH connection at
-/// all, so a host whose daemon is not directly reachable resolves to null and
-/// the SSH collectors stay in charge.
+/// Three routes answer, in this order:
 ///
-/// [ServerMaidCafeRoute.maidCafeBrowserTerminalUrl] is the address a client
-/// without a tunnel dials: the endpoint override when one is stored, otherwise
-/// the server host on the port the daemon itself reported. It is used on every
-/// platform, so a native build prefers a direct dial over opening a session for
-/// numbers the daemon already serves.
+/// 1. A stored endpoint that is **not** loopback is the user's own address for
+///    the daemon — typically an HTTPS reverse proxy. It is dialed as stored,
+///    because it reaches a published daemon without costing the host anything.
+/// 2. Otherwise, a native build with a live SSH session **forwards** the
+///    daemon's port and dials that forward. This is what makes a stock
+///    installation, whose daemon listens only on `127.0.0.1:8747`, readable
+///    without publishing it — and it is also what makes a daemon bound to
+///    `0.0.0.0` but firewalled off from this client readable, which a blind
+///    dial at the server host is not.
+/// 3. With no SSH transport (a browser build, above all) the address is
+///    [ServerMaidCafeRoute.maidCafeBrowserTerminalUrl]: the server host on the
+///    port the daemon reported, which only answers when it is published.
+///
+/// A route that fails withdraws the snapshot, so the SSH collectors take the
+/// host back rather than a card showing numbers that stopped arriving.
 class MaidCafeStatsCollector {
   MaidCafeStatsCollector({
     required ServerRepository repository,
@@ -323,46 +329,80 @@ class MaidCafeStatsCollector {
   final ServerRepository _repository;
   final SshConnectionManager _manager;
 
-  /// The resolved direct route per server id: the address, the credential
+  /// The resolved route per server id: how it was reached, the credential
   /// version it was resolved against, and the session it opened.
   ///
   /// The scheduler polls every served host on a fixed cadence, so resolving
   /// the route again on every read would decrypt the vault secret and open a
   /// fresh TCP connection — and re-run the daemon's `/health` handshake — for
   /// numbers that come from the same place every time. A cached session is
-  /// reused until the address or the stored credential changes, or the
-  /// session dies.
-  final Map<int, _DirectRoute> _routes = {};
+  /// reused until the route or the stored credential changes, the transport
+  /// it rides dies, or the session itself does.
+  final Map<int, _StatsRoute> _routes = {};
 
   /// Reads already running per server id, so a manual refresh landing on top
   /// of a scheduled poll shares one dial instead of opening a second session.
   final Map<int, Future<MaidCafeServerStats?>> _inFlight = {};
 
-  /// The direct daemon address for [server], or null when only an SSH route
-  /// exists.
+  /// The address a statistics read dials directly, or null when the read has
+  /// to go through an SSH forward instead.
+  ///
+  /// A stored non-loopback endpoint is the user's own route and always wins.
+  /// With no SSH session to forward through — a browser above all, but also a
+  /// desktop that has not connected yet — the browser view of the row is what
+  /// there is: the server host on the daemon port it reported, which answers
+  /// only when the daemon is published. A live session makes the read forward
+  /// instead, because that is the transport that reaches a daemon listening on
+  /// the server's own loopback.
   String? endpointFor(Server server) {
     if (!server.collectStats) return null;
-    final url = server.maidCafeBrowserTerminalUrl;
-    if (url == null || url.trim().isEmpty) return null;
-    return url;
+    final override = server.maidCafeEndpointOverride;
+    if (override != null) return override;
+    if (kIsWeb || _manager.clientFor(server.id) == null) {
+      return server.maidCafeBrowserTerminalUrl;
+    }
+    return null;
   }
+
+  /// Whether [server]'s daemon can be reached through an SSH forward: a native
+  /// build with a live session, and no published endpoint that already answers.
+  ///
+  /// The address is not required: a row that never probed its daemon carries
+  /// neither a port nor a daemon URL, and a stock installation is exactly that
+  /// case. The forward path reads the daemon's own configuration in that state
+  /// — once, before the route is cached — which is what a probe would have
+  /// stored.
+  bool forwardsFor(Server server) {
+    if (!server.collectStats || kIsWeb) return false;
+    if (server.maidCafeEndpointOverride != null) return false;
+    return _manager.clientFor(server.id) != null;
+  }
+
+  /// Whether a read of [server]'s statistics can reach its daemon at all: a
+  /// published endpoint this client dials, or a session it forwards through.
+  ///
+  /// It says nothing about the daemon answering — a route that fails is what
+  /// withdraws the snapshot — so it is the predicate the scheduler serves by
+  /// and the one a surface checks before asking for a read.
+  bool canServe(Server server) =>
+      endpointFor(server) != null || forwardsFor(server);
 
   /// Why [server]'s statistics cannot be read from its daemon, or null when a
   /// read can be attempted.
   ///
   /// A caller that has to explain the failure — the dashboard's connect action,
   /// which is the only way a browser has to fill a card in — needs these told
-  /// apart: an address this client cannot dial, a credential that was never
-  /// stored, and a daemon that stayed silent are three different things to fix.
+  /// apart: no route this client can take, a credential that was never stored,
+  /// and a daemon that stayed silent are three different things to fix.
   Future<MaidCafeStatsBlocker?> blockerFor(Server server) async {
-    if (endpointFor(server) == null) return MaidCafeStatsBlocker.routeMissing;
+    if (!canServe(server)) return MaidCafeStatsBlocker.routeMissing;
     return await _credentialFor(server) == null
         ? MaidCafeStatsBlocker.credentialMissing
         : null;
   }
 
-  /// The credential a direct read presents: the dedicated terminal secret when
-  /// one is stored, the metrics secret otherwise — the same fallback the daemon
+  /// The credential a read presents: the dedicated terminal secret when one is
+  /// stored, the metrics secret otherwise — the same fallback the daemon
   /// itself applies to `daemon.terminal.secret`.
   Future<String?> _credentialFor(Server server) async {
     final secret =
@@ -380,9 +420,10 @@ class MaidCafeStatsCollector {
       '${server.maidCafeTerminalSecretNonce ?? '-'}/'
       '${server.maidCafeMetricsSecretNonce ?? '-'}';
 
-  /// One snapshot, or null when the daemon is unreachable on its direct route
-  /// or answered with something unusable. Failures are logged, never thrown:
-  /// a host whose daemon is down must not take the dashboard with it.
+  /// One snapshot, or null when the daemon is unreachable on every route this
+  /// client can take, or answered with something unusable. Failures are
+  /// logged, never thrown: a host whose daemon is down must not take the
+  /// dashboard with it.
   Future<MaidCafeServerStats?> collect(Server server) {
     final pending = _inFlight[server.id];
     if (pending != null) return pending;
@@ -393,93 +434,153 @@ class MaidCafeStatsCollector {
 
   Future<MaidCafeServerStats?> _collectOnce(Server server) async {
     final endpoint = endpointFor(server);
-    if (endpoint == null) {
-      // Either collection is switched off for this server or its daemon has no
-      // address this client can dial; the SSH collectors cover the second.
+    final forward = endpoint == null && forwardsFor(server);
+    if (endpoint == null && !forward) {
+      // Collection is off for this host, or it has neither a published address
+      // this client can dial nor a session to forward through; the SSH
+      // collectors cover the second case.
       maidCafeLog(
-        'no direct daemon address for "${server.name}" '
-        '(collectStats=${server.collectStats}); its statistics stay with the '
-        'SSH collectors',
+        'no daemon route for "${server.name}" '
+        '(collectStats=${server.collectStats}, '
+        'stored=${server.maidCafeTerminalUrl ?? 'none'}, '
+        'port=${server.maidCafeTerminalPort ?? 'none'}, '
+        'ssh=${_manager.clientFor(server.id) == null ? 'none' : 'available'}); '
+        'its statistics stay with the SSH collectors',
       );
       return null;
     }
+    // The route identity: what the read dials, or the forward it rides.
+    // A change here — an endpoint saved, a session appearing or going — is a
+    // different route, so the cached session speaks to a configuration that
+    // no longer exists.
+    final routeKey =
+        endpoint ??
+        'forward:${server.maidCafeTerminalUrl ?? ''}/'
+            '${server.maidCafeTerminalPort ?? ''}';
     final version = _credentialVersion(server);
     var route = _routes[server.id];
     if (route != null &&
-        (route.endpoint != endpoint ||
+        (route.key != routeKey ||
             route.credentialVersion != version ||
             route.session.isClosed)) {
-      // The address or the credential moved: the old session is speaking to a
-      // configuration that no longer exists.
       await closeSession(server.id);
       route = null;
     }
     if (route == null) {
       final secret = await _credentialFor(server);
-      if (secret == null) {
+      if (secret == null && !forward) {
         maidCafeLog(
           'no daemon credential is stored for "${server.name}", so its '
-          'statistics cannot be read directly',
+          'statistics cannot be read from $endpoint',
         );
         return null;
       }
-      maidCafeLog('reading statistics for "${server.name}" from $endpoint');
+      maidCafeLog(
+        forward
+            ? 'reading statistics for "${server.name}" through an SSH forward '
+                  'to its daemon'
+            : 'reading statistics for "${server.name}" from $endpoint',
+      );
       final MaidCafeStreamSession session;
       try {
-        session = await MaidCafeStreamSession.openAt(
-          manager: _manager,
-          baseUrl: endpoint,
-          apiSecret: secret,
-        );
+        session = forward
+            ? await _openThroughForward(server, secret)
+            : await MaidCafeStreamSession.openAt(
+                manager: _manager,
+                baseUrl: endpoint!,
+                apiSecret: secret,
+              );
       } catch (error) {
         maidCafeLog(
-          'opening $endpoint for "${server.name}" failed',
+          forward
+              ? 'the SSH forward to the daemon of "${server.name}" failed'
+              : 'opening $endpoint for "${server.name}" failed',
           error: error,
         );
         return null;
       }
-      route = _DirectRoute(
-        endpoint: endpoint,
+      route = _StatsRoute(
+        key: routeKey,
         credentialVersion: version,
         session: session,
       );
       _routes[server.id] = route;
     }
+    final baseUrl = route.session.baseUrl;
     try {
       final metrics = await route.session.metrics();
       final stats = parseMaidCafeServerStats(metrics);
       if (stats == null) {
         maidCafeLog(
-          'the daemon at $endpoint answered without usable metrics for '
+          'the daemon at $baseUrl answered without usable metrics for '
           '"${server.name}"',
         );
         return null;
       }
       return MaidCafeServerStats(
         stats: stats,
-        endpoint: endpoint,
+        endpoint: baseUrl,
         fetchedAt: DateTime.now(),
       );
     } catch (error) {
       maidCafeLog(
-        'reading statistics for "${server.name}" from $endpoint failed',
+        'reading statistics for "${server.name}" from $baseUrl failed',
         error: error,
       );
-      // A failed read is what a dead socket or a restarted daemon looks like;
-      // the next read has to dial again rather than retry the corpse.
+      // A failed read is what a dead socket, a dropped SSH transport or a
+      // restarted daemon looks like; the next read has to open a fresh route
+      // rather than retry the corpse.
       await closeSession(server.id);
       return null;
     }
   }
 
-  /// Drops the cached session for [serverId], if one is open.
+  /// Opens the daemon through a local SSH forward, which is the route a stock
+  /// installation needs: the daemon listens on the server's own loopback, so
+  /// nothing but a forward reaches it without publishing it first.
+  ///
+  /// A port the row already carries — the one a probe learned, or the one in a
+  /// stored tunnel address — opens the forward with no SSH command at all. A
+  /// row that never probed its daemon is the one case that has to read the
+  /// daemon's configuration first, which is what `open` does; that read happens
+  /// once per cached route, not per poll.
+  Future<MaidCafeStreamSession> _openThroughForward(
+    Server server,
+    String? storedSecret,
+  ) async {
+    final stored = Uri.tryParse(server.maidCafeTerminalUrl?.trim() ?? '');
+    final port =
+        server.maidCafeTerminalPort ??
+        (stored != null && stored.hasPort ? stored.port : null);
+    if (port == null) {
+      final credential = await _repository.credentialFor(server);
+      return MaidCafeStreamSession.open(
+        manager: _manager,
+        server: server,
+        apiSecret: storedSecret,
+        sudoPassword: credential.type == CredentialType.password
+            ? credential.password
+            : null,
+      );
+    }
+    return MaidCafeStreamSession.openThroughForward(
+      manager: _manager,
+      server: server,
+      port: port,
+      apiSecret: storedSecret,
+    );
+  }
+
+  /// Drops the cached session for [serverId], if one is open. A forwarded
+  /// session closes its own forward.
   Future<void> closeSession(int serverId) async {
     final route = _routes.remove(serverId);
     await route?.session.close();
   }
 
   /// Drops every cached session — what the scheduler does when no dashboard is
-  /// watching, so no idle daemon socket outlives the readings it served.
+  /// watching, so no idle daemon socket, and no idle SSH forward, outlives the
+  /// readings it served.
   Future<void> closeAll() async {
     final routes = _routes.values.toList();
     _routes.clear();
@@ -489,16 +590,17 @@ class MaidCafeStatsCollector {
   }
 }
 
-/// One server's resolved direct daemon route: the address it was resolved at,
-/// the credential version behind it, and the session that serves it.
-class _DirectRoute {
-  const _DirectRoute({
-    required this.endpoint,
+/// One server's resolved statistics route: what it dials (a published address,
+/// or the forward it rides), the credential version behind it, and the session
+/// that serves it.
+class _StatsRoute {
+  const _StatsRoute({
+    required this.key,
     required this.credentialVersion,
     required this.session,
   });
 
-  final String endpoint;
+  final String key;
   final String credentialVersion;
   final MaidCafeStreamSession session;
 }

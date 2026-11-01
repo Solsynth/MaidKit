@@ -359,12 +359,14 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     final manager = ref.read(connectionManagerProvider);
     _refreshing = true;
     try {
-      // Statistics: the daemon leads whenever it has a direct address, and the
+      // Statistics: the daemon leads whenever this client has a route to it —
+      // a published endpoint, or a forward through the session below — and the
       // overview reads whatever it publishes. Skipping this while a session is
       // live is what used to leave a MaidCafe-backed host on SSH numbers. The
       // refresh is not forced, so a daemon that failed waits out its backoff
       // rather than being dialled on every focused interval.
-      if (metricsEnabled && widget.server.maidCafeBrowserTerminalUrl != null) {
+      final collector = ref.read(maidCafeStatsCollectorProvider);
+      if (metricsEnabled && collector.canServe(widget.server)) {
         await ref
             .read(maidCafeStatsSchedulerProvider)
             .refreshServer(widget.server);

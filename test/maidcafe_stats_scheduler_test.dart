@@ -33,6 +33,8 @@ void main() {
     final scheduler = MaidCafeStatsScheduler(
       collect: (_) async => null,
       onSnapshot: (_, _) {},
+      serves: (server) =>
+          server.collectStats && server.maidCafeBrowserTerminalUrl != null,
     );
     addTearDown(scheduler.dispose);
 
@@ -56,6 +58,7 @@ void main() {
     final scheduler = MaidCafeStatsScheduler(
       collect: (_) async => answering ? _snapshot() : null,
       onSnapshot: (id, snapshot) => published['$id-$answering'] = snapshot,
+      serves: (_) => true,
     );
     addTearDown(scheduler.dispose);
 
@@ -81,6 +84,7 @@ void main() {
     final scheduler = MaidCafeStatsScheduler(
       collect: (_) async => throw StateError('boom'),
       onSnapshot: (id, snapshot) => published[id] = snapshot,
+      serves: (_) => true,
     );
     addTearDown(scheduler.dispose);
 
@@ -96,6 +100,7 @@ void main() {
       final scheduler = MaidCafeStatsScheduler(
         collect: (_) async => _snapshot(),
         onSnapshot: (id, _) => published.add(id),
+        serves: (_) => true,
       );
       addTearDown(scheduler.dispose);
 
@@ -122,6 +127,7 @@ void main() {
           return null;
         },
         onSnapshot: (_, _) {},
+        serves: (_) => true,
       );
       addTearDown(scheduler.dispose);
       final server = _server(id: 3);
@@ -143,6 +149,7 @@ void main() {
     final scheduler = MaidCafeStatsScheduler(
       collect: (_) async => answering ? _snapshot() : null,
       onSnapshot: (id, snapshot) => published[id] = snapshot,
+      serves: (_) => true,
     );
     addTearDown(scheduler.dispose);
     final server = _server(id: 4);

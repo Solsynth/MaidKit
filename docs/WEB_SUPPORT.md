@@ -68,15 +68,24 @@ being refused rather than as a bad endpoint or origin.
 
 ### Host statistics over the daemon
 
-A host whose daemon answers on an address this client can dial reports its load,
-memory, swap, disk and uptime over `/api/v1/metrics` — **no SSH session is
-opened for them**, on any platform. `MaidCafeStatsCollector`
-(`lib/servers/maidcafe_stats.dart`) resolves that address with
-`maidCafeBrowserTerminalUrl`, the same view a browser gets: the endpoint override
-when one is stored, otherwise the server host on the port the daemon reported. A
-daemon that only listens on the server's own loopback therefore has no direct
-route, so it falls back to the SSH collectors rather than opening a forward —
-the point of the route is that it costs the server no connection at all.
+A host reports its load, memory, swap, disk and uptime over `/api/v1/metrics`
+from whichever route this client can take to its daemon.
+`MaidCafeStatsCollector` (`lib/servers/maidcafe_stats.dart`) dials a stored
+non-loopback endpoint as-is — the user's own address, typically an HTTPS front —
+and otherwise:
+
+- on a native build with a live SSH session, **forwards** the daemon's port and
+  dials that forward. A stock installation listens on the server's own
+  `127.0.0.1:8747`, which no dial at the server host reaches, so without the
+  forward such a host had no daemon statistics at all and stayed on the SSH
+  collectors. The port comes from the column a probe learned (or from the stored
+  tunnel address), so opening the route costs no config read over SSH.
+- with no SSH transport — a browser build above all — dials
+  `maidCafeBrowserTerminalUrl`: the server host on the port the daemon reported,
+  which answers only when the daemon is published.
+
+A route that fails withdraws the snapshot and the SSH collectors take the host
+back, so a card never presents numbers that stopped arriving.
 
 `MaidCafeStatsScheduler` polls on the same cadence as the SSH path, driven by
 `maidCafeStatsSchedulerProvider` from `app.dart`. Both that scheduler and the
@@ -91,29 +100,30 @@ the stored credential it was resolved against (identified by the secret's
 nonces, so a rotation invalidates it without decrypting anything), and the
 connection — and the next poll reuses it, which makes a refresh one
 `/api/v1/metrics` request rather than a vault decrypt, a TCP dial and a
-`/health` handshake. The session is closed when SSH takes the host over, when
-the host leaves the served set, and when the dashboard stops being the focused
-tab. A route that fails is backed off exponentially from the poll interval up to
-five minutes, so a dead daemon costs one attempt per backoff rather than two log
-lines every 30 seconds; a manual refresh always bypasses that. Only the
-transition is logged: one line when a route goes down, one when it recovers.
+`/health` handshake. The session is closed when its route changes — an endpoint
+saved, a forward's SSH transport going away — when the host leaves the served
+set, and when the dashboard stops being the focused tab; a forwarded session
+closes its own forward with it. A route that fails is backed off exponentially
+from the poll interval up to five minutes, so a dead daemon costs one attempt
+per backoff rather than two log lines every 30 seconds; a manual refresh always
+bypasses that. Only the transition is logged: one line when a route goes down,
+one when it recovers.
 
 The first read a focus change triggers is deferred by a microtask: the
 scheduler provider calls `update` from its own build, and publishing a snapshot
 there would modify another provider during initialisation, which Riverpod
 rejects as an unhandled assertion on every rebuild.
 
-A card and the server detail page read the daemon snapshot while no SSH session
-is up — that is what makes a
-daemon-backed card live (`connected`) with no session, and what makes the
-browser's cards work at all — and the session's own numbers whenever one is: a
-connection the user opened outranks the no-session route, and it is the only
-route that measures a round trip. The card says *Connected* rather than a
-latency it never measured while the daemon is the source, and it keeps offering
-*Connect*: a native build has an SSH route to open, and a daemon snapshot is not
-a session this client made (a browser, which has no socket to open, keeps the
-button away). When a daemon stops answering, its snapshot is withdrawn instead
-of being left on screen as if it were current.
+A card and the server detail page read the daemon snapshot whenever one is
+present, with the session's own readings as the fallback for a host whose daemon
+does not answer: the daemon poll costs the host no exec, and it is what makes a
+daemon-backed card live (`connected`) with no session at all. The session still
+owns the connection itself — its round trip shows, and *Connect* stays offered
+on a native build while no session the user opened is up, because a daemon
+snapshot is not a connection this client made (a browser, which has no socket to
+open, keeps the button away). When a daemon stops answering, its snapshot is
+withdrawn instead of being left on screen as if it were current, and the SSH
+readings take the card back.
 
 The daemon serves this only to a caller that presents its terminal secret or,
 when none is set, its metrics secret — the same fallback the daemon applies to

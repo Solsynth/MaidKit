@@ -18,20 +18,31 @@ import 'maidcafe_stats.dart';
 /// backoff (capped at [maxRetryDelay]) instead of being dialled on every tick,
 /// which is what keeps a dead tunnel from filling the log and the event loop.
 class MaidCafeStatsScheduler {
+  /// [serves] answers whether a host has a route this client can take; it is
+  /// not "the daemon is up", only "a read can be attempted", so a host whose
+  /// daemon turns out to be down still gets its failed read recorded and its
+  /// retry backed off.
   MaidCafeStatsScheduler({
     required Future<MaidCafeServerStats?> Function(Server server) collect,
     required void Function(int serverId, MaidCafeServerStats? snapshot)
     onSnapshot,
+    required bool Function(Server server) serves,
     Future<void> Function(int serverId)? releaseRoute,
     Future<void> Function()? releaseRoutes,
-  }) : this._(collect, onSnapshot, releaseRoute, releaseRoutes);
+  }) : this._(collect, onSnapshot, serves, releaseRoute, releaseRoutes);
 
   MaidCafeStatsScheduler._(
     this._collect,
     this._onSnapshot,
+    this._serves,
     this._releaseRoute,
     this._releaseRoutes,
   );
+
+  /// Whether [server] has a daemon route this client can take at all — a
+  /// published address, or a session to forward through. A host without one
+  /// stays with the SSH collectors instead of being dialled on every tick.
+  final bool Function(Server server) _serves;
 
   final Future<MaidCafeServerStats?> Function(Server server) _collect;
   final void Function(int serverId, MaidCafeServerStats? snapshot) _onSnapshot;
@@ -69,10 +80,13 @@ class MaidCafeStatsScheduler {
   /// in when the dashboard opens instead of after the first interval; the same
   /// set only re-arms the timer.
   void update({required Duration interval, required List<Server> servers}) {
+    // The predicate is answered from the SSH transport as well as the row, and
+    // a session comes and goes without the row changing: the served set is
+    // what could be served right now, and [refresh] asks again per tick so a
+    // host joins or leaves the daemon route as its session does.
     _servers = [
       for (final server in servers)
-        if (server.collectStats && server.maidCafeBrowserTerminalUrl != null)
-          server,
+        if (server.collectStats && _serves(server)) server,
     ];
     final ids = {for (final server in _servers) server.id};
     final changed = !_sameIds(ids, _serverIds);
@@ -111,13 +125,20 @@ class MaidCafeStatsScheduler {
 
   /// Reads every served host whose route is due. Concurrent calls are dropped:
   /// a slow daemon must not stack up requests.
+  ///
+  /// A host whose route went away — its SSH transport dropped, so nothing can
+  /// be forwarded — is released here rather than dialled into a backoff it can
+  /// never clear.
   Future<void> refresh() async {
     if (_refreshing) return;
     _refreshing = true;
     try {
       await Future.wait([
         for (final server in _servers)
-          if (_due(server.id)) refreshServer(server),
+          if (_serves(server) && _due(server.id))
+            refreshServer(server)
+          else if (!_serves(server))
+            _releaseRoute?.call(server.id) ?? Future<void>.value(),
       ]);
     } finally {
       _refreshing = false;

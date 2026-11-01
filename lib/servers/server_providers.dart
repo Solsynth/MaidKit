@@ -1753,6 +1753,10 @@ final maidCafeStatsSchedulerProvider = Provider<MaidCafeStatsScheduler>((ref) {
   final scheduler = MaidCafeStatsScheduler(
     collect: collector.collect,
     onSnapshot: notifier.set,
+    // A host is served when a read can reach its daemon at all — a published
+    // endpoint, or a session to forward through. Whether the daemon answers is
+    // the read's own business; a host without a route stays on SSH readings.
+    serves: collector.canServe,
     // The collector keeps each daemon's session open between polls; the
     // scheduler is the only thing that knows when a host stops being watched.
     releaseRoute: collector.closeSession,

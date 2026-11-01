@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:dartssh2/dartssh2.dart';
+import 'package:maid_kit/servers/port_forwarding_models.dart';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -308,4 +311,119 @@ void routeCacheTests() {
 
     expect(daemon.healthReads, 2, reason: 'the old session is not reused');
   });
+
+  test('a loopback daemon is reached through an SSH forward', () async {
+    // The regression this guards: statistics dialled the row's address only,
+    // so a stock installation — daemon on the server's own 127.0.0.1:8747 —
+    // had no route at all and fell back to SSH readings, or to nothing.
+    final server = await repository.create(
+      ServerDraft(
+        name: 'stock host',
+        host: '10.0.0.9',
+        port: 22,
+        username: 'root',
+        maidCafeTerminalUrl: 'http://127.0.0.1:8747',
+      ),
+    );
+    await repository.updateMaidCafeConfig(
+      server,
+      daemonUrl: 'http://127.0.0.1:8747',
+      metricsSecret: 'metrics-secret',
+    );
+    final row = await repository.currentServer(server);
+    final manager = _ForwardingManager(daemon.baseUrl);
+    final forwarding = MaidCafeStatsCollector(
+      repository: repository,
+      manager: manager,
+    );
+    addTearDown(forwarding.closeAll);
+
+    expect(forwarding.endpointFor(row), isNull, reason: 'it forwards instead');
+    expect(forwarding.forwardsFor(row), isTrue);
+
+    final snapshot = await forwarding.collect(row);
+
+    expect(snapshot, isNotNull);
+    expect(manager.forwards, 1, reason: 'the daemon is reached via a forward');
+    expect(snapshot!.endpoint, daemon.baseUrl);
+  });
+
+  test('a published endpoint is dialled instead of forwarded', () async {
+    // A non-loopback address is the user's own route — typically an HTTPS
+    // front — so it is dialled as stored even while a session could forward.
+    final server = await repository.create(
+      ServerDraft(
+        name: 'published host',
+        host: '10.0.0.9',
+        port: 22,
+        username: 'root',
+        maidCafeTerminalUrl: 'https://daemon.example',
+      ),
+    );
+    await repository.updateMaidCafeConfig(
+      server,
+      daemonUrl: 'https://daemon.example',
+      metricsSecret: 'metrics-secret',
+    );
+    final row = await repository.currentServer(server);
+    final manager = _ForwardingManager(daemon.baseUrl);
+    final forwarding = MaidCafeStatsCollector(
+      repository: repository,
+      manager: manager,
+    );
+    addTearDown(forwarding.closeAll);
+
+    expect(forwarding.endpointFor(row), row.maidCafeTerminalUrl);
+    expect(forwarding.forwardsFor(row), isFalse);
+    expect(manager.forwards, 0, reason: 'a published daemon needs no tunnel');
+  });
+}
+
+/// A manager whose server has a live SSH session and whose forward dials
+/// [daemonUrl] in place — the daemon the tests run on this machine.
+class _ForwardingManager extends SshConnectionManager {
+  _ForwardingManager(this.daemonUrl) : super(() => throw UnimplementedError());
+
+  final String daemonUrl;
+  var forwards = 0;
+
+  @override
+  SSHClient? clientFor(int serverId) => _FakeClient();
+
+  @override
+  Future<ActivePortForward> startPortForward({
+    required Server server,
+    required PortForwardDirection direction,
+    required PortForwardKind kind,
+    required String bindHost,
+    required int bindPort,
+    String targetHost = '',
+    int targetPort = 0,
+    PortForwardOwner owner = PortForwardOwner.user,
+  }) async {
+    forwards++;
+    final target = Uri.parse(daemonUrl);
+    return ActivePortForward(
+      id: 'forward-${forwards - 1}',
+      serverId: server.id,
+      serverName: server.name,
+      direction: direction,
+      kind: kind,
+      bindHost: target.host,
+      bindPort: target.port,
+      targetHost: targetHost,
+      targetPort: targetPort,
+      owner: owner,
+    );
+  }
+
+  @override
+  Future<void> stopManagedPortForward(String id) async {}
+}
+
+/// A client that only has to exist: the forward is what carries the traffic.
+class _FakeClient implements SSHClient {
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('no SSH command runs in this test');
 }

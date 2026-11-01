@@ -13,6 +13,9 @@ class _FakeSession implements MaidCafeStreamSession {
   bool closed = false;
 
   @override
+  String get baseUrl => 'http://127.0.0.1:0';
+
+  @override
   String? get apiSecret => null;
 
   @override

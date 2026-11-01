@@ -114,6 +114,7 @@ void main() {
     final scheduler = MaidCafeStatsScheduler(
       collect: (_) async => _daemonSnapshot,
       onSnapshot: (_, _) {},
+      serves: (_) => true,
     );
     addTearDown(scheduler.dispose);
 

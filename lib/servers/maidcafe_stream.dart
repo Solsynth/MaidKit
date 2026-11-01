@@ -1092,6 +1092,7 @@ class MaidCafeStreamSession {
     this._forward,
     this._dio,
     this._apiSecret,
+    this._baseUrl,
   );
 
   static const _remoteHost = '127.0.0.1';
@@ -1100,6 +1101,7 @@ class MaidCafeStreamSession {
   final ActivePortForward? _forward;
   final Dio _dio;
   final String? _apiSecret;
+  final String _baseUrl;
   var _closed = false;
   String? _version;
   http.Client? _streamClient;
@@ -1107,6 +1109,11 @@ class MaidCafeStreamSession {
   _activeStreamSubscriptions = {};
 
   String? get apiSecret => _apiSecret;
+
+  /// The address this session speaks to: the stored endpoint, or the local
+  /// port an SSH forward bound. Recorded so a read can name the route that
+  /// answered it.
+  String get baseUrl => _baseUrl;
 
   /// Whether [close] has been called; a closed session cannot be reused.
   bool get isClosed => _closed;
@@ -1128,6 +1135,7 @@ class MaidCafeStreamSession {
       null,
       _newDio(baseUrl, apiSecret),
       apiSecret,
+      baseUrl,
     );
     try {
       await connection.health();
@@ -1137,6 +1145,20 @@ class MaidCafeStreamSession {
       rethrow;
     }
   }
+
+  /// Opens a session through a local SSH forward to [port] on the server's own
+  /// loopback, with no config read and no endpoint override attempt.
+  ///
+  /// [open] decides which route to take, and deciding costs an SSH command to
+  /// read the daemon's configuration. A caller that already knows the port and
+  /// the credential — the statistics collector, which read them once — pays
+  /// nothing for that decision here.
+  static Future<MaidCafeStreamSession> openThroughForward({
+    required SshConnectionManager manager,
+    required Server server,
+    required int port,
+    String? apiSecret,
+  }) => _openWithSecret(manager, server, port, apiSecret);
 
   static Future<MaidCafeStreamSession> open({
     required SshConnectionManager manager,
@@ -1241,14 +1263,13 @@ class MaidCafeStreamSession {
           targetPort: resolvedPort,
           owner: PortForwardOwner.maidCafe,
         );
+        final forwardUrl = 'http://${forward.bindHost}:${forward.bindPort}';
         connection = MaidCafeStreamSession._(
           manager,
           forward,
-          _newDio(
-            'http://${forward.bindHost}:${forward.bindPort}',
-            resolvedSecret,
-          ),
+          _newDio(forwardUrl, resolvedSecret),
           resolvedSecret,
+          forwardUrl,
         );
         await connection.health();
         return connection;
