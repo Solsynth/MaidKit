@@ -1,5 +1,7 @@
 import 'package:easy_localization/easy_localization.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:dartssh2/dartssh2.dart' show SSHKeyPair;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
@@ -7,8 +9,10 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 
+import 'credential_generator.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'ssh_key_generator_dialog.dart';
 
 /// Opens the credential editor sheet; returns the draft when saved.
 Future<SavedCredentialDraft?> showCredentialEditorSheet(
@@ -183,6 +187,7 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
   final _secret = TextEditingController();
   final _passphrase = TextEditingController();
   CredentialType _type = CredentialType.privateKey;
+  bool _revealSecret = false;
 
   @override
   void initState() {
@@ -216,6 +221,44 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
     if (mounted) setState(() => _secret.text = String.fromCharCodes(bytes));
   }
 
+  void _generatePassword() {
+    setState(() {
+      _secret.text = generatePassword();
+      // A generated password nobody can read is useless: show it, so it can be
+      // written straight to the server.
+      _revealSecret = true;
+    });
+    showSnackBar('credentialsPasswordGenerated'.tr());
+  }
+
+  Future<void> _copySecret() async {
+    if (_secret.text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: _secret.text));
+    if (!mounted) return;
+    showSnackBar('commonCopiedToClipboard'.tr());
+  }
+
+  /// Fills the form with a key pair the user generated in the dialog: the
+  /// private key becomes the secret, the passphrase that protects it stays in
+  /// the field, and the public key goes to the clipboard for
+  /// `authorized_keys`.
+  Future<void> _generateKey() async {
+    final result = await showSshKeyGeneratorDialog(
+      context,
+      initialPassphrase: _passphrase.text,
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _type = CredentialType.privateKey;
+      _secret.text = result.pair.privateKeyPem;
+      _passphrase.text = result.passphrase;
+      if (_name.text.trim().isEmpty) _name.text = result.pair.comment;
+    });
+    await Clipboard.setData(ClipboardData(text: result.pair.publicKey));
+    if (!mounted) return;
+    showSnackBar('credentialsKeyPublicCopied'.tr());
+  }
+
   void _save() {
     if (!_form.currentState!.validate()) return;
     final credential = _type == CredentialType.password
@@ -224,10 +267,28 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
             privateKey: _secret.text,
             keyPassphrase: _passphrase.text.isEmpty ? null : _passphrase.text,
           );
+    // A passphrase-protected PEM without its passphrase is unusable: the
+    // connection would fail to parse the key, not ask for the passphrase.
+    if (credential.type == CredentialType.privateKey &&
+        credential.keyPassphrase == null &&
+        _encryptedPem(credential.privateKey!)) {
+      _showMessage(context, 'credentialsKeyPassphraseRequired'.tr());
+      return;
+    }
     Navigator.pop(
       context,
       SavedCredentialDraft(name: _name.text, credential: credential),
     );
+  }
+
+  /// Whether [pem] carries a passphrase-protected private key. Unparseable text
+  /// is left to the connection manager to reject.
+  static bool _encryptedPem(String pem) {
+    try {
+      return SSHKeyPair.isEncryptedPem(pem);
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -268,16 +329,48 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
                   setState(() => _type = value.first),
             ),
             const SizedBox(height: 12),
-            if (_type == CredentialType.password)
+            if (_type == CredentialType.password) ...[
               TextFormField(
                 controller: _secret,
-                obscureText: true,
+                obscureText: !_revealSecret,
                 decoration: InputDecoration(
                   labelText: 'serverPasswordLabel'.tr(),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip:
+                            (_revealSecret
+                                    ? 'credentialsHidePassword'
+                                    : 'credentialsShowPassword')
+                                .tr(),
+                        onPressed: () =>
+                            setState(() => _revealSecret = !_revealSecret),
+                        icon: Icon(
+                          _revealSecret
+                              ? Symbols.visibility_off
+                              : Symbols.visibility,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'commonCopy'.tr(),
+                        onPressed: _copySecret,
+                        icon: const Icon(Symbols.content_copy),
+                      ),
+                    ],
+                  ),
                 ),
                 validator: _requiredSecret,
-              )
-            else ...[
+              ),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: _generatePassword,
+                  icon: const Icon(Symbols.casino, size: 18),
+                  label: Text('credentialsGeneratePassword'.tr()),
+                ),
+              ),
+            ] else ...[
               TextFormField(
                 controller: _secret,
                 minLines: 4,
@@ -285,11 +378,20 @@ class _CredentialEditorSheetState extends State<_CredentialEditorSheet> {
                 decoration: InputDecoration(
                   labelText: 'serverPrivateKeyLabel'.tr(),
                   suffixIcon: IconButton(
+                    tooltip: 'credentialsKeyImport'.tr(),
                     onPressed: _pickKey,
                     icon: const Icon(Symbols.upload_file),
                   ),
                 ),
                 validator: _required,
+              ),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: _generateKey,
+                  icon: const Icon(Symbols.key, size: 18),
+                  label: Text('credentialsGenerateKey'.tr()),
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(

@@ -19,7 +19,9 @@ import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
 import 'package:maid_kit/theme.dart';
+import 'credential_generator.dart';
 import 'maidcafe_service.dart';
+import 'ssh_key_generator_dialog.dart';
 import 'port_forward_sheet.dart';
 import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
@@ -2249,6 +2251,25 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
     if (mounted) setState(() => _secret.text = String.fromCharCodes(bytes));
   }
 
+  /// Generates a key pair for a new credential, then leaves the public half on
+  /// the clipboard for `authorized_keys`: the server needs it before the
+  /// connection being configured can work.
+  Future<void> _generateKeyPair() async {
+    final result = await showSshKeyGeneratorDialog(
+      context,
+      initialPassphrase: _passphrase.text,
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _type = CredentialType.privateKey;
+      _secret.text = result.pair.privateKeyPem;
+      _passphrase.text = result.passphrase;
+    });
+    await Clipboard.setData(ClipboardData(text: result.pair.publicKey));
+    if (!mounted) return;
+    showSnackBar('credentialsKeyPublicCopied'.tr());
+  }
+
   /// Discovers serial devices through the platform bridge helper and fills
   /// the device dropdown. A picked device replaces the current field value.
   Future<void> _scanSerialDevices() async {
@@ -2808,7 +2829,7 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                         setState(() => _type = value.first),
                   ),
                   const SizedBox(height: 12),
-                  if (_type == CredentialType.password)
+                  if (_type == CredentialType.password) ...[
                     TextFormField(
                       controller: _secret,
                       obscureText: true,
@@ -2816,8 +2837,17 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                         labelText: 'serverPasswordLabel'.tr(),
                       ),
                       validator: _requiredSecret,
-                    )
-                  else ...[
+                    ),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        onPressed: () =>
+                            setState(() => _secret.text = generatePassword()),
+                        icon: const Icon(Symbols.casino, size: 18),
+                        label: Text('credentialsGeneratePassword'.tr()),
+                      ),
+                    ),
+                  ] else ...[
                     TextFormField(
                       controller: _secret,
                       minLines: 4,
@@ -2829,6 +2859,14 @@ class _AddServerDialogState extends ConsumerState<ServerEditorDialog> {
                           onPressed: _pickKey,
                           icon: const Icon(Symbols.upload_file),
                         ),
+                      ),
+                    ),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        onPressed: _generateKeyPair,
+                        icon: const Icon(Symbols.key, size: 18),
+                        label: Text('credentialsGenerateKey'.tr()),
                       ),
                     ),
                     const SizedBox(height: 12),
