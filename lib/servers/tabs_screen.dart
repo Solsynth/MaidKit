@@ -936,10 +936,10 @@ class _TabEntry extends StatelessWidget {
               if (content != null)
                 _TabActivityIcon(tab: content)
               else
-                const Icon(Symbols.terminal, size: 16),
+                Icon(_emptyPaneIcon(tab), size: 16),
               const SizedBox(width: 6),
               Text(
-                content == null ? 'sessionsNewPane'.tr() : _tabLabel(content),
+                content == null ? _emptyPaneLabel(tab) : _tabLabel(content),
                 style: theme.textTheme.labelMedium,
               ),
               if (paneCount > 1) ...[
@@ -1085,7 +1085,7 @@ class _TabChip extends StatelessWidget {
                   children: [
                     if (content == null)
                       Icon(
-                        Symbols.splitscreen,
+                        _emptyPaneIcon(tab),
                         size: 16,
                         color: selected ? scheme.primary : null,
                       )
@@ -1113,7 +1113,7 @@ class _TabChip extends StatelessWidget {
                               ),
                               child: Text(
                                 content == null
-                                    ? 'sessionsNewPane'.tr()
+                                    ? _emptyPaneLabel(tab)
                                     : _tabLabel(content),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -1364,6 +1364,14 @@ class _SessionTabBody extends ConsumerWidget {
             onOpenFileManagement: () =>
                 unawaited(_openFilesForTerminal(context, ref, terminalTab)),
             onKeyEvent: (_, event) {
+              // Where Ctrl is the command modifier the renderer would encode
+              // Ctrl+T as `^T` and keep it, so the new-tab chord has to be
+              // answered before the remote shell sees it. Cmd+T on Apple
+              // platforms falls through to the window shell instead.
+              if (isNewTabShortcut(event)) {
+                ref.read(terminalTabsProvider.notifier).openEmptyTab();
+                return KeyEventResult.handled;
+              }
               // The terminal would otherwise encode the chord for the remote
               // shell (Ctrl+D is its end-of-input) and keep the event.
               if (splitShortcutAxis(event) case final axis?) {
@@ -1551,6 +1559,18 @@ String _tabLabel(SessionTab tab) {
   if (tab is SettingsSessionTab) return 'tabSettings'.tr();
   return tab.serverName;
 }
+
+/// The bar label for a pane that has no content yet.
+///
+/// A tab opened by Cmd/Ctrl+T holds one empty pane and reads as a new tab; a
+/// pane a split added to an existing tab reads as that new pane. The bar names
+/// the tab, so the distinction is what the user just did.
+String _emptyPaneLabel(WorkspaceTab tab) =>
+    tab.panes.length == 1 ? 'sessionsNewTab'.tr() : 'sessionsNewPane'.tr();
+
+/// The icon a contentless pane shows in the bar, matching its label.
+IconData _emptyPaneIcon(WorkspaceTab tab) =>
+    tab.panes.length == 1 ? Symbols.tab : Symbols.splitscreen;
 
 /// Hands the keyboard back to a terminal when its tab becomes the visible one.
 ///

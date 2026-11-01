@@ -1034,22 +1034,29 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     _splitTab(tab, axis);
   }
 
+  /// Opens a workspace tab that holds one empty pane, the same intro a split
+  /// leaves behind, so Cmd/Ctrl+T starts from the picker instead of cloning
+  /// whatever is on screen.
+  void openEmptyTab() {
+    final paneId = _uuid.v4();
+    final next = WorkspaceTab(
+      id: _uuid.v4(),
+      panes: {paneId: TabPane(id: paneId)},
+      layout: SessionLayoutLeaf(paneId),
+      focusedPaneId: paneId,
+    );
+    state = TerminalTabsState(
+      tabs: [...state.tabs, next],
+      selectedTabId: next.id,
+    );
+  }
+
   /// Splits the selected tab into an empty sibling for the user to fill.
   void splitEmpty(SessionSplitAxis axis) {
     final tab = state.selectedTab;
     if (tab == null) {
       // No tab yet — start a workspace tab with one empty pane.
-      final paneId = _uuid.v4();
-      final next = WorkspaceTab(
-        id: _uuid.v4(),
-        panes: {paneId: TabPane(id: paneId)},
-        layout: SessionLayoutLeaf(paneId),
-        focusedPaneId: paneId,
-      );
-      state = TerminalTabsState(
-        tabs: [...state.tabs, next],
-        selectedTabId: next.id,
-      );
+      openEmptyTab();
       return;
     }
     _splitTab(tab, axis);

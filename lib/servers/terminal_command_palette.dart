@@ -73,6 +73,12 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
                   .openFileManagement(activeServer);
               close(null);
             },
+      // The palette restores the keyboard as it closes; the new tab's launcher
+      // claims it on the frame that builds it, which lands after that restore.
+      onNewTab: () {
+        close(null);
+        ref.read(terminalTabsProvider.notifier).openEmptyTab();
+      },
       // The palette hands the keyboard back to whatever had it before, on the
       // frame after it closes; the split therefore runs on the following frame
       // too. Splitting first would let that restore land on the old pane and
@@ -151,6 +157,7 @@ class _TerminalCommandPalette extends StatefulWidget {
     required this.onDismiss,
     required this.onOpen,
     required this.onOpenFiles,
+    required this.onNewTab,
     required this.onSplitRight,
     required this.onSplitDown,
     required this.onClosePane,
@@ -167,6 +174,10 @@ class _TerminalCommandPalette extends StatefulWidget {
   final VoidCallback onDismiss;
   final Future<void> Function(Server server) onOpen;
   final Future<void> Function()? onOpenFiles;
+
+  /// Opens an empty workspace tab, the launcher pane included.
+  final VoidCallback onNewTab;
+
   final VoidCallback? onSplitRight;
   final VoidCallback? onSplitDown;
 
@@ -252,6 +263,13 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
           group: _PaletteGroup.tab,
           onSelect: widget.onOpenFiles!,
         ),
+      _TerminalAction(
+        label: 'sessionsNewTab'.tr(),
+        icon: Symbols.tab,
+        group: _PaletteGroup.tab,
+        shortcut: newTabShortcutLabel(),
+        onSelect: () async => widget.onNewTab(),
+      ),
       if (widget.onSplitRight != null)
         _TerminalAction(
           label: 'sessionsSplitRight'.tr(),

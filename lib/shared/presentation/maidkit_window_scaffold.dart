@@ -114,6 +114,14 @@ class MaidKitWindowScaffold extends ConsumerWidget {
           );
           return KeyEventResult.handled;
         }
+        // Cmd/Ctrl+T opens an empty workspace tab — the same launcher pane a
+        // split leaves behind — so the new tab starts from a choice instead of
+        // a copy of the current one. It sits before the split branch so a
+        // terminal that keeps the chord never reaches the remote shell.
+        if (isNewTabShortcut(event)) {
+          ref.read(terminalTabsProvider.notifier).openEmptyTab();
+          return KeyEventResult.handled;
+        }
         // Cmd/Ctrl+D splits the focused pane to the right, Shift below. The
         // terminal asks the same helper before its renderer claims the chord,
         // so this branch covers every other focused surface.

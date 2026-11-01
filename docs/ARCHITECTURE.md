@@ -138,13 +138,15 @@ closed; a dashboard mounted in a split pane closes with its pane.
 
 The window shell
 (`shared/presentation/maidkit_window_scaffold.dart`) owns the app-level
-shortcuts — Shift+Tab opens the session-actions palette and Cmd/Ctrl+W closes
-the pane the workspace is showing — because focus may sit outside the
-workspace when they are pressed. A split loses only its focused pane; the
-tab's last pane *is* the tab, so the same chord closes the whole tab there.
-The close routes through `TerminalTabsNotifier.closePaneInTab`, which asks
-first when the pane's content is still working: a terminal running a task, an
-agent chat still replying, or a dirty file editor.
+shortcuts — Shift+Tab opens the session-actions palette, Cmd/Ctrl+T opens an
+empty workspace tab and Cmd/Ctrl+W closes the pane the workspace is showing —
+because focus may sit outside the workspace when they are pressed. The new tab
+is one empty pane, the same launcher a split leaves behind, so it starts from a
+choice instead of a copy of the current tab. A split loses only its focused
+pane; the tab's last pane *is* the tab, so the same chord closes the whole tab
+there. The close routes through `TerminalTabsNotifier.closePaneInTab`, which
+asks first when the pane's content is still working: a terminal running a task,
+an agent chat still replying, or a dirty file editor.
 
 The saved workspace (`servers/workspace_snapshot.dart`, version 2) stores one
 layout and one pane map per tab. Version 1 saves — a single workspace layout

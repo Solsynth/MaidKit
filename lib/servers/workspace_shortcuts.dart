@@ -37,6 +37,19 @@ SessionSplitAxis? splitShortcutAxis(KeyEvent event) {
       : SessionSplitAxis.horizontal;
 }
 
+/// Whether [event] asks for an empty workspace tab.
+///
+/// Cmd/Ctrl+T, the chord every browser and editor uses for "new tab". The
+/// terminal asks this before its renderer sees the key: on platforms where
+/// Ctrl is the command modifier, Ctrl+T would otherwise be encoded as `^T`
+/// and swallowed by the remote shell.
+bool isNewTabShortcut(KeyEvent event) {
+  if (event is! KeyDownEvent) return false;
+  if (event.logicalKey != LogicalKeyboardKey.keyT) return false;
+  if (HardwareKeyboard.instance.isShiftPressed) return false;
+  return isCommandChord(event);
+}
+
 /// How a command chord prints in menus on this platform.
 ///
 /// `⌘D` / `⇧⌘D` on Apple platforms, `Ctrl+D` / `Ctrl+Shift+D` elsewhere.
@@ -44,6 +57,9 @@ String commandChordLabel(String key, {bool shift = false}) {
   if (usesCommandGlyph) return '${shift ? '⇧' : ''}⌘$key';
   return 'Ctrl+${shift ? 'Shift+' : ''}$key';
 }
+
+/// The chord that opens an empty workspace tab.
+String newTabShortcutLabel() => commandChordLabel('T');
 
 /// The chord that splits the focused pane along [axis].
 String splitShortcutLabel(SessionSplitAxis axis) =>

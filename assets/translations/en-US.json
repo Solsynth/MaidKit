@@ -1737,6 +1737,7 @@
   "sessionsReconnectFailed": "Reconnect failed: {}",
   "sessionsDropTabHere": "Drop tab here",
   "sessionsNewPane": "New pane",
+  "sessionsNewTab": "New tab",
   "sessionsMovePane": "Drag onto another pane to swap places",
   "sessionsPaneCountTooltip": "This tab is split into {0} panes",
   "sessionsNewTerminal": "New terminal",

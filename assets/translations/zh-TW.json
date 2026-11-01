@@ -1694,6 +1694,7 @@
   "sessionsReconnectFailed": "重新連線失敗：{}",
   "sessionsDropTabHere": "拖放標籤頁到此處",
   "sessionsNewPane": "新建面板",
+  "sessionsNewTab": "新建標籤頁",
   "sessionsMovePane": "拖到其他面板可交換位置",
   "sessionsPaneCountTooltip": "此分頁拆分為 {0} 個面板",
   "sessionsNewTerminal": "新建終端",
