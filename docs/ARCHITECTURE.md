@@ -212,13 +212,20 @@ local colour schemes or chrome.
   `surfaceContainerLow`, the same tone as the tab bar, so the locked vault, the
   window frame and every top-level page share it. The bar's selected entry
   paints `surface`. Panes are `MaidKitPanel` cards that step off the paper by
-  exactly one tone: the focused pane is `surfaceContainer` and an unfocused one
-  is `surfaceContainerLow`, so it sits back down on the paper and the gutter
-  alone divides the split. A panel republishes its own tone as the theme paper
+  exactly one tone: the focused pane is `surfaceContainerLow` and an unfocused
+  one sits back down on the paper, `surfaceContainerLowest`, so a split shows
+  one live card and the gutter alone divides them. An unfocused pane keeps a
+  neutral hairline (`outlineVariant` at 60%) — the one outline in the system,
+  and it exists because a pane body may paint no surface of its own: the file
+  manager's pane is transparent, so without the edge an idle pane would be the
+  paper exactly, with nothing to read as a pane. Never flatten the two tones
+  into one role; that collapse is what removes the only other cue. A panel
+  republishes its own tone as the theme paper
   for everything inside it, so a tab body that paints a surface — a page
   scaffold, a pushed detail page, a file editor — fills the card instead of
   cutting a paper-coloured hole in it, and cards inside step one tone further
-  (`surfaceContainerHigh`).
+  off whichever sheet holds them (`surfaceContainer` live,
+  `surfaceContainerLow` idle).
 - **Inputs are tonal first.** A soft fill (`surfaceContainerHigh` at 70%)
   defines a field; only focus and error draw an edge.
 - **Placeholders.** Every empty or failed surface renders through

@@ -54,10 +54,15 @@ class MaidKitPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    // The focused pane is the card, one step off the bar's paper — no further,
-    // or a pane reads as a lit sheet instead of the same paper as the strip.
-    // An unfocused pane sits back down on that paper, so a split shows exactly
-    // one live card and the gutters alone divide the rest.
+    // The focused pane is the card: one tone off the bar's paper, so the live
+    // viewport is the only sheet that steps out of it. The tone has to be a
+    // real step, not the paper with a little alpha — the paper is
+    // `surfaceContainerLowest`, so tinting that same role would paint the
+    // paper again and leave the hairline doing all the work.
+    // An unfocused pane sits back down on that paper but keeps a neutral
+    // hairline, so it still reads as a pane: a body that paints no surface of
+    // its own — the file manager, a settings page — must not become a hole
+    // with no edge, which only a terminal's own dark backdrop can survive.
     final color = emphasized
         ? scheme.surfaceContainerLow
         : scheme.surfaceContainerLowest;
@@ -65,7 +70,8 @@ class MaidKitPanel extends StatelessWidget {
     // own surface — a page scaffold, a pushed detail page, an editor — fills
     // the panel's tone instead of cutting a paper-coloured hole in the card.
     // Cards inside step one tone off the sheet, so the hierarchy in a pane
-    // reads exactly as it does on the window paper.
+    // reads exactly as it does on the window paper: the idle sheet is a tone
+    // lower than the live one, and a card steps off whichever sheet holds it.
     final cardColor = emphasized
         ? scheme.surfaceContainer
         : scheme.surfaceContainerLow;
@@ -93,13 +99,19 @@ class MaidKitPanel extends StatelessWidget {
           borderRadius: MaidKitRadius.cardRadius,
           // One hairline around the live pane: enough to name it at a glance,
           // quiet enough to stay a sheet rather than a boxed control. A drag
-          // hovering this slot takes the same hairline at full strength.
+          // hovering this slot takes the same hairline at full strength. An
+          // idle pane keeps a neutral hairline of its own: it sits on the
+          // paper, so the edge is what keeps a body that paints no surface —
+          // the file manager's transparent pane, a settings page — reading as
+          // a pane instead of as the paper behind it.
           side: switch ((highlighted, emphasized)) {
             (true, _) => BorderSide(color: scheme.primary),
             (_, true) => BorderSide(
               color: scheme.primary.withValues(alpha: 0.45),
             ),
-            _ => BorderSide.none,
+            _ => BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: 0.6),
+            ),
           },
         ),
         // Dimming is a paint-time filter, not a block above the content: an
