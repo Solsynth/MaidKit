@@ -175,6 +175,109 @@ void main() {
     expect(controller.text, 'check nginx\n');
   });
 
+  testWidgets('Enter during IME composition leaves the draft for the IME', (
+    tester,
+  ) async {
+    var sends = 0;
+    final controller = TextEditingController();
+    await pumpComposer(tester, controller: controller, onSubmit: () => sends++);
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'hello',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 0, end: 5),
+      ),
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(sends, 0);
+    expect(controller.text, 'hello');
+    expect(controller.value.composing, const TextRange(start: 0, end: 5));
+  });
+
+  testWidgets('Shift+Enter during IME composition preserves the draft', (
+    tester,
+  ) async {
+    var sends = 0;
+    final controller = TextEditingController();
+    await pumpComposer(tester, controller: controller, onSubmit: () => sends++);
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'hello',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 0, end: 5),
+      ),
+    );
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect(sends, 0);
+    expect(controller.text, 'hello');
+    expect(controller.value.composing, const TextRange(start: 0, end: 5));
+  });
+
+  testWidgets('Enter sends after IME commits its text', (tester) async {
+    var sends = 0;
+    final controller = TextEditingController();
+    await pumpComposer(tester, controller: controller, onSubmit: () => sends++);
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'hello',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 0, end: 5),
+      ),
+    );
+    await tester.pump();
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'hello',
+        selection: TextSelection.collapsed(offset: 5),
+      ),
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(sends, 1);
+    expect(controller.text, 'hello');
+  });
+
+  testWidgets('Enter sends with a collapsed composing range', (tester) async {
+    var sends = 0;
+    final controller = TextEditingController();
+    await pumpComposer(tester, controller: controller, onSubmit: () => sends++);
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'hello',
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange.collapsed(5),
+      ),
+    );
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(sends, 1);
+    expect(controller.text, 'hello');
+  });
+
   testWidgets('a working turn queues instead of sending, and offers stop', (
     tester,
   ) async {
