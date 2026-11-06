@@ -208,8 +208,11 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
     // Mirror the interactive terminal: a transparent terminal lets the app
     // surface show through; otherwise fall back to the opaque terminal slab.
     // Passing [transparentBackground] through also keeps the opacity in sync
-    // when the user toggles the setting while a log is on screen.
+    // when the user toggles the setting while a log is on screen. The palette
+    // is watched for the same reason: the adapter outlives a brightness
+    // change, so the rebuilt view carries the current one.
     final transparent = ref.watch(transparentTerminalBackgroundProvider);
+    final colorScheme = ref.watch(terminalColorSchemeProvider);
 
     // If a dump never landed (e.g. interrupted by dispose/recreate), schedule
     // a write — never force-recreate here, or we cancel the deferred write.
@@ -226,7 +229,7 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
     return ClipRRect(
       borderRadius: widget.borderRadius,
       child: ColoredBox(
-        color: transparent ? Colors.transparent : const Color(0xFF111315),
+        color: transparent ? Colors.transparent : colorScheme.background,
         child: ScrollConfiguration(
           behavior: ScrollConfiguration.of(context).copyWith(
             scrollbars: true,
@@ -248,6 +251,7 @@ class _AnsiLogViewState extends ConsumerState<AnsiLogView> {
                 readOnly: true,
                 showCursor: false,
                 transparentBackground: transparent,
+                colorScheme: colorScheme,
               ),
             ),
           ),

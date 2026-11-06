@@ -243,9 +243,11 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) {
     _applyCursorVisibility(showCursor);
+    final theme = _themeFor(colorScheme ?? this.colorScheme);
     final view = xterm.TerminalView(
       _terminal,
       key: _viewKey,
@@ -259,7 +261,7 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
       // mounted view state. Read-only log surfaces keep their own host's.
       focusNode: readOnly ? null : _focusNode,
       autofocus: autofocus && !readOnly,
-      theme: _theme,
+      theme: theme,
       textStyle: xterm.TerminalStyle(fontFamily: fontFamily),
       backgroundOpacity: (transparentBackground ?? this.transparentBackground)
           ? 0
@@ -380,7 +382,7 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
   @visibleForTesting
   int get debugKeywordHighlightCount => _keywordHighlights.length;
 
-  xterm.TerminalTheme get _theme {
+  xterm.TerminalTheme _themeFor(TerminalColorScheme colorScheme) {
     final ansi = colorScheme.ansiColors;
     return xterm.TerminalTheme(
       cursor: colorScheme.cursor,

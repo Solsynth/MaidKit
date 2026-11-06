@@ -18,6 +18,7 @@ import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/sessions_page.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
+import 'package:maid_kit/servers/terminal_color_scheme.dart';
 import 'package:maid_kit/theme.dart';
 
 /// The band is a row of pills, not a ruled table: no rule above it and no
@@ -248,6 +249,7 @@ class _FakeAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox.shrink();
 

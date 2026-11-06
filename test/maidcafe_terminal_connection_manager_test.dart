@@ -11,6 +11,7 @@ import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/maidcafe_terminal_connection_manager.dart';
 import 'package:maid_kit/servers/server_models.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
+import 'package:maid_kit/servers/terminal_color_scheme.dart';
 
 void main() {
   test('the refusal is mapped to the policy that produced it', () {
@@ -872,6 +873,7 @@ class _RecordingAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox.shrink();
 

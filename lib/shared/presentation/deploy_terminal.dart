@@ -7,6 +7,7 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/theme.dart';
+import 'package:maid_kit/servers/server_providers.dart';
 import 'ansi_log_view.dart';
 import 'cli_output_progress.dart';
 
@@ -292,6 +293,11 @@ class _DeployTerminalModalState extends ConsumerState<_DeployTerminalModal> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    // The log inside paints the live terminal palette, so its surround has to
+    // be that palette's background too instead of a fixed dark slab.
+    final terminalBackground = ref
+        .watch(terminalColorSchemeProvider)
+        .background;
     final sessions = ref.watch(deploySessionsProvider);
 
     if (sessions.isEmpty) {
@@ -442,7 +448,7 @@ class _DeployTerminalModalState extends ConsumerState<_DeployTerminalModal> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF111315),
+                  color: terminalBackground,
                   borderRadius: BorderRadius.circular(MaidKitRadius.md),
                   border: Border.all(color: scheme.outlineVariant),
                 ),

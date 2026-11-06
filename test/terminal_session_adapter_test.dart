@@ -986,6 +986,7 @@ class _FakeTerminalSessionAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox();
 

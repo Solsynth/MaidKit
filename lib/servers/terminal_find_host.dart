@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import 'terminal_color_scheme.dart';
 import 'terminal_session_adapter.dart';
 
 /// Wraps a [TerminalSessionAdapter] view with Cmd/Ctrl+F find UI and
@@ -15,6 +16,7 @@ class TerminalFindHost extends StatefulWidget {
     this.readOnly = false,
     this.showCursor = true,
     this.transparentBackground,
+    this.colorScheme,
     this.onKeyEvent,
     this.onOpenFileManagement,
   });
@@ -24,6 +26,10 @@ class TerminalFindHost extends StatefulWidget {
   final bool readOnly;
   final bool showCursor;
   final bool? transparentBackground;
+
+  /// Palette to paint with; a terminal outlives a brightness change, so the
+  /// caller passes the current one on every rebuild.
+  final TerminalColorScheme? colorScheme;
   final FocusOnKeyEventCallback? onKeyEvent;
   final VoidCallback? onOpenFileManagement;
 
@@ -198,6 +204,7 @@ class _TerminalFindHostState extends State<TerminalFindHost> {
                 showCursor: widget.showCursor,
                 onOpenFileManagement: widget.onOpenFileManagement,
                 transparentBackground: widget.transparentBackground,
+                colorScheme: widget.colorScheme,
                 onKeyEvent: widget.onKeyEvent,
               ),
             ),

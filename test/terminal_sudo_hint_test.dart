@@ -9,6 +9,7 @@ import 'package:easy_localization/src/translations.dart' as ez_tr;
 import 'package:flutter/material.dart' hide Theme;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
+import 'package:maid_kit/servers/terminal_color_scheme.dart';
 import 'package:maid_kit/servers/terminal_sudo_hint.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -147,6 +148,7 @@ class _HintAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => const SizedBox();
 

@@ -1347,10 +1347,13 @@ class _SessionTabBody extends ConsumerWidget {
       );
     }
     final terminalTab = tab as TerminalTab;
+    // Watched, not read: the app's brightness can change under a live
+    // session, and the terminal only repaints when it is rebuilt with the
+    // palette that matches the new theme.
+    final colorScheme = ref.watch(terminalColorSchemeProvider);
+    final transparent = ref.watch(transparentTerminalBackgroundProvider);
     return ColoredBox(
-      color: ref.watch(transparentTerminalBackgroundProvider)
-          ? Colors.transparent
-          : const Color(0xFF111315),
+      color: transparent ? Colors.transparent : colorScheme.background,
       child: ClipRect(
         child: TerminalSudoAutofillHint(
           adapter: terminalTab.terminal,
@@ -1358,9 +1361,8 @@ class _SessionTabBody extends ConsumerWidget {
             key: key,
             adapter: terminalTab.terminal,
             autofocus: autofocus,
-            transparentBackground: ref.watch(
-              transparentTerminalBackgroundProvider,
-            ),
+            transparentBackground: transparent,
+            colorScheme: colorScheme,
             onOpenFileManagement: () =>
                 unawaited(_openFilesForTerminal(context, ref, terminalTab)),
             onKeyEvent: (_, event) {

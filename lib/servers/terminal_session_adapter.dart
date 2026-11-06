@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
+import 'terminal_color_scheme.dart';
+
 Menu terminalContextMenu({
   required bool hasSelection,
   required bool canPaste,
@@ -188,12 +190,20 @@ abstract interface class TerminalSessionAdapter {
   /// playback rather than an interactive shell.
   /// [showCursor] hides the caret (useful for static log playback).
   /// [transparentBackground] overrides the adapter's initial background
+  /// opacity.
+  /// [colorScheme] is the palette to draw with, normally the app-wide
+  /// brightness-matched one. It is passed in rather than fixed at creation
+  /// because the app's brightness can change while the session is open: the
+  /// renderer repaints when its widget gets a new theme, so the live palette
+  /// has to reach every rebuild. Falls back to the adapter's creation-time
+  /// palette when omitted.
   Widget buildView({
     bool autofocus = false,
     bool readOnly = false,
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   });
 

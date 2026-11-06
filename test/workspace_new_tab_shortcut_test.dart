@@ -23,6 +23,7 @@ import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/servers/tabs_screen.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
+import 'package:maid_kit/servers/terminal_color_scheme.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/shared/presentation/maidkit_window_scaffold.dart';
 import 'package:maid_kit/shared/presentation/window_chrome.dart';
@@ -112,6 +113,7 @@ class _KeyHostAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) => Focus(
     focusNode: focusNode,

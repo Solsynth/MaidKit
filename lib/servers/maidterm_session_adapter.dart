@@ -323,8 +323,10 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     bool showCursor = true,
     VoidCallback? onOpenFileManagement,
     bool? transparentBackground,
+    TerminalColorScheme? colorScheme,
     FocusOnKeyEventCallback? onKeyEvent,
   }) {
+    final palette = colorScheme ?? this.colorScheme;
     if (!showCursor) {
       _controller.modeSet(maidterm.TerminalMode.cursorVisible(), value: false);
     }
@@ -335,21 +337,21 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
 
     final theme = maidterm.TerminalTheme(
       palette: maidterm.ColorPalette(
-        ansiColors: colorScheme.ansiColors,
+        ansiColors: palette.ansiColors,
         // Keep an opaque palette color for libghostty's color resolution.
         // Transparency belongs to TerminalTheme.backgroundOpacity; passing
         // an alpha-zero palette color is flattened to black by the renderer.
-        background: colorScheme.background,
-        foreground: colorScheme.foreground,
+        background: palette.background,
+        foreground: palette.foreground,
       ),
       cursor: maidterm.CursorTheme(
-        color: maidterm.DynamicColor.fixed(colorScheme.cursor),
+        color: maidterm.DynamicColor.fixed(palette.cursor),
       ),
       cursorMotionDuration: cursorAnimationEnabled
           ? const Duration(milliseconds: 90)
           : Duration.zero,
       selection: maidterm.SelectionTheme(
-        background: maidterm.DynamicColor.fixed(colorScheme.selection),
+        background: maidterm.DynamicColor.fixed(palette.selection),
       ),
       backgroundOpacity: (transparentBackground ?? this.transparentBackground)
           ? 0
