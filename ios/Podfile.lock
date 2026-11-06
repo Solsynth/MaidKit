@@ -4,14 +4,34 @@ PODS:
     - Flutter
   - irondash_engine_context (0.0.1):
     - Flutter
+  - libwebp (1.6.0):
+    - libwebp/demux (= 1.6.0)
+    - libwebp/mux (= 1.6.0)
+    - libwebp/sharpyuv (= 1.6.0)
+    - libwebp/webp (= 1.6.0)
+  - libwebp/demux (1.6.0):
+    - libwebp/webp
+  - libwebp/mux (1.6.0):
+    - libwebp/demux
+  - libwebp/sharpyuv (1.6.0)
+  - libwebp/webp (1.6.0):
+    - libwebp/sharpyuv
   - super_native_extensions (0.0.1):
     - Flutter
+  - video_thumbnail (0.0.1):
+    - Flutter
+    - libwebp
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_app_update (from `.symlinks/plugins/flutter_app_update/ios`)
   - irondash_engine_context (from `.symlinks/plugins/irondash_engine_context/ios`)
   - super_native_extensions (from `.symlinks/plugins/super_native_extensions/ios`)
+  - video_thumbnail (from `.symlinks/plugins/video_thumbnail/ios`)
+
+SPEC REPOS:
+  trunk:
+    - libwebp
 
 EXTERNAL SOURCES:
   Flutter:
@@ -22,12 +42,16 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/irondash_engine_context/ios"
   super_native_extensions:
     :path: ".symlinks/plugins/super_native_extensions/ios"
+  video_thumbnail:
+    :path: ".symlinks/plugins/video_thumbnail/ios"
 
 SPEC CHECKSUMS:
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   flutter_app_update: 816fdb2e30e4832a7c45e3f108d391c42ef040a9
   irondash_engine_context: 8e58ca8e0212ee9d1c7dc6a42121849986c88486
+  libwebp: af5937a13536ef73f3784d69cc342b98961acf33
   super_native_extensions: b763c02dc3a8fd078389f410bf15149179020cb4
+  video_thumbnail: b637e0ad5f588ca9945f6e2c927f73a69a661140
 
 PODFILE CHECKSUM: 07c1d30a83e2a4ea9a77857077087b9ef56ba5f1
 
