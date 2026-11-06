@@ -12,6 +12,7 @@ import 'maidcafe_service.dart';
 import 'server_models.dart';
 import 'ssh_connection_manager.dart';
 import 'terminal_session_adapter.dart';
+import 'tmux_control_client.dart';
 
 // The credential encoder lives with the target it authorizes; re-exported here
 // so the manager's importers keep seeing it.
@@ -389,6 +390,168 @@ class MaidCafeTerminalConnectionManager {
     );
   }
 
+  /// Opens a tmux control-mode client on [server]'s daemon [target].
+  ///
+  /// Same socket, credential and failure mapping as [openTerminal]; the
+  /// difference is what the bytes mean. A tmux target's daemon runs `tmux -CC`
+  /// in the PTY, so the binary frames are control-mode notifications rather
+  /// than shell output, and the geometry is reported with `refresh-client -C`
+  /// instead of a resize frame — sending one would resize a PTY nobody renders.
+  Future<MaidCafeTmuxControl> openTmuxControl(
+    Server server,
+    MaidCafeTerminalTarget target, {
+    required String sessionName,
+  }) async {
+    final session = target.withTmux(sessionName);
+    final credential = await _credentialFor(session);
+    final endpoint = session.sessionEndpoint(
+      columns: maidCafeTerminalInitialColumns,
+      rows: maidCafeTerminalInitialRows,
+    );
+    maidCafeLog(
+      'opening tmux "$sessionName" on "${server.name}" (id=${server.id}) at '
+      '$endpoint relayed=${session.isRelayed}',
+    );
+    final channel = _socketFactory(endpoint, [credential]);
+    final output = StreamController<Uint8List>.broadcast();
+    final done = Completer<void>();
+    var closed = false;
+    StreamSubscription<Object?>? subscription;
+    try {
+      await channel.ready;
+    } catch (error) {
+      unawaited(output.close());
+      if (session.isRelayed) {
+        throw MaidCafeTerminalException(
+          'Cannot open the cloud-relayed tmux terminal at '
+          '${session.baseUrl}: $error. Check that you are signed in '
+          'with Solarpass and that this workspace still owns the daemon.',
+        );
+      }
+      maidCafeLog('the tmux socket to $endpoint never upgraded', error: error);
+      final failure = await diagnoseMaidCafeTerminalHandshake(
+        session,
+        session.secret,
+      );
+      throw MaidCafeTerminalException(
+        _maidCafeDaemonHandshakeMessage(session, error, failure),
+        handshake: failure,
+      );
+    }
+    // An error frame (tmux missing, the name refused) arrives before any
+    // control output, so the first frame decides whether the client is usable.
+    // The daemon's hello confirms it attached the session that was asked for.
+    final ready = Completer<String?>();
+    subscription = channel.stream.listen(
+      (frame) {
+        if (closed) return;
+        if (frame is String) {
+          if (ready.isCompleted) return;
+          final decoded = _maidCafeDecodedFrame(frame);
+          if (decoded == null) return;
+          switch (decoded['type']) {
+            case 'error':
+              final message = decoded['message'];
+              ready.complete(
+                message is String && message.isNotEmpty
+                    ? message
+                    : 'The MaidCafe daemon rejected the terminal session.',
+              );
+            case 'hello':
+              if (decoded['version'] != maidCafeTerminalProtocolVersion) {
+                ready.complete(
+                  'The MaidCafe daemon speaks terminal protocol '
+                  '${decoded['version']}, but this app expects '
+                  '$maidCafeTerminalProtocolVersion. Update the daemon or the '
+                  'app.',
+                );
+                return;
+              }
+              final attached = decoded['tmux'];
+              if (attached is! String || attached != sessionName) {
+                ready.complete(
+                  'The daemon attached tmux session "${attached ?? ''}" '
+                  'instead of "$sessionName".',
+                );
+                return;
+              }
+              ready.complete(null);
+          }
+          return;
+        }
+        final bytes = switch (frame) {
+          Uint8List value => value,
+          List<int> value => Uint8List.fromList(value),
+          _ => null,
+        };
+        if (bytes == null || bytes.isEmpty) return;
+        if (!ready.isCompleted) ready.complete(null);
+        if (!output.isClosed) output.add(bytes);
+      },
+      onError: (Object error) {
+        if (!ready.isCompleted) {
+          ready.complete('Terminal transport failed: $error');
+        }
+        if (!done.isCompleted) done.complete();
+      },
+      onDone: () {
+        if (!ready.isCompleted) {
+          ready.complete('The daemon closed the tmux session.');
+        }
+        if (!done.isCompleted) done.complete();
+      },
+    );
+    final failure = await ready.future;
+    if (failure != null) {
+      closed = true;
+      await subscription.cancel();
+      try {
+        await channel.sink.close();
+      } catch (_) {}
+      unawaited(output.close());
+      throw MaidCafeTerminalException(failure);
+    }
+    final control = TmuxControlClient(
+      output: output.stream,
+      write: (bytes) {
+        if (closed) return;
+        try {
+          channel.sink.add(Uint8List.fromList(bytes));
+        } catch (_) {
+          // The socket can close between delivering input and teardown.
+        }
+      },
+      onClosed: (reason) {
+        if (!done.isCompleted) done.complete();
+      },
+    );
+    return MaidCafeTmuxControl(
+      control: control,
+      done: done.future,
+      closeTransport: () async {
+        if (closed) return;
+        closed = true;
+        await control.dispose();
+        await subscription?.cancel();
+        subscription = null;
+        try {
+          await channel.sink.close();
+        } catch (_) {}
+        unawaited(output.close());
+        if (!done.isCompleted) done.complete();
+      },
+    );
+  }
+
+  Map<String, dynamic>? _maidCafeDecodedFrame(String frame) {
+    try {
+      final decoded = jsonDecode(frame);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Resolves the subprotocol credential for [target]: a freshly minted cloud
   /// ticket for a relayed target, or the daemon secret for a direct one.
   ///
@@ -403,6 +566,7 @@ class MaidCafeTerminalConnectionManager {
         maidCafeTerminalInitialColumns,
         maidCafeTerminalInitialRows,
         target.user,
+        target.tmux,
       );
     } on MaidCafeException catch (error) {
       // The cloud mints the session, so a refusal here is about the daemon
@@ -638,4 +802,22 @@ class _MaidCafeTerminalConnection {
   int? exitCode;
   String? reason;
   String? error;
+}
+
+/// One live tmux control-mode client riding a MaidCafe daemon socket.
+///
+/// Closing it drops the socket, which detaches the tmux client; the session
+/// itself keeps running on the daemon's host.
+class MaidCafeTmuxControl {
+  MaidCafeTmuxControl({
+    required this.control,
+    required this.done,
+    required Future<void> Function() closeTransport,
+  }) : _closeTransportThunk = closeTransport;
+
+  final TmuxControlClient control;
+  final Future<void> done;
+  final Future<void> Function() _closeTransportThunk;
+
+  Future<void> close() => _closeTransportThunk();
 }

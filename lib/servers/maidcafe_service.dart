@@ -747,6 +747,9 @@ class MaidCafeService {
   /// should start the shell with. Omitted fields fall back to the daemon's own
   /// `daemon.terminal.*` defaults.
   ///
+  /// A non-empty [tmux] asks the daemon to attach that tmux session instead of
+  /// starting a bare shell, so the session outlives the relayed socket.
+  ///
   /// The ticket authorizes one browser WebSocket upgrade against the cloud,
   /// which relays the session to the daemon; the daemon needs no inbound
   /// reachability because it picks the session up by long-poll and dials out.
@@ -754,6 +757,7 @@ class MaidCafeService {
     String daemonId, {
     String? shell,
     String? user,
+    String? tmux,
     int? columns,
     int? rows,
   }) async {
@@ -763,6 +767,7 @@ class MaidCafeService {
         data: {
           if (shell != null && shell.trim().isNotEmpty) 'shell': shell.trim(),
           if (user != null && user.trim().isNotEmpty) 'user': user.trim(),
+          if (tmux != null && tmux.trim().isNotEmpty) 'tmux': tmux.trim(),
           if (columns != null && columns > 0) 'cols': columns,
           if (rows != null && rows > 0) 'rows': rows,
         },

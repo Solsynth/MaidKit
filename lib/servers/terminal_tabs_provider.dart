@@ -6,15 +6,19 @@ import 'package:flutter/widgets.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:maid_kit/data/local/app_database.dart' hide WorkspaceSnapshot;
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'session_layout.dart';
 import 'ssh_connection_manager.dart';
 import 'terminal_session_adapter.dart';
+import 'tmux_control_client.dart';
+import 'tmux_terminal.dart';
 import 'workspace_snapshot.dart';
 
 export 'session_layout.dart';
@@ -79,14 +83,18 @@ sealed class SessionTab {
 
 /// How a terminal is connected, for the status bar to name.
 ///
-/// The four cases are the transports this app can open a shell over; a MaidCafe
+/// The cases are the transports this app can open a shell over; a MaidCafe
 /// terminal is two of them, because a relayed session rides the cloud and a
-/// direct one dials the daemon itself.
+/// direct one dials the daemon itself. [tmux] is orthogonal to those on the
+/// wire — a tmux client rides either SSH or a daemon socket — and names the
+/// session's own transport because that is what the user is looking at: a
+/// process tree that outlives the connection.
 enum TerminalTransport {
   ssh('terminalTransportSsh'),
   serial('terminalTransportSerial'),
   maidCafeDirect('terminalTransportMaidCafeDirect'),
-  maidCafeRelay('terminalTransportMaidCafeRelay');
+  maidCafeRelay('terminalTransportMaidCafeRelay'),
+  tmux('terminalTransportTmux');
 
   const TerminalTransport(this.labelKey);
 
@@ -110,6 +118,7 @@ class TerminalTab extends SessionTab {
     required super.serverName,
     required this.terminal,
     required this.transport,
+    this.tmux,
   });
 
   final TerminalSessionAdapter terminal;
@@ -117,6 +126,12 @@ class TerminalTab extends SessionTab {
   /// Which transport serves this terminal. Shown in the status bar, so a
   /// relayed session is distinguishable from a direct one at a glance.
   final TerminalTransport transport;
+
+  /// The tmux binding this pane belongs to, when the pane mirrors a tmux pane.
+  ///
+  /// One tmux session is one workspace tab, so every pane in it shares the
+  /// binding that owns the control client and the adapter for each tmux pane.
+  final TmuxTabBinding? tmux;
 
   @override
   SessionTabType get type => SessionTabType.terminal;
@@ -501,6 +516,12 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// as its terminal and no other tab is affected.
   final _tabCleanups = <String, Future<void> Function()>{};
 
+  /// tmux sessions mounted as workspace tabs, keyed by the tab id.
+  final _tmuxTabs = <String, TmuxTabBinding>{};
+
+  /// The tmux binding behind [tabId], when that tab mirrors a tmux session.
+  TmuxTabBinding? tmuxForTab(String tabId) => _tmuxTabs[tabId];
+
   /// Every workspace mutation schedules a debounced snapshot save.
   ///
   /// The pristine default is exempt so it never overwrites a real snapshot on
@@ -610,6 +631,23 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   ) async {
     final server = serversById[pending.serverId];
     if (server == null) return;
+    // A tmux terminal reattaches to its session by name; a host that cannot
+    // serve it falls back to the plain open below.
+    final tmuxSession = pending.tmuxSession;
+    if (tmuxSession != null &&
+        pending.connectionType != ServerConnectionType.serial) {
+      try {
+        await openTmuxSession(
+          server,
+          sessionName: tmuxSession,
+          paneId: pending.paneId,
+        );
+        return;
+      } catch (_) {
+        // The session may have been killed on the host; a plain terminal is
+        // still better than an empty pane.
+      }
+    }
     try {
       if (pending.connectionType == ServerConnectionType.serial) {
         await openSerial(
@@ -741,6 +779,238 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     if (onClose != null) _tabCleanups[handle.id] = onClose;
     _insertTab(tab, targetPaneId: paneId);
     _watchTerminalDone(handle);
+  }
+
+  /// Opens [server]'s tmux session as one workspace tab.
+  ///
+  /// The tab starts with a single empty pane and is filled by the first
+  /// `%layout-change` tmux reports: the session's own pane tree is the layout,
+  /// so nothing is guessed here. Every pane mounts a [TerminalTab] whose
+  /// adapter receives that tmux pane's output, and the binding owns the
+  /// control client they all write through.
+  Future<void> openTmux(
+    Server server, {
+    required String sessionName,
+    required TmuxControlClient control,
+    required Future<void> Function() closeTransport,
+    required TerminalTransport transport,
+    String? paneId,
+  }) async {
+    final existing = _tmuxTabs.entries
+        .where(
+          (entry) =>
+              entry.value.sessionName == sessionName &&
+              entry.value.serverId == server.id,
+        )
+        .firstOrNull;
+    if (existing != null) {
+      select(existing.key);
+      await releaseTmuxTransport(control, closeTransport);
+      return;
+    }
+    final binding = TmuxTabBinding(
+      sessionName: sessionName,
+      control: control,
+      closeTransport: closeTransport,
+      adapterFactory: ref.read(terminalSessionAdapterFactoryProvider),
+      serverId: server.id,
+      serverName: server.name,
+      transport: transport,
+      onEventStream: control.events,
+    );
+    final placeholderId = _uuid.v4();
+    final tab = WorkspaceTab(
+      id: placeholderId,
+      panes: {placeholderId: TabPane(id: placeholderId)},
+      layout: SessionLayoutLeaf(placeholderId),
+      focusedPaneId: placeholderId,
+    );
+    _tmuxTabs[tab.id] = binding..tabId = tab.id;
+    state = TerminalTabsState(
+      tabs: [...state.tabs, tab],
+      selectedTabId: paneId == null ? tab.id : state.selectedTabId,
+    );
+    if (paneId != null) {
+      // The caller reserved a pane for this session. A tmux tab owns its own
+      // panes, so the reserved one is dropped instead of staying empty beside
+      // the session it was meant to show.
+      final owner = _tabOwningPane(paneId);
+      if (owner != null && owner.panes[paneId]?.isEmpty == true) {
+        _removePane(owner, paneId);
+      }
+      select(tab.id);
+    }
+    binding.listen(() => this);
+    await binding.initialize();
+  }
+
+  /// Opens (or reattaches) [sessionName] on [server] without a UI context.
+  ///
+  /// Used where no dialog can be shown: a restored workspace, and the
+  /// background-session sheet, which has already resolved everything the
+  /// transport needs. A session already on screen is selected, not reopened.
+  Future<void> openTmuxSession(
+    Server server, {
+    required String sessionName,
+    String? paneId,
+  }) async {
+    final repository = ref.read(serverRepositoryProvider);
+    final target = await repository.maidCafeTerminalTargetFor(server);
+    if (target != null) {
+      final control = await ref
+          .read(maidCafeTerminalConnectionManagerProvider)
+          .openTmuxControl(server, target, sessionName: sessionName);
+      await openTmux(
+        server,
+        sessionName: sessionName,
+        control: control.control,
+        transport: maidCafeTerminalTransport(target),
+        closeTransport: control.close,
+        paneId: paneId,
+      );
+      return;
+    }
+    final manager = ref.read(connectionManagerProvider);
+    final tmuxPath =
+        manager.tmuxPaths.cached(server.id) ??
+        await manager.withClient(server.id, (client) => probeTmuxPath(client));
+    manager.tmuxPaths.store(server.id, tmuxPath);
+    if (tmuxPath == null) {
+      throw const TmuxControlException('tmux is not installed on this host');
+    }
+    final credential = await repository.credentialFor(server);
+    final proxy = await repository.proxyFor(server);
+    final session = await manager.openTmuxControl(
+      server,
+      credential,
+      (_) async => false,
+      knownHostKeyFingerprint: server.hostKeyFingerprint,
+      proxy: proxy,
+      tmuxPath: tmuxPath,
+      sessionName: sessionName,
+      environment: decodeEnvironmentMap(server.environment),
+    );
+    await openTmux(
+      server,
+      sessionName: sessionName,
+      control: session.control,
+      transport: TerminalTransport.tmux,
+      closeTransport: session.close,
+      paneId: paneId,
+    );
+  }
+
+  /// Projects [layout] (a tmux window's pane tree) onto the tab [binding] owns.
+  ///
+  /// Panes that appeared mount a [TerminalTab]; panes that disappeared lose
+  /// theirs, adapters included. Re-parsing the same layout yields the same
+  /// split ids, so an unchanged layout produces an equal tree and no rebuild.
+  void applyTmuxLayout(TmuxTabBinding binding, SessionLayout layout) {
+    if (!ref.mounted) return;
+    final tabId = binding.tabId;
+    if (tabId == null) return;
+    final tab = state.tabById(tabId);
+    if (tab == null) return;
+    final paneIds = layout.paneIds.toList();
+    if (paneIds.isEmpty) return;
+    final panes = <String, TabPane>{};
+    final gone = <String>{};
+    for (final paneId in tab.panes.keys) {
+      if (!paneIds.contains(paneId)) gone.add(paneId);
+    }
+    for (final paneId in paneIds) {
+      final existing = tab.panes[paneId];
+      if (existing?.tab case final TerminalTab content
+          when content.tmux == binding) {
+        panes[paneId] = existing!;
+        continue;
+      }
+      final tmuxContentId = binding.contentIdForPane(paneId);
+      panes[paneId] = TabPane(
+        id: paneId,
+        tab: TerminalTab(
+          id: tmuxContentId,
+          serverId: binding.serverId,
+          serverName: binding.serverName,
+          terminal: binding.adapterFor(paneId),
+          transport: binding.transport,
+          tmux: binding,
+        ),
+      );
+    }
+    for (final paneId in gone) {
+      final content = tab.panes[paneId]?.tab;
+      if (content != null) _forgetTmuxContent(content.id);
+      unawaited(binding.releasePane(paneId));
+    }
+    final focusedPaneId = panes.containsKey(tab.focusedPaneId)
+        ? tab.focusedPaneId
+        : binding.focusedPaneId != null &&
+              panes.containsKey(binding.focusedPaneId)
+        ? binding.focusedPaneId!
+        : paneIds.first;
+    state = TerminalTabsState(
+      tabs: [
+        for (final candidate in state.tabs)
+          candidate.id == tabId
+              ? candidate.copyWith(
+                  panes: panes,
+                  layout: layout,
+                  focusedPaneId: focusedPaneId,
+                )
+              : candidate,
+      ],
+      selectedTabId: state.selectedTabId,
+    );
+  }
+
+  /// Removes a tmux tab whose session already ended.
+  ///
+  /// No close guard runs: the tmux session is gone, so there is nothing left to
+  /// abandon, and the transport only has to be dropped.
+  Future<void> closeTmuxTab(TmuxTabBinding binding, {String? reason}) async {
+    final tabId = binding.tabId;
+    if (!ref.mounted) return;
+    if (tabId == null) return;
+    _tmuxTabs.remove(tabId);
+    final tab = state.tabById(tabId);
+    if (tab != null) {
+      for (final content in tab.tabs.toList()) {
+        _forgetTmuxContent(content.id);
+      }
+    }
+    await binding.dispose();
+    // The tab can outlive a disposed workspace only in teardown, where a late
+    // exit event must not touch state.
+    if (!ref.mounted) return;
+    _removeTab(tabId);
+    final text = reason == null || reason.trim().isEmpty
+        ? 'sessionsTmuxExited'.tr()
+        : '${'sessionsTmuxExited'.tr()}: $reason';
+    showStyledSnackBar(message: text, icon: Symbols.terminal);
+  }
+
+  /// Drops a tmux transport a caller no longer needs: a second open of a
+  /// session already on screen attaches nothing and leaves the extra client.
+  Future<void> releaseTmuxTransport(
+    TmuxControlClient control,
+    Future<void> Function() closeTransport,
+  ) async {
+    try {
+      await control.dispose();
+    } catch (_) {}
+    try {
+      await closeTransport();
+    } catch (_) {}
+  }
+
+  /// Forgets the view state of one tmux-mirrored pane, which is going away.
+  void _forgetTmuxContent(String contentId) {
+    _tabCleanups.remove(contentId);
+    _releaseSessionTabViewKey(contentId);
+    releaseTabNavigator(contentId);
+    _lastBufferRows.remove(contentId);
+    _cachedHistory.remove(contentId);
   }
 
   /// Opens [server]'s file manager.
@@ -1031,6 +1301,13 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       return;
     }
     if (!canSplitTab(tab)) return;
+    // A tmux tab's panes are tmux's own: ask tmux to split, and let its
+    // `%layout-change` add the pane here.
+    final binding = _tmuxTabs[tab.id];
+    if (binding != null) {
+      binding.splitFocusedPane(axis);
+      return;
+    }
     _splitTab(tab, axis);
   }
 
@@ -1170,6 +1447,12 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   void setSplitRatio(String tabId, String splitId, double ratio) {
     final tab = state.tabById(tabId);
     if (tab == null) return;
+    // A tmux tab's sizes live in tmux. The ratio is kept locally for the drag,
+    // and the `%layout-change` that answers the resize replaces the tree.
+    final binding = _tmuxTabs[tabId];
+    if (binding != null) {
+      binding.applySplitRatio(splitId, ratio);
+    }
     state = TerminalTabsState(
       tabs: [
         for (final candidate in state.tabs)
@@ -1190,7 +1473,16 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// button, Cmd/Ctrl+W, closing a pane — goes through [close], so they all
   /// ask the same question.
   Future<bool> _confirmCloseWhileWorking(SessionTab? tab) async {
+    final detaching =
+        tab is TerminalTab &&
+        tab.tmux != null &&
+        ref.read(detachOnCloseProvider);
     final message = switch (tab) {
+      TerminalTab(:final terminal, :final tmux, serverName: final name)
+          when tmux != null && terminal.currentTaskActivity.running =>
+        detaching
+            ? 'sessionsCloseTmuxTerminalMessage'.tr(args: [tmux.sessionName])
+            : 'sessionsCloseRunningTerminalMessage'.tr(args: [name]),
       TerminalTab(serverName: final name, :final terminal)
           when terminal.currentTaskActivity.running =>
         'sessionsCloseRunningTerminalMessage'.tr(args: [name]),
@@ -1259,6 +1551,20 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         if (guard != null && !await guard()) return;
       }
     }
+    // A tmux pane closes through tmux, which ends its processes; the pane and
+    // its adapter disappear on the `%layout-change` that follows. A window
+    // holding one pane falls through to the tab close instead, because killing
+    // the last pane would end the session.
+    final binding = _tmuxTabs[tabId];
+    final terminal = content;
+    if (binding != null &&
+        terminal is TerminalTab &&
+        terminal.tmux == binding &&
+        tab.panes.length > 1) {
+      final tmuxPane = binding.tmuxPaneForContentId(terminal.id) ?? paneId;
+      binding.closePane(tmuxPane);
+      return;
+    }
     // The layout may have changed while the modal was open.
     final current = state.tabById(tabId);
     if (current == null || !current.panes.containsKey(paneId)) return;
@@ -1293,22 +1599,52 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   }
 
   /// Runs the cleanup registered for [content] and forgets its view state.
+  ///
+  /// A tmux pane's teardown belongs to its whole tab: detaching or killing is
+  /// one command for the session, and every pane of that tab goes with it.
   Future<void> _releaseContent(SessionTab content) async {
     final cleanup = _tabCleanups.remove(content.id);
     if (cleanup != null) await cleanup();
     if (content is TerminalTab) {
-      await ref.read(connectionManagerProvider).closeTerminal(content.id);
-      // Idempotent for SSH terminal ids, closes serial and daemon sessions.
-      await ref.read(serialConnectionManagerProvider).closeTerminal(content.id);
-      await ref
-          .read(maidCafeTerminalConnectionManagerProvider)
-          .closeTerminal(content.id);
+      final binding = content.tmux;
+      if (binding != null) {
+        await _teardownTmuxBinding(binding);
+      } else {
+        await ref.read(connectionManagerProvider).closeTerminal(content.id);
+        // Idempotent for SSH terminal ids, closes serial and daemon sessions.
+        await ref
+            .read(serialConnectionManagerProvider)
+            .closeTerminal(content.id);
+        await ref
+            .read(maidCafeTerminalConnectionManagerProvider)
+            .closeTerminal(content.id);
+      }
     }
     fileEditorCloseGuards.remove(content.id);
     _releaseSessionTabViewKey(content.id);
     releaseTabNavigator(content.id);
     _lastBufferRows.remove(content.id);
     _cachedHistory.remove(content.id);
+  }
+
+  /// Detaches or kills one tmux session, then releases its binding and tab.
+  ///
+  /// Detaching is the default: the process tree keeps running on the host, so
+  /// the session is still there to attach to later. Killing ends it.
+  Future<void> _teardownTmuxBinding(TmuxTabBinding binding) async {
+    final tabId = binding.tabId;
+    if (tabId == null) return;
+    if (_tmuxTabs.remove(tabId) == null) return;
+    try {
+      if (ref.read(detachOnCloseProvider)) {
+        await binding.detach();
+      } else {
+        await binding.killSession();
+      }
+    } catch (_) {
+      // A transport that already dropped needs no detach.
+    }
+    await binding.dispose();
   }
 
   Future<TerminalSessionHandle> _openTerminalHandle(

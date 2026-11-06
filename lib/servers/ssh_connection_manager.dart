@@ -26,6 +26,8 @@ import 'tailscale_ssh_socket.dart';
 import 'tailscale_service.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_branding.dart';
+import 'tmux_control_client.dart';
+import 'tmux_terminal.dart';
 import 'web_server_adapter.dart';
 import 'web_server_adapters.dart';
 import 'web_server_models.dart';
@@ -125,8 +127,14 @@ class SshConnectionManager {
   List<SshSessionInfo> get current => _states.values.toList();
   Stream<List<ActivePortForward>> get portForwards =>
       _portForwardController.stream;
+
   List<ActivePortForward> get currentPortForwards =>
       _portForwards.values.map((forward) => forward.info).toList();
+
+  final _tmuxSessions = <String, _TmuxConnection>{};
+
+  /// Where `tmux` was found per server, so repeated opens skip the probe.
+  final tmuxPaths = TmuxPathCache();
 
   Future<ActivePortForward> startPortForward({
     required Server server,
@@ -446,6 +454,67 @@ class SshConnectionManager {
     );
   }
 
+  /// Opens a tmux control-mode client on [server]'s host.
+  ///
+  /// The shell channel runs `tmux -CC new-session -A -s <sessionName>` with an
+  /// allocated pty, which control mode requires; the session is created on
+  /// first use and attached to on every later open, so a terminal survives its
+  /// transport.
+  Future<TmuxSshSession> openTmuxControl(
+    Server server,
+    ServerCredential credential,
+    HostKeyApproval approve, {
+    String? knownHostKeyFingerprint,
+    ServerProxy? proxy,
+    AuthChallengeApproval? approveAuth,
+    required String tmuxPath,
+    required String sessionName,
+    String? initialDirectory,
+    Map<String, String>? environment,
+  }) async {
+    final client = await _createClient(
+      server,
+      credential,
+      approve,
+      knownHostKeyFingerprint: knownHostKeyFingerprint,
+      approveAuth: approveAuth,
+      proxy: proxy,
+    );
+    final command =
+        'exec ${_shellSingleQuote(tmuxPath)} -CC new-session -A -s '
+        '${_shellSingleQuote(sessionName)}'
+        '${initialDirectory == null || initialDirectory.trim().isEmpty ? '' : ' -c ${_shellSingleQuote(initialDirectory.trim())}'}\n';
+    final shell = await _openShell(
+      client,
+      environment ?? const <String, String>{},
+      initialCommand: command,
+    );
+    final sessionId = 'tmux-ssh-${_nextTerminalId++}';
+    final doneCompleter = Completer<void>();
+    final control = TmuxControlClient(
+      output: shell.stdout,
+      write: (bytes) => shell.write(Uint8List.fromList(bytes)),
+      onClosed: (reason) {
+        // The control client is gone. The tmux session may still be running on
+        // the host — only detaching or killing ends it — so the pane is done
+        // even though the session is not.
+        if (!doneCompleter.isCompleted) doneCompleter.complete();
+      },
+    );
+    _tmuxSessions[sessionId] = _TmuxConnection(
+      client: client,
+      shell: shell,
+      control: control,
+      doneCompleter: doneCompleter,
+    );
+    return TmuxSshSession(
+      id: sessionId,
+      control: control,
+      done: doneCompleter.future,
+      closeTransport: () => _closeTmuxSession(sessionId),
+    );
+  }
+
   Future<RemoteShellDialect> _detectRemoteShellDialect(
     SSHClient client,
     Server server,
@@ -518,6 +587,10 @@ class SshConnectionManager {
       "'${value.replaceAll("'", "'\\''")}'";
 
   Future<void> closeTerminal(String terminalId) async {
+    if (_tmuxSessions.containsKey(terminalId)) {
+      await _closeTmuxSession(terminalId);
+      return;
+    }
     final terminal = _terminals.remove(terminalId);
     if (terminal == null) return;
     if (!terminal.doneCompleter.isCompleted) terminal.doneCompleter.complete();
@@ -541,11 +614,42 @@ class SshConnectionManager {
     terminal.client.close();
   }
 
+  /// Cuts a tmux control-mode shell loose.
+  ///
+  /// Only the transport goes: the tmux session keeps running on the host, so a
+  /// later open attaches to it again.
+  Future<void> _closeTmuxSession(String sessionId) async {
+    final session = _tmuxSessions.remove(sessionId);
+    if (session == null) return;
+    if (!session.doneCompleter.isCompleted) session.doneCompleter.complete();
+    try {
+      await session.control.dispose();
+    } catch (_) {}
+    try {
+      await session.shell.stdin.close();
+    } catch (_) {}
+    session.client.close();
+  }
+
   /// Opens an interactive shell on [client] with the given environment.
+  ///
+  /// [initialCommand] is written to the pty as its first input, before any
+  /// other byte: a tmux control-mode client must start as the shell's only
+  /// command, so nothing may be typed ahead of it.
   ///
   /// Closing the client on failure mirrors [openTerminal]'s original behavior:
   /// a shell request that cannot be answered must not leak the connection.
   Future<SSHSession> _openShell(
+    SSHClient client,
+    Map<String, String> environment, {
+    String? initialCommand,
+  }) async {
+    final shell = await _openShellPty(client, environment);
+    if (initialCommand != null) shell.write(utf8.encode(initialCommand));
+    return shell;
+  }
+
+  Future<SSHSession> _openShellPty(
     SSHClient client,
     Map<String, String> environment,
   ) async {
@@ -5270,6 +5374,21 @@ class TerminalSessionHandle {
   final String id;
   final TerminalSessionAdapter adapter;
   final Future<void> done;
+}
+
+/// One live tmux control-mode shell channel.
+class _TmuxConnection {
+  _TmuxConnection({
+    required this.client,
+    required this.shell,
+    required this.control,
+    required this.doneCompleter,
+  });
+
+  SSHClient client;
+  SSHSession shell;
+  TmuxControlClient control;
+  final Completer<void> doneCompleter;
 }
 
 class _TerminalConnection {

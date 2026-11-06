@@ -114,6 +114,8 @@ class SettingsPage extends HookConsumerWidget {
     final shiftInsertPasteEnabled = ref.watch(shiftInsertPasteEnabledProvider);
     final keywordHighlightEnabled = ref.watch(keywordHighlightEnabledProvider);
     final sudoAutofillEnabled = ref.watch(sudoAutofillEnabledProvider);
+    final tmuxEnabled = ref.watch(tmuxEnabledProvider);
+    final detachOnClose = ref.watch(detachOnCloseProvider);
     final terminalLightTheme = ref.watch(terminalLightThemeProvider);
     final terminalDarkTheme = ref.watch(terminalDarkThemeProvider);
     final connectOnStartup = ref.watch(connectOnStartupProvider);
@@ -529,6 +531,34 @@ class SettingsPage extends HookConsumerWidget {
                             value: sudoAutofillEnabled,
                             onChanged: (enabled) => ref
                                 .read(sudoAutofillEnabledProvider.notifier)
+                                .setEnabled(enabled),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            key: const Key('settingsTerminalTmux'),
+                            contentPadding: _sectionTilePadding,
+                            title: const Text('settingsTerminalTmux').tr(),
+                            subtitle: const Text(
+                              'settingsTerminalTmuxHint',
+                            ).tr(),
+                            value: tmuxEnabled,
+                            onChanged: (enabled) => ref
+                                .read(tmuxEnabledProvider.notifier)
+                                .setEnabled(enabled),
+                          ),
+                          const SizedBox(height: 8),
+                          SwitchListTile(
+                            key: const Key('settingsTerminalTmuxDetachOnClose'),
+                            contentPadding: _sectionTilePadding,
+                            title: const Text(
+                              'settingsTerminalTmuxDetachOnClose',
+                            ).tr(),
+                            subtitle: const Text(
+                              'settingsTerminalTmuxDetachOnCloseHint',
+                            ).tr(),
+                            value: detachOnClose,
+                            onChanged: (enabled) => ref
+                                .read(detachOnCloseProvider.notifier)
                                 .setEnabled(enabled),
                           ),
                         ],

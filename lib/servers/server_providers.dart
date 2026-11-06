@@ -51,6 +51,7 @@ import 'terminal_session_adapter.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
 import 'startup_connection_preferences.dart';
+import 'tmux_preferences.dart';
 import 'transfer_conflict_preferences.dart';
 import 'vault_service.dart';
 import 'vault_file_storage.dart';
@@ -978,6 +979,42 @@ class ServerMetricsEnabledNotifier extends Notifier<bool> {
     await ref
         .read(metricsRefreshSettingsProvider)
         .saveServerMetricsEnabled(value);
+    state = value;
+  }
+}
+
+final tmuxSettingsProvider = Provider<TmuxSettings>(
+  (ref) => InMemoryTmuxSettings(),
+);
+
+/// Whether terminals open inside tmux. Off means every terminal is a bare
+/// shell again, with today's behaviour when its tab closes.
+final tmuxEnabledProvider = NotifierProvider<TmuxEnabledNotifier, bool>(
+  TmuxEnabledNotifier.new,
+);
+
+class TmuxEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.read(tmuxSettingsProvider).tmuxEnabled;
+
+  Future<void> setEnabled(bool value) async {
+    await ref.read(tmuxSettingsProvider).saveTmuxEnabled(value);
+    state = value;
+  }
+}
+
+/// What closing a tmux terminal does: detach from the session (the default,
+/// so the process tree keeps running) or kill it.
+final detachOnCloseProvider = NotifierProvider<DetachOnCloseNotifier, bool>(
+  DetachOnCloseNotifier.new,
+);
+
+class DetachOnCloseNotifier extends Notifier<bool> {
+  @override
+  bool build() => ref.read(tmuxSettingsProvider).detachOnClose;
+
+  Future<void> setEnabled(bool value) async {
+    await ref.read(tmuxSettingsProvider).saveDetachOnClose(value);
     state = value;
   }
 }

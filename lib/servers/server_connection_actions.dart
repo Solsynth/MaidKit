@@ -23,6 +23,8 @@ import 'server_providers.dart';
 import 'server_repository.dart';
 import 'ssh_connection_manager.dart';
 import 'terminal_tabs_provider.dart';
+import 'tmux_control_client.dart';
+import 'tmux_terminal.dart';
 
 /// Ensures the server is connected, then opens the reusable cloud file picker.
 ///
@@ -292,34 +294,39 @@ Future<bool> openTerminalSession(
     }
     return false;
   }
+  // A tmux terminal is the same transport with a session that outlives it.
+  // Its own failure path reports the reason and returns false, so a host that
+  // cannot serve one still gets a plain terminal below.
+  if (ref.read(tmuxEnabledProvider)) {
+    if (await openTmuxTerminal(
+      context,
+      ref,
+      server,
+      paneId: paneId,
+      initialDirectory: initialDirectory,
+    )) {
+      return true;
+    }
+    if (!context.mounted) return false;
+  }
   HostKeyPrompt? approvedHostKey;
   final loading = showMaidKitLoadingModal(
     context,
     message: 'serverOpeningTerminal'.tr(args: [server.name]),
   );
   try {
-    final repository = ref.read(serverRepositoryProvider);
-    final servers = await repository.all();
-    if (!context.mounted) return false;
-    await _ensureJumpHostsConnected(
+    final route = await resolveTerminalRoute(
       context,
       ref,
       server,
-      servers,
-      <int>{},
-      onHostKeyPrompt: loading.dismiss,
-      approveAuth: (challenge) =>
-          approveAuthChallenge(challenge, onBeforePrompt: loading.dismiss),
+      onBeforePrompt: loading.dismiss,
     );
-    if (!context.mounted) return false;
-    final credential = await repository.credentialFor(server);
-    final proxy = await repository.proxyFor(server);
     if (!context.mounted) return false;
     await ref
         .read(terminalTabsProvider.notifier)
         .open(
           server,
-          credential,
+          route.credential,
           (prompt) async {
             // A host-key prompt must remain interactive, so release the blocking
             // loading overlay before presenting it.
@@ -333,7 +340,7 @@ Future<bool> openTerminalSession(
           initialDirectory: initialDirectory,
           initialScripts: initialScripts,
           paneId: paneId,
-          proxy: proxy,
+          proxy: route.proxy,
           approveAuth: (challenge) =>
               approveAuthChallenge(challenge, onBeforePrompt: loading.dismiss),
         );
@@ -355,6 +362,168 @@ Future<bool> openTerminalSession(
     return false;
   } finally {
     loading.dismiss();
+  }
+}
+
+/// The credential and proxy an SSH terminal on [server] dials with.
+///
+/// Shared by the plain and the tmux open paths, which differ only in what they
+/// start once the transport is up. [onBeforePrompt] releases any blocking
+/// overlay before an interactive host-key prompt appears.
+Future<({ServerCredential credential, ServerProxy? proxy})>
+resolveTerminalRoute(
+  BuildContext context,
+  WidgetRef ref,
+  Server server, {
+  VoidCallback? onBeforePrompt,
+}) async {
+  final repository = ref.read(serverRepositoryProvider);
+  final servers = await repository.all();
+  if (!context.mounted) throw StateError('The connection request was closed.');
+  await _ensureJumpHostsConnected(
+    context,
+    ref,
+    server,
+    servers,
+    <int>{},
+    onHostKeyPrompt: onBeforePrompt,
+    approveAuth: (challenge) =>
+        approveAuthChallenge(challenge, onBeforePrompt: onBeforePrompt),
+  );
+  if (!context.mounted) throw StateError('The connection request was closed.');
+  final credential = await repository.credentialFor(server);
+  final proxy = await repository.proxyFor(server);
+  return (credential: credential, proxy: proxy);
+}
+
+/// The tmux session name a server's terminals attach to by default.
+///
+/// tmux accepts `[A-Za-z0-9_.-]` and this client bounds the name at 40 bytes,
+/// so a server name is folded into that alphabet. A name that folds away
+/// entirely falls back to the server id, which is always a valid body.
+String defaultTmuxSessionName(Server server) {
+  final folded = server.name
+      .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '-')
+      .replaceFirst(RegExp(r'^[^A-Za-z0-9]+'), '')
+      .replaceFirst(RegExp(r'-+$'), '');
+  final body = folded.length > 32 ? folded.substring(0, 32) : folded;
+  return body.isEmpty ? 'maidkit-${server.id}' : 'maidkit-$body';
+}
+
+/// Opens [server]'s terminal as a tmux client, returning false when the host
+/// cannot serve one.
+///
+/// The caller falls back to a plain terminal on false: a host without tmux, or
+/// a control-mode handshake tmux refuses, must never cost the user their
+/// terminal. A refusal is reported, so the fallback is not silent.
+Future<bool> openTmuxTerminal(
+  BuildContext context,
+  WidgetRef ref,
+  Server server, {
+  String? paneId,
+  String? sessionName,
+  String? initialDirectory,
+  VoidCallback? onBeforePrompt,
+}) async {
+  if (server.connectionType == ServerConnectionType.serial.name) return false;
+  final name = sessionName ?? defaultTmuxSessionName(server);
+  try {
+    final repository = ref.read(serverRepositoryProvider);
+    final target = await repository.maidCafeTerminalTargetFor(server);
+    final bool viaDaemon =
+        server.connectionType == ServerConnectionType.maidcafe.name ||
+        target != null;
+    if (viaDaemon) {
+      final resolution = target == null
+          ? await resolveMaidCafeTerminal(ref, server)
+          : (target: target, stop: null);
+      final resolved = resolution.target;
+      if (resolved == null) return false;
+      final control = await ref
+          .read(maidCafeTerminalConnectionManagerProvider)
+          .openTmuxControl(server, resolved, sessionName: name);
+      var closed = false;
+      await ref
+          .read(terminalTabsProvider.notifier)
+          .openTmux(
+            server,
+            sessionName: name,
+            control: control.control,
+            transport: maidCafeTerminalTransport(resolved),
+            closeTransport: () async {
+              if (closed) return;
+              closed = true;
+              await control.close();
+              await resolution.stop?.call();
+            },
+            paneId: paneId,
+          );
+      return true;
+    }
+    if (!context.mounted) return false;
+    final route = await resolveTerminalRoute(
+      context,
+      ref,
+      server,
+      onBeforePrompt: onBeforePrompt,
+    );
+    if (!context.mounted) return false;
+    final manager = ref.read(connectionManagerProvider);
+    final tmuxPath =
+        manager.tmuxPaths.cached(server.id) ??
+        await manager.withClient(server.id, (client) => probeTmuxPath(client));
+    manager.tmuxPaths.store(server.id, tmuxPath);
+    if (tmuxPath == null) return false;
+    if (!context.mounted) return false;
+    final session = await manager.openTmuxControl(
+      server,
+      route.credential,
+      (prompt) async {
+        if (!context.mounted) return false;
+        return _approveHostKey(context, prompt);
+      },
+      knownHostKeyFingerprint: server.hostKeyFingerprint,
+      proxy: route.proxy,
+      tmuxPath: tmuxPath,
+      sessionName: name,
+      initialDirectory: initialDirectory,
+      environment: decodeEnvironmentMap(server.environment),
+    );
+    await ref
+        .read(terminalTabsProvider.notifier)
+        .openTmux(
+          server,
+          sessionName: name,
+          control: session.control,
+          transport: TerminalTransport.tmux,
+          closeTransport: session.close,
+          paneId: paneId,
+        );
+    return true;
+  } on TmuxControlException catch (error) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: error.message,
+        title: 'serverCannotOpenTerminal'.tr(),
+        icon: Symbols.terminal,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+    return false;
+  } on MaidCafeTerminalException catch (error) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: error.message,
+        title: 'serverCannotOpenTerminal'.tr(),
+        icon: Symbols.terminal,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+    return false;
+  } catch (_) {
+    // Anything else is the fallback's problem to report: this attempt only has
+    // to say it did not work.
+    return false;
   }
 }
 
@@ -655,6 +824,14 @@ Future<bool> openMaidCafeTerminalSession(
     }
   }
   if (!context.mounted) return false;
+  // A tmux terminal on the daemon carries the session name in the handshake, so
+  // it survives the socket. A refusal falls through to today's plain session.
+  if (ref.read(tmuxEnabledProvider)) {
+    if (await openTmuxTerminal(context, ref, server, paneId: paneId)) {
+      return true;
+    }
+    if (!context.mounted) return false;
+  }
   // The spinner goes up before anything slow. Resolving the route can open an
   // SSH session to read the daemon's configuration and start a port forward,
   // and a menu item that appears to do nothing for that long reads as broken.

@@ -455,6 +455,8 @@ class _StatusBarTransport extends StatelessWidget {
       // A daemon dialed directly, versus one reached through the cloud.
       TerminalTransport.maidCafeDirect => Symbols.dns,
       TerminalTransport.maidCafeRelay => Symbols.cloud,
+      // A tmux session owns a process tree that outlives the connection.
+      TerminalTransport.tmux => Symbols.account_tree,
     };
     return Tooltip(
       message: transport.labelKey.tr(),

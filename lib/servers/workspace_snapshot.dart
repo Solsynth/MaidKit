@@ -45,6 +45,7 @@ class WorkspaceContentSnapshot {
     this.path,
     this.fileName,
     this.isRemote = false,
+    this.tmuxSession,
   });
 
   final String id;
@@ -58,6 +59,10 @@ class WorkspaceContentSnapshot {
   final String? fileName;
   final bool isRemote;
 
+  /// The tmux session this terminal mirrors, when it is a tmux client. A null
+  /// here is a plain shell, which restores exactly as before.
+  final String? tmuxSession;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'kind': kind.name,
@@ -70,6 +75,7 @@ class WorkspaceContentSnapshot {
     if (path != null) 'path': path,
     if (fileName != null) 'fileName': fileName,
     if (isRemote) 'isRemote': isRemote,
+    if (tmuxSession != null) 'tmuxSession': tmuxSession,
   };
 
   static WorkspaceContentSnapshot? fromJson(Map<String, dynamic> json) {
@@ -89,6 +95,7 @@ class WorkspaceContentSnapshot {
       path: json['path'] as String?,
       fileName: json['fileName'] as String?,
       isRemote: json['isRemote'] as bool? ?? false,
+      tmuxSession: json['tmuxSession'] as String?,
     );
   }
 }
@@ -186,6 +193,7 @@ class WorkspaceSnapshot {
                     serverId: content.serverId,
                     cwd: content.terminal.currentDirectory,
                     history: historyFor(content),
+                    tmuxSession: content.tmux?.sessionName,
                   ),
                   final FileManagementTab content => WorkspaceContentSnapshot(
                     id: content.id,
@@ -432,6 +440,7 @@ class PendingTerminalRestore {
     this.cwd,
     this.history,
     this.connectionType = ServerConnectionType.ssh,
+    this.tmuxSession,
   });
 
   final String paneId;
@@ -441,6 +450,9 @@ class PendingTerminalRestore {
 
   /// Transport the terminal was on, so a restored tab reopens the same way.
   final ServerConnectionType connectionType;
+
+  /// The tmux session to reattach, when the terminal was a tmux client.
+  final String? tmuxSession;
 }
 
 /// A [WorkspaceSnapshot] resolved against the current server catalog: the tabs
@@ -497,6 +509,7 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
             connectionType: serverConnectionTypeFromName(
               server!.connectionType,
             ),
+            tmuxSession: content.tmuxSession,
           ),
         );
         continue;

@@ -153,6 +153,36 @@ layout and one pane map per tab. Version 1 saves — a single workspace layout
 with tab lists frozen inside each pane — are converted on load, one tab per
 pane tab, so an older session still reopens.
 
+## tmux-backed terminals
+
+A terminal can be a tmux *client* instead of a shell, so its process tree
+outlives the transport: closing the tab detaches, the session keeps running,
+and any later open — over SSH or over a MaidCafe daemon, relayed or direct —
+reattaches by name.
+
+The layer has three parts. `servers/tmux_control_client.dart` speaks tmux's
+control-mode protocol (`tmux -CC`): it strips the DCS framing, parses the
+`%`-prefixed notifications, correlates `%begin`/`%end` blocks with the commands
+that asked for them, and turns keystrokes into `send-keys -H` hex chunks. It
+runs on an allocated pty because `-CC` refuses to start without a tty, which is
+why the SSH path opens a shell channel (`SshConnectionManager.openTmuxControl`)
+and the daemon path runs `tmux -CC` inside the PTY it already allocates.
+`servers/tmux_terminal.dart` owns `TmuxTabBinding`: one binding per session,
+the adapter for every mirrored pane, and the tmux commands behind splitting,
+resizing, closing a pane and detaching. `servers/tmux_layout.dart` maps a tmux
+v2 JSON layout onto the workspace's binary `SessionLayout` tree, folding an
+n-ary container into nested splits.
+
+tmux is the authority. Splitting, dragging a gutter and closing a pane all
+become tmux commands whose `%layout-change` reply is what re-tiles the screen,
+so the tab's layout is a projection of the session's own tree and a refused
+gesture snaps back instead of drifting. `TerminalTabsNotifier.openTmux` mounts
+one workspace tab per session, `applyTmuxLayout` applies a projected tree, and
+`closeTmuxTab` drops a tab whose session ended. `tmuxEnabledProvider` is the
+app-wide switch; `detachOnCloseProvider` chooses between detaching and killing
+when a tab closes, and the workspace snapshot records a terminal's session name
+so a restored workspace reattaches to it.
+
 When changing pages:
 
 1. Add the destination or detail widget; only `ServerWorkspacePage` is a

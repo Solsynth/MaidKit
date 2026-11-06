@@ -1327,6 +1327,35 @@ class MaidCafeStreamSession {
   /// arrives as [MaidCafeRouteMissingException] rather than a failed read.
   Future<Map<String, dynamic>> healthReport() => _get('/api/v1/health');
 
+  /// The host's background tmux sessions, for a terminal that detached from
+  /// one. A daemon older than the route answers
+  /// [MaidCafeRouteMissingException].
+  Future<Map<String, dynamic>> terminalSessions() =>
+      _get('/api/v1/terminal/sessions');
+
+  /// Ends the tmux session [name] on the host, every process in it.
+  Future<void> killTerminalSession(String name) async {
+    final path = '/api/v1/terminal/sessions/${Uri.encodeComponent(name)}';
+    _throwIfClosed();
+    try {
+      final response = await _dio.delete<Object?>(path);
+      final status = response.statusCode ?? 500;
+      if (status >= 400) {
+        final data = response.data;
+        final message = data is Map ? data['error']?.toString() : null;
+        throw StateError(message ?? 'MaidCafe HTTP request failed ($status).');
+      }
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 401) {
+        throw const MaidCafeUnauthorizedException();
+      }
+      if (_isMaidCafeMissingRoute(error)) {
+        throw MaidCafeRouteMissingException(path);
+      }
+      throw StateError(_dioError(error));
+    }
+  }
+
   Future<Map<String, dynamic>> metrics() => _get('/api/v1/metrics');
 
   /// One-shot container list from the daemon (same payload as the `containers`

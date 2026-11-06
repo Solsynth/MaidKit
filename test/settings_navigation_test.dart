@@ -407,6 +407,38 @@ void main() {
     expect(find.text('maidCafeServerConfigTitle'.tr()), findsNothing);
     expect(find.text('maidCafeServerDaemonUrl'.tr()), findsNothing);
   });
+  testWidgets('terminal settings own the tmux switches', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1200, 2400));
+
+    final container = containerOf(tester);
+    container.read(terminalTabsProvider.notifier).openSettings();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('settingsTerminal'.tr()).first);
+    await tester.pumpAndSettle();
+
+    final tmux = find.byKey(const Key('settingsTerminalTmux'));
+    final detach = find.byKey(const Key('settingsTerminalTmuxDetachOnClose'));
+    expect(tmux, findsOneWidget);
+    expect(detach, findsOneWidget);
+    expect(container.read(tmuxEnabledProvider), isTrue);
+    expect(container.read(detachOnCloseProvider), isTrue);
+
+    await tester.ensureVisible(tmux);
+    await tester.tap(tmux);
+    await tester.pumpAndSettle();
+    expect(container.read(tmuxEnabledProvider), isFalse);
+    expect(container.read(tmuxSettingsProvider).tmuxEnabled, isFalse);
+
+    await tester.ensureVisible(detach);
+    await tester.tap(detach);
+    await tester.pumpAndSettle();
+    expect(container.read(detachOnCloseProvider), isFalse);
+    expect(container.read(tmuxSettingsProvider).detachOnClose, isFalse);
+  });
+
   testWidgets('channel picker lays out inside a dialog', (
     WidgetTester tester,
   ) async {

@@ -605,12 +605,13 @@ class ServerRepository {
         secret: '',
         user: user,
         relayDaemonId: daemonId,
-        ticketProvider: (columns, rows, requestedUser) =>
+        ticketProvider: (columns, rows, requestedUser, tmux) =>
             service.createTerminalSession(
               daemonId,
               columns: columns,
               rows: rows,
               user: requestedUser,
+              tmux: tmux,
             ),
       );
     }

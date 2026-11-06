@@ -22,6 +22,7 @@ import 'servers/terminal_adapter_preferences.dart';
 import 'servers/startup_connection_preferences.dart';
 import 'servers/transfer_conflict_preferences.dart';
 import 'servers/workspace_restore_preferences.dart';
+import 'servers/tmux_preferences.dart';
 import 'servers/terminal_tabs_provider.dart';
 import 'servers/privacy_preferences.dart';
 import 'firebase_options.dart';
@@ -67,6 +68,7 @@ Future<void> main(List<String> args) async {
     MaidCafePreferences.load(),
     TransferConflictPreferences.load(),
     WorkspaceRestorePreferences.load(),
+    TmuxPreferences.load(),
   ]);
   final terminalAdapterPreferences =
       preferences[0] as TerminalAdapterPreferences;
@@ -80,6 +82,7 @@ Future<void> main(List<String> args) async {
       preferences[6] as TransferConflictPreferences;
   final workspaceRestorePreferences =
       preferences[7] as WorkspaceRestorePreferences;
+  final tmuxPreferences = preferences[8] as TmuxPreferences;
 
   // The legacy vault is an SQLite file in the documents directory, which a
   // browser does not have; there is nothing on disk to migrate there.
@@ -107,6 +110,7 @@ Future<void> main(List<String> args) async {
       workspaceRestoreSettingsProvider.overrideWithValue(
         workspaceRestorePreferences,
       ),
+      tmuxSettingsProvider.overrideWithValue(tmuxPreferences),
     ],
   );
 

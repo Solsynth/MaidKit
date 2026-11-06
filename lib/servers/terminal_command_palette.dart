@@ -15,6 +15,8 @@ import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
+import 'tmux_sessions_sheet.dart';
+import 'tmux_terminal.dart';
 import 'workspace_shortcuts.dart';
 
 Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
@@ -48,6 +50,10 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
     builder: (context, close) => _TerminalCommandPalette(
       activeTab: activeTab,
       servers: servers,
+      tmuxForTab: (tabId) =>
+          ref.read(terminalTabsProvider.notifier).tmuxForTab(tabId),
+      hostContext: hostContext,
+      ref: ref,
       destinationActions: _destinationActions(
         hostContext: hostContext,
         ref: ref,
@@ -163,6 +169,9 @@ class _TerminalCommandPalette extends StatefulWidget {
     required this.onClosePane,
     required this.onClose,
     required this.onDisconnect,
+    required this.tmuxForTab,
+    required this.hostContext,
+    required this.ref,
   });
 
   final SessionTab? activeTab;
@@ -185,6 +194,14 @@ class _TerminalCommandPalette extends StatefulWidget {
   final Future<void> Function()? onClosePane;
   final Future<void> Function()? onClose;
   final Future<void> Function()? onDisconnect;
+
+  /// The tmux binding behind a tab, when that tab mirrors a session.
+  final TmuxTabBinding? Function(String tabId) tmuxForTab;
+
+  /// The palette's own caller context and container, for the surfaces that must
+  /// outlive the overlay entry (the background-session sheet).
+  final BuildContext hostContext;
+  final WidgetRef ref;
 
   @override
   State<_TerminalCommandPalette> createState() =>
@@ -307,6 +324,7 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
           group: _PaletteGroup.tab,
           onSelect: widget.onDisconnect!,
         ),
+      ..._tmuxActions(activeTab, activeServer),
       for (final server in widget.servers)
         if (server.id != activeTab?.serverId)
           _TerminalAction(
@@ -318,6 +336,65 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
           ),
       ...widget.destinationActions,
     ].where((action) => action.label.toLowerCase().contains(_query)).toList();
+  }
+
+  /// The tmux entries, offered only while the selected tab mirrors a session.
+  List<_TerminalAction> _tmuxActions(SessionTab? activeTab, Server? server) {
+    if (activeTab is! TerminalTab) return const [];
+    final binding = widget.tmuxForTab(activeTab.id);
+    if (binding == null || server == null) return const [];
+    return [
+      _TerminalAction(
+        label: 'sessionsTmuxDetach'.tr(),
+        icon: Symbols.logout,
+        group: _PaletteGroup.tab,
+        onSelect: () async {
+          widget.onDismiss();
+          await binding.detach();
+        },
+      ),
+      _TerminalAction(
+        label: 'sessionsTmuxKill'.tr(),
+        icon: Symbols.power_settings_new,
+        group: _PaletteGroup.tab,
+        onSelect: () async {
+          widget.onDismiss();
+          final confirmed = await showMaidKitConfirmAlert(
+            'sessionsTmuxKillConfirm'.tr(args: [binding.sessionName]),
+            'sessionsTmuxKill'.tr(),
+            isDanger: true,
+          );
+          if (!confirmed) return;
+          await binding.killSession();
+        },
+      ),
+      for (final window in binding.windows)
+        _TerminalAction(
+          label:
+              '${'sessionsTmuxSwitchWindow'.tr()} '
+              '${'sessionsTmuxWindow'.tr(args: ['${window.index}'])}',
+          icon: Symbols.tab_recent,
+          group: _PaletteGroup.tab,
+          hint: window.name,
+          onSelect: () async {
+            widget.onDismiss();
+            try {
+              await binding.control.command('select-window -t ${window.index}');
+            } catch (_) {
+              // A window that went away needs no switch.
+            }
+          },
+        ),
+      _TerminalAction(
+        label: 'sessionsTmuxBackground'.tr(args: [server.name]),
+        icon: Symbols.inventory,
+        group: _PaletteGroup.servers,
+        onSelect: () async {
+          widget.onDismiss();
+          await showTmuxSessionsSheet(widget.hostContext, widget.ref, server);
+        },
+      ),
+    ];
   }
 
   KeyEventResult _onKey(

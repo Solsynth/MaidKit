@@ -153,7 +153,7 @@ void main() {
       secret: '',
       user: 'deploy',
       relayDaemonId: 'daemon-1',
-      ticketProvider: (columns, rows, user) async {
+      ticketProvider: (columns, rows, user, tmux) async {
         minted.add((columns, rows, user));
         return MaidCafeTerminalTicket(
           sessionId: 'session-1',
@@ -196,7 +196,7 @@ void main() {
       baseUrl: 'https://mkc.solsynth.dev',
       secret: '',
       relayDaemonId: 'daemon-1',
-      ticketProvider: (columns, rows, user) async =>
+      ticketProvider: (columns, rows, user, tmux) async =>
           throw const MaidCafeException(
             'Sign in with Solarpass before managing MaidCafe.',
             kind: MaidCafeErrorKind.signInRequired,

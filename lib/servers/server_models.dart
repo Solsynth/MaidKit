@@ -352,13 +352,15 @@ String maidCafeTerminalToken(String credential) {
 }
 
 /// Mints a one-time cloud ticket for a relayed session with the requested PTY
-/// geometry and run-as [user] (null/empty for the daemon's own account).
-/// Sampled by [MaidCafeTerminalTarget.ticketProvider].
+/// geometry, run-as [user] (null/empty for the daemon's own account) and tmux
+/// session [tmux] (null/empty for a bare shell). Sampled by
+/// [MaidCafeTerminalTarget.ticketProvider].
 typedef MaidCafeTerminalTicketProvider =
     Future<MaidCafeTerminalTicket> Function(
       int columns,
       int rows,
       String? user,
+      String? tmux,
     );
 
 /// A resolved MaidCafe daemon terminal endpoint and its credential.
@@ -378,6 +380,7 @@ class MaidCafeTerminalTarget {
     this.user,
     this.relayDaemonId,
     this.ticketProvider,
+    this.tmux,
   });
 
   final String baseUrl;
@@ -404,6 +407,14 @@ class MaidCafeTerminalTarget {
   /// the daemon never sees the ticket, it authenticates its outbound dial with
   /// its own cloud secret.
   final MaidCafeTerminalTicketProvider? ticketProvider;
+
+  /// The tmux session name to attach to, or null for a bare login shell.
+  ///
+  /// A tmux target asks the daemon for a control-mode client on that session,
+  /// so the process tree survives the socket. A relayed target carries the name
+  /// in its ticket instead, because the cloud's session row is what the daemon
+  /// picks up.
+  final String? tmux;
 
   /// Whether this target goes through the MaidCafe cloud relay.
   bool get isRelayed => relayDaemonId != null;
@@ -451,18 +462,31 @@ class MaidCafeTerminalTarget {
     user: user,
     relayDaemonId: relayDaemonId,
     ticketProvider: ticketProvider,
+    tmux: tmux,
   );
 
-  /// The handshake URL for one session: [endpoint] with the PTY geometry and
-  /// the run-as account the daemon should apply.
+  /// The same target attached to a tmux session instead of a bare shell.
+  MaidCafeTerminalTarget withTmux(String? sessionName) =>
+      MaidCafeTerminalTarget(
+        baseUrl: baseUrl,
+        secret: secret,
+        user: user,
+        relayDaemonId: relayDaemonId,
+        ticketProvider: ticketProvider,
+        tmux: sessionName,
+      );
+
+  /// The handshake URL for one session: [endpoint] with the PTY geometry, the
+  /// run-as account the daemon should apply, and the tmux session to attach.
   ///
-  /// A relayed target returns [endpoint] unchanged — the cloud takes both in
-  /// the ticket request body, and the browser socket carries no query
+  /// A relayed target returns [endpoint] unchanged — the cloud takes all three
+  /// in the ticket request body, and the browser socket carries no query
   /// parameters there. Also what the diagnostic probe requests, so a refusal
   /// it has to explain is the one the session itself would have met.
   Uri sessionEndpoint({int? columns, int? rows}) {
     if (isRelayed) return endpoint;
     final user = this.user?.trim();
+    final tmux = this.tmux?.trim();
     return endpoint.replace(
       queryParameters: {
         if (columns != null) 'cols': '$columns',
@@ -470,6 +494,7 @@ class MaidCafeTerminalTarget {
         // Absent when no account is selected, which the daemon reads as its
         // own account — the same value an empty parameter means.
         if (user != null && user.isNotEmpty) 'user': user,
+        if (tmux != null && tmux.isNotEmpty) 'tmux': tmux,
       },
     );
   }
