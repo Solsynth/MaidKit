@@ -1703,6 +1703,8 @@
   "sessionsOpenFileTransfer": "在 {} 上打开文件传输",
   "sessionsSearchActions": "搜索会话操作",
   "sessionsSessionActions": "会话操作 (Shift+Tab)",
+  "sessionsNextTab": "下一个标签页",
+  "sessionsPreviousTab": "上一个标签页",
   "sessionsSplitDown": "向下拆分",
   "sessionsSplitRight": "向右拆分",
   "sessionsPaletteGroupTab": "当前标签",

@@ -50,6 +50,52 @@ bool isNewTabShortcut(KeyEvent event) {
   return isCommandChord(event);
 }
 
+/// Which way Ctrl+Tab asks to walk the workspace's tabs.
+///
+/// Ctrl+Tab is the chord browsers and editors use to step through their tabs;
+/// holding it with Shift walks back. Ctrl is the modifier on every platform,
+/// not this platform's command chord: on Apple platforms Cmd+Tab belongs to
+/// the system's application switcher and never reaches the app. Repeats count,
+/// so a held chord keeps cycling.
+///
+/// Returns 1 for the next tab, -1 for the previous one, 0 when [event] is not
+/// this chord.
+int tabCycleStep(KeyEvent event) {
+  if (event is! KeyDownEvent && event is! KeyRepeatEvent) return 0;
+  if (event.logicalKey != LogicalKeyboardKey.tab) return 0;
+  final keyboard = HardwareKeyboard.instance;
+  if (keyboard.isAltPressed || !keyboard.isControlPressed) return 0;
+  return keyboard.isShiftPressed ? -1 : 1;
+}
+
+/// The one-based tab position Cmd/Ctrl+1…9 asks for, or null.
+///
+/// The number counts the workspace tabs in bar order: the shortcut picks the
+/// tab the bar would show there, not a pane. A position past the last tab
+/// selects nothing.
+int? tabPositionShortcut(KeyEvent event) {
+  if (event is! KeyDownEvent) return null;
+  final keyboard = HardwareKeyboard.instance;
+  if (keyboard.isShiftPressed || keyboard.isAltPressed) return null;
+  if (!isCommandChord(event)) return null;
+  for (var position = 1; position <= 9; position++) {
+    if (event.logicalKey == _tabDigitKey(position)) return position;
+  }
+  return null;
+}
+
+LogicalKeyboardKey _tabDigitKey(int position) => switch (position) {
+  1 => LogicalKeyboardKey.digit1,
+  2 => LogicalKeyboardKey.digit2,
+  3 => LogicalKeyboardKey.digit3,
+  4 => LogicalKeyboardKey.digit4,
+  5 => LogicalKeyboardKey.digit5,
+  6 => LogicalKeyboardKey.digit6,
+  7 => LogicalKeyboardKey.digit7,
+  8 => LogicalKeyboardKey.digit8,
+  _ => LogicalKeyboardKey.digit9,
+};
+
 /// How a command chord prints in menus on this platform.
 ///
 /// `⌘D` / `⇧⌘D` on Apple platforms, `Ctrl+D` / `Ctrl+Shift+D` elsewhere.
@@ -64,3 +110,11 @@ String newTabShortcutLabel() => commandChordLabel('T');
 /// The chord that splits the focused pane along [axis].
 String splitShortcutLabel(SessionSplitAxis axis) =>
     commandChordLabel('D', shift: axis == SessionSplitAxis.vertical);
+
+/// The chord that steps the workspace's tab selection, forwards or back.
+String tabCycleShortcutLabel({bool backwards = false}) => usesCommandGlyph
+    ? '⌃${backwards ? '⇧' : ''}⇥'
+    : 'Ctrl+${backwards ? 'Shift+' : ''}Tab';
+
+/// The chord that selects the tab at a one-based [position].
+String tabPositionShortcutLabel(int position) => commandChordLabel('$position');

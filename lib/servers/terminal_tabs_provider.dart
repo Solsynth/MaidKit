@@ -1485,6 +1485,35 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     state = TerminalTabsState(tabs: state.tabs, selectedTabId: tabId);
   }
 
+  /// Steps the workspace's tab selection by [step] entries, wrapping at the
+  /// ends.
+  ///
+  /// Ctrl+Tab walks the bar the same way a browser does, so stepping past the
+  /// last tab lands on the first instead of stopping. A step of zero, or a
+  /// workspace with a single tab, changes nothing.
+  void cycleSelectedTab(int step) {
+    final tabs = state.tabs;
+    if (tabs.length < 2 || step == 0) return;
+    final current = tabs.indexWhere((tab) => tab.id == state.selectedTabId);
+    if (current < 0) {
+      selectTab(tabs.first.id);
+      return;
+    }
+    final next = (current + step) % tabs.length;
+    selectTab(tabs[next < 0 ? next + tabs.length : next].id);
+  }
+
+  /// Selects the tab at the one-based bar [position].
+  ///
+  /// Positions past the last tab are ignored, so Cmd/Ctrl+5 on a three-tab
+  /// workspace leaves the selection where it was instead of jumping to the
+  /// last tab behind the user's back.
+  void selectTabAt(int position) {
+    final tabs = state.tabs;
+    if (position < 1 || position > tabs.length) return;
+    selectTab(tabs[position - 1].id);
+  }
+
   void focusPane(String paneId) {
     final tab = state.selectedTab;
     if (tab == null || !tab.panes.containsKey(paneId)) return;

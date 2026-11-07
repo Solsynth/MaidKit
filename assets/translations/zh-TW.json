@@ -1661,6 +1661,8 @@
   "sessionsOpenFileTransfer": "在 {} 上開啟檔案傳輸",
   "sessionsSearchActions": "搜尋會話操作",
   "sessionsSessionActions": "會話操作 (Shift+Tab)",
+  "sessionsNextTab": "下一個分頁",
+  "sessionsPreviousTab": "上一個分頁",
   "sessionsSplitDown": "向下拆分",
   "sessionsSplitRight": "向右拆分",
   "sessionsPaletteGroupTab": "目前分頁",

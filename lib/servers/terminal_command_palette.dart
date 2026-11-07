@@ -288,6 +288,28 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
         shortcut: newTabShortcutLabel(),
         onSelect: () async => widget.onNewTab(),
       ),
+      if (widget.ref.read(terminalTabsProvider).tabs.length > 1) ...[
+        _TerminalAction(
+          label: 'sessionsNextTab'.tr(),
+          icon: Symbols.keyboard_tab,
+          group: _PaletteGroup.tab,
+          shortcut: tabCycleShortcutLabel(),
+          onSelect: () async {
+            widget.onDismiss();
+            widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(1);
+          },
+        ),
+        _TerminalAction(
+          label: 'sessionsPreviousTab'.tr(),
+          icon: Symbols.keyboard_tab,
+          group: _PaletteGroup.tab,
+          shortcut: tabCycleShortcutLabel(backwards: true),
+          onSelect: () async {
+            widget.onDismiss();
+            widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(-1);
+          },
+        ),
+      ],
       if (widget.onSplitRight != null)
         _TerminalAction(
           label: 'sessionsSplitRight'.tr(),

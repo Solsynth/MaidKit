@@ -91,6 +91,16 @@ class MaidKitWindowScaffold extends ConsumerWidget {
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        // Ctrl+Tab steps to the next workspace tab, Shift+Ctrl+Tab back —
+        // the chord every editor and browser uses for the same move. It has to
+        // be asked before the plain Shift+Tab palette chord below, because
+        // Shift+Ctrl+Tab would otherwise read as that chord. Ctrl is required
+        // rather than this platform's command modifier: on Apple platforms
+        // Cmd+Tab belongs to the system and never reaches the app.
+        if (tabCycleStep(event) case final step when step != 0) {
+          ref.read(terminalTabsProvider.notifier).cycleSelectedTab(step);
+          return KeyEventResult.handled;
+        }
         if (event.logicalKey == LogicalKeyboardKey.tab &&
             HardwareKeyboard.instance.isShiftPressed) {
           showTerminalCommandPalette(context, ref);
@@ -127,6 +137,12 @@ class MaidKitWindowScaffold extends ConsumerWidget {
         // so this branch covers every other focused surface.
         if (splitShortcutAxis(event) case final axis?) {
           ref.read(terminalTabsProvider.notifier).splitSelectedTab(axis);
+          return KeyEventResult.handled;
+        }
+        // Cmd/Ctrl+1…9 selects the tab at that position in the bar. Positions
+        // past the last tab do nothing.
+        if (tabPositionShortcut(event) case final position?) {
+          ref.read(terminalTabsProvider.notifier).selectTabAt(position);
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;

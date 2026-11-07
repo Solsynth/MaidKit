@@ -148,6 +148,12 @@ there. The close routes through `TerminalTabsNotifier.closePaneInTab`, which
 asks first when the pane's content is still working: a terminal running a task,
 an agent chat still replying, or a dirty file editor.
 
+Ctrl+Tab walks the workspace's tabs (Shift+Ctrl+Tab walks back) and
+Cmd/Ctrl+1…9 jumps to the tab at that position; both are answered by the
+terminal's key hook as well, because a focused terminal would otherwise
+encode or swallow them. The cycle wraps at the ends, while a position past the
+last tab selects nothing.
+
 The saved workspace (`servers/workspace_snapshot.dart`, version 2) stores one
 layout and one pane map per tab. Version 1 saves — a single workspace layout
 with tab lists frozen inside each pane — are converted on load, one tab per

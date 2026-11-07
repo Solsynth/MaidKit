@@ -648,7 +648,7 @@ class _TerminalPaneHeader extends ConsumerWidget {
         alignment: Alignment.center,
         children: [
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: movable ? 32 : 0),
+            padding: EdgeInsets.only(left: 8, right: 4),
             child: Row(
               children: [
                 Icon(
@@ -657,7 +657,7 @@ class _TerminalPaneHeader extends ConsumerWidget {
                   color: focused ? scheme.primary : scheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 8),
-                Flexible(
+                Expanded(
                   child: Text(
                     terminal.serverName.isNotEmpty
                         ? terminal.serverName
@@ -672,7 +672,6 @@ class _TerminalPaneHeader extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const Spacer(),
                 IconButton(
                   tooltip: 'terminalRunSnippetTooltip'.tr(),
                   visualDensity: VisualDensity.compact,
@@ -1568,6 +1567,18 @@ class _SessionTabBody extends ConsumerWidget {
               // shell (Ctrl+D is its end-of-input) and keep the event.
               if (splitShortcutAxis(event) case final axis?) {
                 ref.read(terminalTabsProvider.notifier).splitSelectedTab(axis);
+                return KeyEventResult.handled;
+              }
+              // Ctrl+Tab and Cmd/Ctrl+1…9 change which tab the workspace shows.
+              // The renderer would otherwise encode or drop them for the
+              // remote shell, so they are answered here first, like the
+              // new-tab and split chords above.
+              if (tabCycleStep(event) case final step when step != 0) {
+                ref.read(terminalTabsProvider.notifier).cycleSelectedTab(step);
+                return KeyEventResult.handled;
+              }
+              if (tabPositionShortcut(event) case final position?) {
+                ref.read(terminalTabsProvider.notifier).selectTabAt(position);
                 return KeyEventResult.handled;
               }
               if (!_isTerminalSnippetShortcut(event)) {

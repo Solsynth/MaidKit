@@ -1704,6 +1704,8 @@
   "sessionsOpenFileTransfer": "Open file transfer on {}",
   "sessionsSearchActions": "Search session actions",
   "sessionsSessionActions": "Session actions (Shift+Tab)",
+  "sessionsNextTab": "Next tab",
+  "sessionsPreviousTab": "Previous tab",
   "sessionsSplitDown": "Split down",
   "sessionsSplitRight": "Split right",
   "sessionsPaletteGroupTab": "THIS TAB",
