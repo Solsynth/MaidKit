@@ -30,6 +30,10 @@ class MaidKitPanel extends StatelessWidget {
   /// unambiguous.
   final bool highlighted;
 
+  /// Whether the panel fills its container flatly with square edges and no
+  /// card border (used for desktop split-view layouts).
+  final bool flat;
+
   const MaidKitPanel({
     super.key,
     this.child,
@@ -41,6 +45,7 @@ class MaidKitPanel extends StatelessWidget {
     ),
     this.emphasized = true,
     this.highlighted = false,
+    this.flat = false,
   });
 
   /// Brightness an idle panel's content keeps, as a fraction of its own.
@@ -96,7 +101,7 @@ class MaidKitPanel extends StatelessWidget {
         // dimmed pane's filter both end on the card's corner.
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
-          borderRadius: MaidKitRadius.cardRadius,
+          borderRadius: flat ? BorderRadius.zero : MaidKitRadius.cardRadius,
           // One hairline around the live pane: enough to name it at a glance,
           // quiet enough to stay a sheet rather than a boxed control. A drag
           // hovering this slot takes the same hairline at full strength. An
@@ -104,15 +109,19 @@ class MaidKitPanel extends StatelessWidget {
           // paper, so the edge is what keeps a body that paints no surface —
           // the file manager's transparent pane, a settings page — reading as
           // a pane instead of as the paper behind it.
-          side: switch ((highlighted, emphasized)) {
-            (true, _) => BorderSide(color: scheme.primary),
-            (_, true) => BorderSide(
-              color: scheme.primary.withValues(alpha: 0.45),
-            ),
-            _ => BorderSide(
-              color: scheme.outlineVariant.withValues(alpha: 0.6),
-            ),
-          },
+          side: flat
+              ? (highlighted
+                  ? BorderSide(color: scheme.primary, width: 2)
+                  : BorderSide.none)
+              : switch ((highlighted, emphasized)) {
+                  (true, _) => BorderSide(color: scheme.primary),
+                  (_, true) => BorderSide(
+                    color: scheme.primary.withValues(alpha: 0.45),
+                  ),
+                  _ => BorderSide(
+                    color: scheme.outlineVariant.withValues(alpha: 0.6),
+                  ),
+                },
         ),
         // Dimming is a paint-time filter, not a block above the content: an
         // idle pane keeps its own Material ancestors, its pointer events, its

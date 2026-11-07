@@ -241,55 +241,42 @@ class _DashboardRuntimesSectionState
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      child: Card(
-        elevation: 0,
-        color: Theme.of(context).colorScheme.surfaceContainer,
-        margin: .zero,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  Icon(Symbols.code_blocks, size: 18, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'dashboardRuntimes'.tr(),
-                      style: theme.textTheme.titleSmall,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'runtimeRefresh'.tr(),
-                    onPressed: _refresh,
-                    icon: const Icon(Symbols.refresh, size: 18),
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
+              Icon(Symbols.code_blocks, size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                'dashboardRuntimes'.tr(),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  for (final config in pinned)
-                    SizedBox(
-                      width: 300,
-                      child: _DashboardRuntimeTile(
-                        config: config,
-                        serverName: serversById[config.serverId]?.name ?? '',
-                        snapshot: _snapshots[config.serverId],
-                      ),
-                    ),
-                ],
+              const SizedBox(width: 2),
+              IconButton(
+                tooltip: 'runtimeRefresh'.tr(),
+                onPressed: _refresh,
+                icon: const Icon(Symbols.refresh, size: 14),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
               ),
             ],
           ),
-        ),
+          for (final config in pinned)
+            _DashboardRuntimeTile(
+              config: config,
+              serverName: serversById[config.serverId]?.name ?? '',
+              snapshot: _snapshots[config.serverId],
+            ),
+        ],
       ),
     );
   }
@@ -322,45 +309,36 @@ class _DashboardRuntimeTile extends StatelessWidget {
     final processes = pid != null
         ? _matchingProcess(pid)
         : _matchingProcesses();
-    return DecoratedBox(
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(MaidKitRadius.md),
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.3)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(identity.icon, size: 16, color: scheme.primary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    identity.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelLarge,
-                  ),
-                ),
-                if (serverName.isNotEmpty)
-                  Flexible(
-                    child: Text(
-                      serverName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-              ],
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(identity.icon, size: 15, color: scheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            identity.label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 8),
-            _buildBody(context, theme, scheme, isPidPin, processes),
+          ),
+          if (serverName.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Text(
+              '· $serverName',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ],
-        ),
+          const SizedBox(width: 8),
+          _buildBody(context, theme, scheme, isPidPin, processes),
+        ],
       ),
     );
   }
@@ -374,15 +352,10 @@ class _DashboardRuntimeTile extends StatelessWidget {
   ) {
     final snap = snapshot;
     if (snap == null || snap.isLoading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(8),
-          child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
+      return const SizedBox(
+        width: 12,
+        height: 12,
+        child: CircularProgressIndicator(strokeWidth: 1.5),
       );
     }
     if (snap.hasError) {
@@ -396,15 +369,14 @@ class _DashboardRuntimeTile extends StatelessWidget {
     if (snap.value == null) {
       // Server not connected: the snapshot is intentionally null.
       return Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Symbols.link_off, size: 14, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              'dashboardRuntimeNotConnected'.tr(),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
+          Icon(Symbols.link_off, size: 12, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 4),
+          Text(
+            'dashboardRuntimeNotConnected'.tr(),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
             ),
           ),
         ],
@@ -435,62 +407,31 @@ class _DashboardRuntimeTile extends StatelessWidget {
       0,
       (sum, process) => sum + process.rssKb,
     );
-    var threadTotal = 0;
-    var threadCount = 0;
-    for (final process in processes) {
-      if (process.threads != null) {
-        threadTotal += process.threads!;
-        threadCount++;
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (command != null && command.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              command,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: scheme.primary,
+            shape: BoxShape.circle,
           ),
-        Row(
-          children: [
-            Expanded(
-              child: _DashboardStat(
-                label: 'runtimeProcessCount',
-                value: '${processes.length}',
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _DashboardStat(
-                label: 'runtimeCpuTotal',
-                value: '${cpuTotal.toStringAsFixed(1)}%',
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _DashboardStat(
-                label: 'runtimeRssTotal',
-                value: _formatKb(rssTotal),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _DashboardStat(
-                label: 'runtimeThreads',
-                value: threadCount == 0 ? '—' : '$threadTotal',
-              ),
-            ),
-          ],
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '${processes.length} proc · ${cpuTotal.toStringAsFixed(1)}% · ${_formatKb(rssTotal)}',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurface,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
         ),
       ],
     );
+    if (command != null && command.isNotEmpty) {
+      return Tooltip(message: command, child: content);
+    }
+    return content;
   }
 
   /// Returns the pinned pid's process row from any runtime or watched group,
@@ -527,41 +468,6 @@ class _DashboardRuntimeTile extends StatelessWidget {
       if (group.name == config.runtime) return group.processes;
     }
     return null;
-  }
-}
-
-class _DashboardStat extends StatelessWidget {
-  const _DashboardStat({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label.tr(),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-            fontSize: 10,
-          ),
-        ),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.titleSmall?.copyWith(
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      ],
-    );
   }
 }
 

@@ -5,7 +5,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:styled_widget/styled_widget.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:maid_kit/platform/tailscale.dart';
@@ -23,7 +22,6 @@ import 'maidcafe_service.dart';
 import 'ssh_key_generator_dialog.dart';
 import 'port_forward_sheet.dart';
 import 'server_connection_actions.dart';
-import 'dashboard_actions_bar.dart';
 import 'dashboard_runtimes_section.dart';
 import 'server_health_chip.dart';
 import 'server_models.dart';
@@ -281,6 +279,7 @@ class _ServersCatalog extends StatelessWidget {
             : _ServerGrid(
                 servers: items,
                 sessions: sessions,
+                onAdd: onAdd,
                 onConnect: onConnect,
                 onReconnectAll: onReconnectAll,
                 onEdit: onEdit,
@@ -296,12 +295,6 @@ class _ServersCatalog extends StatelessWidget {
           child: Text('serversLoadError'.tr(args: [error.toString()])),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'servers-create-fab',
-        onPressed: onAdd,
-        icon: const Icon(Symbols.add),
-        label: Text('serversAddServer'.tr()),
-      ),
     );
   }
 }
@@ -310,6 +303,7 @@ class _ServerGrid extends ConsumerStatefulWidget {
   const _ServerGrid({
     required this.servers,
     required this.sessions,
+    required this.onAdd,
     required this.onConnect,
     required this.onReconnectAll,
     required this.onEdit,
@@ -323,6 +317,7 @@ class _ServerGrid extends ConsumerStatefulWidget {
 
   final List<Server> servers;
   final List<SshSessionInfo> sessions;
+  final VoidCallback onAdd;
   final ValueChanged<Server> onConnect;
   final Future<void> Function(List<Server>) onReconnectAll;
   final ValueChanged<Server> onEdit;
@@ -548,11 +543,38 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                 ),
               ),
             ),
+            const SliverToBoxAdapter(
+              key: ValueKey('dashboard-runtimes'),
+              child: DashboardRuntimesSection(),
+            ),
+            SliverToBoxAdapter(
+              key: const ValueKey('servers-toolbar'),
+              child: _ServerToolbar(
+                allTags: allTags,
+                selectedTags: _selectedTags,
+                onToggleTag: (tag) => setState(() {
+                  if (_selectedTags.contains(tag)) {
+                    _selectedTags.remove(tag);
+                  } else {
+                    _selectedTags.add(tag);
+                  }
+                }),
+                onClearTags: () => setState(() => _selectedTags.clear()),
+                onAdd: widget.onAdd,
+                isSearching: _showSearch,
+                onToggleSearch: _toggleSearch,
+                isArranging: _isArranging,
+                canArrange: widget.servers.length > 1,
+                onToggleArrange: _isArranging
+                    ? () => setState(() => _isArranging = false)
+                    : _startArranging,
+              ),
+            ),
             _AnimatedHeaderSliver(
               key: const ValueKey('servers-search'),
               visible: _showSearch,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
                 child: TextField(
                   controller: _searchController,
                   focusNode: _searchFocusNode,
@@ -575,51 +597,18 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                 ),
               ),
             ),
-            if (allTags.isNotEmpty)
-              SliverToBoxAdapter(
-                key: const ValueKey('servers-tag-filters'),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final tag in allTags)
-                          FilterChip(
-                            label: Text(tag),
-                            visualDensity: VisualDensity.compact,
-                            selected: _selectedTags.contains(tag),
-                            onSelected: (selected) => setState(() {
-                              if (selected) {
-                                _selectedTags.add(tag);
-                              } else {
-                                _selectedTags.remove(tag);
-                              }
-                            }),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
             if (visibleServers.isEmpty) ...[
               const SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(child: _NoServersMatch()),
               ),
             ] else ...[
-              const SliverToBoxAdapter(
-                key: ValueKey('dashboard-runtimes'),
-                child: DashboardRuntimesSection(),
-              ),
               SliverPadding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
                 sliver: SliverGrid(
                   gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 380,
-                    mainAxisExtent: isCompactView ? 200 : 320,
+                    mainAxisExtent: isCompactView ? 160 : 220,
                     mainAxisSpacing: 16,
                     crossAxisSpacing: 16,
                   ),
@@ -657,6 +646,11 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                           MenuAction(
                             title: 'serversEditServer'.tr(),
                             callback: () => widget.onEdit(server),
+                          ),
+                          MenuAction(
+                            title: 'serversRefreshStatistics'.tr(),
+                            image: MenuImage.icon(Symbols.refresh),
+                            callback: () => widget.onRefresh(server),
                           ),
                           MenuSeparator(),
                           // The daemon and the relay are transports of
@@ -723,13 +717,7 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
     );
   }
 
-  /// The dashboard's footer: everything that can come and go — the live
-  /// port-forward and deploy chips, the arrange/search controls.
-  ///
-  /// It sits *below* the catalog inside the same scroll view rather than in a
-  /// fixed strip above it. A forward that starts or stops must not move the
-  /// server cards: below them, a chip's arrival only extends the scroll extent,
-  /// while above them it shifted every card on each toggle.
+  /// The dashboard's footer: active port forwards and deploys, and arrange hint.
   Widget _dashboardFooter(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -737,15 +725,6 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const _WorkspaceSurfacesRow(),
-          DashboardActionsBar(
-            isArranging: _isArranging,
-            canArrange: widget.servers.length > 1,
-            onToggleArrange: _isArranging
-                ? () => setState(() => _isArranging = false)
-                : _startArranging,
-            isSearching: _showSearch,
-            onToggleSearch: _toggleSearch,
-          ),
           if (_isArranging) ...[
             const SizedBox(height: 8),
             Align(
@@ -758,6 +737,107 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ServerToolbar extends StatelessWidget {
+  const _ServerToolbar({
+    required this.allTags,
+    required this.selectedTags,
+    required this.onToggleTag,
+    required this.onClearTags,
+    required this.onAdd,
+    required this.isSearching,
+    required this.onToggleSearch,
+    required this.isArranging,
+    required this.canArrange,
+    required this.onToggleArrange,
+  });
+
+  final List<String> allTags;
+  final Set<String> selectedTags;
+  final ValueChanged<String> onToggleTag;
+  final VoidCallback onClearTags;
+  final VoidCallback onAdd;
+  final bool isSearching;
+  final VoidCallback onToggleSearch;
+  final bool isArranging;
+  final bool canArrange;
+  final VoidCallback onToggleArrange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  FilterChip(
+                    label: Text('serversFilterAll'.tr()),
+                    visualDensity: VisualDensity.compact,
+                    selected: selectedTags.isEmpty,
+                    onSelected: (_) => onClearTags(),
+                  ),
+                  for (final tag in allTags) ...[
+                    const SizedBox(width: 8),
+                    FilterChip(
+                      label: Text(tag),
+                      visualDensity: VisualDensity.compact,
+                      selected: selectedTags.contains(tag),
+                      onSelected: (_) => onToggleTag(tag),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          IconButton(
+            tooltip: isSearching
+                ? 'serversHideSearch'.tr()
+                : 'serversSearch'.tr(),
+            visualDensity: VisualDensity.compact,
+            onPressed: onToggleSearch,
+            icon: Icon(
+              Symbols.search,
+              size: 20,
+              color: isSearching ? Theme.of(context).colorScheme.primary : null,
+            ),
+          ),
+          if (canArrange) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: isArranging
+                  ? 'serversDoneArranging'.tr()
+                  : 'serversArrange'.tr(),
+              visualDensity: VisualDensity.compact,
+              onPressed: onToggleArrange,
+              icon: Icon(
+                isArranging ? Symbols.check : Symbols.drag_indicator,
+                size: 20,
+                color: isArranging
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
+          FilledButton.tonalIcon(
+            onPressed: onAdd,
+            style: FilledButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+            icon: const Icon(Symbols.add, size: 18),
+            label: Text('serversAddServer'.tr()),
+          ),
         ],
       ),
     );
@@ -1171,6 +1251,10 @@ class _ServerCard extends ConsumerWidget {
     final offersConnect = isTerminalOnly || kIsWeb
         ? !connected && !connecting
         : !sshConnected && !connecting;
+    final systemLabel = [
+      systemInfo?.distribution,
+      systemInfo?.kernel,
+    ].whereType<String>().join(' · ');
 
     return Card(
       margin: EdgeInsets.zero,
@@ -1185,7 +1269,7 @@ class _ServerCard extends ConsumerWidget {
               Padding(
                 padding: EdgeInsets.only(
                   left: compact ? 12 : 16,
-                  right: compact ? 4 : 8,
+                  right: compact ? 8 : 12,
                 ),
                 child: Row(
                   children: [
@@ -1202,11 +1286,31 @@ class _ServerCard extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            server.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: textTheme.titleMedium,
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  server.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              if (systemLabel.isNotEmpty) ...[
+                                const SizedBox(width: 6),
+                                Tooltip(
+                                  message: systemLabel,
+                                  child: Icon(
+                                    Symbols.info,
+                                    size: 14,
+                                    color: colorScheme.onSurfaceVariant
+                                        .withValues(alpha: 0.6),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                           const SizedBox(height: 2),
                           Row(
@@ -1251,23 +1355,6 @@ class _ServerCard extends ConsumerWidget {
                       ServerHealthChip(health: stats!.health, compact: compact),
                       const SizedBox(width: 4),
                     ],
-                    IconButton(
-                      tooltip: 'serversRefreshStatistics'.tr(),
-                      visualDensity: VisualDensity.compact,
-                      // A daemon-backed card refreshes the daemon; an SSH card
-                      // refreshes the session it already holds. With metrics
-                      // turned off there is nothing for either route to do.
-                      onPressed: !connected || !metricsEnabled
-                          ? null
-                          : statsFromDaemon
-                          ? () => unawaited(
-                              ref
-                                  .read(maidCafeStatsSchedulerProvider)
-                                  .refreshServer(server, force: true),
-                            )
-                          : onRefresh,
-                      icon: const Icon(Symbols.refresh),
-                    ),
                   ],
                 ),
               ),
@@ -1311,55 +1398,53 @@ class _ServerCard extends ConsumerWidget {
                         ),
                 ),
               ),
-              SizedBox(height: compact ? 8 : 12),
+              SizedBox(height: compact ? 6 : 8),
               const Divider(height: 1),
-              SizedBox(height: compact ? 6 : 10),
               Padding(
-                padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 16),
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 12 : 16,
+                  vertical: compact ? 4 : 8,
+                ),
                 child: Row(
                   children: [
-                    // The status gives up width before the Connect action: on
-                    // a narrow card its label ellipsizes instead of pushing
-                    // the row past the card's edge.
-                    Flexible(
+                    Expanded(
                       child: _ConnectionStatus(
                         connected: connected,
                         connecting: connecting,
                         failed: failed,
                         networkLatency: session?.networkLatency,
-                        // Only an SSH session measures a round trip, so a card
-                        // with no session reports no ping even while the
-                        // daemon feeds it numbers.
                         measuresLatency: sshConnected || !statsFromDaemon,
+                        uptime: stats?.uptime,
+                        updatedAt: stats?.updatedAt,
                       ),
                     ),
-                    const Spacer(),
-                    if (offersConnect)
+                    if (offersConnect) ...[
                       TextButton(
                         onPressed: onConnect,
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
                         child: Text('serversConnect'.tr()),
                       ),
-                    if (connecting)
-                      SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colorScheme.primary,
-                        ),
+                      const SizedBox(width: 4),
+                    ],
+                    if (connecting) ...[
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
+                      const SizedBox(width: 6),
+                    ],
+                    _ServerQuickActions(
+                      compact: compact,
+                      onOpenTerminal: connecting ? null : onOpenTerminal,
+                      onOpenFiles: connecting || isTerminalOnly
+                          ? null
+                          : onOpenFiles,
+                    ),
                   ],
-                ),
-              ),
-              SizedBox(height: compact ? 4 : 8),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 16),
-                child: _ServerQuickActions(
-                  compact: compact,
-                  onOpenTerminal: connecting ? null : onOpenTerminal,
-                  onOpenFiles: connecting || isTerminalOnly
-                      ? null
-                      : onOpenFiles,
                 ),
               ),
             ],
@@ -1435,66 +1520,42 @@ class _ServerQuickActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 340) {
-          return Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: onOpenTerminal,
-                  style: ButtonStyle(
-                    visualDensity: compact ? VisualDensity.compact : null,
-                  ),
-                  icon: const Icon(Symbols.terminal, size: 18),
-                  label: Text('sessionsNewTerminal'.tr()),
-                ),
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: 'sessionsNewTerminal'.tr(),
+          child: IconButton.outlined(
+            onPressed: onOpenTerminal,
+            visualDensity: VisualDensity.compact,
+            style: IconButton.styleFrom(
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.4),
               ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'sessionsOpenFileManagement'.tr(),
-                child: IconButton.outlined(
-                  onPressed: onOpenFiles,
-                  visualDensity: compact ? VisualDensity.compact : null,
-                  icon: const Icon(Symbols.folder, size: 18),
-                ),
-              ),
-            ],
-          );
-        }
-
-        return Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: onOpenTerminal,
-                style: ButtonStyle(
-                  visualDensity: compact ? VisualDensity.compact : null,
-                  padding: const WidgetStatePropertyAll(
-                    EdgeInsets.symmetric(horizontal: 8),
-                  ),
-                ),
-                icon: const Icon(Symbols.terminal, size: 18),
-                label: Text('sessionsNewTerminal'.tr()),
-              ),
+              padding: const EdgeInsets.all(6),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: onOpenFiles,
-                style: ButtonStyle(
-                  visualDensity: compact ? VisualDensity.compact : null,
-                  padding: const WidgetStatePropertyAll(
-                    EdgeInsets.symmetric(horizontal: 8),
-                  ),
+            icon: const Icon(Symbols.terminal, size: 16),
+          ),
+        ),
+        if (onOpenFiles != null) ...[
+          const SizedBox(width: 6),
+          Tooltip(
+            message: 'sessionsOpenFileManagement'.tr(),
+            child: IconButton.outlined(
+              onPressed: onOpenFiles,
+              visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                side: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
                 ),
-                icon: const Icon(Symbols.folder, size: 18),
-                label: Text('sessionsOpenFileManagement'.tr()),
+                padding: const EdgeInsets.all(6),
               ),
+              icon: const Icon(Symbols.folder, size: 16),
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      ],
     );
   }
 }
@@ -1506,25 +1567,25 @@ class _ConnectionStatus extends StatelessWidget {
     required this.failed,
     required this.measuresLatency,
     this.networkLatency,
+    this.uptime,
+    this.updatedAt,
   });
 
   final bool connected;
   final bool connecting;
   final bool failed;
-  final Duration? networkLatency;
-
-  /// Whether the card's numbers arrived with a measured round trip. A daemon
-  /// snapshot does not, so the ping slot names the connection state instead of
-  /// showing a dash that reads as "no latency data".
   final bool measuresLatency;
+  final Duration? networkLatency;
+  final Duration? uptime;
+  final DateTime? updatedAt;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final latency = networkLatency;
 
     if (connected) {
+      final latency = networkLatency;
       final latencyColor = latency == null
           ? colorScheme.onSurfaceVariant
           : latency.inMilliseconds >= 250
@@ -1532,39 +1593,67 @@ class _ConnectionStatus extends StatelessWidget {
           : latency.inMilliseconds >= 100
           ? colorScheme.tertiary
           : colorScheme.onSurfaceVariant;
-      return Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (measuresLatency)
-            Tooltip(
-              message: 'serversNetworkPingTooltip'.tr(),
-              child: Text(
-                latency == null ? '—' : '${latency.inMilliseconds} ms',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.labelLarge?.copyWith(color: latencyColor),
+
+      final tooltip = updatedAt != null
+          ? '${'serversConnected'.tr()} · ${'detailRefreshDetailsAt'.tr(args: [_formatRelative(updatedAt!)])}'
+          : 'serversConnected'.tr();
+
+      return Tooltip(
+        message: tooltip,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+                shape: BoxShape.circle,
               ),
-            )
-          else
-            Flexible(
-              child: Text(
-                'serversConnected'.tr(),
+            ),
+            const SizedBox(width: 7),
+            if (measuresLatency && latency != null) ...[
+              Text(
+                '${latency.inMilliseconds} ms',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: textTheme.labelLarge?.copyWith(
-                  color: colorScheme.onSurface,
+                style: textTheme.labelMedium?.copyWith(color: latencyColor),
+              ),
+              if (uptime != null && uptime!.inSeconds > 0) ...[
+                Text(
+                  ' · ${_formatUptime(uptime)} up',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ] else if (uptime != null && uptime!.inSeconds > 0) ...[
+              Flexible(
+                child: Text(
+                  '${'serversConnected'.tr()} · ${_formatUptime(uptime)} up',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-            ),
-        ],
+            ] else ...[
+              Flexible(
+                child: Text(
+                  'serversConnected'.tr(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       );
     }
 
@@ -1575,19 +1664,22 @@ class _ConnectionStatus extends StatelessWidget {
     };
 
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 8,
-          height: 8,
+          width: 7,
+          height: 7,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 7),
         Flexible(
           child: Text(
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: textTheme.labelLarge?.copyWith(color: colorScheme.onSurface),
+            style: textTheme.labelMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],
@@ -1609,33 +1701,27 @@ class _DisconnectedStats extends StatelessWidget {
         ? 'serversEstablishingSession'.tr()
         : (error ?? 'serversConnectToViewStats'.tr());
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(MaidKitRadius.md),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-        child: Row(
-          children: [
-            Icon(
-              connecting ? Symbols.hourglass_top : Symbols.insights,
-              size: 20,
-              color: colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Row(
+        children: [
+          Icon(
+            connecting ? Symbols.hourglass_top : Symbols.insights,
+            size: 18,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1659,7 +1745,6 @@ class _ServerStats extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
 
     if (!collectStats && !collectSystemInfo) {
       return _StatsMessage(
@@ -1691,10 +1776,6 @@ class _ServerStats extends StatelessWidget {
     final gpuUtilization = _averageGpuUtilization(gpus);
     final gpuMemoryUsedKb = _sumGpuMemory(gpus, used: true);
     final gpuMemoryTotalKb = _sumGpuMemory(gpus, used: false);
-    final systemLabel = [
-      systemInfo?.distribution,
-      systemInfo?.kernel,
-    ].whereType<String>().join(' · ');
 
     return SingleChildScrollView(
       child: Column(
@@ -1709,7 +1790,8 @@ class _ServerStats extends StatelessWidget {
                     compact: compact,
                     label: 'detailLoadAverage'.tr(),
                     value: stats!.loadAverage?.toStringAsFixed(2) ?? '—',
-                    detail: compact ? null : _loadDetail(stats!.loadAverage),
+                    detail: 'detailLoadAverage'.tr(),
+                    tooltip: _loadDetail(stats!.loadAverage),
                     valueColor: _loadColor(stats!.loadAverage, colorScheme),
                   ),
                 ),
@@ -1719,11 +1801,8 @@ class _ServerStats extends StatelessWidget {
                     compact: compact,
                     label: 'detailMemory'.tr(),
                     value: memoryPercent == null ? '—' : '$memoryPercent%',
-                    detail:
-                        compact ||
-                            usedMemoryKb == null ||
-                            stats!.memoryTotalKb == null
-                        ? null
+                    detail: usedMemoryKb == null || stats!.memoryTotalKb == null
+                        ? 'detailMemory'.tr()
                         : '${_formatBytes(usedMemoryKb * 1024)} / ${_formatBytes(stats!.memoryTotalKb! * 1024)}',
                     progress: memoryRatio,
                     progressColor: _memoryColor(memoryRatio, colorScheme),
@@ -1736,7 +1815,8 @@ class _ServerStats extends StatelessWidget {
                     compact: compact,
                     label: 'detailUptime'.tr(),
                     value: _formatUptime(stats!.uptime),
-                    detail: compact ? null : _uptimeDetail(stats!.uptime),
+                    detail: 'detailUptime'.tr(),
+                    tooltip: _uptimeDetail(stats!.uptime),
                   ),
                 ),
               ],
@@ -1778,33 +1858,6 @@ class _ServerStats extends StatelessWidget {
                 ),
               ],
             ),
-          ],
-          // The caption block owns one leading gap for the tiles above it, so
-          // a host that reports no distribution/kernel keeps the same rhythm
-          // as one that does; the refresh line is never glued to the grid.
-          if (!compact &&
-              (systemLabel.isNotEmpty || stats?.updatedAt != null)) ...[
-            const SizedBox(height: 8),
-            if (systemLabel.isNotEmpty)
-              Text(
-                systemLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ).padding(horizontal: 4),
-            if (stats?.updatedAt != null)
-              Text(
-                'detailRefreshDetailsAt'.tr(
-                  args: [_formatRelative(stats!.updatedAt)],
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.outline,
-                ),
-              ).padding(horizontal: 4),
           ],
         ],
       ),
@@ -1868,29 +1921,23 @@ class _StatsMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(MaidKitRadius.md),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                message,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1902,6 +1949,7 @@ class _StatTile extends StatelessWidget {
     required this.value,
     this.compact = false,
     this.detail,
+    this.tooltip,
     this.progress,
     this.progressColor,
     this.valueColor,
@@ -1911,6 +1959,7 @@ class _StatTile extends StatelessWidget {
   final String value;
   final bool compact;
   final String? detail;
+  final String? tooltip;
   final double? progress;
   final Color? progressColor;
   final Color? valueColor;
@@ -1922,70 +1971,57 @@ class _StatTile extends StatelessWidget {
     final resolvedValueColor = valueColor ?? colorScheme.onSurface;
     final resolvedProgressColor = progressColor ?? colorScheme.primary;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(MaidKitRadius.md),
+    final content = Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 2 : 4,
+        vertical: compact ? 2 : 4,
       ),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          compact ? 8 : 10,
-          compact ? 7 : 10,
-          compact ? 8 : 10,
-          compact ? 7 : 10,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.labelSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: (compact ? textTheme.titleMedium : textTheme.titleLarge)
+                ?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: resolvedValueColor,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+          ),
+          if (progress != null) ...[
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(MaidKitRadius.pill),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 3,
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.08),
+                color: resolvedProgressColor,
               ),
             ),
-            SizedBox(height: compact ? 2 : 4),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: (compact ? textTheme.titleSmall : textTheme.titleMedium)
-                  ?.copyWith(
-                    color: resolvedValueColor,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-            ),
-            SizedBox(height: compact ? 4 : 8),
-            if (progress != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(MaidKitRadius.pill),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 4,
-                  backgroundColor: colorScheme.onSurface.withValues(
-                    alpha: 0.08,
-                  ),
-                  color: resolvedProgressColor,
-                ),
-              )
-            else
-              SizedBox(height: compact ? 0 : 4),
-            if (!compact) ...[
-              const SizedBox(height: 6),
-              Text(
-                detail ?? ' ',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+            const SizedBox(height: 4),
+          ] else ...[
+            const SizedBox(height: 6),
           ],
-        ),
+          Text(
+            detail ?? label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ),
     );
+
+    if (tooltip != null && tooltip!.isNotEmpty) {
+      return Tooltip(message: tooltip!, child: content);
+    }
+    return content;
   }
 }
 

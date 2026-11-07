@@ -182,15 +182,19 @@ class _SessionLayoutView extends ConsumerWidget {
           _AnimatedPaneTabContent(
             key: ValueKey('tab-layout-${tab.id}'),
             active: tabs.selectedTabId == tab.id,
-            // One gutter around the whole pane area: the workspace paper shows
-            // through it, and the split's own gutter shows between two panes.
-            // Cards sit flush inside their slots and never double the gap.
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                MaidKitSpace.sm,
-                MaidKitSpace.xs,
-                MaidKitSpace.sm,
-                MaidKitSpace.sm,
+            // The pane area fills edge-to-edge flatly; a subtle top 1px border
+            // separates the workspace tab bar from the content panes.
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .outlineVariant
+                        .withValues(alpha: 0.45),
+                    width: 1,
+                  ),
+                ),
               ),
               child: _LayoutNode(
                 tab: tab,
@@ -298,14 +302,14 @@ class _ResizableSplit extends StatefulWidget {
 }
 
 class _ResizableSplitState extends State<_ResizableSplit> {
-  /// Width of the grab band between two panes.
-  ///
-  /// Panes are cards floating on the workspace paper, so the separation is the
-  /// gutter itself: no rule is drawn between them. The band is still a drag
-  /// target, which is the only thing that makes the split adjustable.
-  static const _gutter = MaidKitSpace.lg;
+  /// Visual width of the splitter line between two panes.
+  static const double _dividerWidth = 1.0;
+
+  /// Hit target width centered over the divider line for easy pointer grabbing.
+  static const double _hitTargetExtent = 10.0;
 
   double? _dragRatio;
+  bool _hovering = false;
 
   double get _ratio => _dragRatio ?? widget.ratio;
 
@@ -329,14 +333,15 @@ class _ResizableSplitState extends State<_ResizableSplit> {
   @override
   Widget build(BuildContext context) {
     final isHorizontal = widget.axis == SessionSplitAxis.horizontal;
+    final scheme = Theme.of(context).colorScheme;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxExtent = isHorizontal
             ? constraints.maxWidth
             : constraints.maxHeight;
-        final available = maxExtent - _gutter;
-        final firstExtent = available * _ratio;
+        final available = maxExtent - _dividerWidth;
+        final firstExtent = (available * _ratio).clamp(60.0, available - 60.0);
         final secondExtent = available - firstExtent;
 
         final children = <Widget>[
@@ -345,24 +350,55 @@ class _ResizableSplitState extends State<_ResizableSplit> {
             height: isHorizontal ? null : firstExtent,
             child: widget.first,
           ),
-          MouseRegion(
-            cursor: isHorizontal
-                ? SystemMouseCursors.resizeColumn
-                : SystemMouseCursors.resizeRow,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onHorizontalDragUpdate: isHorizontal
-                  ? (d) => _onDragUpdate(d, available)
-                  : null,
-              onHorizontalDragEnd: isHorizontal ? (_) => _onDragEnd() : null,
-              onVerticalDragUpdate: isHorizontal
-                  ? null
-                  : (d) => _onDragUpdate(d, available),
-              onVerticalDragEnd: isHorizontal ? null : (_) => _onDragEnd(),
-              child: SizedBox(
-                width: isHorizontal ? _gutter : double.infinity,
-                height: isHorizontal ? double.infinity : _gutter,
-              ),
+          SizedBox(
+            width: isHorizontal ? _dividerWidth : double.infinity,
+            height: isHorizontal ? double.infinity : _dividerWidth,
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                Positioned.fill(
+                  child: ColoredBox(
+                    color: (_hovering || _dragRatio != null)
+                        ? scheme.primary
+                        : scheme.outlineVariant.withValues(alpha: 0.6),
+                  ),
+                ),
+                Positioned(
+                  left: isHorizontal
+                      ? -(_hitTargetExtent - _dividerWidth) / 2
+                      : 0,
+                  right: isHorizontal
+                      ? -(_hitTargetExtent - _dividerWidth) / 2
+                      : 0,
+                  top: isHorizontal
+                      ? 0
+                      : -(_hitTargetExtent - _dividerWidth) / 2,
+                  bottom: isHorizontal
+                      ? 0
+                      : -(_hitTargetExtent - _dividerWidth) / 2,
+                  child: MouseRegion(
+                    cursor: isHorizontal
+                        ? SystemMouseCursors.resizeColumn
+                        : SystemMouseCursors.resizeRow,
+                    onEnter: (_) => setState(() => _hovering = true),
+                    onExit: (_) => setState(() => _hovering = false),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragUpdate: isHorizontal
+                          ? (d) => _onDragUpdate(d, available)
+                          : null,
+                      onHorizontalDragEnd:
+                          isHorizontal ? (_) => _onDragEnd() : null,
+                      onVerticalDragUpdate: isHorizontal
+                          ? null
+                          : (d) => _onDragUpdate(d, available),
+                      onVerticalDragEnd:
+                          isHorizontal ? null : (_) => _onDragEnd(),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           SizedBox(
@@ -441,9 +477,19 @@ class _SessionPaneView extends ConsumerWidget {
           .swapPanes(tab.id, details.data, paneId),
       builder: (context, candidate, rejected) {
         final accepting = candidate.isNotEmpty;
+        final view = _paneView(
+          context,
+          ref,
+          content,
+          terminal,
+          highlighted: accepting,
+        );
+        // The terminal pane integrates its drag handle directly inside its
+        // header bar rather than floating a pill over terminal text.
+        if (terminal != null) return view;
         return Stack(
           children: [
-            _paneView(context, ref, content, terminal, highlighted: accepting),
+            view,
             Positioned(
               top: 0,
               left: 0,
@@ -494,12 +540,22 @@ class _SessionPaneView extends ConsumerWidget {
         },
         child: MaidKitPanel(
           margin: EdgeInsets.zero,
+          flat: true,
           // The focused pane reads as the live one; the others dim, the same
           // way an unfocused window does.
           emphasized: focused,
           highlighted: highlighted,
           child: Column(
             children: [
+              if (terminal != null)
+                _TerminalPaneHeader(
+                  tab: tab,
+                  paneId: paneId,
+                  terminal: terminal,
+                  focused: focused,
+                  movable: movable,
+                  accepting: highlighted,
+                ),
               Expanded(
                 // The workspace bar owns the top safe area; strip it here so
                 // tab bodies don't re-apply the status-bar inset and leave a
@@ -544,6 +600,118 @@ class _SessionPaneView extends ConsumerWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TerminalPaneHeader extends ConsumerWidget {
+  const _TerminalPaneHeader({
+    required this.tab,
+    required this.paneId,
+    required this.terminal,
+    required this.focused,
+    required this.movable,
+    required this.accepting,
+  });
+
+  final WorkspaceTab tab;
+  final String paneId;
+  final TerminalTab terminal;
+  final bool focused;
+  final bool movable;
+  final bool accepting;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      height: 38,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.5),
+            width: 1,
+          ),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: MaidKitSpace.sm),
+      child: Row(
+        children: [
+          Icon(
+            Symbols.terminal,
+            size: 16,
+            color: focused ? scheme.primary : scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              terminal.serverName.isNotEmpty
+                  ? terminal.serverName
+                  : 'terminalPaneTitle'.tr(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: focused ? FontWeight.w600 : FontWeight.w500,
+                color: focused ? scheme.onSurface : scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          if (movable)
+            Expanded(
+              child: Center(
+                child: _PaneDragHandle(
+                  paneId: paneId,
+                  active: focused,
+                  accepting: accepting,
+                  onClose: () => ref
+                      .read(terminalTabsProvider.notifier)
+                      .closePaneInTab(tab.id, paneId),
+                ),
+              ),
+            )
+          else
+            const Spacer(),
+          IconButton(
+            tooltip: 'terminalRunSnippetTooltip'.tr(),
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            icon: const Icon(Symbols.code, size: 16),
+            onPressed: () => unawaited(
+              _showTerminalSnippetPopover(
+                context,
+                ref,
+                terminalId: terminal.id,
+                anchorRect: terminal.terminal.cursorGlobalRect,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'terminalSplitRightTooltip'.tr(),
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            icon: const Icon(Symbols.splitscreen, size: 16),
+            onPressed: () => ref
+                .read(terminalTabsProvider.notifier)
+                .splitSelectedTab(SessionSplitAxis.horizontal),
+          ),
+          if (movable)
+            IconButton(
+              tooltip: 'terminalClosePaneTooltip'.tr(),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              icon: const Icon(Symbols.close, size: 16),
+              onPressed: () => ref
+                  .read(terminalTabsProvider.notifier)
+                  .closePaneInTab(tab.id, paneId),
+            ),
+        ],
       ),
     );
   }
@@ -933,13 +1101,15 @@ class _TabEntry extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (content != null)
+              if (tab.panes.length > 1)
+                const Icon(Symbols.splitscreen, size: 16)
+              else if (content != null)
                 _TabActivityIcon(tab: content)
               else
                 Icon(_emptyPaneIcon(tab), size: 16),
               const SizedBox(width: 6),
               Text(
-                content == null ? _emptyPaneLabel(tab) : _tabLabel(content),
+                _workspaceTabLabel(tab),
                 style: theme.textTheme.labelMedium,
               ),
               if (paneCount > 1) ...[
@@ -1083,7 +1253,13 @@ class _TabChip extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (content == null)
+                    if (tab.panes.length > 1)
+                      Icon(
+                        Symbols.splitscreen,
+                        size: 16,
+                        color: selected ? scheme.primary : null,
+                      )
+                    else if (content == null)
                       Icon(
                         _emptyPaneIcon(tab),
                         size: 16,
@@ -1112,9 +1288,7 @@ class _TabChip extends StatelessWidget {
                                 maxWidth: _tabTitleMaxWidth,
                               ),
                               child: Text(
-                                content == null
-                                    ? _emptyPaneLabel(tab)
-                                    : _tabLabel(content),
+                                _workspaceTabLabel(tab),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.labelMedium?.copyWith(
@@ -1560,6 +1734,46 @@ String _tabLabel(SessionTab tab) {
   if (tab is MaidCafeCloudSessionTab) return 'maidCafeCloudTitle'.tr();
   if (tab is SettingsSessionTab) return 'tabSettings'.tr();
   return tab.serverName;
+}
+
+/// The workspace tab's title in the bar, naming its server session or split tools.
+String _workspaceTabLabel(WorkspaceTab tab) {
+  if (tab.panes.isEmpty) return 'sessionsNewTab'.tr();
+  if (tab.panes.length == 1) {
+    final content = tab.panes.values.first.tab;
+    return content == null ? _emptyPaneLabel(tab) : _tabLabel(content);
+  }
+
+  // Split tab: check servers and tool combination
+  final serverNames = tab.panes.values
+      .map((p) => p.tab?.serverName)
+      .where((s) => s != null && s.isNotEmpty)
+      .toSet();
+
+  final hasTerminal = tab.panes.values.any((p) => p.tab is TerminalTab);
+  final hasFiles = tab.panes.values.any((p) => p.tab is FileManagementTab);
+  final hasEditor = tab.panes.values.any((p) => p.tab is FileEditorTab);
+
+  if (serverNames.length == 1) {
+    final server = serverNames.first!;
+    if (hasTerminal && hasFiles) {
+      return 'tabSplitTerminalSftp'.tr(args: [server]);
+    }
+    if (hasTerminal && hasEditor) {
+      return '$server (Terminal + Editor)';
+    }
+    return 'tabSplitWithCount'.tr(args: [server, '${tab.panes.length}']);
+  }
+
+  if (hasTerminal && hasFiles) {
+    return 'Terminal + SFTP';
+  }
+
+  final active = tab.tab;
+  if (active != null) {
+    return _tabLabel(active);
+  }
+  return 'sessionsNewPane'.tr();
 }
 
 /// The bar label for a pane that has no content yet.

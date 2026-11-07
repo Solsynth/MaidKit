@@ -14,6 +14,7 @@ import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'servers_page.dart';
 import 'terminal_tabs_provider.dart';
 import 'tmux_sessions_sheet.dart';
 import 'tmux_terminal.dart';
@@ -334,6 +335,15 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             hint: server.host,
             onSelect: () => widget.onOpen(server),
           ),
+      _TerminalAction(
+        label: 'serversAddServer'.tr(),
+        icon: Symbols.add,
+        group: _PaletteGroup.workspace,
+        onSelect: () async {
+          widget.onDismiss();
+          await showAddServerSheet(widget.hostContext, widget.ref);
+        },
+      ),
       ...widget.destinationActions,
     ].where((action) => action.label.toLowerCase().contains(_query)).toList();
   }

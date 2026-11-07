@@ -45,8 +45,7 @@ enum _ArchiveFormat { zip, tarGzip }
 /// keyboard navigation can scroll items into view precisely.
 const double _kFileRowExtent = 48.0;
 
-/// A 40×40 toolbar icon button ([MaidKitSpace.control]) for the pane headers,
-/// sized for a desktop pointer instead of a cramped 28px target.
+/// A compact toolbar icon button for pane headers, sized for desktop pointer.
 IconButton _paneIconButton({
   required String tooltip,
   required IconData icon,
@@ -57,10 +56,10 @@ IconButton _paneIconButton({
   visualDensity: VisualDensity.compact,
   padding: EdgeInsets.zero,
   constraints: const BoxConstraints(
-    minWidth: MaidKitSpace.control,
-    minHeight: MaidKitSpace.control,
+    minWidth: 32,
+    minHeight: 32,
   ),
-  icon: Icon(icon, size: 20),
+  icon: Icon(icon, size: 18),
 );
 
 /// Per-conflict choice when the transfer conflict mode is [ask].
@@ -3137,18 +3136,33 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
     // The left pane exists only once another server is chosen; with one server
     // this tab is a single-pane browser.
     final leftPane = _leftIsRemote ? _buildLeftRemotePane(pathTextStyle) : null;
+    final remoteSelectedBytes = _remoteEntries
+        .where(
+          (e) => _selectedRemotePaths.contains(
+            _joinRemotePath(_remotePath, e.filename),
+          ),
+        )
+        .fold<int>(0, (sum, e) => sum + (e.attr.size ?? 0));
+
     final remotePane = _FilePane(
-      // The pane is the server it browses: "Remote" says where the files live,
-      // which the path bar already shows, while a second server in the left
-      // pane makes telling the two apart the header's job.
       title: _serverRecord()?.name ?? widget.tab.serverName,
       path: _remotePath,
       pathTextStyle: pathTextStyle,
       searchInput: _rightSearchOpen ? _searchInput(_FileSide.remote) : null,
       focused: _focusedSide == _FileSide.remote,
       dropHighlighted: _dropTargetSide == _FileSide.remote,
+      canGoBack: _remoteBackHistory.isNotEmpty,
+      onGoBack: () => _goBackInHistory(_FileSide.remote),
+      canGoForward: _remoteForwardHistory.isNotEmpty,
+      onGoForward: () => _goForwardInHistory(_FileSide.remote),
       canGoUp: _remotePath != '/',
       onGoUp: _goUpRemote,
+      onSwitchServer: _chooseLeftServer,
+      totalItems: _remoteEntries.length,
+      selectedCount: _selectedRemotePaths.length,
+      selectedBytes: remoteSelectedBytes,
+      searchQuery: _rightSearchController.text.trim(),
+      filteredCount: _displayedRemoteEntries.length,
       pathInput: TextField(
         controller: _remotePathController,
         focusNode: _remotePathFocusNode,
@@ -3167,13 +3181,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           hintText: 'fileManagerRemotePath'.tr(),
           isDense: true,
           filled: true,
-          fillColor: scheme.surfaceContainerHigh,
+          fillColor: scheme.surfaceContainerHigh.withValues(alpha: 0.5),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+            borderSide: BorderSide.none,
           ),
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: MaidKitSpace.md,
-            vertical: MaidKitSpace.sm,
+            horizontal: MaidKitSpace.sm,
+            vertical: MaidKitSpace.xs,
           ),
         ),
       ),
@@ -3206,11 +3221,6 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           tooltip: 'fileManagerCreateFolder'.tr(),
           icon: Symbols.create_new_folder,
           onPressed: _busy ? null : () => _createFolder(_FileSide.remote),
-        ),
-        _paneIconButton(
-          tooltip: 'fileManagerUseAnotherServer'.tr(),
-          icon: Symbols.swap_horiz,
-          onPressed: _chooseLeftServer,
         ),
       ],
       onPointerDown: (event) => _handlePanePointerDown(event, _FileSide.remote),
@@ -3385,6 +3395,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
             .firstOrNull
             ?.name ??
         'fileManagerAnotherServer'.tr();
+    final leftSelectedBytes = _leftRemoteEntries
+        .where(
+          (e) => _selectedLeftPaths.contains(
+            _joinRemotePath(_leftRemotePath, e.filename),
+          ),
+        )
+        .fold<int>(0, (sum, e) => sum + (e.attr.size ?? 0));
+
     return _FilePane(
       title: serverName,
       path: _leftRemotePath,
@@ -3392,6 +3410,10 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
       searchInput: _leftSearchOpen ? _searchInput(_FileSide.left) : null,
       focused: _focusedSide == _FileSide.left,
       dropHighlighted: _dropTargetSide == _FileSide.left,
+      canGoBack: _leftBackHistory.isNotEmpty,
+      onGoBack: () => _goBackInHistory(_FileSide.left),
+      canGoForward: _leftForwardHistory.isNotEmpty,
+      onGoForward: () => _goForwardInHistory(_FileSide.left),
       canGoUp: _leftRemotePath != '/',
       onGoUp: () async {
         _pushLeftHistory();
@@ -3402,6 +3424,12 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
         });
         await _refreshLeftRemote();
       },
+      onSwitchServer: _chooseLeftServer,
+      totalItems: _leftRemoteEntries.length,
+      selectedCount: _selectedLeftPaths.length,
+      selectedBytes: leftSelectedBytes,
+      searchQuery: _leftSearchController.text.trim(),
+      filteredCount: _displayedLeftRemoteEntries.length,
       pathInput: TextField(
         controller: _leftRemotePathController,
         focusNode: _leftRemotePathFocusNode,
@@ -3420,13 +3448,14 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           hintText: 'fileManagerRemotePath'.tr(),
           isDense: true,
           filled: true,
-          fillColor: scheme.surfaceContainerHigh,
+          fillColor: scheme.surfaceContainerHigh.withValues(alpha: 0.5),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+            borderSide: BorderSide.none,
           ),
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: MaidKitSpace.md,
-            vertical: MaidKitSpace.sm,
+            horizontal: MaidKitSpace.sm,
+            vertical: MaidKitSpace.xs,
           ),
         ),
       ),
@@ -3450,11 +3479,6 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
           tooltip: 'fileManagerCreateFolder'.tr(),
           icon: Symbols.create_new_folder,
           onPressed: _busy ? null : () => _createFolder(_FileSide.left),
-        ),
-        _paneIconButton(
-          tooltip: 'fileManagerChangeServer'.tr(),
-          icon: Symbols.swap_horiz,
-          onPressed: _chooseLeftServer,
         ),
       ],
       onPointerDown: (event) => _handlePanePointerDown(event, _FileSide.left),
@@ -3806,6 +3830,8 @@ class _FilePaneDivider extends StatelessWidget {
   }
 }
 
+enum _FilePaneAction { copyPath, openTerminal, switchServer }
+
 class _FilePane extends StatelessWidget {
   const _FilePane({
     required this.title,
@@ -3825,6 +3851,16 @@ class _FilePane extends StatelessWidget {
     required this.onDragExited,
     required this.onAcceptDrop,
     required this.child,
+    this.canGoBack = false,
+    this.onGoBack,
+    this.canGoForward = false,
+    this.onGoForward,
+    this.onSwitchServer,
+    this.totalItems = 0,
+    this.selectedCount = 0,
+    this.selectedBytes = 0,
+    this.searchQuery = '',
+    this.filteredCount = 0,
     this.pathInput,
     this.searchInput,
     this.onCopyPath,
@@ -3840,9 +3876,14 @@ class _FilePane extends StatelessWidget {
   final TextStyle? pathTextStyle;
   final bool focused;
   final bool dropHighlighted;
+  final bool canGoBack;
+  final VoidCallback? onGoBack;
+  final bool canGoForward;
+  final VoidCallback? onGoForward;
   final bool canGoUp;
   final VoidCallback onGoUp;
   final VoidCallback onRefresh;
+  final VoidCallback? onSwitchServer;
   final VoidCallback onFocus;
   final bool loading;
   final String? error;
@@ -3852,6 +3893,11 @@ class _FilePane extends StatelessWidget {
   final VoidCallback onDragExited;
   final Future<void> Function(_FileDragData data) onAcceptDrop;
   final Widget child;
+  final int totalItems;
+  final int selectedCount;
+  final int selectedBytes;
+  final String searchQuery;
+  final int filteredCount;
   final Widget? pathInput;
   final Widget? searchInput;
   final Future<void> Function()? onCopyPath;
@@ -3865,6 +3911,21 @@ class _FilePane extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+
+    final String statusSummary;
+    if (searchQuery.isNotEmpty) {
+      statusSummary = 'fileManagerSearchMatches'.tr(
+        args: ['$filteredCount', '$totalItems'],
+      );
+    } else if (selectedCount > 0) {
+      statusSummary = 'fileManagerSelectedItems'.tr(
+        args: ['$selectedCount', _formatBytes(selectedBytes)],
+      );
+    } else {
+      statusSummary = 'fileManagerTotalItems'.tr(
+        args: ['$totalItems'],
+      );
+    }
 
     return Listener(
       onPointerDown: onPointerDown,
@@ -3891,65 +3952,34 @@ class _FilePane extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Title row: what this pane is, plus its primary actions.
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        MaidKitSpace.md,
-                        MaidKitSpace.sm,
-                        MaidKitSpace.xs,
-                        MaidKitSpace.xxs,
+                    // Single compact toolbar row: Navigation + Path + Primary Tools
+                    Container(
+                      height: 38,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: MaidKitSpace.xs,
                       ),
                       child: Row(
                         children: [
-                          Flexible(
-                            child: Text(
-                              title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                color: focused || highlighted
-                                    ? scheme.primary
-                                    : null,
-                              ),
+                          if (onGoBack != null)
+                            _paneIconButton(
+                              tooltip: 'commonBack'.tr(),
+                              icon: Symbols.arrow_back,
+                              onPressed: canGoBack ? onGoBack : null,
                             ),
-                          ),
-                          if (clipboardHint != null) ...[
-                            const SizedBox(width: MaidKitSpace.sm),
-                            Flexible(
-                              child: Text(
-                                clipboardHint!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: scheme.primary,
-                                ),
-                              ),
+                          if (onGoForward != null)
+                            _paneIconButton(
+                              tooltip: 'commonForward'.tr(),
+                              icon: Symbols.arrow_forward,
+                              onPressed: canGoForward ? onGoForward : null,
                             ),
-                          ],
-                          ...headerActions,
-                        ],
-                      ),
-                    ),
-                    // Location row: where this pane is, with the actions that
-                    // move it.
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        MaidKitSpace.xs,
-                        MaidKitSpace.xxs,
-                        MaidKitSpace.xs,
-                        MaidKitSpace.sm,
-                      ),
-                      child: Row(
-                        children: [
                           _paneIconButton(
                             tooltip: 'fileManagerGoUp'.tr(),
                             icon: Symbols.arrow_upward,
                             onPressed: canGoUp ? onGoUp : null,
                           ),
-                          const SizedBox(width: MaidKitSpace.xxs),
+                          const SizedBox(width: MaidKitSpace.xs),
                           Expanded(
-                            child:
-                                pathInput ??
+                            child: pathInput ??
                                 Text(
                                   path,
                                   maxLines: 1,
@@ -3957,23 +3987,75 @@ class _FilePane extends StatelessWidget {
                                   style: pathTextStyle,
                                 ),
                           ),
-                          if (onCopyPath != null)
-                            _paneIconButton(
-                              tooltip: 'fileManagerCopyRemotePath'.tr(),
-                              icon: Symbols.content_copy,
-                              onPressed: () => onCopyPath!(),
-                            ),
-                          if (onOpenTerminal != null)
-                            _paneIconButton(
-                              tooltip: 'fileManagerOpenTerminalHere'.tr(),
-                              icon: Symbols.terminal,
-                              onPressed: () => onOpenTerminal!(),
-                            ),
+                          const SizedBox(width: MaidKitSpace.xs),
+                          ...headerActions,
                           _paneIconButton(
                             tooltip: 'commonRefresh'.tr(),
                             icon: Symbols.refresh,
                             onPressed: loading ? null : onRefresh,
                           ),
+                          if (onCopyPath != null ||
+                              onOpenTerminal != null ||
+                              onSwitchServer != null)
+                            PopupMenuButton<_FilePaneAction>(
+                              tooltip: 'commonMore'.tr(),
+                              padding: EdgeInsets.zero,
+                              icon: const Icon(Symbols.more_vert, size: 18),
+                              onSelected: (action) {
+                                switch (action) {
+                                  case _FilePaneAction.copyPath:
+                                    onCopyPath?.call();
+                                  case _FilePaneAction.openTerminal:
+                                    onOpenTerminal?.call();
+                                  case _FilePaneAction.switchServer:
+                                    onSwitchServer?.call();
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                if (onCopyPath != null)
+                                  PopupMenuItem(
+                                    value: _FilePaneAction.copyPath,
+                                    child: ListTile(
+                                      dense: true,
+                                      leading: const Icon(
+                                        Symbols.content_copy,
+                                        size: 18,
+                                      ),
+                                      title: Text(
+                                        'fileManagerCopyRemotePath'.tr(),
+                                      ),
+                                    ),
+                                  ),
+                                if (onOpenTerminal != null)
+                                  PopupMenuItem(
+                                    value: _FilePaneAction.openTerminal,
+                                    child: ListTile(
+                                      dense: true,
+                                      leading: const Icon(
+                                        Symbols.terminal,
+                                        size: 18,
+                                      ),
+                                      title: Text(
+                                        'fileManagerOpenTerminalHere'.tr(),
+                                      ),
+                                    ),
+                                  ),
+                                if (onSwitchServer != null)
+                                  PopupMenuItem(
+                                    value: _FilePaneAction.switchServer,
+                                    child: ListTile(
+                                      dense: true,
+                                      leading: const Icon(
+                                        Symbols.swap_horiz,
+                                        size: 18,
+                                      ),
+                                      title: Text(
+                                        'fileManagerUseAnotherServer'.tr(),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                         ],
                       ),
                     ),
@@ -3991,6 +4073,45 @@ class _FilePane extends StatelessWidget {
                               ),
                             )
                           : child,
+                    ),
+                    // Bottom status bar matching terminal status baseline
+                    const Divider(height: 1),
+                    SizedBox(
+                      height: 30,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: MaidKitSpace.md,
+                        ),
+                        child: Row(
+                          children: [
+                            Text(
+                              statusSummary,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                            if (clipboardHint != null) ...[
+                              const SizedBox(width: MaidKitSpace.sm),
+                              Text(
+                                '· $clipboardHint',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                            const Spacer(),
+                            Text(
+                              'SFTP · UTF-8',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant.withValues(
+                                  alpha: 0.8,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -4473,13 +4594,95 @@ IconData _fileIcon(String name, {required bool isDirectory}) {
   if (isDirectory) return Symbols.folder;
 
   final lowerName = name.toLowerCase();
-  if (lowerName == 'dockerfile' || lowerName == 'makefile') {
-    return Symbols.code;
+  if (lowerName == 'dockerfile' ||
+      lowerName == 'containerfile' ||
+      lowerName == 'docker-compose.yml' ||
+      lowerName == 'docker-compose.yaml' ||
+      lowerName == 'compose.yml' ||
+      lowerName == 'compose.yaml' ||
+      lowerName.startsWith('docker-compose') ||
+      lowerName.startsWith('compose.') ||
+      lowerName == '.dockerignore' ||
+      lowerName == 'helmfile.yaml' ||
+      lowerName.endsWith('.k8s.yaml') ||
+      lowerName.endsWith('.k8s.yml')) {
+    return Symbols.deployed_code;
+  }
+  if (lowerName.endsWith('.sh') ||
+      lowerName.endsWith('.bash') ||
+      lowerName.endsWith('.zsh') ||
+      lowerName.endsWith('.fish') ||
+      lowerName.endsWith('.ps1') ||
+      lowerName.endsWith('.bat') ||
+      lowerName.endsWith('.cmd')) {
+    return Symbols.terminal;
+  }
+  if (lowerName == '.gitignore' ||
+      lowerName == '.gitmodules' ||
+      lowerName == '.gitattributes' ||
+      lowerName.startsWith('.git')) {
+    return Symbols.commit;
+  }
+  if (lowerName.endsWith('.md') ||
+      lowerName.endsWith('.markdown') ||
+      lowerName == 'readme' ||
+      lowerName.startsWith('readme.') ||
+      lowerName == 'license' ||
+      lowerName.startsWith('license.') ||
+      lowerName == 'changelog' ||
+      lowerName.startsWith('changelog.')) {
+    return Symbols.markdown;
+  }
+  if (lowerName.endsWith('.pem') ||
+      lowerName.endsWith('.key') ||
+      lowerName.endsWith('.pub') ||
+      lowerName.endsWith('.crt') ||
+      lowerName.endsWith('.cer') ||
+      lowerName.endsWith('.pfx') ||
+      lowerName.endsWith('.p12') ||
+      lowerName == 'id_rsa' ||
+      lowerName == 'id_ed25519' ||
+      lowerName == 'authorized_keys' ||
+      lowerName == 'known_hosts') {
+    return Symbols.key;
+  }
+  if (lowerName.endsWith('.lock') ||
+      lowerName == 'package-lock.json' ||
+      lowerName == 'pnpm-lock.yaml' ||
+      lowerName == 'yarn.lock' ||
+      lowerName == 'cargo.lock' ||
+      lowerName == 'gemfile.lock' ||
+      lowerName == 'composer.lock' ||
+      lowerName == 'pubspec.lock') {
+    return Symbols.lock;
+  }
+  if (lowerName.endsWith('.html') || lowerName.endsWith('.htm')) {
+    return Symbols.html;
+  }
+  if (lowerName.endsWith('.css') ||
+      lowerName.endsWith('.scss') ||
+      lowerName.endsWith('.sass') ||
+      lowerName.endsWith('.less')) {
+    return Symbols.css;
+  }
+  if (lowerName.endsWith('.js') ||
+      lowerName.endsWith('.mjs') ||
+      lowerName.endsWith('.cjs') ||
+      lowerName.endsWith('.jsx') ||
+      lowerName.endsWith('.ts') ||
+      lowerName.endsWith('.tsx')) {
+    return Symbols.javascript;
+  }
+  if (lowerName.endsWith('.json') ||
+      lowerName.endsWith('.json5') ||
+      lowerName.endsWith('.jsonc')) {
+    return Symbols.data_object;
   }
   if (_hasFileExtension(lowerName, _configFileExtensions)) {
     return Symbols.settings;
   }
-  if (_hasFileExtension(lowerName, _scriptFileExtensions)) {
+  if (lowerName == 'makefile' ||
+      _hasFileExtension(lowerName, _scriptFileExtensions)) {
     return Symbols.code;
   }
   if (_hasFileExtension(lowerName, _databaseFileExtensions)) {
