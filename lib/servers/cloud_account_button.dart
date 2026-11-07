@@ -34,7 +34,7 @@ class CloudAccountButton extends ConsumerWidget {
       onPressed: () =>
           ref.read(terminalTabsProvider.notifier).openMaidCafeCloud(),
       icon: user == null
-          ? const Icon(Symbols.account_circle, size: 24)
+          ? const Icon(Symbols.account_circle, size: 20)
           : CircleAvatar(
               radius: 12,
               backgroundColor: scheme.primaryContainer,

@@ -218,7 +218,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
               // The account slot gives up width first: on a narrow strip its
               // label ellipsizes instead of pushing the refresh control off
               // the edge.
-              Flexible(
+              Expanded(
                 child: cloudUser.when(
                   loading: () => const _CloudUserLoading(),
                   error: (_, _) => _statusSignIn(context),
@@ -227,7 +227,6 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
                       : _statusAccount(context, user),
                 ),
               ),
-              const Spacer(),
               if (_lastRefreshed != null && showTimestamp) ...[
                 Flexible(
                   child: Text(
