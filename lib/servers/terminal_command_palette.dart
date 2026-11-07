@@ -763,12 +763,6 @@ List<_TerminalAction> _destinationActions({
       onSelect: () async => open(notifier.openAssets),
     ),
     _TerminalAction(
-      label: 'tabGithub'.tr(),
-      icon: Symbols.rocket_launch,
-      onSelect: () async =>
-          open(() => notifier.openAssets(section: AssetsSection.github)),
-    ),
-    _TerminalAction(
       label: 'assetsCredentialsTitle'.tr(),
       icon: Symbols.key,
       onSelect: () async =>

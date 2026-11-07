@@ -42,6 +42,39 @@ void main() {
                 username: 'root',
               ),
             );
+        // A schema-22 database still carries the GitHub integration's tables.
+        await seeded.customStatement('''
+          CREATE TABLE github_connections (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            account_login TEXT NOT NULL UNIQUE,
+            account_name TEXT NOT NULL DEFAULT '',
+            avatar_url TEXT NOT NULL DEFAULT '',
+            created_at DATETIME NOT NULL
+          )
+        ''');
+        await seeded.customStatement('''
+          CREATE TABLE github_repo_pins (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            connection_id INTEGER NOT NULL
+              REFERENCES github_connections (id),
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            pinned_at DATETIME NOT NULL
+          )
+        ''');
+        await seeded.customStatement(
+          'CREATE UNIQUE INDEX github_repo_pins_unique '
+          'ON github_repo_pins (connection_id, owner, name)',
+        );
+        await seeded.customStatement('''
+          CREATE TABLE github_tokens (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            account_login TEXT NOT NULL UNIQUE,
+            encrypted_token TEXT NOT NULL,
+            token_nonce TEXT NOT NULL,
+            updated_at DATETIME NOT NULL
+          )
+        ''');
         await seeded.customStatement('PRAGMA user_version = 22');
         await seeded.close();
 
@@ -63,14 +96,15 @@ void main() {
             .getSingle();
         expect(row.read<int>('sort_order'), 1);
 
-        // The GitHub token table is created for vault-backed token storage.
-        final tokenTable = await database
+        // The removed GitHub integration leaves no tables behind.
+        final githubTables = await database
             .customSelect(
-              "SELECT name FROM sqlite_master "
-              "WHERE type = 'table' AND name = 'github_tokens'",
+              "SELECT name FROM sqlite_master WHERE type = 'table' "
+              "AND name IN ('github_connections', 'github_repo_pins', "
+              "'github_tokens')",
             )
             .get();
-        expect(tokenTable, isNotEmpty);
+        expect(githubTables, isEmpty);
 
         // Saved port-forwarding presets are created in schema 28.
         final presetTable = await database
@@ -278,11 +312,6 @@ void main() {
             'ALTER TABLE servers DROP COLUMN $column',
           );
         }
-        // Schema 19 recreates these (including the unguarded unique index);
-        // drop the fresh-schema versions so the migration reproduces a real
-        // upgrade.
-        await seeded.customStatement('DROP TABLE IF EXISTS github_repo_pins');
-        await seeded.customStatement('DROP TABLE IF EXISTS github_connections');
         await seeded.customStatement('''
           CREATE TABLE agent_conversations (
             id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

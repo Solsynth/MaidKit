@@ -7,7 +7,6 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/github/github_section.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
 import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
@@ -21,9 +20,8 @@ import 'servers_page.dart';
 import 'terminal_tabs_provider.dart';
 
 /// A home for saved, reusable connection resources: server connections,
-/// GitHub, credentials and snippets, each in its own tab. The primary
-/// create action lives on a floating action button that adapts to the
-/// active tab.
+/// credentials and snippets, each in its own tab. The primary create action
+/// lives on a floating action button that adapts to the active tab.
 class AssetsPage extends ConsumerStatefulWidget {
   const AssetsPage({
     super.key,
@@ -32,7 +30,7 @@ class AssetsPage extends ConsumerStatefulWidget {
   });
 
   /// The page to show. Changing it switches the tab bar to that page, which is
-  /// how the launcher opens ["GitHub"] or ["Snippets"] directly.
+  /// how the launcher opens ["Credentials"] or ["Snippets"] directly.
   final AssetsSection initialSection;
 
   /// Reports the page the user switched to, so the workspace tab can remember
@@ -91,10 +89,6 @@ class _AssetsPageState extends ConsumerState<AssetsPage>
                   label: 'assetsConnections'.tr(),
                 ),
                 IconLabelTab(
-                  icon: const Icon(Symbols.rocket_launch, size: 18),
-                  label: 'tabGithub'.tr(),
-                ),
-                IconLabelTab(
                   icon: const Icon(Symbols.key, size: 18),
                   label: 'assetsCredentialsTitle'.tr(),
                 ),
@@ -111,10 +105,6 @@ class _AssetsPageState extends ConsumerState<AssetsPage>
                   ListView(
                     padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
                     children: const [ServerAssetsSection()],
-                  ),
-                  ListView(
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                    children: const [GitHubSection(showHeader: false)],
                   ),
                   ListView(
                     padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
@@ -135,8 +125,7 @@ class _AssetsPageState extends ConsumerState<AssetsPage>
   }
 
   /// The unified create action: one floating button whose label and target
-  /// follow the active tab. The GitHub tab keeps its in-content sign-in and
-  /// pin-repo controls, so no FAB there.
+  /// follow the active tab.
   Widget? _fabForTab(int index) {
     return switch (index) {
       0 => FloatingActionButton.extended(
@@ -145,13 +134,13 @@ class _AssetsPageState extends ConsumerState<AssetsPage>
         icon: const Icon(Symbols.add),
         label: Text('serversAddServer'.tr()),
       ),
-      2 => FloatingActionButton.extended(
+      1 => FloatingActionButton.extended(
         heroTag: 'assets-create-fab',
         onPressed: () => _addCredential(context, ref),
         icon: const Icon(Symbols.add),
         label: Text('settingsCredentialAdd'.tr()),
       ),
-      3 => FloatingActionButton.extended(
+      2 => FloatingActionButton.extended(
         heroTag: 'assets-create-fab',
         onPressed: () => _newSnippet(context, ref),
         icon: const Icon(Symbols.add),
@@ -542,7 +531,7 @@ class SnippetsSection extends ConsumerWidget {
           data: (items) => items.isEmpty
               ? _EmptySnippets(onCreate: () => _edit(context, ref))
               : Column(
-                spacing: 8,
+                  spacing: 8,
                   children: [
                     for (final item in items)
                       ListTile(

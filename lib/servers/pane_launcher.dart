@@ -157,12 +157,6 @@ class _PaneLauncherState extends ConsumerState<PaneLauncher> {
         run: () async => notifier.openAssets(paneId: paneId),
       ),
       _LauncherEntry(
-        label: 'tabGithub'.tr(),
-        icon: Symbols.rocket_launch,
-        run: () async =>
-            notifier.openAssets(section: AssetsSection.github, paneId: paneId),
-      ),
-      _LauncherEntry(
         label: 'assetsCredentialsTitle'.tr(),
         icon: Symbols.key,
         run: () async => notifier.openAssets(

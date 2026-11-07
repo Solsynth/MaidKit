@@ -15,9 +15,6 @@ enum _MergeTable {
   deploymentProjects,
   deploymentResources,
   scriptSnippets,
-  githubConnections,
-  githubRepoPins,
-  githubTokens,
 }
 
 const _mergeTableNames = {
@@ -27,9 +24,6 @@ const _mergeTableNames = {
   _MergeTable.deploymentProjects: 'deploymentProjects',
   _MergeTable.deploymentResources: 'deploymentResources',
   _MergeTable.scriptSnippets: 'scriptSnippets',
-  _MergeTable.githubConnections: 'githubConnections',
-  _MergeTable.githubRepoPins: 'githubRepoPins',
-  _MergeTable.githubTokens: 'githubTokens',
 };
 
 /// Creates portable, password-encrypted snapshots of the user-managed data.
@@ -222,16 +216,6 @@ class DatabaseBackupService {
           record['directory'],
           record['scope'],
         ]);
-      case _MergeTable.githubConnections:
-        return value(record['accountLogin']);
-      case _MergeTable.githubTokens:
-        return value(record['accountLogin']);
-      case _MergeTable.githubRepoPins:
-        return _compoundKey([
-          record['connectionId'],
-          record['owner'],
-          record['name'],
-        ]);
     }
   }
 
@@ -253,7 +237,6 @@ class DatabaseBackupService {
   DateTime? _recordTimestamp(_MergeTable table, Map<String, dynamic> record) {
     final fields = switch (table) {
       _MergeTable.composeProjectLinks => ['linkedAt'],
-      _MergeTable.githubRepoPins => ['pinnedAt'],
       _ => ['updatedAt', 'createdAt'],
     };
     for (final field in fields) {
@@ -369,18 +352,6 @@ class DatabaseBackupService {
       );
       credentialRecords.add(record);
     }
-    final githubTokenRecords = <Map<String, dynamic>>[];
-    for (final token in await _database.select(_database.gitHubTokens).get()) {
-      final record = token.toJson()
-        ..remove('encryptedToken')
-        ..remove('tokenNonce');
-      record['token'] = await _vault.decrypt(
-        EncryptedValue(bytes: token.encryptedToken, nonce: token.tokenNonce),
-        context: 'github-token',
-      );
-      githubTokenRecords.add(record);
-    }
-
     final archive = <String, Object?>{
       'version': _formatVersion,
       'servers': serverRecords,
@@ -400,17 +371,6 @@ class DatabaseBackupService {
       'scriptSnippets': (await _database.select(_database.scriptSnippets).get())
           .map((record) => record.toJson())
           .toList(),
-      // GitHub metadata and vault-encrypted access tokens sync with the
-      // vault; tokens are decrypted only while the archive is assembled and
-      // re-encrypted with the destination vault key during import.
-      'githubConnections':
-          (await _database.select(_database.gitHubConnections).get())
-              .map((record) => record.toJson())
-              .toList(),
-      'githubRepoPins': (await _database.select(_database.gitHubRepoPins).get())
-          .map((record) => record.toJson())
-          .toList(),
-      'githubTokens': githubTokenRecords,
     };
     return archive;
   }
@@ -436,13 +396,6 @@ class DatabaseBackupService {
     final projects = _records(payload, 'deploymentProjects');
     final resources = _records(payload, 'deploymentResources');
     final snippets = _records(payload, 'scriptSnippets');
-    // Optional keys: archives written before the GitHub integration carry no
-    // GitHub metadata, which imports as an empty connection state. Tokens
-    // joined the archive later and are optional too; a connection imported
-    // without one simply needs a new sign-in.
-    final githubConnections = _recordsOrEmpty(payload, 'githubConnections');
-    final githubRepoPins = _recordsOrEmpty(payload, 'githubRepoPins');
-    final githubTokens = _recordsOrEmpty(payload, 'githubTokens');
 
     // `lastConnectedAt` never travels in an archive, but the import rewrites
     // every server row, so remember this device's own connect times first.
@@ -457,9 +410,6 @@ class DatabaseBackupService {
       await _database.delete(_database.deploymentProjects).go();
       await _database.delete(_database.composeProjectLinks).go();
       await _database.delete(_database.scriptSnippets).go();
-      await _database.delete(_database.gitHubRepoPins).go();
-      await _database.delete(_database.gitHubConnections).go();
-      await _database.delete(_database.gitHubTokens).go();
       await _database.delete(_database.servers).go();
       await _database.delete(_database.savedCredentials).go();
 
@@ -634,45 +584,6 @@ class DatabaseBackupService {
         await _database
             .into(_database.scriptSnippets)
             .insert(snippet.toCompanion(false));
-      }
-      for (final record in githubConnections) {
-        await _database
-            .into(_database.gitHubConnections)
-            .insert(GitHubConnection.fromJson(record).toCompanion(false));
-      }
-      for (final record in githubRepoPins) {
-        await _database
-            .into(_database.gitHubRepoPins)
-            .insert(GitHubRepoPin.fromJson(record).toCompanion(false));
-      }
-      for (final record in githubTokens) {
-        // The archive carries the clear token (the whole archive is encrypted
-        // with the vault passphrase); re-encrypt it with this vault's data
-        // key, mirroring the saved-credential import.
-        final clearToken = record['token'];
-        if (clearToken is! String) {
-          throw const FormatException('Invalid GitHub token.');
-        }
-        final token = GitHubToken.fromJson({
-          ...record,
-          'encryptedToken': '',
-          'tokenNonce': '',
-        });
-        final encrypted = await _vault.encrypt(
-          clearToken,
-          context: 'github-token',
-        );
-        await _database
-            .into(_database.gitHubTokens)
-            .insert(
-              GitHubTokensCompanion(
-                id: Value(token.id),
-                accountLogin: Value(token.accountLogin),
-                encryptedToken: Value(encrypted.bytes),
-                tokenNonce: Value(encrypted.nonce),
-                updatedAt: Value(token.updatedAt),
-              ),
-            );
       }
     });
   }

@@ -19,8 +19,6 @@ Map<String, dynamic> _payload(List<Map<String, dynamic>> servers) => {
   'deploymentProjects': <Map<String, dynamic>>[],
   'deploymentResources': <Map<String, dynamic>>[],
   'scriptSnippets': <Map<String, dynamic>>[],
-  'githubConnections': <Map<String, dynamic>>[],
-  'githubRepoPins': <Map<String, dynamic>>[],
 };
 
 void main() {

@@ -165,7 +165,7 @@ void main() {
     expect(find.text('tabDashboard'.tr()), findsOneWidget);
 
     // Ctrl+W is the same shortcut on Windows and Linux.
-    notifier.openAssets(section: AssetsSection.github);
+    notifier.openAssets(section: AssetsSection.credentials);
     await tester.pumpAndSettle();
     expect(find.text('tabAssets'.tr()), findsOneWidget);
 

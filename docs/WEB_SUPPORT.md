@@ -11,7 +11,7 @@ and what is still open.
 | Terminal rendering | `xterm3` (see `docs/TERMINAL_EMU_ADAPTER.md`) |
 | Terminals | MaidCafe daemon terminals over WebSocket — the only transport that needs no raw socket |
 | Server statistics | MaidCafe daemon `/api/v1/metrics` over HTTP(S) — the only statistics route that needs no SSH |
-| Servers, settings, snippets, GitHub, projects, cloud sync | Local database + HTTP(S) |
+| Servers, settings, snippets, projects, cloud sync | Local database + HTTP(S) |
 | SSH, serial, local shells | Unavailable (no raw sockets) |
 | File management, file editor | MaidCafe daemon `/api/v1/files` over HTTP(S) for a remote server; the browser shows the same remote-only file manager the desktop does |
 | Containers | MaidCafe daemon `/api/v1/containers` and its per-container reads, over HTTP(S). Exec, attach and re-create-from-inspect stay SSH-only |

@@ -233,7 +233,6 @@ void main() {
 
     expect(find.byType(TabBar), findsOneWidget);
     expect(find.text('assetsConnections'.tr()), findsOneWidget);
-    expect(find.text('tabGithub'.tr()), findsOneWidget);
     expect(find.text('assetsCredentialsTitle'.tr()), findsOneWidget);
     expect(find.text('tabSnippets'.tr()), findsOneWidget);
 

@@ -15,7 +15,6 @@ enum DeploymentResourceKind {
   firewallRule,
   systemdService,
   database,
-  githubWorkflow,
   other,
 }
 
@@ -37,8 +36,6 @@ String deploymentResourceKindLabel(DeploymentResourceKind kind) =>
       DeploymentResourceKind.firewallRule => 'deploymentKindFirewall'.tr(),
       DeploymentResourceKind.systemdService => 'deploymentKindSystemd'.tr(),
       DeploymentResourceKind.database => 'deploymentKindDatabase'.tr(),
-      DeploymentResourceKind.githubWorkflow =>
-        'deploymentKindGithubWorkflow'.tr(),
       DeploymentResourceKind.other => 'deploymentKindOther'.tr(),
     };
 
@@ -52,7 +49,6 @@ IconData deploymentResourceKindIcon(DeploymentResourceKind kind) =>
       DeploymentResourceKind.firewallRule => Symbols.security,
       DeploymentResourceKind.systemdService => Symbols.settings,
       DeploymentResourceKind.database => Symbols.database,
-      DeploymentResourceKind.githubWorkflow => Symbols.rocket_launch,
       DeploymentResourceKind.other => Symbols.extension,
     };
 

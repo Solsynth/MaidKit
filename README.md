@@ -108,13 +108,6 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 - Attach files, screenshots and pasted logs to a message
 - Conversation history is stored on-device, outside the vault
 
-### GitHub
-
-- Sign in with device-flow authorization
-- Pin repositories and follow workflow runs, pull requests, and releases
-- Access tokens are stored encrypted in the vault
-- GitHub tools are available to the agent
-
 ### Local MCP Server
 
 - Expose MaidKit's SSH servers, snippets, and skills to other agents on this machine through a local Model Context Protocol server
@@ -127,7 +120,6 @@ Built with Flutter, MaidKit runs on desktop and mobile platforms alike. Inspired
 - Biometric unlock support
 - Optional per-vault cloud sync over encrypted blobs (Solar Network)
 - Encrypted backup archives (.mkb)
-- GitHub access tokens encrypted in the vault
 
 ### Settings
 

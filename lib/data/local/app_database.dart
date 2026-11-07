@@ -272,46 +272,6 @@ class AgentSkills extends Table {
   DateTimeColumn get updatedAt => dateTime()();
 }
 
-/// A GitHub account the user signed in with. Only non-secret identity is kept
-/// here; the access token lives in [GitHubTokens], encrypted with the vault
-/// key, and never enters this table or the portable payload in clear text.
-class GitHubConnections extends Table {
-  @override
-  String get tableName => 'github_connections';
-
-  IntColumn get id => integer().autoIncrement()();
-  TextColumn get accountLogin => text().unique()();
-  TextColumn get accountName => text().withDefault(const Constant(''))();
-  TextColumn get avatarUrl => text().withDefault(const Constant(''))();
-  DateTimeColumn get createdAt => dateTime()();
-}
-
-/// Repositories pinned to the GitHub tab. Metadata only, safe to sync.
-class GitHubRepoPins extends Table {
-  @override
-  String get tableName => 'github_repo_pins';
-
-  IntColumn get id => integer().autoIncrement()();
-  IntColumn get connectionId => integer().references(GitHubConnections, #id)();
-  TextColumn get owner => text()();
-  TextColumn get name => text()();
-  DateTimeColumn get pinnedAt => dateTime()();
-}
-
-/// GitHub access tokens, encrypted with the vault data key. Tokens live
-/// inside the vault so they sync with it and survive vault migration; only
-/// the ciphertext is stored, keyed by [accountLogin] like the connection.
-class GitHubTokens extends Table {
-  @override
-  String get tableName => 'github_tokens';
-
-  IntColumn get id => integer().autoIncrement()();
-  TextColumn get accountLogin => text().unique()();
-  TextColumn get encryptedToken => text()();
-  TextColumn get tokenNonce => text()();
-  DateTimeColumn get updatedAt => dateTime()();
-}
-
 /// A saved port-forwarding preset (Termius-style). A preset is metadata only:
 /// it reuses the server's existing SSH connection and contains no credentials.
 /// When [autoStart] is set, the forward is started automatically every time
@@ -368,8 +328,6 @@ class WorkspaceSnapshots extends Table {
   Set<Column<Object>> get primaryKey => {id};
 }
 
-/// Links a deployment project to a GitHub workflow whose latest run is shown
-/// on the project detail page.
 @DriftDatabase(
   tables: [
     Servers,
@@ -385,9 +343,6 @@ class WorkspaceSnapshots extends Table {
     AgentProviderModels,
     McpServers,
     AgentSkills,
-    GitHubConnections,
-    GitHubRepoPins,
-    GitHubTokens,
     PortForwardConfigs,
     RuntimeWatchConfigs,
     AppSettings,
@@ -420,7 +375,7 @@ class AppDatabase extends _$AppDatabase {
   static const String webDatabaseName = 'maid_kit';
 
   @override
-  int get schemaVersion => 41;
+  int get schemaVersion => 42;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -432,10 +387,6 @@ class AppDatabase extends _$AppDatabase {
       await customStatement(
         'CREATE UNIQUE INDEX compose_project_links_location_unique '
         'ON compose_project_links (server_id, directory, scope)',
-      );
-      await customStatement(
-        'CREATE UNIQUE INDEX github_repo_pins_unique '
-        'ON github_repo_pins (connection_id, owner, name)',
       );
     },
     onUpgrade: (m, from, to) async {
@@ -642,22 +593,12 @@ class AppDatabase extends _$AppDatabase {
         await m.addColumn(servers, servers.encryptedProxyPassword);
         await m.addColumn(servers, servers.proxyPasswordNonce);
       }
-      if (from < 19) {
-        await m.createTable(gitHubConnections);
-        await m.createTable(gitHubRepoPins);
-        await customStatement(
-          'CREATE UNIQUE INDEX github_repo_pins_unique '
-          'ON github_repo_pins (connection_id, owner, name)',
-        );
-      }
       if (from < 20) {
         await m.addColumn(servers, servers.environment);
         await m.addColumn(servers, servers.initialSnippets);
         await m.addColumn(servers, servers.tags);
       }
       if (from < 21) {
-        // Workflow links became a regular deployment resource (kind
-        // `githubWorkflow`, configuration JSON) in schema 21.
         await customStatement(
           'DROP TABLE IF EXISTS github_project_workflow_links',
         );
@@ -728,13 +669,6 @@ class AppDatabase extends _$AppDatabase {
         if (!existing.contains('maid_cafe_metrics_secret_nonce')) {
           await m.addColumn(servers, servers.maidCafeMetricsSecretNonce);
         }
-      }
-      if (from < 27) {
-        // GitHub tokens moved from the OS keychain into the vault so they
-        // sync with it. Existing keychain entries are migrated lazily by
-        // VaultGitHubTokenStorage on first read (encryption needs the vault
-        // key, which is only available after unlock).
-        await m.createTable(gitHubTokens);
       }
       if (from < 28) {
         await m.createTable(portForwardConfigs);
@@ -902,6 +836,15 @@ class AppDatabase extends _$AppDatabase {
           await m.addColumn(servers, servers.maidCafeTerminalUsers);
         }
       }
+      if (from < 42) {
+        // The GitHub integration (connections, pinned repositories and
+        // vault-backed access tokens) was removed. A database that still has
+        // its tables drops them here.
+        await customStatement('DROP INDEX IF EXISTS github_repo_pins_unique');
+        await customStatement('DROP TABLE IF EXISTS github_repo_pins');
+        await customStatement('DROP TABLE IF EXISTS github_connections');
+        await customStatement('DROP TABLE IF EXISTS github_tokens');
+      }
     },
   );
 
@@ -951,13 +894,6 @@ class AppDatabase extends _$AppDatabase {
   Stream<List<AgentSkill>> watchAgentSkills() => (select(
     agentSkills,
   )..orderBy([(table) => OrderingTerm.asc(table.name)])).watch();
-
-  Stream<List<GitHubConnection>> watchGitHubConnections() => (select(
-    gitHubConnections,
-  )..orderBy([(table) => OrderingTerm.asc(table.accountLogin)])).watch();
-
-  Stream<List<GitHubRepoPin>> watchGitHubRepoPins() =>
-      select(gitHubRepoPins).watch();
 
   Stream<List<PortForwardConfig>> watchPortForwardConfigs(int serverId) =>
       (select(portForwardConfigs)

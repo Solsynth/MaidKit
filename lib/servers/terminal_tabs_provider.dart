@@ -56,7 +56,7 @@ enum SessionTabType {
 /// A caller can open the assets tab straight on one of them (a palette entry
 /// per page, a deep link), so the section is part of the tab rather than page
 /// local state.
-enum AssetsSection { connections, github, credentials, snippets }
+enum AssetsSection { connections, credentials, snippets }
 
 /// Optional close confirmation for dirty file-editor tabs.
 final Map<String, Future<bool> Function()> fileEditorCloseGuards = {};
@@ -222,7 +222,7 @@ sealed class DestinationTab extends SessionTab {
     : super(serverId: -1);
 }
 
-/// Saved connection resources: servers, GitHub, credentials and snippets.
+/// Saved connection resources: servers, credentials and snippets.
 class AssetsSessionTab extends DestinationTab {
   const AssetsSessionTab({
     this.section = AssetsSection.connections,

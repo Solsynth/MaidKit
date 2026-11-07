@@ -138,15 +138,6 @@ void main() {
 
     // Re-opening the already open tab on another page switches to it instead
     // of opening a second assets tab.
-    await openPalette(tester, query: 'git');
-    final tabGithubEntry = find.widgetWithText(ListTile, 'tabGithub'.tr());
-    expect(tabGithubEntry, findsOneWidget);
-    await tester.tap(tabGithubEntry);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(AssetsPage), findsOneWidget);
-    expect(assetsSection(tester), AssetsSection.github.index);
-
     await openPalette(tester, query: 'cred');
     final assetsCredentialsTitleEntry = find.widgetWithText(
       ListTile,

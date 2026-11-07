@@ -9,10 +9,6 @@ import 'package:island_ui_foundation/island_ui_foundation.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/github/github_models.dart';
-import 'package:maid_kit/github/github_providers.dart';
-import 'package:maid_kit/github/github_run_detail_page.dart';
-import 'package:maid_kit/github/github_ui.dart';
 import 'package:maid_kit/servers/maidcafe_service.dart';
 import 'package:maid_kit/servers/server_connection_actions.dart';
 import 'package:maid_kit/servers/server_detail_page.dart';
@@ -25,7 +21,6 @@ import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/cloud_file_picker.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/theme.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'compose_detail_page.dart';
 import 'compose_project_actions.dart';
 import 'container_detail_page.dart';
@@ -708,29 +703,6 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
   DeploymentResourceKind get kind =>
       deploymentResourceKindFromId(resource.kind);
 
-  String get _githubOwner => '${effectiveConfig['owner'] ?? ''}'.trim();
-  String get _githubName => '${effectiveConfig['name'] ?? ''}'.trim();
-  String get _githubWorkflow => '${effectiveConfig['workflow'] ?? ''}'.trim();
-
-  /// The latest run of the linked workflow, watched while the tile builds.
-  WorkflowRun? get _githubRun {
-    if (_githubOwner.isEmpty ||
-        _githubName.isEmpty ||
-        _githubWorkflow.isEmpty) {
-      return null;
-    }
-    return ref
-        .watch(
-          githubLinkedRunProvider((
-            owner: _githubOwner,
-            name: _githubName,
-            workflowName: _githubWorkflow,
-          )),
-        )
-        .asData
-        ?.value;
-  }
-
   /// The resource's own configuration. The compose fields are what the
   /// resource records — this app does not keep a second copy of where a
   /// project lives any more: the daemon's registry is that answer, and a
@@ -861,20 +833,6 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
           enabled: _systemdUnit.isNotEmpty,
         ),
       ],
-      DeploymentResourceKind.githubWorkflow => [
-        _QuickActionSpec(
-          id: 'github_open_run',
-          label: 'deploymentGithubOpenRun'.tr(),
-          icon: Symbols.open_in_new,
-          enabled: _githubRun != null,
-        ),
-        _QuickActionSpec(
-          id: 'github_open_web',
-          label: 'githubRunOpen'.tr(),
-          icon: Symbols.language,
-          enabled: _githubRun?.htmlUrl.isNotEmpty ?? false,
-        ),
-      ],
       _ => const [],
     };
   }
@@ -926,13 +884,6 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
           await _runSystemd(SystemdUnitAction.stop);
         case 'systemd_restart':
           await _runSystemd(SystemdUnitAction.restart);
-        case 'github_open_run':
-          await _openGithubRun();
-        case 'github_open_web':
-          final run = _githubRun;
-          if (run != null && run.htmlUrl.isNotEmpty) {
-            await launchUrl(Uri.parse(run.htmlUrl));
-          }
       }
     } catch (error) {
       if (mounted) {
@@ -948,19 +899,6 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
-
-  Future<void> _openGithubRun() async {
-    final run = _githubRun;
-    if (run == null) return;
-    TabNavigator.of(context).push(
-      GitHubRunDetailPage(
-        owner: _githubOwner,
-        name: _githubName,
-        runId: run.id,
-        run: run,
-      ),
-    );
   }
 
   Future<void> _runCompose(ComposeProjectAction action) async {
@@ -1409,12 +1347,6 @@ class _ResourceTileState extends ConsumerState<_ResourceTile> {
                 children: [
                   Divider(height: 1, color: scheme.outlineVariant),
                   const SizedBox(height: 12),
-                  if (kind == DeploymentResourceKind.githubWorkflow)
-                    _GithubWorkflowLivePanel(
-                      owner: _githubOwner,
-                      name: _githubName,
-                      workflow: _githubWorkflow,
-                    ),
                   if (kind == DeploymentResourceKind.compose &&
                       server != null &&
                       !kIsWeb)
@@ -1888,94 +1820,6 @@ class _ComposeLivePanelState extends ConsumerState<_ComposeLivePanel> {
   );
 }
 
-/// Latest run status of a linked GitHub workflow deployment resource.
-class _GithubWorkflowLivePanel extends ConsumerWidget {
-  const _GithubWorkflowLivePanel({
-    required this.owner,
-    required this.name,
-    required this.workflow,
-  });
-
-  final String owner;
-  final String name;
-  final String workflow;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final key = (owner: owner, name: name, workflowName: workflow);
-    final run = ref.watch(githubLinkedRunProvider(key)).asData?.value;
-    final loading = ref.watch(githubLinkedRunProvider(key)).isLoading;
-
-    if (loading && run == null) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 12),
-        child: LinearProgressIndicator(),
-      );
-    }
-    if (run == null) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Text(
-          'githubNoRuns'.tr(),
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-      );
-    }
-    final (:icon, :color) = githubRunStatusVisual(
-      context,
-      run.status,
-      run.conclusion,
-    );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  run.displayTitle.isEmpty ? run.name : run.displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  [
-                    if (run.runNumber > 0) '#${run.runNumber}',
-                    if (run.headBranch.isNotEmpty) run.headBranch,
-                    githubRunDateTime(context, run.updatedAt ?? run.createdAt),
-                    githubTimeAgo(context, run.updatedAt ?? run.createdAt),
-                  ].join(' · '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'githubRunOpen'.tr(),
-            onPressed: run.htmlUrl.isEmpty
-                ? null
-                : () => launchUrl(Uri.parse(run.htmlUrl)),
-            icon: const Icon(Symbols.open_in_new, size: 18),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _EmptyResources extends StatelessWidget {
   const _EmptyResources({required this.projectName, required this.onAdd});
   final String projectName;
@@ -2074,8 +1918,6 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
   var _suggestions = const <String>[];
   var _loadingSuggestions = false;
   String? _suggestionError;
-  String? _ghRepoSlug;
-  String? _ghWorkflow;
 
   bool get _isEditing => widget.initialDraft != null;
 
@@ -2085,7 +1927,6 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
     DeploymentResourceKind.serverFolder,
     DeploymentResourceKind.firewallRule,
     DeploymentResourceKind.systemdService,
-    DeploymentResourceKind.githubWorkflow,
   ];
 
   @override
@@ -2111,11 +1952,6 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
     _directory = '${configuration['directory'] ?? ''}';
     _runtime = _runtimeFrom(configuration);
     _scope = _scopeFrom(configuration);
-    if (_kind == DeploymentResourceKind.githubWorkflow) {
-      _ghRepoSlug =
-          '${configuration['owner'] ?? ''}/${configuration['name'] ?? ''}';
-      _ghWorkflow = '${configuration['workflow'] ?? ''}';
-    }
   }
 
   String get _locationLabel => switch (_kind) {
@@ -2138,11 +1974,6 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
     },
     DeploymentResourceKind.firewallRule => {'rule': _location.trim()},
     DeploymentResourceKind.systemdService => {'unit': _location.trim()},
-    DeploymentResourceKind.githubWorkflow => {
-      'owner': _ghRepoSlug?.split('/').first ?? '',
-      'name': _ghRepoSlug?.split('/').skip(1).join('/') ?? '',
-      'workflow': _ghWorkflow ?? '',
-    },
     _ => widget.initialDraft?.configuration ?? const {},
   };
 
@@ -2227,108 +2058,6 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
     });
   }
 
-  /// Repo picker for the GitHub workflow kind. Keyed by repo slug with a
-  /// membership-guarded value so an async items refresh can never leave the
-  /// dropdown holding a value that no longer matches an item.
-  Widget _githubRepoDropdown() {
-    final repos =
-        ref.watch(githubAvailableReposProvider).asData?.value ??
-        const <GitHubRepo>[];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'githubSelectRepo'.tr(),
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        DropdownButton<String>(
-          value: repos.any((repo) => repo.slug == _ghRepoSlug)
-              ? _ghRepoSlug
-              : null,
-          isExpanded: true,
-          hint: Text('githubSelectRepo'.tr()),
-          items: [
-            for (final repo in repos)
-              DropdownMenuItem(
-                value: repo.slug,
-                child: Text(
-                  repo.slug,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
-          onChanged: (slug) => setState(() {
-            _ghRepoSlug = slug;
-            _ghWorkflow = null;
-          }),
-        ),
-      ],
-    );
-  }
-
-  /// Workflow picker for the GitHub workflow kind, gated on the selected repo.
-  Widget _githubWorkflowDropdown() {
-    final workflows = _ghRepoSlug == null
-        ? const <GitHubWorkflow>[]
-        : ref
-                  .watch(
-                    githubWorkflowsProvider(
-                      GitHubRepoRef(
-                        owner: _ghRepoSlug!.split('/').first,
-                        name: _ghRepoSlug!.split('/').skip(1).join('/'),
-                      ),
-                    ),
-                  )
-                  .asData
-                  ?.value ??
-              const <GitHubWorkflow>[];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'githubSelectWorkflow'.tr(),
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        DropdownButton<String>(
-          value: workflows.any((workflow) => workflow.name == _ghWorkflow)
-              ? _ghWorkflow
-              : null,
-          isExpanded: true,
-          hint: Text('githubSelectWorkflow'.tr()),
-          items: [
-            for (final workflow in workflows)
-              DropdownMenuItem(
-                value: workflow.name,
-                child: Text(
-                  workflow.name.isEmpty
-                      ? workflow.path
-                      : '${workflow.name} (${workflow.path})',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
-          onChanged: (name) => setState(() {
-            _ghWorkflow = name;
-            if (name != null) _name = name;
-          }),
-        ),
-        if (_ghRepoSlug != null && workflows.isEmpty) ...[
-          const SizedBox(height: 6),
-          Text(
-            'githubNoWorkflows'.tr(),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
   Future<void> _pickFolder() async {
     // The picker lists remote folders over SFTP.
     if (kIsWeb) return;
@@ -2350,18 +2079,10 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
   }
 
   void _submit() {
-    if (_kind == DeploymentResourceKind.githubWorkflow) {
-      if (_ghRepoSlug == null || _ghWorkflow == null || _ghWorkflow!.isEmpty) {
-        return;
-      }
-      _name = _ghWorkflow!;
-    } else {
-      if (_serverId == null || _name.trim().isEmpty) return;
-      if (_locationLabel.isNotEmpty && _location.trim().isEmpty) return;
-      if (_kind == DeploymentResourceKind.compose &&
-          _directory.trim().isEmpty) {
-        return;
-      }
+    if (_serverId == null || _name.trim().isEmpty) return;
+    if (_locationLabel.isNotEmpty && _location.trim().isEmpty) return;
+    if (_kind == DeploymentResourceKind.compose && _directory.trim().isEmpty) {
+      return;
     }
     Navigator.pop(
       context,
@@ -2376,16 +2097,12 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final isGithub = _kind == DeploymentResourceKind.githubWorkflow;
-    final canSubmit = isGithub
-        ? (_ghRepoSlug != null &&
-              _ghWorkflow != null &&
-              _ghWorkflow!.isNotEmpty)
-        : _serverId != null &&
-              _name.trim().isNotEmpty &&
-              (_locationLabel.isEmpty || _location.trim().isNotEmpty) &&
-              (_kind != DeploymentResourceKind.compose ||
-                  _directory.trim().isNotEmpty);
+    final canSubmit =
+        _serverId != null &&
+        _name.trim().isNotEmpty &&
+        (_locationLabel.isEmpty || _location.trim().isNotEmpty) &&
+        (_kind != DeploymentResourceKind.compose ||
+            _directory.trim().isNotEmpty);
 
     return SheetScaffold(
       titleText:
@@ -2432,173 +2149,154 @@ class _LinkResourceSheetState extends ConsumerState<_LinkResourceSheet> {
             },
           ),
           const SizedBox(height: 12),
-          if (isGithub) ...[
-            _githubRepoDropdown(),
-            const SizedBox(height: 16),
-            _githubWorkflowDropdown(),
-          ] else ...[
-            if (widget.servers.isEmpty)
+          if (widget.servers.isEmpty)
+            Text(
+              'deploymentNoServersHint'.tr(),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            )
+          else
+            DropdownButtonFormField<int>(
+              initialValue: _serverId,
+              decoration: InputDecoration(
+                labelText: 'deploymentServerLabel'.tr(),
+              ),
+              items: [
+                for (final server in widget.servers)
+                  DropdownMenuItem(value: server.id, child: Text(server.name)),
+              ],
+              onChanged: (value) {
+                setState(() => _serverId = value);
+                _loadSuggestions();
+              },
+            ),
+          const SizedBox(height: 12),
+          TextFormField(
+            initialValue: _name,
+            decoration: InputDecoration(
+              labelText: 'deploymentDisplayName'.tr(),
+              helperText: 'deploymentDisplayNameHelper'.tr(),
+            ),
+            onChanged: (value) => setState(() => _name = value),
+            onFieldSubmitted: (_) {
+              if (canSubmit) _submit();
+            },
+          ),
+          if (_locationLabel.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Autocomplete<String>(
+              optionsBuilder: (value) {
+                final query = value.text.toLowerCase();
+                return _suggestions.where(
+                  (item) => query.isEmpty || item.toLowerCase().contains(query),
+                );
+              },
+              onSelected: _selectSuggestion,
+              fieldViewBuilder: (context, controller, focusNode, onSubmit) {
+                if (controller.text != _location) {
+                  controller.value = TextEditingValue(
+                    text: _location,
+                    selection: TextSelection.collapsed(
+                      offset: _location.length,
+                    ),
+                  );
+                }
+                return TextFormField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  decoration: InputDecoration(
+                    labelText: _locationLabel,
+                    suffixIcon: _loadingSuggestions
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : IconButton(
+                            tooltip: 'deploymentRefreshSuggestions'.tr(),
+                            icon: const Icon(Symbols.refresh),
+                            onPressed: _loadSuggestions,
+                          ),
+                  ),
+                  onChanged: (value) => setState(() => _location = value),
+                  onFieldSubmitted: (_) {
+                    if (canSubmit) _submit();
+                  },
+                );
+              },
+            ),
+            if (_suggestionError != null) ...[
+              const SizedBox(height: 6),
               Text(
-                'deploymentNoServersHint'.tr(),
+                'deploymentLoadSuggestionsError'.tr(args: [_suggestionError!]),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.error,
                 ),
-              )
-            else
-              DropdownButtonFormField<int>(
-                initialValue: _serverId,
-                decoration: InputDecoration(
-                  labelText: 'deploymentServerLabel'.tr(),
-                ),
-                items: [
-                  for (final server in widget.servers)
-                    DropdownMenuItem(
-                      value: server.id,
-                      child: Text(server.name),
+              ),
+            ] else if (_suggestions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'deploymentDetectedOnServer'.tr(),
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final item in _suggestions.take(12))
+                    ActionChip(
+                      label: Text(item),
+                      onPressed: () => _selectSuggestion(item),
                     ),
                 ],
-                onChanged: (value) {
-                  setState(() => _serverId = value);
-                  _loadSuggestions();
-                },
               ),
-            const SizedBox(height: 12),
-            TextFormField(
-              initialValue: _name,
-              decoration: InputDecoration(
-                labelText: 'deploymentDisplayName'.tr(),
-                helperText: 'deploymentDisplayNameHelper'.tr(),
-              ),
-              onChanged: (value) => setState(() => _name = value),
-              onFieldSubmitted: (_) {
-                if (canSubmit) _submit();
-              },
-            ),
-            if (_locationLabel.isNotEmpty) ...[
+            ],
+            if (_kind == DeploymentResourceKind.compose) ...[
               const SizedBox(height: 12),
-              Autocomplete<String>(
-                optionsBuilder: (value) {
-                  final query = value.text.toLowerCase();
-                  return _suggestions.where(
-                    (item) =>
-                        query.isEmpty || item.toLowerCase().contains(query),
-                  );
-                },
-                onSelected: _selectSuggestion,
-                fieldViewBuilder: (context, controller, focusNode, onSubmit) {
-                  if (controller.text != _location) {
-                    controller.value = TextEditingValue(
-                      text: _location,
-                      selection: TextSelection.collapsed(
-                        offset: _location.length,
-                      ),
-                    );
-                  }
-                  return TextFormField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    decoration: InputDecoration(
-                      labelText: _locationLabel,
-                      suffixIcon: _loadingSuggestions
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            )
-                          : IconButton(
-                              tooltip: 'deploymentRefreshSuggestions'.tr(),
-                              icon: const Icon(Symbols.refresh),
-                              onPressed: _loadSuggestions,
-                            ),
-                    ),
-                    onChanged: (value) => setState(() => _location = value),
-                    onFieldSubmitted: (_) {
-                      if (canSubmit) _submit();
-                    },
-                  );
-                },
+              TextFormField(
+                decoration: InputDecoration(
+                  labelText: 'deploymentRemoteDirectory'.tr(),
+                ),
+                onChanged: (value) => setState(() => _directory = value),
               ),
-              if (_suggestionError != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  'deploymentLoadSuggestionsError'.tr(
-                    args: [_suggestionError!],
-                  ),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<ContainerRuntime>(
+                initialValue: _runtime,
+                decoration: InputDecoration(
+                  labelText: 'deploymentRuntime'.tr(),
                 ),
-              ] else if (_suggestions.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'deploymentDetectedOnServer'.tr(),
-                  style: Theme.of(context).textTheme.labelMedium,
+                items: [
+                  for (final runtime in ContainerRuntime.values)
+                    DropdownMenuItem(value: runtime, child: Text(runtime.name)),
+                ],
+                onChanged: (value) => setState(() => _runtime = value!),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<ContainerScope>(
+                initialValue: _scope,
+                decoration: InputDecoration(labelText: 'deploymentScope'.tr()),
+                items: [
+                  for (final scope in ContainerScope.values)
+                    DropdownMenuItem(value: scope, child: Text(scope.name)),
+                ],
+                onChanged: (value) => setState(() => _scope = value!),
+              ),
+            ],
+            if (_kind == DeploymentResourceKind.serverFolder && !kIsWeb) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _serverId == null ? null : _pickFolder,
+                  icon: const Icon(Symbols.folder_open, size: 18),
+                  label: Text('deploymentBrowseFolders'.tr()),
                 ),
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final item in _suggestions.take(12))
-                      ActionChip(
-                        label: Text(item),
-                        onPressed: () => _selectSuggestion(item),
-                      ),
-                  ],
-                ),
-              ],
-              if (_kind == DeploymentResourceKind.compose) ...[
-                const SizedBox(height: 12),
-                TextFormField(
-                  decoration: InputDecoration(
-                    labelText: 'deploymentRemoteDirectory'.tr(),
-                  ),
-                  onChanged: (value) => setState(() => _directory = value),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<ContainerRuntime>(
-                  initialValue: _runtime,
-                  decoration: InputDecoration(
-                    labelText: 'deploymentRuntime'.tr(),
-                  ),
-                  items: [
-                    for (final runtime in ContainerRuntime.values)
-                      DropdownMenuItem(
-                        value: runtime,
-                        child: Text(runtime.name),
-                      ),
-                  ],
-                  onChanged: (value) => setState(() => _runtime = value!),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<ContainerScope>(
-                  initialValue: _scope,
-                  decoration: InputDecoration(
-                    labelText: 'deploymentScope'.tr(),
-                  ),
-                  items: [
-                    for (final scope in ContainerScope.values)
-                      DropdownMenuItem(value: scope, child: Text(scope.name)),
-                  ],
-                  onChanged: (value) => setState(() => _scope = value!),
-                ),
-              ],
-              if (_kind == DeploymentResourceKind.serverFolder && !kIsWeb) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _serverId == null ? null : _pickFolder,
-                    icon: const Icon(Symbols.folder_open, size: 18),
-                    label: Text('deploymentBrowseFolders'.tr()),
-                  ),
-                ),
-              ],
+              ),
             ],
           ],
           const SizedBox(height: 24),

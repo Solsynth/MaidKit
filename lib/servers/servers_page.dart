@@ -11,7 +11,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:maid_kit/platform/tailscale.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 import 'package:maid_kit/data/local/app_database.dart';
-import 'package:maid_kit/github/github_workflow_strip.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
 import 'package:maid_kit/shared/presentation/collapsible_section.dart';
@@ -38,41 +37,52 @@ import 'tailscale_ssh_socket.dart';
 import 'terminal_tabs_provider.dart';
 import 'workspace_snapshot.dart';
 
+Future<void> showAddServerSheet(BuildContext context, WidgetRef ref) async {
+  final repository = ref.read(serverRepositoryProvider);
+  final credentials = await repository.credentials();
+  final snippets = await ref.read(snippetRepositoryProvider).all();
+  final servers = await repository.all();
+  if (!context.mounted) return;
+  final draft = await showModalBottomSheet<ServerDraft>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => ServerEditorDialog(
+      credentials: credentials,
+      snippets: snippets,
+      servers: servers,
+    ),
+  );
+  if (draft == null || !context.mounted) return;
+  try {
+    final server = await ref.read(serverRepositoryProvider).create(draft);
+    if (!context.mounted) return;
+    if (server.connectionType == ServerConnectionType.ssh.name) {
+      if (kIsWeb) {
+        await refreshMaidCafeStatistics(context, ref, server);
+      } else {
+        await connectForStatistics(context, ref, server);
+      }
+    } else {
+      await openTerminalFor(context, ref, server);
+    }
+  } catch (_) {
+    if (context.mounted) {
+      showStyledSnackBar(
+        message: 'serversSaveError'.tr(),
+        title: 'serversSaveError'.tr(),
+        icon: Symbols.error,
+        accentColor: Theme.of(context).colorScheme.error,
+      );
+    }
+  }
+}
+
 class ServerDashboardTab extends ConsumerWidget {
   const ServerDashboardTab({super.key});
 
-  Future<void> _add(BuildContext context, WidgetRef ref) async {
-    final repository = ref.read(serverRepositoryProvider);
-    final credentials = await repository.credentials();
-    final snippets = await ref.read(snippetRepositoryProvider).all();
-    final servers = await repository.all();
-    if (!context.mounted) return;
-    final draft = await showModalBottomSheet<ServerDraft>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => ServerEditorDialog(
-        credentials: credentials,
-        snippets: snippets,
-        servers: servers,
-      ),
-    );
-    if (draft == null || !context.mounted) return;
-    try {
-      final server = await ref.read(serverRepositoryProvider).create(draft);
-      if (!context.mounted) return;
-      await _connect(context, ref, server);
-    } catch (_) {
-      if (context.mounted) {
-        showStyledSnackBar(
-          message: 'serversSaveError'.tr(),
-          title: 'serversSaveError'.tr(),
-          icon: Symbols.error,
-          accentColor: Theme.of(context).colorScheme.error,
-        );
-      }
-    }
-  }
+  Future<void> _add(BuildContext context, WidgetRef ref) =>
+      showAddServerSheet(context, ref);
 
   Future<void> _connect(
     BuildContext context,
@@ -595,10 +605,6 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                 ),
               ),
             if (visibleServers.isEmpty) ...[
-              const SliverToBoxAdapter(
-                key: ValueKey('dashboard-workflow-strip'),
-                child: GithubWorkflowStatusStrip(),
-              ),
               const SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(child: _NoServersMatch()),
@@ -607,10 +613,6 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
               const SliverToBoxAdapter(
                 key: ValueKey('dashboard-runtimes'),
                 child: DashboardRuntimesSection(),
-              ),
-              const SliverToBoxAdapter(
-                key: ValueKey('dashboard-workflow-strip'),
-                child: GithubWorkflowStatusStrip(),
               ),
               SliverPadding(
                 padding: const EdgeInsets.all(24),
