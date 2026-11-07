@@ -26,6 +26,88 @@ Future<void> showTmuxSessionsSheet(
   builder: (_) => _TmuxSessionsSheet(server: server),
 );
 
+/// Asks which of the sessions [server]'s host already runs should be attached,
+/// before a terminal opens and creates a new one.
+///
+/// [sessions] is what the host reported (see [attachableTmuxSessions]); it is
+/// passed in rather than fetched again so the caller's listing is the one the
+/// user is choosing from. Returns the chosen session name, `''` for "start a new
+/// one", or null when the sheet was dismissed.
+Future<String?> showTmuxAttachPicker(
+  BuildContext context,
+  Server server, {
+  required String defaultName,
+  required List<TmuxSessionInfo> sessions,
+}) => showModalBottomSheet<String>(
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  useRootNavigator: true,
+  builder: (_) => _TmuxAttachPicker(
+    server: server,
+    defaultName: defaultName,
+    sessions: sessions,
+  ),
+);
+
+class _TmuxAttachPicker extends StatelessWidget {
+  const _TmuxAttachPicker({
+    required this.server,
+    required this.defaultName,
+    required this.sessions,
+  });
+
+  final Server server;
+
+  /// The name MaidKit itself uses on this host, so "start a new terminal" can
+  /// say what it will actually be called.
+  final String defaultName;
+
+  /// Sessions the user started, newest first as the host listed them.
+  final List<TmuxSessionInfo> sessions;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SheetScaffold(
+      titleText: 'sessionsTmuxAttachPickerTitle'.tr(args: [server.name]),
+      onClose: () => Navigator.of(context).pop(),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.6,
+        ),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          children: [
+            ListTile(
+              leading: Icon(Symbols.add, color: scheme.onSurfaceVariant),
+              title: Text('sessionsTmuxAttachNew'.tr()),
+              subtitle: Text(defaultName),
+              onTap: () => Navigator.of(context).pop(''),
+            ),
+            const Divider(height: 1),
+            for (final session in sessions)
+              ListTile(
+                leading: Icon(
+                  session.attached > 0 ? Symbols.link : Symbols.inventory,
+                  color: scheme.onSurfaceVariant,
+                ),
+                title: Text(session.name),
+                subtitle: Text(
+                  session.attached > 0
+                      ? '${session.windows} \u00b7 ${session.attached}'
+                      : '${session.windows}',
+                ),
+                onTap: () => Navigator.of(context).pop(session.name),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _TmuxSessionsSheet extends ConsumerStatefulWidget {
   const _TmuxSessionsSheet({required this.server});
 

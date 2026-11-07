@@ -24,6 +24,8 @@ import 'server_repository.dart';
 import 'ssh_connection_manager.dart';
 import 'terminal_tabs_provider.dart';
 import 'tmux_control_client.dart';
+import 'tmux_sessions.dart';
+import 'tmux_sessions_sheet.dart';
 import 'tmux_terminal.dart';
 
 /// Ensures the server is connected, then opens the reusable cloud file picker.
@@ -410,6 +412,39 @@ String defaultTmuxSessionName(Server server) {
   return body.isEmpty ? 'maidkit-${server.id}' : 'maidkit-$body';
 }
 
+/// Asks which session on [server]'s host to attach, when there is a choice.
+///
+/// Returns the chosen session name, `''` to open a fresh one, or null when the
+/// user backed out. A host that carries nothing but MaidKit's own session, has
+/// no tmux, or cannot be listed at all answers `''` without showing anything:
+/// an ordinary "open a terminal" must not turn into a dialog, and a listing
+/// that fails is not a reason to refuse the terminal.
+Future<String?> _chooseExistingTmuxSession(
+  BuildContext context,
+  WidgetRef ref,
+  Server server,
+) async {
+  final TmuxSessionListing listing;
+  try {
+    listing = await listTmuxSessionsFor(ref, server);
+  } catch (_) {
+    return '';
+  }
+  if (!context.mounted) return null;
+  if (!listing.tmuxInstalled) return '';
+  final existing = attachableTmuxSessions(
+    listing.sessions,
+    defaultName: defaultTmuxSessionName(server),
+  );
+  if (existing.isEmpty) return '';
+  return showTmuxAttachPicker(
+    context,
+    server,
+    defaultName: defaultTmuxSessionName(server),
+    sessions: existing,
+  );
+}
+
 /// Whether a tmux terminal on [server] should attach through its MaidCafe
 /// daemon rather than over SSH.
 ///
@@ -451,7 +486,7 @@ Future<bool> openTmuxTerminal(
   String? relayDaemonId,
 }) async {
   if (server.connectionType == ServerConnectionType.serial.name) return false;
-  final name = sessionName ?? defaultTmuxSessionName(server);
+  var name = sessionName ?? defaultTmuxSessionName(server);
   try {
     final viaDaemon = shouldOpenTmuxViaDaemon(
       server,
@@ -468,6 +503,13 @@ Future<bool> openTmuxTerminal(
       );
       final resolved = resolution.target;
       if (resolved == null) return false;
+      if (sessionName == null) {
+        if (!context.mounted) return false;
+        final choice = await _chooseExistingTmuxSession(context, ref, server);
+        if (!context.mounted) return false;
+        if (choice == null) return false;
+        if (choice.isNotEmpty) name = choice;
+      }
       final control = await ref
           .read(maidCafeTerminalConnectionManagerProvider)
           .openTmuxControl(server, resolved, sessionName: name);
@@ -516,6 +558,17 @@ Future<bool> openTmuxTerminal(
     manager.tmuxPaths.store(server.id, tmuxPath);
     if (tmuxPath == null) return false;
     if (!context.mounted) return false;
+    // The host may already carry sessions this server did not make - started by
+    // hand, by another client, or by a script. Creating another one would leave
+    // them invisible, so what is already there is offered instead. Only when
+    // something is actually there: a plain "open a terminal" must not turn into
+    // a dialog on a host where there is nothing to choose.
+    if (sessionName == null) {
+      final choice = await _chooseExistingTmuxSession(context, ref, server);
+      if (!context.mounted) return false;
+      if (choice == null) return false;
+      if (choice.isNotEmpty) name = choice;
+    }
     final session = await manager.openTmuxControl(
       server,
       route.credential,

@@ -2353,6 +2353,8 @@
   "sessionsTmuxBackgroundEmpty": "此主机上没有正在运行的 tmux 会话。",
   "sessionsTmuxBackgroundUnavailable": "此主机未安装 tmux。",
   "sessionsTmuxUnsupportedDaemon": "此守护进程不支持列出后台会话。",
+  "sessionsTmuxAttachPickerTitle": "{} 上的会话",
+  "sessionsTmuxAttachNew": "新建终端",
   "sessionsTmuxAttach": "接入",
   "sessionsTmuxKillConfirm": "结束 tmux 会话 {}？其中的所有进程都会终止。",
   "sessionsCloseTmuxTerminalMessage": "{} 仍在运行。关闭标签页会让其 tmux 会话继续在后台运行。",

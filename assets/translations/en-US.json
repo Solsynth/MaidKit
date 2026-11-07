@@ -2355,6 +2355,8 @@
   "sessionsTmuxBackgroundEmpty": "No tmux session is running on this host.",
   "sessionsTmuxBackgroundUnavailable": "This host has no tmux installed.",
   "sessionsTmuxUnsupportedDaemon": "This daemon does not list background sessions.",
+  "sessionsTmuxAttachPickerTitle": "Sessions on {}",
+  "sessionsTmuxAttachNew": "Start a new terminal",
   "sessionsTmuxAttach": "Attach",
   "sessionsTmuxKillConfirm": "Kill the tmux session {}? Every process in it ends.",
   "sessionsCloseTmuxTerminalMessage": "{} is still running. Closing the tab leaves its tmux session attached in the background.",

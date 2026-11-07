@@ -2311,6 +2311,8 @@
   "sessionsTmuxBackgroundEmpty": "此主機上沒有正在執行的 tmux 工作階段。",
   "sessionsTmuxBackgroundUnavailable": "此主機未安裝 tmux。",
   "sessionsTmuxUnsupportedDaemon": "此守護程序不支援列出背景工作階段。",
+  "sessionsTmuxAttachPickerTitle": "{} 上的工作階段",
+  "sessionsTmuxAttachNew": "新增終端機",
   "sessionsTmuxAttach": "接入",
   "sessionsTmuxKillConfirm": "結束 tmux 工作階段 {}？其中的所有程序都會終止。",
   "sessionsCloseTmuxTerminalMessage": "{} 仍在執行。關閉標籤頁會讓其 tmux 工作階段繼續在背景執行。",
