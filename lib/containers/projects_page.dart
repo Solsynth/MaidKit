@@ -122,8 +122,6 @@ class _ProjectsPageState extends ConsumerState<ProjectsPage> {
         dialogTitle: 'deploymentExportDialogTitle'.tr(),
         fileName:
             'maidkit-projects-${exportFileNamePrefix(ref)}-${exportTimestamp()}.toml',
-        type: FileType.custom,
-        allowedExtensions: const ['toml'],
         bytes: utf8.encode(source),
       );
       if (saved != null && mounted) {

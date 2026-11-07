@@ -297,6 +297,14 @@ class MaidCafePushService {
 
     if (_isAndroidPlatform()) {
       _attachListeners();
+      // firebase_messaging 17 deprecates the registration-token APIs in favour
+      // of Firebase Installation IDs (`register()` + `onRegistered`), but
+      // Metoer sends `message.token` (LightHouse `push/senders.go`
+      // `fcmPayload`). Moving to FIDs also needs the
+      // `firebase_messaging_installation_id_enabled` manifest flag and a
+      // backend that sends `message.fid`; until then the token APIs still
+      // deliver, so silence the deprecation instead of half-migrating.
+      // ignore: deprecated_member_use
       final token = await FirebaseMessaging.instance.getToken();
       debugPrint(
         token == null || token.isEmpty
@@ -342,6 +350,7 @@ class MaidCafePushService {
     if (_listenersAttached) return;
     _listenersAttached = true;
 
+    // ignore: deprecated_member_use
     FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
       if (!pushAllowed()) {
         debugPrint(

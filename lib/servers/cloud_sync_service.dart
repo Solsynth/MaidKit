@@ -303,10 +303,12 @@ class CloudSyncService {
   static const _clientId = 'maidkit';
   static const _callbackScheme = 'maidkit';
   static const _redirectUri = '$_callbackScheme://oauth/callback';
-  // On Windows/Linux flutter_web_auth_2's default in-app WebView2 window runs
-  // a second Flutter engine that crashes the app; the browser + loopback
-  // callback flow is used instead there. The port must stay fixed so the
-  // redirect URI can be registered with the Solarpass OIDC client.
+  // Windows/Linux use the system browser with a loopback callback. Under
+  // desktop_webview_window 0.3 the in-app webview's title bar ran a second
+  // Flutter engine that crashed the app; 0.4 renders browser windows natively
+  // and removes that engine, but the registered loopback redirect is kept so
+  // sign-in never depends on an embedded browser. The port must stay fixed so
+  // the redirect URI can be registered with the Solarpass OIDC client.
   static const _loopbackPort = 42871;
   static const _loopbackCallbackScheme = 'http://127.0.0.1:$_loopbackPort';
   static const _loopbackRedirectUri = '$_loopbackCallbackScheme/oauth/callback';
@@ -875,9 +877,8 @@ class CloudSyncService {
     final challenge = base64UrlEncode(
       sha256.convert(utf8.encode(verifier)).bytes,
     ).replaceAll('=', '');
-    // Windows/Linux: use the system browser with a loopback callback instead
-    // of the in-app WebView2 window, which crashes the app (its title bar
-    // runs a second Flutter engine without the window_manager plugin).
+    // Windows/Linux keep the system browser with a loopback callback; see
+    // [_loopbackPort] for why that flow stays in place.
     final useLoopback =
         !kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.windows ||

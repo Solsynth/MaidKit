@@ -53,9 +53,9 @@ final desktopWindowProvider = Provider<bool>((ref) => isMaidKitDesktop);
 /// Closes the desktop window without a visible teardown stall.
 ///
 /// On Windows, `windowManager.destroy()` only posts WM_QUIT; the window stays
-/// on screen while the engines (Flutter, plus WebView2's title-bar engine)
-/// shut down and stop pumping messages, which reads as a freeze. Hide first,
-/// then quit. On macOS/Linux `destroy()` tears down immediately either way.
+/// on screen while the engine shuts down and stops pumping messages, which
+/// reads as a freeze. Hide first, then quit. On macOS/Linux `destroy()` tears
+/// down immediately either way.
 ///
 /// `destroy()` quits the process without emitting a window-close event on
 /// Windows and macOS, so the geometry is flushed here while the isolate still

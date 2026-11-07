@@ -299,9 +299,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   }
 
   /// Whether the user is currently looking at the app: window focus on
-  /// desktop, lifecycle state elsewhere. A missing window manager (tests,
-  /// the WebView2 title-bar engine) counts as attended so notifications are
-  /// never shown from a surface that cannot see the terminal.
+  /// desktop, lifecycle state elsewhere. A missing window manager (tests)
+  /// counts as attended so notifications are never shown from a surface that
+  /// cannot see the terminal.
   Future<bool> _userAttending() async {
     if (!kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.macOS ||

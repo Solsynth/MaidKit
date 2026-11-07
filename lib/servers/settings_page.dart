@@ -1561,8 +1561,6 @@ class SettingsPage extends HookConsumerWidget {
         dialogTitle: 'settingsExportData'.tr(),
         fileName:
             'maidkit-${exportFileNamePrefix(ref)}-${exportTimestamp()}.mkb',
-        type: FileType.custom,
-        allowedExtensions: const ['mkb'],
         bytes: utf8.encode(archive),
       );
       if (saved != null && context.mounted) {
@@ -1809,8 +1807,6 @@ class SettingsPage extends HookConsumerWidget {
       final saved = await FilePicker.saveFile(
         dialogTitle: 'settingsConnectionsExportTitle'.tr(),
         fileName: fileName,
-        type: FileType.custom,
-        allowedExtensions: [extension],
         bytes: utf8.encode(content),
       );
       if (saved != null && context.mounted) {

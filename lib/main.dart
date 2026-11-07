@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:drift/drift.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -32,17 +31,6 @@ import 'shared/services/analytics_service.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  // The Solarpass sign-in flow opens an in-app WebView2 window
-  // (flutter_web_auth_2 -> desktop_webview_window). On Windows that window's
-  // title bar is rendered by a second in-process Flutter engine, which only
-  // registers the webview plugin. That engine re-enters this entrypoint with
-  // ['web_view_title_bar', <id>] and must run the title-bar app instead of the
-  // full startup below; otherwise window_manager (and other plugins) are
-  // missing and the app crashes with a MissingPluginException.
-  if (runWebViewTitleBarWidget(args)) {
-    return;
-  }
-
   // Each selected vault uses its own SQLite file and executor. Drift's debug
   // warning is type-based, so it cannot distinguish these independent files.
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
