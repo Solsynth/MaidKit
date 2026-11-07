@@ -111,6 +111,10 @@ class _AgentComposerState extends State<AgentComposer> {
     if (event.logicalKey != LogicalKeyboardKey.enter) {
       return KeyEventResult.ignored;
     }
+    final composing = widget.controller.value.composing;
+    if (composing.isValid && !composing.isCollapsed) {
+      return KeyEventResult.ignored;
+    }
     if (HardwareKeyboard.instance.isShiftPressed) {
       _insertNewLine();
     } else {
