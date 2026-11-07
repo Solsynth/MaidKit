@@ -31,7 +31,7 @@
 		85FF883D3A461A462848EAC3 /* Pods_MaidKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7243611A85675F4B66966A4F /* Pods_MaidKit.framework */; };
 		A1B2C3D4E5F60708 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60709 /* GoogleService-Info.plist */; };
 		AB12CD34EF56AB12CD34EF03 /* AppIconChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB12CD34EF56AB12CD34EF04 /* AppIconChannel.swift */; };
-		AB12CD34EF56AB12CD34EF05 /* AppIcon-Cuite.icon in Resources */ = {isa = PBXBuildFile; fileRef = AB12CD34EF56AB12CD34EF06 /* AppIcon-Cuite.icon */; };
+		AB12CD34EF56AB12CD34EF05 /* ../ios/MaidKit/AppIcon-Cuite.icon in Resources */ = {isa = PBXBuildFile; fileRef = AB12CD34EF56AB12CD34EF06 /* ../ios/MaidKit/AppIcon-Cuite.icon */; };
 		EBE42D0CF5CA968BEA5DC7A3 /* Pods_MaidKitTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD2B2470C99DF72809186C86 /* Pods_MaidKitTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -92,7 +92,7 @@
 		A1B2C3D4E5F60709 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "GoogleService-Info.plist"; path = "MaidKit/GoogleService-Info.plist"; sourceTree = "<group>"; };
 		A499799ED724B2951780E6EC /* Pods-MaidKitTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaidKitTests.debug.xcconfig"; path = "Target Support Files/Pods-MaidKitTests/Pods-MaidKitTests.debug.xcconfig"; sourceTree = "<group>"; };
 		AB12CD34EF56AB12CD34EF04 /* AppIconChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconChannel.swift; sourceTree = "<group>"; };
-		AB12CD34EF56AB12CD34EF06 /* AppIcon-Cuite.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "../ios/MaidKit/AppIcon-Cuite.icon"; sourceTree = "<group>"; };
+		AB12CD34EF56AB12CD34EF06 /* ../ios/MaidKit/AppIcon-Cuite.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "../ios/MaidKit/AppIcon-Cuite.icon"; sourceTree = "<group>"; };
 		AC99087DF0E9B35BD9C17540 /* Pods-MaidKit.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaidKit.profile.xcconfig"; path = "Target Support Files/Pods-MaidKit/Pods-MaidKit.profile.xcconfig"; sourceTree = "<group>"; };
 		DD2B2470C99DF72809186C86 /* Pods_MaidKitTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MaidKitTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2C503501A19AE2679775C42 /* Pods-MaidKitTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MaidKitTests.release.xcconfig"; path = "Target Support Files/Pods-MaidKitTests/Pods-MaidKitTests.release.xcconfig"; sourceTree = "<group>"; };
@@ -141,7 +141,7 @@
 		33CC10E42044A3C60003C045 = {
 			isa = PBXGroup;
 			children = (
-				AB12CD34EF56AB12CD34EF06 /* AppIcon-Cuite.icon */,
+				AB12CD34EF56AB12CD34EF06 /* ../ios/MaidKit/AppIcon-Cuite.icon */,
 				33FAB671232836740065AC1E /* MaidKit */,
 				33CEB47122A05771004F2AC0 /* Flutter */,
 				331C80D6294CF71000263BE5 /* MaidKitTests */,
@@ -308,7 +308,7 @@
 			);
 			mainGroup = 33CC10E42044A3C60003C045;
 			packageReferences = (
-				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
+				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
 			);
 			productRefGroup = 33CC10EE2044A3C60003C045 /* Products */;
 			projectDirPath = "";
@@ -335,7 +335,7 @@
 			files = (
 				33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */,
 				33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */,
-				AB12CD34EF56AB12CD34EF05 /* AppIcon-Cuite.icon in Resources */,
+				AB12CD34EF56AB12CD34EF05 /* ../ios/MaidKit/AppIcon-Cuite.icon in Resources */,
 				A1B2C3D4E5F60708 /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -411,9 +411,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaidKit/Pods-MaidKit-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-MaidKit/Pods-MaidKit-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -619,6 +623,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 3.1.0;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
 			};
@@ -768,6 +773,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 3.1.0;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -804,6 +810,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 3.1.0;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
 			};
@@ -873,7 +880,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
+		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};
