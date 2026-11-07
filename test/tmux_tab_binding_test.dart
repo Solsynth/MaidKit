@@ -415,11 +415,25 @@ void main() {
   });
 
   test('a resize reports the client size to tmux', () async {
+    // One pane fills the session, so its own viewport *is* the client extent.
     await mount(layout: _onePane);
     control.writes.clear();
     factory.adapters.first.emitResize(120, 36);
     await pumpEventQueue();
     expect(control.written, contains('refresh-client -C 120x36'));
+  });
+
+  test('a split pane never resizes the session to its own half', () async {
+    // Two panes share one session: `refresh-client -C` is the whole client, so
+    // reporting a single pane's width would tell tmux the session is half the
+    // size it is drawn at - and every full-screen program in it would wrap.
+    await mount(layout: _twoPanes);
+    control.writes.clear();
+    factory.adapters[0].emitResize(80, 40);
+    factory.adapters[1].emitResize(80, 40);
+    await pumpEventQueue();
+    expect(control.written, contains('refresh-client -C 161x40'));
+    expect(control.written, isNot(contains('refresh-client -C 80x40')));
   });
 
   test('a pane that disappears loses its content', () async {

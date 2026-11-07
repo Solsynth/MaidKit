@@ -134,8 +134,12 @@ class TmuxTabBinding {
   String? focusedPaneId;
 
   /// Client geometry, reported to tmux with `refresh-client -C`.
-  int clientColumns = 120;
-  int clientRows = 36;
+  ///
+  /// Zero until a pane has said what it is drawn at. Seeding a guess here would
+  /// make the first real report look like "no change" and be suppressed, which
+  /// is exactly how a session ends up sized for a grid nobody is looking at.
+  int clientColumns = 0;
+  int clientRows = 0;
 
   /// The tab's layout tree as last projected from tmux.
   SessionLayout? projected;
@@ -176,12 +180,70 @@ class TmuxTabBinding {
     return null;
   }
 
-  /// Reports the client's own size to tmux, which sizes the session's windows.
-  void reportClientSize(int columns, int rows) {
+  /// Records the size the tmux pane [paneId]'s viewport shows.
+  ///
+  /// tmux sizes the *whole session* from one client size (`refresh-client -C`),
+  /// and then splits that extent among the panes. Each mirrored pane therefore
+  /// cannot report itself: with two panes open, whichever reported last would
+  /// halve the session and the full-screen programs in both would be told a
+  /// width that is not the width they are drawn at - which is how a TUI ends up
+  /// wrapping its progress output. The panes are composed back into one client
+  /// extent instead, following the layout tree tmux itself gave us.
+  void reportPaneSize(String paneId, int columns, int rows) {
     if (_disposed || columns <= 0 || rows <= 0) return;
-    clientColumns = columns;
-    clientRows = rows;
-    control.resizeClient(columns, rows);
+    final attachment = _panes[paneId];
+    if (attachment == null) return;
+    if (attachment.columns == columns && attachment.rows == rows) return;
+    attachment.columns = columns;
+    attachment.rows = rows;
+    _recomposeClientSize();
+  }
+
+  /// Sums the panes' own sizes back into the client extent tmux expects.
+  ///
+  /// A horizontal split is two panes side by side, so the client is as wide as
+  /// both plus the divider, and as tall as the taller one; a vertical split is
+  /// the other way round. Sizes for panes that have not been laid out yet are
+  /// ignored rather than guessed.
+  void _recomposeClientSize() {
+    final layout = projected;
+    if (layout == null) return;
+    final size = _composeSize(layout);
+    if (size == null) return;
+    if (size.$1 == clientColumns && size.$2 == clientRows) return;
+    clientColumns = size.$1;
+    clientRows = size.$2;
+    control.resizeClient(clientColumns, clientRows);
+  }
+
+  /// The client extent [layout] needs, given what each pane's viewport shows.
+  ///
+  /// Returns null until every pane in the tree has reported a size, so a
+  /// half-known layout never sends tmux a wrong extent.
+  (int, int)? _composeSize(SessionLayout layout) {
+    switch (layout) {
+      case SessionLayoutLeaf(paneId: final paneId):
+        final attachment = _panes[paneId];
+        if (attachment == null ||
+            attachment.columns <= 0 ||
+            attachment.rows <= 0) {
+          return null;
+        }
+        return (attachment.columns, attachment.rows);
+      case SessionLayoutSplit(
+        axis: final axis,
+        first: final first,
+        second: final second,
+      ):
+        final a = _composeSize(first);
+        final b = _composeSize(second);
+        if (a == null || b == null) return null;
+        return axis == SessionSplitAxis.horizontal
+            // Side by side: widths add up (plus the one-cell divider), heights
+            // take the taller pane.
+            ? (a.$1 + b.$1 + 1, a.$2 > b.$2 ? a.$2 : b.$2)
+            : (a.$1 > b.$1 ? a.$1 : b.$1, a.$2 + b.$2 + 1);
+    }
   }
 
   /// Starts mirroring: asks for the JSON layout, learns the active window and
@@ -401,6 +463,9 @@ class TmuxTabBinding {
     if (layout == null) return;
     projected = layout;
     tabs.applyTmuxLayout(this, layout);
+    // The tree just changed: a pane joined, closed or moved, so the client
+    // extent the session should be told is different too.
+    _recomposeClientSize();
   }
 
   /// The adapter for [paneId], building it on first use.
@@ -411,7 +476,7 @@ class TmuxTabBinding {
       paneId: paneId,
       adapterFactory: _adapterFactoryRef,
       send: (bytes) => control.sendKeys(paneId, bytes),
-      resize: (event) => reportClientSize(event.columns, event.rows),
+      resize: (event) => reportPaneSize(paneId, event.columns, event.rows),
     );
     _panes[paneId] = attachment;
     return attachment.adapter;
@@ -589,6 +654,13 @@ class _TmuxPaneAttachment {
 
   /// Whether tmux's scrollback has already been replayed into this pane.
   var seeded = false;
+
+  /// The grid this pane's own viewport currently shows.
+  ///
+  /// A mirrored pane is drawn at its own size, not at the session's, so this is
+  /// what the pane contributes when the client size is composed below.
+  int columns = 0;
+  int rows = 0;
   late final TerminalSessionAdapter adapter;
   late final TerminalSessionBinding binding;
 

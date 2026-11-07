@@ -188,10 +188,9 @@ class _SessionLayoutView extends ConsumerWidget {
               decoration: BoxDecoration(
                 border: Border(
                   top: BorderSide(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .outlineVariant
-                        .withValues(alpha: 0.45),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.45),
                     width: 1,
                   ),
                 ),
@@ -388,13 +387,15 @@ class _ResizableSplitState extends State<_ResizableSplit> {
                       onHorizontalDragUpdate: isHorizontal
                           ? (d) => _onDragUpdate(d, available)
                           : null,
-                      onHorizontalDragEnd:
-                          isHorizontal ? (_) => _onDragEnd() : null,
+                      onHorizontalDragEnd: isHorizontal
+                          ? (_) => _onDragEnd()
+                          : null,
                       onVerticalDragUpdate: isHorizontal
                           ? null
                           : (d) => _onDragUpdate(d, available),
-                      onVerticalDragEnd:
-                          isHorizontal ? null : (_) => _onDragEnd(),
+                      onVerticalDragEnd: isHorizontal
+                          ? null
+                          : (_) => _onDragEnd(),
                     ),
                   ),
                 ),
@@ -639,75 +640,93 @@ class _TerminalPaneHeader extends ConsumerWidget {
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: MaidKitSpace.sm),
-      child: Row(
+      // The grab handle is the pane's, so it sits on the header's own centre
+      // line. In a Row it could only centre inside whatever gap the title left
+      // over, which drifts right as the server name grows; a Stack centres it
+      // in the header instead, and the row keeps clear of it on both sides.
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          Icon(
-            Symbols.terminal,
-            size: 16,
-            color: focused ? scheme.primary : scheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              terminal.serverName.isNotEmpty
-                  ? terminal.serverName
-                  : 'terminalPaneTitle'.tr(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: focused ? FontWeight.w600 : FontWeight.w500,
-                color: focused ? scheme.onSurface : scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          if (movable)
-            Expanded(
-              child: Center(
-                child: _PaneDragHandle(
-                  paneId: paneId,
-                  active: focused,
-                  accepting: accepting,
-                  onClose: () => ref
-                      .read(terminalTabsProvider.notifier)
-                      .closePaneInTab(tab.id, paneId),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: movable ? 32 : 0),
+            child: Row(
+              children: [
+                Icon(
+                  Symbols.terminal,
+                  size: 16,
+                  color: focused ? scheme.primary : scheme.onSurfaceVariant,
                 ),
-              ),
-            )
-          else
-            const Spacer(),
-          IconButton(
-            tooltip: 'terminalRunSnippetTooltip'.tr(),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            icon: const Icon(Symbols.code, size: 16),
-            onPressed: () => unawaited(
-              _showTerminalSnippetPopover(
-                context,
-                ref,
-                terminalId: terminal.id,
-                anchorRect: terminal.terminal.cursorGlobalRect,
-              ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    terminal.serverName.isNotEmpty
+                        ? terminal.serverName
+                        : 'terminalPaneTitle'.tr(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: focused ? FontWeight.w600 : FontWeight.w500,
+                      color: focused
+                          ? scheme.onSurface
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'terminalRunSnippetTooltip'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
+                  icon: const Icon(Symbols.code, size: 16),
+                  onPressed: () => unawaited(
+                    _showTerminalSnippetPopover(
+                      context,
+                      ref,
+                      terminalId: terminal.id,
+                      anchorRect: terminal.terminal.cursorGlobalRect,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'terminalSplitRightTooltip'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
+                  icon: const Icon(Symbols.splitscreen, size: 16),
+                  onPressed: () => ref
+                      .read(terminalTabsProvider.notifier)
+                      .splitSelectedTab(SessionSplitAxis.horizontal),
+                ),
+                if (movable)
+                  IconButton(
+                    tooltip: 'terminalClosePaneTooltip'.tr(),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
+                    icon: const Icon(Symbols.close, size: 16),
+                    onPressed: () => ref
+                        .read(terminalTabsProvider.notifier)
+                        .closePaneInTab(tab.id, paneId),
+                  ),
+              ],
             ),
           ),
-          IconButton(
-            tooltip: 'terminalSplitRightTooltip'.tr(),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            icon: const Icon(Symbols.splitscreen, size: 16),
-            onPressed: () => ref
-                .read(terminalTabsProvider.notifier)
-                .splitSelectedTab(SessionSplitAxis.horizontal),
-          ),
           if (movable)
-            IconButton(
-              tooltip: 'terminalClosePaneTooltip'.tr(),
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              icon: const Icon(Symbols.close, size: 16),
-              onPressed: () => ref
+            _PaneDragHandle(
+              paneId: paneId,
+              active: focused,
+              accepting: accepting,
+              onClose: () => ref
                   .read(terminalTabsProvider.notifier)
                   .closePaneInTab(tab.id, paneId),
             ),
@@ -1108,10 +1127,7 @@ class _TabEntry extends StatelessWidget {
               else
                 Icon(_emptyPaneIcon(tab), size: 16),
               const SizedBox(width: 6),
-              Text(
-                _workspaceTabLabel(tab),
-                style: theme.textTheme.labelMedium,
-              ),
+              Text(_workspaceTabLabel(tab), style: theme.textTheme.labelMedium),
               if (paneCount > 1) ...[
                 const SizedBox(width: 6),
                 _PaneCountBadge(count: paneCount),
