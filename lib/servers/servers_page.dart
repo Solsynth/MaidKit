@@ -1820,27 +1820,32 @@ class _ServerStats extends StatelessWidget {
               ],
             ),
           ],
-          if (!compact && systemLabel.isNotEmpty) ...[
+          // The caption block owns one leading gap for the tiles above it, so
+          // a host that reports no distribution/kernel keeps the same rhythm
+          // as one that does; the refresh line is never glued to the grid.
+          if (!compact &&
+              (systemLabel.isNotEmpty || stats?.updatedAt != null)) ...[
             const SizedBox(height: 8),
-
-            Text(
-              systemLabel,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.labelSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ).padding(horizontal: 4),
-          ],
-          if (!compact && stats?.updatedAt != null) ...[
-            Text(
-              'detailRefreshDetailsAt'.tr(
-                args: [_formatRelative(stats!.updatedAt)],
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.labelSmall?.copyWith(color: colorScheme.outline),
-            ).padding(horizontal: 4),
+            if (systemLabel.isNotEmpty)
+              Text(
+                systemLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ).padding(horizontal: 4),
+            if (stats?.updatedAt != null)
+              Text(
+                'detailRefreshDetailsAt'.tr(
+                  args: [_formatRelative(stats!.updatedAt)],
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.labelSmall?.copyWith(
+                  color: colorScheme.outline,
+                ),
+              ).padding(horizontal: 4),
           ],
         ],
       ),
