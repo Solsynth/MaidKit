@@ -239,6 +239,30 @@ class TmuxTabBinding {
       if (_disposed) return;
       final attachment = _panes[paneId];
       if (attachment == null || attachment.seeded) continue;
+      final TmuxBlockEvent flags;
+      try {
+        // A pane running a full-screen program keeps that program on the
+        // alternate screen, and the alternate screen is *not* terminal history:
+        // it is a live UI whose cursor positions are meaningless once replayed
+        // into a fresh emulator, which is how vim and less came out garbled and
+        // wrapped. Only the normal screen is seeded.
+        flags = await control.command(
+          'display-message -p -t $paneId "#{alternate_on}"',
+        );
+      } catch (_) {
+        continue;
+      }
+      final alternate = (flags.lines.isEmpty ? '' : flags.lines.first).trim();
+      if (alternate.isEmpty) continue;
+      if (alternate == '1') {
+        // No history to give it, but it is seeded: attaching again must not
+        // re-ask, and the program repaints itself on the next keypress.
+        attachment.seeded = true;
+        continue;
+      }
+      // `capture-pane` returns the whole grid, so the blank rows below the
+      // prompt would otherwise be replayed as output and scroll the pane to
+      // emptiness. They are trimmed off the tail below.
       final TmuxBlockEvent block;
       try {
         block = await control.command(
@@ -250,8 +274,16 @@ class TmuxTabBinding {
         continue;
       }
       attachment.seeded = true;
-      if (block.lines.isEmpty) continue;
-      attachment.adapter.replayHistory('${block.lines.join('\n')}\n');
+      final lines = [...block.lines];
+      while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+        lines.removeLast();
+      }
+      if (lines.isEmpty) {
+        // An empty screen: nothing to restore, and replaying padding here would
+        // be the very whitespace this trims.
+        continue;
+      }
+      attachment.adapter.replayHistory(lines.join('\n'));
     }
   }
 

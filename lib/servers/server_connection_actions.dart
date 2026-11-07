@@ -412,37 +412,50 @@ String defaultTmuxSessionName(Server server) {
   return body.isEmpty ? 'maidkit-${server.id}' : 'maidkit-$body';
 }
 
-/// Asks which session on [server]'s host to attach, when there is a choice.
+/// Picks the tmux session a new terminal opens on [server].
 ///
-/// Returns the chosen session name, `''` to open a fresh one, or null when the
-/// user backed out. A host that carries nothing but MaidKit's own session, has
-/// no tmux, or cannot be listed at all answers `''` without showing anything:
-/// an ordinary "open a terminal" must not turn into a dialog, and a listing
-/// that fails is not a reason to refuse the terminal.
-Future<String?> _chooseExistingTmuxSession(
+/// Returns the session name to use, or null when the user backed out. The
+/// session is decided here, once, from a single listing, because two rules
+/// depend on it and neither can be answered without knowing what the host runs:
+///
+/// * A session the user started is offered before MaidKit makes another one;
+///   nothing to choose between means no dialog at all.
+/// * A session that is already attached is not joined by `new-session -A`
+///   (see [nextTmuxSessionName]): "open another terminal" has to give another
+///   terminal.
+///
+/// A listing that fails is not a reason to refuse the terminal: the bare
+/// default name is used and the open proceeds as it always has.
+Future<String?> _resolveTmuxSessionName(
   BuildContext context,
   WidgetRef ref,
   Server server,
 ) async {
+  final defaultName = defaultTmuxSessionName(server);
   final TmuxSessionListing listing;
   try {
     listing = await listTmuxSessionsFor(ref, server);
   } catch (_) {
-    return '';
+    return defaultName;
   }
   if (!context.mounted) return null;
-  if (!listing.tmuxInstalled) return '';
+  if (!listing.tmuxInstalled) return defaultName;
   final existing = attachableTmuxSessions(
     listing.sessions,
-    defaultName: defaultTmuxSessionName(server),
+    defaultName: defaultName,
   );
-  if (existing.isEmpty) return '';
-  return showTmuxAttachPicker(
-    context,
-    server,
-    defaultName: defaultTmuxSessionName(server),
-    sessions: existing,
-  );
+  final chosen = existing.isEmpty
+      ? ''
+      : await showTmuxAttachPicker(
+          context,
+          server,
+          defaultName: defaultName,
+          sessions: existing,
+        );
+  if (chosen == null) return null;
+  if (chosen.isNotEmpty) return chosen;
+  // A fresh terminal: its name still has to avoid a session that is on screen.
+  return nextTmuxSessionName(base: defaultName, existing: listing.sessions);
 }
 
 /// Whether a tmux terminal on [server] should attach through its MaidCafe
@@ -505,10 +518,10 @@ Future<bool> openTmuxTerminal(
       if (resolved == null) return false;
       if (sessionName == null) {
         if (!context.mounted) return false;
-        final choice = await _chooseExistingTmuxSession(context, ref, server);
+        final choice = await _resolveTmuxSessionName(context, ref, server);
         if (!context.mounted) return false;
         if (choice == null) return false;
-        if (choice.isNotEmpty) name = choice;
+        name = choice;
       }
       final control = await ref
           .read(maidCafeTerminalConnectionManagerProvider)
@@ -558,16 +571,14 @@ Future<bool> openTmuxTerminal(
     manager.tmuxPaths.store(server.id, tmuxPath);
     if (tmuxPath == null) return false;
     if (!context.mounted) return false;
-    // The host may already carry sessions this server did not make - started by
-    // hand, by another client, or by a script. Creating another one would leave
-    // them invisible, so what is already there is offered instead. Only when
-    // something is actually there: a plain "open a terminal" must not turn into
-    // a dialog on a host where there is nothing to choose.
+    // The session is decided once, from what the host actually runs: a session
+    // the user started is offered first, and a name that is already attached is
+    // not reused (see [_resolveTmuxSessionName]).
     if (sessionName == null) {
-      final choice = await _chooseExistingTmuxSession(context, ref, server);
+      final choice = await _resolveTmuxSessionName(context, ref, server);
       if (!context.mounted) return false;
       if (choice == null) return false;
-      if (choice.isNotEmpty) name = choice;
+      name = choice;
     }
     final session = await manager.openTmuxControl(
       server,

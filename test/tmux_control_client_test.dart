@@ -149,6 +149,39 @@ void main() {
     await harness.dispose();
   });
 
+  test('non-ASCII output keeps its UTF-8 bytes intact', () async {
+    // A braille spinner reaches control mode as plain UTF-8 text, so the
+    // decoder has to encode it back to the same bytes. Copying code units
+    // instead truncates every non-ASCII glyph to its low byte, which turned
+    // docker compose's spinner and progress bars into control characters.
+    final harness = _Harness();
+    harness.feed('%output %0 \u280b Building\u2809\n');
+    await pumpEventQueue();
+    final output = harness.events.whereType<TmuxOutputEvent>().single;
+    expect(
+      utf8.decode(output.bytes),
+      '\u280b Building\u2809',
+      reason: 'the spinner has to arrive as text, not as stray control bytes',
+    );
+    expect(output.bytes, utf8.encode('\u280b Building\u2809'));
+    await harness.dispose();
+  });
+
+  test('octal escapes and literal text coexist', () async {
+    // The escape still means a raw byte; the text around it keeps its own
+    // encoding.
+    final harness = _Harness();
+    harness.feed('%output %0 \u2500\\033[31mred\u2500\n');
+    await pumpEventQueue();
+    final output = harness.events.whereType<TmuxOutputEvent>().single;
+    expect(output.bytes, [
+      ...utf8.encode('\u2500'),
+      0x1b,
+      ...utf8.encode('[31mred\u2500'),
+    ]);
+    await harness.dispose();
+  });
+
   test('%extended-output keeps the payload after the colon', () async {
     final harness = _Harness();
     harness.feed('%extended-output %3 0 0 : hi\\012\n');

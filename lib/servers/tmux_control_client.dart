@@ -589,21 +589,36 @@ class TmuxControlClient {
   }
 
   /// Decodes tmux's octal (`\NNN`) and backslash escapes into raw bytes.
+  ///
+  /// The line has already been decoded to UTF-8 text, so ordinary characters
+  /// must be encoded *back* to their UTF-8 bytes here rather than copied as
+  /// code units. Copying is only correct for ASCII: a braille spinner or a
+  /// box-drawing character (`⠋`, U+280B) would be truncated to its low byte,
+  /// which is a control character, so every non-ASCII glyph a program draws -
+  /// docker compose's spinner, a progress bar, a prompt symbol - arrived as
+  /// garbage.
   static List<int> _decodeEscapes(String value) {
     final bytes = <int>[];
+    final literal = StringBuffer();
+    void flush() {
+      if (literal.isEmpty) return;
+      bytes.addAll(utf8.encode(literal.toString()));
+      literal.clear();
+    }
+
     for (var i = 0; i < value.length; i++) {
       final char = value.codeUnitAt(i);
       if (char != 0x5c) {
-        bytes.add(char);
+        literal.writeCharCode(char);
         continue;
       }
       if (i + 1 >= value.length) {
-        bytes.add(char);
+        literal.writeCharCode(char);
         continue;
       }
       final next = value.codeUnitAt(i + 1);
       if (next == 0x5c) {
-        bytes.add(0x5c);
+        literal.writeCharCode(0x5c);
         i++;
         continue;
       }
@@ -611,13 +626,15 @@ class TmuxControlClient {
         final octal = value.substring(i + 1, i + 4);
         final decoded = int.tryParse(octal, radix: 8);
         if (decoded != null) {
+          flush();
           bytes.add(decoded & 0xff);
           i += 3;
           continue;
         }
       }
-      bytes.add(char);
+      literal.writeCharCode(char);
     }
+    flush();
     return bytes;
   }
 }

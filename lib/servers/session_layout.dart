@@ -297,3 +297,51 @@ String? _siblingPane(SessionLayout layout, String paneId) {
       return _siblingPane(first, paneId) ?? _siblingPane(second, paneId);
   }
 }
+
+/// Cuts the panes in [paneIds] out of [layout], leaving the rest as it was.
+///
+/// Splits that lose a child collapse into the sibling that remains, so a
+/// detached subtree keeps its own shape without a dangling half next to it.
+/// Returns null when nothing but the cut panes was left.
+SessionLayout? detachPanes(SessionLayout layout, Set<String> paneIds) {
+  switch (layout) {
+    case SessionLayoutLeaf(paneId: final paneId):
+      return paneIds.contains(paneId) ? null : layout;
+    case SessionLayoutSplit(
+      id: final id,
+      axis: final axis,
+      first: final first,
+      second: final second,
+      ratio: final ratio,
+    ):
+      final newFirst = detachPanes(first, paneIds);
+      final newSecond = detachPanes(second, paneIds);
+      if (newFirst == null) return newSecond;
+      if (newSecond == null) return newFirst;
+      return SessionLayoutSplit(
+        id: id,
+        axis: axis,
+        first: newFirst,
+        second: newSecond,
+        ratio: ratio,
+      );
+  }
+}
+
+/// Puts [detached] beside [base], to the right, at [ratio].
+///
+/// [splitId] is supplied by the caller so the node keeps a stable identity
+/// across projections: rebuilding the same tree yields the same split for the
+/// divider to hold on to.
+SessionLayout attachBeside(
+  SessionLayout base,
+  SessionLayout detached, {
+  required String splitId,
+  double ratio = 0.65,
+}) => SessionLayoutSplit(
+  id: splitId,
+  axis: SessionSplitAxis.horizontal,
+  first: base,
+  second: detached,
+  ratio: ratio,
+);

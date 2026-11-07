@@ -932,9 +932,14 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
 
   /// Projects [layout] (a tmux window's pane tree) onto the tab [binding] owns.
   ///
-  /// Panes that appeared mount a [TerminalTab]; panes that disappeared lose
-  /// theirs, adapters included. Re-parsing the same layout yields the same
+  /// Panes that appeared mount a [TerminalTab]; panes whose tmux pane went away
+  /// lose theirs, adapters included. Re-parsing the same layout yields the same
   /// split ids, so an unchanged layout produces an equal tree and no rebuild.
+  ///
+  /// tmux owns the panes that mirror it, not the tab. A pane holding anything
+  /// else - the file manager or an agent chat the user split in beside the
+  /// terminal - is kept, and its split in the layout tree is preserved, so a
+  /// `%layout-change` cannot silently close work that tmux never knew about.
   void applyTmuxLayout(TmuxTabBinding binding, SessionLayout layout) {
     if (!ref.mounted) return;
     final tabId = binding.tabId;
@@ -946,7 +951,16 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
     final panes = <String, TabPane>{};
     final gone = <String>{};
     for (final paneId in tab.panes.keys) {
-      if (!paneIds.contains(paneId)) gone.add(paneId);
+      final content = tab.panes[paneId]?.tab;
+      // An empty pane is the placeholder the tab started with, before tmux
+      // reported a layout; it is not the user's. Only mounted content can be a
+      // pane tmux does not know about.
+      if (content == null) {
+        gone.add(paneId);
+        continue;
+      }
+      final mirrored = content is TerminalTab && content.tmux == binding;
+      if (mirrored && !paneIds.contains(paneId)) gone.add(paneId);
     }
     for (final paneId in paneIds) {
       final existing = tab.panes[paneId];
@@ -973,10 +987,29 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       if (content != null) _forgetTmuxContent(content.id);
       unawaited(binding.releasePane(paneId));
     }
-    final focusedPaneId = panes.containsKey(tab.focusedPaneId)
+    // Panes that are not tmux's own survive the projection untouched, and the
+    // tree keeps them where the user put them: tmux's layout describes the
+    // terminal region only, so the rest is re-attached beside it.
+    final extra = <String, TabPane>{
+      for (final entry in tab.panes.entries)
+        if (!panes.containsKey(entry.key) && !gone.contains(entry.key))
+          entry.key: entry.value,
+    };
+    final merged = {...panes, ...extra};
+    final detached = extra.isEmpty
+        ? null
+        : detachPanes(tab.layout, panes.keys.toSet());
+    final mergedLayout = detached == null
+        ? layout
+        : attachBeside(
+            layout,
+            detached,
+            splitId: 'tmux-extras-${binding.sessionName}',
+          );
+    final focusedPaneId = merged.containsKey(tab.focusedPaneId)
         ? tab.focusedPaneId
         : binding.focusedPaneId != null &&
-              panes.containsKey(binding.focusedPaneId)
+              merged.containsKey(binding.focusedPaneId)
         ? binding.focusedPaneId!
         : paneIds.first;
     state = TerminalTabsState(
@@ -984,8 +1017,8 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         for (final candidate in state.tabs)
           candidate.id == tabId
               ? candidate.copyWith(
-                  panes: panes,
-                  layout: layout,
+                  panes: merged,
+                  layout: mergedLayout,
                   focusedPaneId: focusedPaneId,
                 )
               : candidate,

@@ -51,6 +51,30 @@ List<TmuxSessionInfo> attachableTmuxSessions(
     if (session.name != defaultName) session,
 ];
 
+/// The session name a *new* terminal should use, given what the host runs.
+///
+/// A detached session is resumed under its own name: that is the whole point of
+/// tmux surviving the tab. An **attached** one is already on someone's screen,
+/// so `new-session -A` would silently drop the new terminal into that live
+/// session - both views then fight over one pane size and one scrollback -
+/// which is not what "open another terminal" means. A free numbered name is
+/// minted instead.
+///
+/// [base] is returned untouched when it is not in use, so the common case never
+/// renames anything.
+String nextTmuxSessionName({
+  required String base,
+  required List<TmuxSessionInfo> existing,
+}) {
+  final byName = {for (final session in existing) session.name: session};
+  final current = byName[base];
+  if (current == null || current.attached == 0) return base;
+  for (var suffix = 2; ; suffix++) {
+    final candidate = '$base-$suffix';
+    if (!byName.containsKey(candidate)) return candidate;
+  }
+}
+
 /// Lists the tmux sessions [server]'s host has running.
 ///
 /// A row with a resolvable daemon route asks the daemon over its HTTP API; any

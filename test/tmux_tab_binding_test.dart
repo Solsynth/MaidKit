@@ -41,6 +41,14 @@ class _Control {
   /// What `capture-pane` reports above the visible screen.
   String scrollback = '';
 
+  /// Panes running a full-screen program, whose screen must not be seeded.
+  final alternateOn = <String>{};
+
+  String _paneInCommand(String command) {
+    final match = RegExp(r'-t (%\d+)').firstMatch(command);
+    return match?.group(1) ?? '';
+  }
+
   final _output = StreamController<Uint8List>();
   final writes = <String>[];
   late final TmuxControlClient client;
@@ -76,6 +84,10 @@ class _Control {
       _ when command.startsWith('capture-pane') => scrollback,
       // The attach-time layout pull, which is the only way an idle session's
       // panes ever reach the workspace.
+      // `alternate_on` asks whether the pane runs a full-screen program; the
+      // scrollback seed skips those.
+      _ when command.contains('alternate_on') =>
+        alternateOn.contains(_paneInCommand(command)) ? '1' : '0',
       _ when command.startsWith('display-message') => initialLayout,
       _ => '',
     };
@@ -480,6 +492,66 @@ void main() {
         .closeTab(container.read(terminalTabsProvider).selectedId!);
     await pumpEventQueue();
     expect(control.written, contains('kill-session -t maidkit-build'));
+  });
+
+  test('a full-screen program is not given a scrollback seed', () async {
+    // vim, less and friends live on the alternate screen: replaying that into a
+    // fresh emulator prints their cursor-addressed UI as literal text, which is
+    // how they came out garbled and wrapped.
+    control.alternateOn.add('%0');
+    control.scrollback = 'stale screen text';
+    await mount(layout: _onePane);
+    await pumpEventQueue();
+    expect(factory.adapters.single.replayed, isEmpty);
+    expect(
+      control.written,
+      isNot(contains('capture-pane -S')),
+      reason: 'the screen of a full-screen program is not history',
+    );
+  });
+
+  test('padding under the prompt is not replayed as history', () async {
+    // `capture-pane` returns the whole grid, so a screen of blank rows would
+    // scroll the pane to emptiness when replayed.
+    control.scrollback = 'echo HI\r\nHI\r\nuser@h:~ \$\n\n\n\n\n';
+    await mount(layout: _onePane);
+    await pumpEventQueue();
+    expect(factory.adapters.single.replayed.single, endsWith('user@h:~ \$'));
+  });
+
+  test('a pane tmux does not own survives a layout change', () async {
+    // The terminal's context menu splits the file manager in beside it. tmux
+    // knows nothing about that pane, so a `%layout-change` used to treat it as
+    // a pane that went away and release it - the browser closed the moment it
+    // opened. Only panes mirroring this binding may be retired here.
+    await mount(layout: _onePane);
+    final tabId = container.read(terminalTabsProvider).selectedTab!.id;
+    final notifier = container.read(terminalTabsProvider.notifier);
+    notifier.openFileManagement(_server(), splitRight: true);
+    await pumpEventQueue();
+    final withFiles = container.read(terminalTabsProvider).selectedTab!;
+    final filesPane = withFiles.panes.values.firstWhere(
+      (pane) => pane.tab is FileManagementTab,
+    );
+    final filesPaneCount = withFiles.panes.length;
+
+    // A window event re-projects the layout.
+    control.layout(_onePane);
+    await pumpEventQueue();
+
+    final after = container.read(terminalTabsProvider).tabById(tabId)!;
+    expect(
+      after.panes.containsKey(filesPane.id),
+      isTrue,
+      reason: 'tmux must not close a pane it never opened',
+    );
+    expect(after.panes[filesPane.id]!.tab, isA<FileManagementTab>());
+    expect(
+      after.layout.paneIds,
+      containsAll(<String>[filesPane.id]),
+      reason: 'the pane stays in the tree, or it is mounted nowhere',
+    );
+    expect(after.panes.length, filesPaneCount);
   });
 
   test('a fresh attach replays the scrollback tmux still holds', () async {
