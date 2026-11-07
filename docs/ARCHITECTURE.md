@@ -100,21 +100,30 @@ instead of snapping the bar's layout, so background tabs stay icon-sized.
 
 Panes below the bar are separate cards on the workspace paper: they are
 separated by a gutter, with no rule drawn between them, and the gutter is the
-drag band that resizes the split. Each pane ends in its own band — the
-terminal status bar (`AnimatedTerminalStatusBar`) when that pane shows a
-terminal, nothing otherwise — so a split reads out every terminal it shows, not
-just the focused one. The band draws no rule above itself and no rules between
-its readings: each reading is a pill on the pane's sheet, so the bar groups
-itself by tone and spacing rather than by dividers. A split's panes carry a
-short drag handle at the top centre of their sheet: dragging it onto a sibling
-swaps the two viewports' slots (`swapPaneSlots`), keeping each pane's id,
-content and state, so moving a terminal rearranges the split instead of
-reopening its shell. Closing one pane of a split is a command-palette action
-(`sessionsClosePane`), next to closing the tab the pane belongs to. The focused
-pane also carries a single accent hairline, and idle panes are dimmed by a
-paint-time brightness filter instead of a colour wash, so exactly one viewport
-reads as live while an idle pane keeps every pointer event, scroll and Material
-ink it had.
+drag band that resizes the split. Each pane ends in its own band — the terminal
+band (`AnimatedTerminalStatusBar`) when that pane shows a terminal, nothing
+otherwise — so a split reads out every terminal it shows, not just the focused
+one. The band is one row deep, and which row depends on the input device. On a
+pointer platform it is the readings: transport, connection state, ping and the
+host's label as pills on the pane's sheet, with no rule above the band and no
+rules between readings, so it groups itself by tone and spacing. On a touch
+platform it is the key deck (`servers/terminal_key_bar.dart`): a soft keyboard
+has no Esc, Tab, arrows or Ctrl, so those keys sit on the caps directly above
+the IME. Mono keycaps at `MaidKitRadius.chip` read as hardware, the leading
+`ctrl` key arms and swaps the run from navigation keys to control chords
+instead of adding a second row, arrows repeat while held, and the trailing key
+raises or puts away the IME. A key never takes focus, so a chord leaves the
+keyboard up and the cursor where it was.
+
+A split's panes carry a short drag handle at the top centre of their sheet:
+dragging it onto a sibling swaps the two viewports' slots (`swapPaneSlots`),
+keeping each pane's id, content and state, so moving a terminal rearranges the
+split instead of reopening its shell. Closing one pane of a split is a
+command-palette action (`sessionsClosePane`), next to closing the tab the pane
+belongs to. The focused pane also carries a single accent hairline, and idle
+panes are dimmed by a paint-time brightness filter instead of a colour wash, so
+exactly one viewport reads as live while an idle pane keeps every pointer
+event, scroll and Material ink it had.
 
 A pane shows exactly one content instance. Every tab stays mounted, with only
 the selected one visible, so switching tabs keeps a terminal's scrollback, an

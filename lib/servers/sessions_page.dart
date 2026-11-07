@@ -7,9 +7,9 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/theme.dart';
-
 import 'server_models.dart';
 import 'server_providers.dart';
+import 'terminal_key_bar.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_tabs_provider.dart';
 
@@ -168,21 +168,24 @@ class _TerminalStatusBarState extends ConsumerState<_TerminalStatusBar> {
         ),
     ];
 
-    // No rule above the band and no rules between readings: each reading is a
-    // pill resting on the pane's sheet, so the bar groups itself by tone and
-    // spacing instead of drawing a table.
+    // The band is the pane's bottom edge, and it is one row deep. On a touch
+    // platform that row is the key deck: the software keyboard covers the line
+    // a physical keyboard would type into, so the keys it cannot produce sit
+    // directly above it, and the readings would otherwise stack a second row
+    // over the terminal for numbers a phone user cannot act on. The readings
+    // keep the row on a pointer platform, where the deck does not exist.
+    final touchKeyboard =
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android;
     return Material(
       color: Colors.transparent,
       child: Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (defaultTargetPlatform == TargetPlatform.iOS ||
-                defaultTargetPlatform == TargetPlatform.android)
-              _TerminalQuickKeys(terminal: widget.terminal),
-            if (segments.isNotEmpty)
-              SizedBox(
+        child: touchKeyboard
+            ? TerminalKeyBar(terminal: widget.terminal)
+            : segments.isEmpty
+            ? const SizedBox.shrink()
+            : SizedBox(
                 height: 30,
                 child: ListView.separated(
                   padding: const EdgeInsets.fromLTRB(
@@ -199,8 +202,6 @@ class _TerminalStatusBarState extends ConsumerState<_TerminalStatusBar> {
                       Center(child: _StatusPill(child: segments[index])),
                 ),
               ),
-          ],
-        ),
       ),
     );
   }
@@ -230,164 +231,6 @@ class _StatusPill extends StatelessWidget {
           vertical: MaidKitSpace.xxs,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [child]),
-      ),
-    );
-  }
-}
-
-class _TerminalQuickKeys extends StatefulWidget {
-  const _TerminalQuickKeys({required this.terminal});
-
-  final TerminalSessionAdapter terminal;
-
-  @override
-  State<_TerminalQuickKeys> createState() => _TerminalQuickKeysState();
-}
-
-class _TerminalQuickKeysState extends State<_TerminalQuickKeys> {
-  static const _commonKeys = [
-    ('Ctrl+C', '\u0003'),
-    ('Ctrl+D', '\u0004'),
-    ('Ctrl+L', '\u000c'),
-    ('Tab', '\t'),
-    ('Esc', '\u001b'),
-    ('↑', '\u001b[A'),
-    ('↓', '\u001b[B'),
-    ('←', '\u001b[D'),
-    ('→', '\u001b[C'),
-    ('Enter', '\r'),
-  ];
-
-  static const _extraKeys = [
-    ('Ctrl+Z', '\u001a'),
-    ('Ctrl+A', '\u0001'),
-    ('Ctrl+E', '\u0005'),
-    ('Ctrl+U', '\u0015'),
-    ('PgUp', '\u001b[5~'),
-    ('PgDn', '\u001b[6~'),
-  ];
-
-  static const _allKeys = [..._commonKeys, ..._extraKeys];
-
-  final _scrollController = ScrollController();
-  var _expanded = false;
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _toggle() {
-    final expanded = !_expanded;
-    setState(() => _expanded = expanded);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      _scrollController.jumpTo(
-        expanded ? _scrollController.position.maxScrollExtent : 0,
-      );
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final terminal = widget.terminal;
-    final keys = _expanded ? _allKeys : _commonKeys;
-
-    return SizedBox(
-      height: 48,
-      child: Row(
-        children: [
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: ListView.separated(
-                key: ValueKey(_expanded),
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
-                scrollDirection: Axis.horizontal,
-                itemCount: keys.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 4),
-                itemBuilder: (context, index) {
-                  final (label, input) = keys[index];
-                  return TextButton(
-                    onPressed: () => terminal.sendInput(input),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(48, 40),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: Text(label),
-                  );
-                },
-              ),
-            ),
-          ),
-          _TerminalKeyboardToggle(terminal: terminal),
-          IconButton(
-            tooltip: _expanded
-                ? 'terminalKeysFewer'.tr()
-                : 'terminalKeysMore'.tr(),
-            onPressed: _toggle,
-            icon: Icon(_expanded ? Symbols.expand_less : Symbols.expand_more),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Raise-or-release button for the mobile soft keyboard.
-///
-/// The pane body sits inside a [Scaffold], which strips the bottom view insets
-/// from the media query it hands down, so `MediaQuery.viewInsetsOf` reads zero
-/// while the keyboard is up — the button would only ever show it. The platform
-/// view still reports the real inset, and its metrics callback is what redraws
-/// this button when the keyboard comes or goes.
-class _TerminalKeyboardToggle extends StatefulWidget {
-  const _TerminalKeyboardToggle({required this.terminal});
-
-  final TerminalSessionAdapter terminal;
-
-  @override
-  State<_TerminalKeyboardToggle> createState() =>
-      _TerminalKeyboardToggleState();
-}
-
-class _TerminalKeyboardToggleState extends State<_TerminalKeyboardToggle>
-    with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeMetrics() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final visible = View.of(context).viewInsets.bottom > 0;
-    return IconButton(
-      tooltip: visible
-          ? 'terminalKeyboardHide'.tr()
-          : 'terminalKeyboardShow'.tr(),
-      // Putting the keyboard away means releasing the terminal, not only
-      // closing the IME: the renderer raises it again on focus gain, so a hide
-      // that kept focus would leave the user unable to get it back by tapping
-      // the terminal.
-      onPressed: visible
-          ? widget.terminal.unfocus
-          : widget.terminal.showKeyboard,
-      icon: Icon(
-        visible ? Symbols.keyboard_arrow_down : Symbols.keyboard_arrow_up,
       ),
     );
   }
