@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'agent_attachment.dart';
+import 'agent_mention.dart';
 
 /// One message stored in a saved conversation. The rendered text and whatever
 /// rode with a user turn are kept; pending tool proposals are intentionally not
@@ -15,6 +16,7 @@ class AgentConversationMessage {
     required this.role,
     required this.text,
     this.attachments = const [],
+    this.mentions = const [],
   });
   final String role;
   final String text;
@@ -23,6 +25,10 @@ class AgentConversationMessage {
   /// conversation rebuilds the same request the model answered.
   final List<AgentAttachment> attachments;
 
+  /// The resources the turn named with `@`, kept beside the text so the
+  /// request that is rebuilt still says which server or snippet was meant.
+  final List<AgentMention> mentions;
+
   Map<String, dynamic> toJson() => {
     'role': role,
     'text': text,
@@ -30,6 +36,8 @@ class AgentConversationMessage {
       'attachments': [
         for (final attachment in attachments) attachment.toJson(),
       ],
+    if (mentions.isNotEmpty)
+      'mentions': [for (final mention in mentions) mention.toJson()],
   };
 
   factory AgentConversationMessage.fromJson(Map<String, dynamic> json) =>
@@ -40,6 +48,10 @@ class AgentConversationMessage {
           for (final attachment in json['attachments'] as List? ?? const [])
             if (attachment is Map<String, dynamic>)
               AgentAttachment.fromJson(attachment),
+        ],
+        mentions: [
+          for (final mention in json['mentions'] as List? ?? const [])
+            if (mention is Map<String, dynamic>) AgentMention.fromJson(mention),
         ],
       );
 }

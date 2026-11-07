@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/agent/agent_attachment.dart';
+import 'package:maid_kit/agent/agent_mention.dart';
 
 void main() {
   late Directory temp;
@@ -155,6 +156,37 @@ void main() {
       final parts = agentUserContent('', const [image]);
       expect(parts, hasLength(1));
       expect((parts as List<Map<String, dynamic>>).single['type'], 'image_url');
+    });
+
+    test('names the resources the message referenced', () {
+      const mention = AgentMention(
+        kind: AgentMentionKind.server,
+        id: 3,
+        name: 'web',
+        detail: 'root@10.0.0.3',
+      );
+      final body =
+          agentUserContent(
+                'restart nginx on @web',
+                const [],
+                mentions: const [mention],
+              )
+              as String;
+      expect(body, startsWith('restart nginx on @web'));
+      expect(body, contains('--- Referenced resources'));
+      expect(body, contains('- server #3: web (root@10.0.0.3)'));
+    });
+
+    test('a mention whose token was deleted stops riding the turn', () {
+      const mention = AgentMention(
+        kind: AgentMentionKind.snippet,
+        id: 7,
+        name: 'backup',
+      );
+      expect(agentMentionPresent('run @backup now', mention), isTrue);
+      expect(agentMentionPresent('run now', mention), isFalse);
+      // A longer name that merely starts with the token is not this one.
+      expect(agentMentionPresent('run @backup_full now', mention), isFalse);
     });
   });
 }

@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:maid_kit/theme.dart';
 
 import 'agent_attachment.dart';
+import 'agent_mention.dart';
 import 'agent_reasoning.dart';
 
 /// The message composer: the prompt field, the attachments queued over it, and
@@ -32,6 +33,10 @@ class AgentComposer extends StatefulWidget {
     required this.onAttachText,
     required this.onEditAttachment,
     required this.onRemoveAttachment,
+    required this.mentionCandidates,
+    required this.mentions,
+    required this.onMentionAdded,
+    required this.onMentionRemoved,
     required this.onSubmit,
     required this.onStop,
     required this.reasoning,
@@ -65,6 +70,18 @@ class AgentComposer extends StatefulWidget {
   /// Drops one queued attachment.
   final ValueChanged<int> onRemoveAttachment;
 
+  /// The resources the reader can name with `@`: servers, saved snippets, and
+  /// skills. The menu filters them as the query is typed.
+  final List<AgentMention> mentionCandidates;
+
+  /// The resources this draft names. They ride the turn with the message, so
+  /// the request points at the exact row instead of leaving the model to guess
+  /// which server, snippet, or skill the sentence meant.
+  final List<AgentMention> mentions;
+
+  final ValueChanged<AgentMention> onMentionAdded;
+  final ValueChanged<int> onMentionRemoved;
+
   final VoidCallback onSubmit;
   final VoidCallback onStop;
 
@@ -91,23 +108,132 @@ class _AgentComposerState extends State<AgentComposer> {
   String _lastInput = '';
   bool _restoringInput = false;
 
+  /// The `@` token the caret currently sits in: where the `@` is and what was
+  /// typed after it. Null when the caret is not naming a resource.
+  ({int start, String query})? _mentionToken;
+
+  /// Which candidate of the open menu is lit, moved with the arrow keys.
+  int _mentionHighlight = 0;
+
+  /// Set by Escape for the token it dismissed, so typing on reopens the menu
+  /// but the same token does not pop back up under the reader's hands.
+  ({int start, String query})? _mentionDismissed;
+
+  /// The most resource names one `@` lists: enough to find one by typing a few
+  /// letters, few enough that the menu never covers the message above it.
+  static const _maxMentionMatches = 7;
+
   @override
   void initState() {
     super.initState();
     _lastInput = widget.controller.text;
+    widget.controller.addListener(_syncMentionToken);
     widget.focusNode.onKeyEvent = _handleKeyEvent;
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_syncMentionToken);
     widget.focusNode.onKeyEvent = null;
     super.dispose();
   }
 
-  /// Enter sends, Shift+Enter breaks the line. The field is multiline, so the
+  /// Reads the token under the caret after every change: a run of non-space
+  /// text that starts with `@`, which is exactly what the reader is typing to
+  /// name a resource. The caret has to sit at the end of it, so moving back
+  /// into an earlier word does not reopen a menu for it.
+  void _syncMentionToken() {
+    final value = widget.controller.value;
+    final selection = value.selection;
+    ({int start, String query})? token;
+    if (selection.isValid && selection.isCollapsed) {
+      final text = value.text;
+      final caret = selection.baseOffset.clamp(0, text.length);
+      var start = caret;
+      while (start > 0 && !_isMentionSpace(text[start - 1])) {
+        start--;
+      }
+      if (start < caret && text[start] == '@') {
+        final query = text.substring(start + 1, caret);
+        if (!query.contains('@')) token = (start: start, query: query);
+      }
+    }
+    if (token == _mentionToken) return;
+    setState(() {
+      _mentionToken = token;
+      _mentionHighlight = 0;
+    });
+  }
+
+  /// The candidates the open menu lists: the ones whose name or detail still
+  /// matches what was typed, minus the ones already riding the turn.
+  List<AgentMention> get _mentionMatches {
+    final token = _mentionToken;
+    if (!widget.enabled || token == null || token == _mentionDismissed) {
+      return const [];
+    }
+    final query = token.query.toLowerCase();
+    return [
+      for (final candidate in widget.mentionCandidates)
+        if (!widget.mentions.contains(candidate) &&
+            (query.isEmpty ||
+                candidate.name.toLowerCase().contains(query) ||
+                candidate.detail.toLowerCase().contains(query)))
+          candidate,
+    ].take(_maxMentionMatches).toList();
+  }
+
+  /// Writes the picked resource into the field as `@name` and queues it for
+  /// the turn.
+  void _acceptMention(AgentMention mention) {
+    final token = _mentionToken;
+    if (token == null) return;
+    final text = widget.controller.text;
+    final caret = widget.controller.selection.baseOffset.clamp(0, text.length);
+    final replacement = '${mention.token} ';
+    final updated = text.replaceRange(token.start, caret, replacement);
+    final offset = token.start + replacement.length;
+    widget.controller.value = TextEditingValue(
+      text: updated,
+      selection: TextSelection.collapsed(offset: offset),
+    );
+    _lastInput = updated;
+    setState(() {
+      _mentionToken = null;
+      _mentionDismissed = null;
+    });
+    widget.onMentionAdded(mention);
+  }
+
+  /// Enter sends, Shift+Enter breaks the line — unless an open resource menu
+  /// wants the key first: the arrows move its highlight, Enter or Tab takes
+  /// the lit resource, and Escape closes it. The field is multiline, so the
   /// key has to be claimed here rather than left to the field's own handling.
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final matches = _mentionMatches;
+    if (matches.isNotEmpty) {
+      final key = event.logicalKey;
+      if (key == LogicalKeyboardKey.arrowUp ||
+          key == LogicalKeyboardKey.arrowDown) {
+        final step = key == LogicalKeyboardKey.arrowUp ? -1 : 1;
+        setState(
+          () => _mentionHighlight = (_mentionHighlight + step) % matches.length,
+        );
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.escape) {
+        setState(() {
+          _mentionDismissed = _mentionToken;
+          _mentionToken = null;
+        });
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.tab) {
+        _acceptMention(matches[_mentionHighlight.clamp(0, matches.length - 1)]);
+        return KeyEventResult.handled;
+      }
+    }
     if (event.logicalKey != LogicalKeyboardKey.enter) {
       return KeyEventResult.ignored;
     }
@@ -182,6 +308,39 @@ class _AgentComposerState extends State<AgentComposer> {
               ),
             ),
             const SizedBox(height: 6),
+          ],
+          if (widget.mentions.isNotEmpty) ...[
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final (index, mention) in widget.mentions.indexed)
+                  _AgentMentionChip(
+                    mention: mention,
+                    onRemove: () => widget.onMentionRemoved(index),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (widget.enabled &&
+              _mentionToken != null &&
+              _mentionToken != _mentionDismissed) ...[
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _mentionMatches.isEmpty
+                  ? Text(
+                      'agentMentionNone'.tr(),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  : _AgentMentionMenu(
+                      matches: _mentionMatches,
+                      highlight: _mentionHighlight,
+                      onPick: _acceptMention,
+                    ),
+            ),
           ],
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -291,6 +450,172 @@ class _AgentComposerState extends State<AgentComposer> {
     context: context,
     builder: (context) => _AttachmentPreviewDialog(attachment: attachment),
   );
+}
+
+bool _isMentionSpace(String character) =>
+    character == ' ' || character == '\n' || character == '\t';
+
+/// One resource the draft names, on the strip above the field: what it is,
+/// which row it points at, and the control that takes it out of the turn.
+class _AgentMentionChip extends StatelessWidget {
+  const _AgentMentionChip({required this.mention, required this.onRemove});
+
+  final AgentMention mention;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Tooltip(
+      message: mention.referenceLine,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 2, 2, 2),
+        decoration: BoxDecoration(
+          color: scheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(MaidKitRadius.md),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              agentMentionIcon(mention.kind),
+              size: 14,
+              color: scheme.onSecondaryContainer,
+            ),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 200),
+              child: Text(
+                mention.token,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.onSecondaryContainer,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'agentMentionRemove'.tr(args: [mention.name]),
+              iconSize: 12,
+              visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                minimumSize: const Size(20, 20),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: onRemove,
+              icon: const Icon(Symbols.close),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The resources an open `@` lists: one row per candidate, naming the row it
+/// points at. A tap takes one exactly as Enter does, so the menu works by
+/// keyboard and by pointer.
+class _AgentMentionMenu extends StatelessWidget {
+  const _AgentMentionMenu({
+    required this.matches,
+    required this.highlight,
+    required this.onPick,
+  });
+
+  final List<AgentMention> matches;
+  final int highlight;
+  final ValueChanged<AgentMention> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(MaidKitRadius.md),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 216),
+        child: ListView.builder(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: matches.length,
+          itemBuilder: (context, index) {
+            final mention = matches[index];
+            final lit = index == highlight;
+            return InkWell(
+              onTap: () => onPick(mention),
+              child: ColoredBox(
+                color: lit
+                    ? scheme.primaryContainer.withValues(alpha: 0.5)
+                    : Colors.transparent,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        agentMentionIcon(mention.kind),
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              mention.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            Text(
+                              agentMentionMenuDetail(mention),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// The icon a mention wears wherever it is shown.
+IconData agentMentionIcon(AgentMentionKind kind) => switch (kind) {
+  AgentMentionKind.server => Symbols.dns,
+  AgentMentionKind.snippet => Symbols.code,
+  AgentMentionKind.skill => Symbols.extension,
+};
+
+/// What a menu row says under the name: what kind of resource it is, then the
+/// detail that tells two rows of the same kind apart.
+String agentMentionMenuDetail(AgentMention mention) {
+  final kind = switch (mention.kind) {
+    AgentMentionKind.server => 'agentMentionServer'.tr(),
+    AgentMentionKind.snippet => 'agentMentionSnippet'.tr(),
+    AgentMentionKind.skill => 'agentMentionSkill'.tr(),
+  };
+  return mention.detail.isEmpty ? kind : '$kind · ${mention.detail}';
 }
 
 /// The reasoning-effort pill: how hard the model thinks before it answers, set

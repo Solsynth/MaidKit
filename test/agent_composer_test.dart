@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/agent/agent_attachment.dart';
 import 'package:maid_kit/agent/agent_composer.dart';
+import 'package:maid_kit/agent/agent_mention.dart';
 import 'package:maid_kit/agent/agent_reasoning.dart';
 
 void main() {
@@ -29,6 +30,7 @@ void main() {
     ValueChanged<AgentReasoning>? onReasoningChanged,
     VoidCallback? onSubmit,
     VoidCallback? onStop,
+    List<AgentMention> mentionCandidates = const [],
   }) async {
     await tester.pumpWidget(
       EasyLocalization(
@@ -46,6 +48,7 @@ void main() {
             onReasoningChanged: onReasoningChanged,
             onSubmit: onSubmit,
             onStop: onStop,
+            mentionCandidates: mentionCandidates,
           ),
         ),
       ),
@@ -201,6 +204,91 @@ void main() {
     expect(stops, 1);
   });
 
+  group('resource mentions', () {
+    // Two candidates of one kind plus one of another: the menu has to tell
+    // apart what typed letters match and what kind each row is.
+    const candidates = [
+      AgentMention(
+        kind: AgentMentionKind.server,
+        id: 3,
+        name: 'web',
+        detail: 'root@10.0.0.3',
+      ),
+      AgentMention(
+        kind: AgentMentionKind.server,
+        id: 4,
+        name: 'db',
+        detail: 'root@10.0.0.4',
+      ),
+      AgentMention(kind: AgentMentionKind.snippet, id: 7, name: 'backup'),
+    ];
+
+    Future<TextEditingController> typeAtSign(WidgetTester tester) async {
+      final controller = TextEditingController();
+      await pumpComposer(
+        tester,
+        controller: controller,
+        mentionCandidates: candidates,
+      );
+      await tester.tap(find.byType(TextField));
+      await tester.enterText(find.byType(TextField), '@');
+      await tester.pump();
+      return controller;
+    }
+
+    testWidgets('typing @ lists servers, snippets and skills', (tester) async {
+      await typeAtSign(tester);
+      expect(find.text('web'), findsOneWidget);
+      expect(find.text('db'), findsOneWidget);
+      expect(find.text('backup'), findsOneWidget);
+    });
+
+    testWidgets('the query narrows the list to matching names', (tester) async {
+      await typeAtSign(tester);
+      await tester.enterText(find.byType(TextField), '@ba');
+      await tester.pump();
+      expect(find.text('backup'), findsOneWidget);
+      expect(find.text('web'), findsNothing);
+      expect(find.text('db'), findsNothing);
+    });
+
+    testWidgets('Enter takes the lit resource and writes its token', (
+      tester,
+    ) async {
+      final controller = await typeAtSign(tester);
+      // `@db` matches one row, so the first row is also the only one.
+      await tester.enterText(find.byType(TextField), '@db');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      expect(controller.text, '@db ');
+      // The chip on the strip names the resource the menu took.
+      expect(find.byIcon(Symbols.dns), findsOneWidget);
+      // Enter took the resource instead of sending the message.
+      expect(find.byType(TextField), findsOneWidget);
+    });
+
+    testWidgets('Escape closes the menu and leaves the token alone', (
+      tester,
+    ) async {
+      final controller = await typeAtSign(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.text('web'), findsNothing);
+      expect(controller.text, '@');
+    });
+
+    testWidgets('one already named is not listed again', (tester) async {
+      await typeAtSign(tester);
+      await tester.enterText(find.byType(TextField), '@db ');
+      await tester.pump();
+      // The menu closes with the trailing space, so nothing is listed at all
+      // until another `@` is opened.
+      expect(find.text('web'), findsNothing);
+    });
+  });
+
   testWidgets('a sent turn names the files it carried', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
@@ -310,6 +398,7 @@ class _Harness extends StatefulWidget {
     this.onReasoningChanged,
     this.onSubmit,
     this.onStop,
+    this.mentionCandidates = const [],
   });
 
   final TextEditingController controller;
@@ -321,12 +410,16 @@ class _Harness extends StatefulWidget {
   final VoidCallback? onSubmit;
   final VoidCallback? onStop;
 
+  /// The resources an `@` may name; each test decides what the menu offers.
+  final List<AgentMention> mentionCandidates;
+
   @override
   State<_Harness> createState() => _HarnessState();
 }
 
 class _HarnessState extends State<_Harness> {
   late final List<AgentAttachment> _attachments = [...widget.attachments];
+  late final List<AgentMention> _mentions = [];
   late AgentReasoning _reasoning = widget.reasoning;
   final _focusNode = FocusNode();
 
@@ -358,6 +451,10 @@ class _HarnessState extends State<_Harness> {
       onEditAttachment: (_) {},
       onRemoveAttachment: (index) =>
           setState(() => _attachments.removeAt(index)),
+      mentionCandidates: widget.mentionCandidates,
+      mentions: _mentions,
+      onMentionAdded: (mention) => setState(() => _mentions.add(mention)),
+      onMentionRemoved: (index) => setState(() => _mentions.removeAt(index)),
       onSubmit: widget.onSubmit ?? () {},
       onStop: widget.onStop ?? () {},
     ),

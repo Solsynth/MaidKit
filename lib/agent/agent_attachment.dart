@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 
+import 'agent_mention.dart';
+
 /// How much of a text file rides with a turn, in characters. It mirrors the cap
 /// tool results already come back under, so one attached file can never crowd
 /// out the conversation it was attached to.
@@ -178,19 +180,29 @@ Future<AgentAttachment> readAgentAttachment({
   );
 }
 
-/// The user message content for one turn: the typed text, the attached text
-/// files written under it, and images as multimodal parts.
+/// The user message content for one turn: the typed text, whatever it named
+/// with `@`, the attached text files written under it, and images as
+/// multimodal parts.
 ///
-/// A plain string is returned while nothing is attached, because that is what
-/// every OpenAI-compatible endpoint accepts. The part list only appears once
-/// there is a picture to send; the text part is dropped when the message was
-/// nothing but attachments.
-Object agentUserContent(String text, List<AgentAttachment> attachments) {
+/// A plain string is returned while nothing is attached or pictured, because
+/// that is what every OpenAI-compatible endpoint accepts. The part list only
+/// appears once there is a picture to send; the text part is dropped when the
+/// message was nothing but attachments.
+Object agentUserContent(
+  String text,
+  List<AgentAttachment> attachments, {
+  List<AgentMention> mentions = const [],
+}) {
   final sendable = [
     for (final attachment in attachments)
       if (attachment.isSendable) attachment,
   ];
   final body = StringBuffer(text.trim());
+  final references = agentMentionReferenceBlock(mentions);
+  if (references.isNotEmpty) {
+    if (body.isNotEmpty) body.write('\n\n');
+    body.write(references);
+  }
   for (final attachment in sendable.where((file) => !file.isImage)) {
     if (body.isNotEmpty) body.write('\n\n');
     body

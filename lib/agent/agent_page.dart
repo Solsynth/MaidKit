@@ -33,6 +33,7 @@ import 'package:maid_kit/agent/skill_registry.dart';
 import 'agent_attachment.dart';
 import 'agent_composer.dart';
 import 'agent_host_executor.dart';
+import 'agent_mention.dart';
 import 'agent_reasoning.dart';
 import 'agent_repository.dart';
 import 'agent_run_policy.dart';
@@ -113,6 +114,10 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   // composer because a turn, a queued prompt and a saved conversation all have
   // to carry them.
   final _attachments = <AgentAttachment>[];
+  // Resources named with `@` in the draft. Like the attachments, they belong
+  // to the page: a queued prompt and a saved conversation carry them too, and
+  // the request they end up in names the exact row they point at.
+  final _mentions = <AgentMention>[];
   bool _draggingFiles = false;
   // OpenAI tool calls need their complete protocol history (assistant call and
   // matching tool result) to be meaningful on the next request. The rendered
@@ -170,6 +175,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     _restoreSelection();
     _messagesScroll.addListener(_updateScrollToBottomVisibility);
     _prompt.addListener(_publishMeter);
+    _prompt.addListener(_pruneMentions);
     if (widget.autofocus) _focusPromptAfterFrame();
   }
 
@@ -278,6 +284,23 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     _publishMeter();
   }
 
+  /// Queues one resource the draft named with `@`. The chip carries its `@name`
+  /// in the field, and the reference rides the turn, so both ends agree on
+  /// which row was meant.
+  void _addMention(AgentMention mention) {
+    if (_mentions.contains(mention)) return;
+    setState(() => _mentions.add(mention));
+    _publishMeter();
+  }
+
+  /// Takes one resource out of the turn. Its `@name` stays in the field as
+  /// ordinary text; the reader can delete it there too.
+  void _removeMention(int index) {
+    if (index < 0 || index >= _mentions.length) return;
+    setState(() => _mentions.removeAt(index));
+    _publishMeter();
+  }
+
   Future<void> _restoreSelection() async {
     final selection = await ref.read(agentSelectionProvider.future);
     if (!mounted) return;
@@ -309,6 +332,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     _showSidebar.dispose();
     _meter.dispose();
     _prompt.removeListener(_publishMeter);
+    _prompt.removeListener(_pruneMentions);
     _messagesScroll.removeListener(_updateScrollToBottomVisibility);
     _messagesScroll.dispose();
     _promptFocus.dispose();
@@ -402,9 +426,16 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       return;
     }
     setState(() {
-      _queuedPrompts.add(_QueuedPrompt(text, attachments));
+      _queuedPrompts.add(
+        _QueuedPrompt(
+          text,
+          attachments,
+          _liveMentions(text, List<AgentMention>.of(_mentions)),
+        ),
+      );
       _prompt.clear();
       _attachments.clear();
+      _mentions.clear();
     });
     _promptFocus.requestFocus();
   }
@@ -421,7 +452,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       return;
     }
     if (mounted) setState(() {});
-    await _runPrompt(queued.text, queued.attachments);
+    await _runPrompt(queued.text, queued.attachments, queued.mentions);
   }
 
   void _removeQueuedPrompt(int index) {
@@ -440,12 +471,13 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     }
     final queued = _queuedPrompts.removeAt(0);
     setState(() {});
-    await _runPrompt(queued.text, queued.attachments);
+    await _runPrompt(queued.text, queued.attachments, queued.mentions);
   }
 
   Future<void> _send() async {
     final text = _prompt.text.trim();
     final attachments = List<AgentAttachment>.of(_attachments);
+    final mentions = _liveMentions(text, List<AgentMention>.of(_mentions));
     final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
     if ((text.isEmpty && attachments.isEmpty) ||
         servers.isEmpty ||
@@ -453,13 +485,14 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         _proposal != null) {
       return;
     }
-    await _runPrompt(text, attachments);
+    await _runPrompt(text, attachments, mentions);
   }
 
   Future<void> _runPrompt(
     String text,
-    List<AgentAttachment> attachments,
-  ) async {
+    List<AgentAttachment> attachments, [
+    List<AgentMention> mentions = const [],
+  ]) async {
     final servers = ref.read(serversProvider).asData?.value ?? const <Server>[];
     if ((text.isEmpty && attachments.isEmpty) ||
         servers.isEmpty ||
@@ -470,16 +503,23 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     final targets = _serverTargets(servers);
     final snippets = await ref.read(snippetRepositoryProvider).all();
     if (!mounted) return;
-    final promptContent = agentUserContent(text, attachments);
+    final promptContent = agentUserContent(
+      text,
+      attachments,
+      mentions: mentions,
+    );
     final userMessage = {'role': 'user', 'content': promptContent};
     final conversationContext = List<Map<String, dynamic>>.from(_agentContext);
     setState(() {
       _working = true;
       _pendingPrompt = text;
       _pendingContext = [...conversationContext, userMessage];
-      _messages.add(_AgentMessage.user(text, attachments: attachments));
+      _messages.add(
+        _AgentMessage.user(text, attachments: attachments, mentions: mentions),
+      );
       _prompt.clear();
       _attachments.clear();
+      _mentions.clear();
     });
     widget.onWorkingChanged(true);
     _reportTitle();
@@ -648,7 +688,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         server: targetServer,
       );
       if (!mounted) return;
-      final String result;
+      String result;
       try {
         result = await _executeProposal(
           executor,
@@ -656,7 +696,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           cancelToken,
           sink: _commandSink(toolIndex),
         );
-      } catch (_) {
+      } on AgentCancelledException {
         // The card has to stop streaming even when the action never produced a
         // result, or it would keep the stop control and the input field alive
         // for a run that is over. What the process printed stays on screen.
@@ -667,6 +707,15 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           });
         }
         rethrow;
+      } catch (error) {
+        // A failed action is a result, not the end of the turn: the failure is
+        // what the model needs in order to pick another route (an SFTP path
+        // that does not exist, a command that refused to run). It is handed
+        // back as the action's own result and the turn continues. Only the
+        // stop control ends it.
+        result =
+            '${'agentActionFailed'.tr(args: [error.toString()])}\n'
+            '${'agentActionFailureContinue'.tr()}';
       }
       if (!mounted) {
         return;
@@ -675,12 +724,12 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         _messages[toolIndex] = _AgentMessage.tool(
           '${approvedProposal.title}:\n$result',
           autoApproved: autoApproved,
+          preview: approvedProposal.detail,
         );
         _endToolCard();
         _proposal = null;
         _reconnectRequired = false;
       });
-      _scrollToBottom();
       final targets = _serverTargets(servers);
       final snippets = _snippetTargets(
         await ref.read(snippetRepositoryProvider).all(),
@@ -784,6 +833,50 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
       ),
   ];
 
+  /// Drops the resources the draft no longer names, so an `@server` the reader
+  /// deleted from the sentence does not keep riding the request. The `@` token
+  /// has to stand whole in [text], which is what keeps `@web` from matching
+  /// `@web2`.
+  static List<AgentMention> _liveMentions(
+    String text,
+    List<AgentMention> mentions,
+  ) => [
+    for (final mention in mentions)
+      if (agentMentionPresent(text, mention)) mention,
+  ];
+
+  /// Every resource the composer can offer after an `@`, in the order the
+  /// system prompt lists them: servers, saved snippets, then enabled skills.
+  List<AgentMention> _mentionCandidates({
+    required List<Server> servers,
+    required List<ScriptSnippet> snippets,
+    required List<AgentSkill> skills,
+    required bool hiddenAddresses,
+  }) => [
+    for (final server in servers)
+      AgentMention(
+        kind: AgentMentionKind.server,
+        id: server.id,
+        name: server.name,
+        detail: hiddenAddresses
+            ? server.username
+            : '${server.username}@${server.host}',
+      ),
+    for (final snippet in snippets)
+      AgentMention(
+        kind: AgentMentionKind.snippet,
+        id: snippet.id,
+        name: snippet.name,
+      ),
+    for (final skill in skills.where((skill) => skill.enabled))
+      AgentMention(
+        kind: AgentMentionKind.skill,
+        id: skill.id,
+        name: skill.name,
+        detail: skill.description,
+      ),
+  ];
+
   List<AgentSnippetTarget> _snippetTargets(List<ScriptSnippet> snippets) => [
     for (final snippet in snippets)
       AgentSnippetTarget(id: snippet.id, name: snippet.name),
@@ -856,6 +949,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
           '${proposal.title}:\n',
           autoApproved: autoApproved,
           live: true,
+          preview: proposal.detail,
         ),
       );
       _liveToolIndex = index;
@@ -1139,6 +1233,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                   role: _roleName(message.kind),
                   text: message.text,
                   attachments: message.attachments,
+                  mentions: message.mentions,
                 ),
             ],
           ),
@@ -1200,6 +1295,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     setState(() {
       _queuedPrompts.clear();
       _attachments.clear();
+      _mentions.clear();
       _messages
         ..clear()
         ..addAll([
@@ -1209,6 +1305,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
               _roleKind(message.role),
               autoApproved: false,
               attachments: message.attachments,
+              mentions: message.mentions,
             ),
         ]);
       _agentContext
@@ -1391,6 +1488,18 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     final conversations =
         ref.watch(agentConversationsProvider).asData?.value ??
         const <AgentConversation>[];
+    // What a draft can name with `@`: the servers it may act on, the snippets
+    // it may run, and the enabled skills. Skills are watched, so one enabled
+    // in another pane shows up here without reopening the chat.
+    final mentionCandidates = _mentionCandidates(
+      servers: servers,
+      snippets:
+          ref.watch(scriptSnippetsProvider).asData?.value ??
+          const <ScriptSnippet>[],
+      skills:
+          ref.watch(agentSkillsProvider).asData?.value ?? const <AgentSkill>[],
+      hiddenAddresses: ref.watch(hideServerAddressesProvider),
+    );
     final selectedProviderId =
         _activeProviderId ?? (providers.isEmpty ? null : providers.first.id);
     final models = selectedProviderId == null
@@ -1477,6 +1586,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
             mainContent: _buildChat(
               servers: servers,
               mcpServers: mcpServers,
+              mentionCandidates: mentionCandidates,
               scheme: scheme,
               compact: compact,
               windowTokens: windowTokens,
@@ -1661,6 +1771,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     required ColorScheme scheme,
     required bool compact,
     required int? windowTokens,
+    required List<AgentMention> mentionCandidates,
   }) {
     return DropTarget(
       onDragEntered: (_) => setState(() => _draggingFiles = true),
@@ -1692,6 +1803,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                 compact: compact,
                 scheme: scheme,
                 windowTokens: windowTokens,
+                mentionCandidates: mentionCandidates,
               ),
             ],
           ),
@@ -1792,6 +1904,7 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     required bool compact,
     required ColorScheme scheme,
     required int? windowTokens,
+    required List<AgentMention> mentionCandidates,
   }) {
     final readingHistory = _showScrollToBottom;
     final gutter = compact ? 16.0 : 24.0;
@@ -1851,6 +1964,10 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
                     onAttachText: _attachText,
                     onEditAttachment: _editAttachment,
                     onRemoveAttachment: _removeAttachment,
+                    mentionCandidates: mentionCandidates,
+                    mentions: _mentions,
+                    onMentionAdded: _addMention,
+                    onMentionRemoved: _removeMention,
                     onSubmit: _submitPrompt,
                     onStop: _interrupt,
                     status: _AgentContextStatus(
@@ -1916,10 +2033,28 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         _historyTokens +
         AgentTokenCounter.estimateMessage({
           'role': 'user',
-          'content': agentUserContent(_prompt.text, _attachments),
+          'content': agentUserContent(
+            _prompt.text,
+            _attachments,
+            mentions: _liveMentions(_prompt.text, _mentions),
+          ),
         });
     if (tokens == _meter.value.tokens) return;
     _meter.value = _meter.value.copyWith(tokens: tokens);
+  }
+
+  /// Keeps the chips in step with the field: a resource whose `@name` the
+  /// reader deleted from the sentence is no longer named, so its chip goes
+  /// and the next request stops pointing at it.
+  void _pruneMentions() {
+    if (!mounted || _mentions.isEmpty) return;
+    final text = _prompt.text;
+    final stale = [
+      for (final mention in _mentions)
+        if (!agentMentionPresent(text, mention)) mention,
+    ];
+    if (stale.isEmpty) return;
+    setState(() => _mentions.removeWhere(stale.contains));
   }
 
   /// Forgets the counts that the conversation context made stale.
@@ -2098,19 +2233,23 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
   }
 
   /// The user message as a request and the saved history carry it: the typed
-  /// text plus whatever was attached to it, in the same shape the turn was
-  /// sent with.
+  /// text, the resources it named, and whatever was attached to it, in the
+  /// same shape the turn was sent with.
   static Map<String, dynamic> _userContextMessage(
     String text,
-    List<AgentAttachment> attachments,
-  ) => {'role': 'user', 'content': agentUserContent(text, attachments)};
+    List<AgentAttachment> attachments, [
+    List<AgentMention> mentions = const [],
+  ]) => {
+    'role': 'user',
+    'content': agentUserContent(text, attachments, mentions: mentions),
+  };
 
   static List<Map<String, dynamic>> _contextFromMessages(
     List<_AgentMessage> messages,
   ) => [
     for (final message in messages)
       if (message.kind == _MessageKind.user)
-        _userContextMessage(message.text, message.attachments)
+        _userContextMessage(message.text, message.attachments, message.mentions)
       else
         _rawContextMessage(
           'assistant',
@@ -2144,16 +2283,20 @@ class _AgentMessage {
     this.kind, {
     required this.autoApproved,
     this.attachments = const [],
+    this.mentions = const [],
     this.live = false,
+    this.preview = '',
   });
   const _AgentMessage.user(
     String text, {
     List<AgentAttachment> attachments = const [],
+    List<AgentMention> mentions = const [],
   }) : this(
          text,
          _MessageKind.user,
          autoApproved: false,
          attachments: attachments,
+         mentions: mentions,
        );
   const _AgentMessage.assistant(String text)
     : this(text, _MessageKind.assistant, autoApproved: false);
@@ -2161,7 +2304,14 @@ class _AgentMessage {
     String text, {
     bool autoApproved = false,
     bool live = false,
-  }) : this(text, _MessageKind.tool, autoApproved: autoApproved, live: live);
+    String preview = '',
+  }) : this(
+         text,
+         _MessageKind.tool,
+         autoApproved: autoApproved,
+         live: live,
+         preview: preview,
+       );
   final String text;
   final _MessageKind kind;
   final bool autoApproved;
@@ -2170,23 +2320,33 @@ class _AgentMessage {
   /// makes its card show the live output with the stop and input controls.
   final bool live;
 
+  /// The action itself — the command, the path, the MCP call — shown above the
+  /// output it produced, so a card reads as what ran and what it printed.
+  final String preview;
+
   /// What the turn was sent with. Only a user turn has any.
   final List<AgentAttachment> attachments;
+
+  /// Which resources the turn named with `@`. Only a user turn has any.
+  final List<AgentMention> mentions;
 
   _AgentMessage copyWith({String? text, bool? live}) => _AgentMessage(
     text ?? this.text,
     kind,
     autoApproved: autoApproved,
     attachments: attachments,
+    mentions: mentions,
     live: live ?? this.live,
+    preview: preview,
   );
 }
 
 class _QueuedPrompt {
-  const _QueuedPrompt(this.text, this.attachments);
+  const _QueuedPrompt(this.text, this.attachments, this.mentions);
 
   final String text;
   final List<AgentAttachment> attachments;
+  final List<AgentMention> mentions;
 }
 
 class _DropdownAction {
@@ -2704,11 +2864,13 @@ class _MessageCard extends StatelessWidget {
               ? _LiveToolCard(
                   text: message.text,
                   autoApproved: message.autoApproved,
+                  preview: message.preview,
                   control: live,
                 )
               : _ToolCallCard(
                   text: message.text,
                   autoApproved: message.autoApproved,
+                  preview: message.preview,
                 ),
         ),
       );
@@ -2828,11 +2990,16 @@ class _LiveToolCard extends StatefulWidget {
   const _LiveToolCard({
     required this.text,
     required this.autoApproved,
+    required this.preview,
     required this.control,
   });
 
   final String text;
   final bool autoApproved;
+
+  /// What is running — the command, the path, the tool call — above the output
+  /// it is producing.
+  final String preview;
   final _LiveToolControl control;
 
   @override
@@ -2909,6 +3076,19 @@ class _LiveToolCardState extends State<_LiveToolCard> {
               ],
             ),
           ),
+          if (widget.preview.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: SelectableText(
+                widget.preview,
+                style: TextStyle(
+                  fontFamily: MaidKitFonts.mono,
+                  fontSize: 12,
+                  height: 1.4,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
           if (content.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -3017,9 +3197,17 @@ class _AutoApprovedBadge extends StatelessWidget {
 }
 
 class _ToolCallCard extends StatelessWidget {
-  const _ToolCallCard({required this.text, this.autoApproved = false});
+  const _ToolCallCard({
+    required this.text,
+    this.autoApproved = false,
+    this.preview = '',
+  });
   final String text;
   final bool autoApproved;
+
+  /// What ran — the command, the path, the tool call — above the output it
+  /// produced.
+  final String preview;
 
   @override
   Widget build(BuildContext context) {
@@ -3066,6 +3254,18 @@ class _ToolCallCard extends StatelessWidget {
         ],
       ),
       children: [
+        if (preview.trim().isNotEmpty) ...[
+          SelectableText(
+            preview,
+            style: TextStyle(
+              fontFamily: MaidKitFonts.mono,
+              fontSize: 12,
+              height: 1.4,
+              color: scheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         SelectableText(
           content,
           style: TextStyle(

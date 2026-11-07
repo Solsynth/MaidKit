@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maid_kit/agent/agent_attachment.dart';
+import 'package:maid_kit/agent/agent_mention.dart';
 import 'package:maid_kit/agent/conversation_store.dart';
 
 void main() {
@@ -165,6 +166,34 @@ void main() {
     expect(attachments.last.byteSize, 4);
     // A message without attachments stays written without the key.
     expect(loaded.messages.last.attachments, isEmpty);
+  });
+
+  test('named resources ride a message through a save and a reload', () async {
+    final id = await store.saveConversation(
+      draft('With references', const [
+        AgentConversationMessage(
+          role: 'user',
+          text: 'restart nginx on @web',
+          mentions: [
+            AgentMention(
+              kind: AgentMentionKind.server,
+              id: 3,
+              name: 'web',
+              detail: 'root@10.0.0.3',
+            ),
+            AgentMention(kind: AgentMentionKind.skill, id: 8, name: 'nginx'),
+          ],
+        ),
+      ]),
+    );
+    final loaded = await store.conversation(id);
+    final mentions = loaded!.messages.single.mentions;
+    expect(mentions, hasLength(2));
+    expect(mentions.first.kind, AgentMentionKind.server);
+    expect(mentions.first.id, 3);
+    expect(mentions.first.detail, 'root@10.0.0.3');
+    expect(mentions.last.kind, AgentMentionKind.skill);
+    expect(mentions.last.name, 'nginx');
   });
 
   test('corrupt and foreign files are ignored', () async {
