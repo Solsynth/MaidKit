@@ -32,7 +32,7 @@ dependencies:
     sdk: flutter
 
   auto_route: ^11.2.0
-  archive: ^4.5.2
+  archive: ^4.6.0
   async: ^2.13.1
   cryptography: ^2.9.0
   dart_ping: ^10.0.1
@@ -40,10 +40,10 @@ dependencies:
   dio: ^5.11.1
   desktop_drop: ^0.8.4
   device_info_plus: ^13.3.0
-  desktop_webview_window: ^0.3.2
+  desktop_webview_window: ^0.4.2
   drift: ^2.35.3
   drift_flutter: ^0.3.1
-  file_picker: ^13.1.0
+  file_picker: ^13.3.2
   file_saver: ^0.7.0
   flutter_code_editor: ^0.3.5
   flutter_app_update:
@@ -51,15 +51,15 @@ dependencies:
       url: https://src.solsynth.dev/SoSYS/Socommon.git
       path: packages/flutter_app_update
       ref: 9fdfb1e385643ab9ccf30d638d15e4f87d56c20a
-  flutter_hooks: ^0.21.3+1
+  flutter_hooks: ^0.21.4
   solsynth_express:
     git:
       url: https://src.solsynth.dev/SoSYS/Socommon.git
       path: packages/solsynth_express
       ref: 9fdfb1e385643ab9ccf30d638d15e4f87d56c20a
   flutter_secure_storage: ^11.2.0
-  flutter_web_auth_2: ^5.1.0
-  hooks_riverpod: ^3.4.3
+  flutter_web_auth_2: ^6.0.0-alpha.9
+  hooks_riverpod: ^3.5.0
   highlight: ^0.7.0
   intl: ^0.20.3
   island_ui_foundation:
@@ -100,21 +100,21 @@ dependencies:
   package_info_plus: ^10.2.2
   path: ^1.9.1
   path_provider: ^2.1.6
-  process_run: ^1.4.1
+  process_run: ^1.4.2
   pointycastle: ^4.0.0
   toml: ^0.18.0
   dart_openai: ^8.0.0
   markdown_widget: ^2.3.2+8
-  material_ui: ^1.8.0
+  material_ui: ^1.10.0
   material_color_utilities: ^0.13.0
   skeletonizer: ^3.0.0
-  cupertino_ui: ^1.1.4
+  cupertino_ui: ^1.1.6
   firebase_core: ^5.1.0
   firebase_messaging: ^17.0.1
-  flutter_local_notifications: ^22.3.2
+  flutter_local_notifications: ^23.0.0
   firebase_analytics: ^13.0.1
   xterm3: ^6.3.7
-  crypto: ^3.0.7
+  crypto: ^3.0.8
 dev_dependencies:
   auto_route_generator: ^10.6.0
   build_runner: ^2.16.1
