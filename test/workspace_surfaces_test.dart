@@ -11,7 +11,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:island_ui_foundation/island_ui_foundation.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
@@ -117,7 +116,11 @@ void main() {
     'the dashboard surfaces button opens a status sheet that stops a forward',
     (tester) async {
       final manager = _RecordingConnectionManager();
-      await pumpWorkspace(tester, connectionManager: manager);
+      await pumpWorkspace(
+        tester,
+        connectionManager: manager,
+        servers: [_server],
+      );
 
       await tester.tap(find.text('activePortForwards'.plural(1)));
       await tester.pumpAndSettle();
@@ -134,24 +137,28 @@ void main() {
     },
   );
 
-  testWidgets('a wide pane keeps the port-forward button above the catalog', (
+  testWidgets(
+    'the port-forward chip sits below the cards in the catalog scroll view, '
+    'so a forward starting or stopping cannot move them',
+    (tester) async {
+      await pumpWorkspace(tester, servers: [_server]);
+
+      final chip = find.text('activePortForwards'.plural(1));
+      expect(chip, findsOneWidget);
+      expect(
+        find.ancestor(of: chip, matching: find.byType(CustomScrollView)),
+        findsOneWidget,
+      );
+      expect(
+        tester.getTopLeft(chip).dy,
+        greaterThan(tester.getTopLeft(find.text('Build host')).dy),
+      );
+    },
+  );
+
+  testWidgets('a pane too narrow for the action bar still reaches the sheet', (
     tester,
   ) async {
-    await pumpWorkspace(tester, servers: [_server]);
-
-    expect(
-      find.ancestor(
-        of: find.text('activePortForwards'.plural(1)),
-        matching: find.byType(CustomScrollView),
-      ),
-      findsNothing,
-    );
-  });
-
-  testWidgets('a narrow pane moves the port-forward button into the footer', (
-    tester,
-  ) async {
-    // A pane this narrow has no room for the fixed strip above the catalog.
     await pumpWorkspace(
       tester,
       servers: [_server],
@@ -160,16 +167,6 @@ void main() {
 
     final chip = find.text('activePortForwards'.plural(1));
     expect(chip, findsOneWidget);
-    // It renders inside the catalog's own scroll view, below the card it
-    // forwards for, and still hands its tap to the status sheet.
-    expect(
-      find.ancestor(of: chip, matching: find.byType(CustomScrollView)),
-      findsOneWidget,
-    );
-    expect(
-      tester.getTopLeft(chip).dy,
-      greaterThan(tester.getTopLeft(find.text('Build host')).dy),
-    );
 
     await tester.tap(chip);
     await tester.pumpAndSettle();
@@ -178,9 +175,12 @@ void main() {
     expect(find.text('test-server'), findsOneWidget);
   });
 
-  testWidgets('managed port forwards show locked in the sheet', (tester) async {
+  testWidgets('managed forwards are plumbing and never reach the dashboard', (
+    tester,
+  ) async {
     await pumpWorkspace(
       tester,
+      servers: [_server],
       forwards: const [
         ActivePortForward(
           id: 'm1',
@@ -195,12 +195,10 @@ void main() {
       ],
     );
 
-    await tester.tap(find.text('activePortForwards'.plural(1)));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(SheetScaffold), findsOneWidget);
-    expect(find.byIcon(Symbols.lock), findsOneWidget);
-    expect(find.byTooltip('portForwardingStop'.tr()), findsNothing);
+    // The statistics collector and the daemon terminal open and close one of
+    // these per connection; a chip that followed them made the dashboard
+    // flicker on every daemon read.
+    expect(find.text('activePortForwards'.plural(1)), findsNothing);
   });
 }
 

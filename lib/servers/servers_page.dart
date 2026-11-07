@@ -23,7 +23,6 @@ import 'credential_generator.dart';
 import 'maidcafe_service.dart';
 import 'ssh_key_generator_dialog.dart';
 import 'port_forward_sheet.dart';
-import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
 import 'dashboard_actions_bar.dart';
 import 'dashboard_runtimes_section.dart';
@@ -38,11 +37,6 @@ import 'tailscale_settings_section.dart';
 import 'tailscale_ssh_socket.dart';
 import 'terminal_tabs_provider.dart';
 import 'workspace_snapshot.dart';
-
-/// Pane width below which the dashboard counts as narrow: the port-forward
-/// chip leaves the fixed strip above the catalog for the bottom action bar,
-/// where it costs the cards no height. The workspace's own narrow breakpoint.
-const _portForwardFooterBreakpoint = 768.0;
 
 class ServerDashboardTab extends ConsumerWidget {
   const ServerDashboardTab({super.key});
@@ -271,45 +265,26 @@ class _ServersCatalog extends StatelessWidget {
     // The page paper is inherited from the pane's panel, so the dashboard's
     // cards sit on the same sheet as every other tab's content.
     return MaidKitAppScaffold(
-      // The pane owns the narrow decision: the strip above the catalog and the
-      // catalog's own footer must agree on where the port-forward chip lives.
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final narrow = constraints.maxWidth < _portForwardFooterBreakpoint;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _WorkspaceSurfacesRow(narrow: narrow),
-              Expanded(
-                child: servers.when(
-                  data: (items) => items.isEmpty
-                      ? _EmptyServers(onAdd: onAdd)
-                      : _ServerGrid(
-                          narrow: narrow,
-                          servers: items,
-                          sessions: sessions,
-                          onConnect: onConnect,
-                          onReconnectAll: onReconnectAll,
-                          onEdit: onEdit,
-                          onDelete: onDelete,
-                          onReorder: onReorder,
-                          onOpenDetail: onOpenDetail,
-                          onOpenTerminal: onOpenTerminal,
-                          onOpenFiles: onOpenFiles,
-                          onRefresh: onRefresh,
-                        ),
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (error, _) => Center(
-                    child: Text(
-                      'serversLoadError'.tr(args: [error.toString()]),
-                    ),
-                  ),
-                ),
+      body: servers.when(
+        data: (items) => items.isEmpty
+            ? _EmptyServers(onAdd: onAdd)
+            : _ServerGrid(
+                servers: items,
+                sessions: sessions,
+                onConnect: onConnect,
+                onReconnectAll: onReconnectAll,
+                onEdit: onEdit,
+                onDelete: onDelete,
+                onReorder: onReorder,
+                onOpenDetail: onOpenDetail,
+                onOpenTerminal: onOpenTerminal,
+                onOpenFiles: onOpenFiles,
+                onRefresh: onRefresh,
               ),
-            ],
-          );
-        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => Center(
+          child: Text('serversLoadError'.tr(args: [error.toString()])),
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'servers-create-fab',
@@ -323,7 +298,6 @@ class _ServersCatalog extends StatelessWidget {
 
 class _ServerGrid extends ConsumerStatefulWidget {
   const _ServerGrid({
-    required this.narrow,
     required this.servers,
     required this.sessions,
     required this.onConnect,
@@ -337,9 +311,6 @@ class _ServerGrid extends ConsumerStatefulWidget {
     required this.onRefresh,
   });
 
-  /// Whether the pane is narrow enough for the port-forward chip to live in
-  /// this widget's footer instead of the strip above the catalog.
-  final bool narrow;
   final List<Server> servers;
   final List<SshSessionInfo> sessions;
   final ValueChanged<Server> onConnect;
@@ -743,36 +714,27 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
                 ),
               ),
             ],
-            SliverToBoxAdapter(child: _dashboardActions(context)),
+            SliverToBoxAdapter(child: _dashboardFooter(context)),
           ],
         ),
       ),
     );
   }
 
-  Widget _dashboardActions(BuildContext context) {
-    // A narrow pane keeps the port-forward chip down here with the other
-    // dashboard controls; above the catalog it would cost the cards height.
-    final activeForwards = ref.watch(dashboardPortForwardsProvider);
-    final forwards = widget.narrow
-        ? activeForwards
-        : const <ActivePortForward>[];
+  /// The dashboard's footer: everything that can come and go — the live
+  /// port-forward and deploy chips, the arrange/search controls.
+  ///
+  /// It sits *below* the catalog inside the same scroll view rather than in a
+  /// fixed strip above it. A forward that starts or stops must not move the
+  /// server cards: below them, a chip's arrival only extends the scroll extent,
+  /// while above them it shifted every card on each toggle.
+  Widget _dashboardFooter(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (forwards.isNotEmpty) ...[
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () => showPortForwardSheet(context, forwards),
-                icon: const Icon(Symbols.swap_horiz, size: 18),
-                label: Text('activePortForwards'.plural(forwards.length)),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
+          const _WorkspaceSurfacesRow(),
           DashboardActionsBar(
             isArranging: _isArranging,
             canArrange: widget.servers.length > 1,
@@ -804,19 +766,14 @@ class _ServerGridState extends ConsumerState<_ServerGrid> {
 /// forwards and deploy sessions nobody is looking at. Both hide themselves
 /// when there is nothing to show.
 ///
-/// On a narrow pane ([narrow]) the port-forward chip is not here: it belongs to
-/// the dashboard's bottom action bar, which cannot afford it above the cards.
+/// They live in the catalog's footer, below the cards, never in a strip above
+/// them: a chip that comes and goes must not shift the cards it sits next to.
 class _WorkspaceSurfacesRow extends ConsumerWidget {
-  const _WorkspaceSurfacesRow({required this.narrow});
-
-  /// Whether the pane is narrow enough to have given the port-forward chip to
-  /// the catalog's footer.
-  final bool narrow;
+  const _WorkspaceSurfacesRow();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final activeForwards = ref.watch(dashboardPortForwardsProvider);
-    final forwards = narrow ? const <ActivePortForward>[] : activeForwards;
+    final forwards = ref.watch(dashboardPortForwardsProvider);
     final hiddenDeploys = ref
         .watch(deploySessionsProvider)
         .where((session) => !session.modalVisible)
@@ -826,7 +783,7 @@ class _WorkspaceSurfacesRow extends ConsumerWidget {
     }
     final running = hiddenDeploys.any((session) => session.isRunning);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Wrap(
         spacing: 8,
         runSpacing: 8,

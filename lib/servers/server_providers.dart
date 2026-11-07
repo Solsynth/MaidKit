@@ -1549,11 +1549,20 @@ Stream<List<ActivePortForward>> _watchPortForwards(
 
 /// The forwards the dashboard surfaces, empty in a browser: the web build has
 /// no SSH transport, so no port can be forwarded there.
+///
+/// Only forwards the user started are here. A `maidCafe`-owned forward is
+/// plumbing: the statistics collector and the daemon terminal open one per
+/// read and close it when the read ends, so surfacing them made the
+/// dashboard's chip appear and disappear on every stats retry and push the
+/// cards up and down with it. They are still listed, locked, in the
+/// port-forwarding tab and status sheet.
 final dashboardPortForwardsProvider = Provider<List<ActivePortForward>>(
   (ref) => kIsWeb
       ? const <ActivePortForward>[]
-      : ref.watch(portForwardsProvider).asData?.value ??
-            const <ActivePortForward>[],
+      : (ref.watch(portForwardsProvider).asData?.value ??
+                const <ActivePortForward>[])
+            .where((forward) => !forward.isManaged)
+            .toList(growable: false),
 );
 
 /// Saved port-forwarding presets for one server, oldest first.
