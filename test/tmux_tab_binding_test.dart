@@ -18,13 +18,25 @@ import 'package:maid_kit/servers/tmux_terminal.dart';
 /// A tmux control transport that answers every command the way tmux does for a
 /// fresh session with one window, so the client never waits on the test.
 class _Control {
-  _Control() {
+  _Control({this.initialLayout = _onePane, this.supportsNewLayouts = true}) {
     client = TmuxControlClient(
       output: _output.stream,
       write: _onWrite,
       onClosed: (_) {},
     );
+    // Every real attach opens with this greeting, and the client holds its
+    // commands until it arrives. Sending it here keeps the fake paced like the
+    // transport it stands in for.
+    scheduleMicrotask(() => feed('\x1bP1000p%begin 1 312 0\n%end 1 312 0\n'));
   }
+
+  /// Whether this build knows `refresh-client -f new-layouts`. A tmux that does
+  /// not answers with `%error` and keeps reporting format 1 layouts.
+  final bool supportsNewLayouts;
+
+  /// What `#{window_layout}` reports when the client attaches, standing in for
+  /// a session that already has panes and is not about to emit an event.
+  final String initialLayout;
 
   final _output = StreamController<Uint8List>();
   final writes = <String>[];
@@ -43,18 +55,38 @@ class _Control {
     final command = utf8.decode(bytes).trimRight();
     writes.add(command);
     _block++;
+    final refusedFlag =
+        !supportsNewLayouts && command.startsWith('refresh-client -f');
     final lines = switch (command) {
-      // The session has one window, window 0, active, named bash.
-      _ when command.startsWith('list-windows') => '@1\t0\tbash\t1',
+      // The session has one window, window 0, active, named bash. The fields
+      // are joined with the separator the command actually asked for: tmux does
+      // not expand `\t` escapes in a format, so a literal backslash-t comes
+      // back as those two characters and the client must not split on it.
+      _ when command.startsWith('list-windows') => [
+        '@1',
+        '0',
+        'bash',
+        '1',
+      ].join(_separatorIn(command)),
       _ when command.startsWith('list-panes') => '',
+      // The attach-time layout pull, which is the only way an idle session's
+      // panes ever reach the workspace.
+      _ when command.startsWith('display-message') => initialLayout,
       _ => '',
     };
     // Answer on a microtask: the command is registered after this write.
     scheduleMicrotask(() {
+      final kind = refusedFlag ? 'error' : 'end';
       feed(
-        '%begin 1 $_block 0\n${lines.isEmpty ? '' : '$lines\n'}%end 1 $_block 0\n',
+        '%begin 1 $_block 0\n${lines.isEmpty ? '' : '$lines\n'}%$kind 1 $_block 0\n',
       );
     });
+  }
+
+  /// The field separator [command]'s format string really carries.
+  String _separatorIn(String command) {
+    if (command.contains(r'\t')) return r'\t';
+    return '\t';
   }
 
   Future<void> close() async {
@@ -238,6 +270,119 @@ void main() {
     expect(binding().windows.single.name, 'bash');
   });
 
+  test('attaching to an idle session pulls its layout', () async {
+    // No `%layout-change` is ever fed: tmux only emits one from events, so an
+    // untouched session reports nothing after the attach. The pull is what has
+    // to fill the tab, otherwise it stays the empty placeholder it opened as.
+    await mount();
+    final tab = container.read(terminalTabsProvider).selectedTab!;
+    expect(tab.panes, hasLength(1));
+    expect(control.written, contains('display-message'));
+    expect(control.written, contains('#{window_layout}'));
+    expect(binding().paneIds, ['%0']);
+  });
+
+  test('the window list is asked for with real tabs', () async {
+    // tmux does not expand `\t` in a format, so an escaped separator arrives as
+    // a backslash and a t. Splitting on that yields one field, the active
+    // window stays unknown, and no layout is ever pulled — an empty tab on
+    // every tmux version. The fake echoes whichever separator it was sent, so
+    // this only passes when the command carries a literal tab.
+    await mount();
+    final listCommand = control.writes.firstWhere(
+      (command) => command.startsWith('list-windows'),
+    );
+    expect(listCommand, contains('\t'));
+    expect(listCommand, isNot(contains(r'\t')));
+    expect(binding().windowId, '@1');
+    expect(binding().paneIds, ['%0']);
+  });
+
+  test(
+    'a session that reports no layout fails instead of staying empty',
+    () async {
+      // The caller falls back to a plain terminal when this throws. Leaving an
+      // empty pane behind would hide the failure entirely, which is what made
+      // the escaped-separator bug invisible.
+      addTearDown(control.close);
+      container.dispose();
+      control = _Control(initialLayout: '');
+      container = ProviderContainer(
+        overrides: [
+          terminalSessionAdapterFactoryProvider.overrideWithValue(factory),
+          tmuxSettingsProvider.overrideWithValue(InMemoryTmuxSettings()),
+        ],
+      );
+      addTearDown(container.dispose);
+      await expectLater(
+        container
+            .read(terminalTabsProvider.notifier)
+            .openTmux(
+              _server(),
+              sessionName: 'maidkit-build',
+              control: control.client,
+              transport: TerminalTransport.tmux,
+              closeTransport: control.close,
+            ),
+        throwsA(isA<TmuxControlException>()),
+      );
+      // Only the workspace's dashboard floor is left: the tmux tab was rolled
+      // back rather than left on screen as an empty pane.
+      final tabs = container.read(terminalTabsProvider).tabs;
+      expect(tabs, hasLength(1));
+      expect(tabs.single.tabs.single, isA<DashboardTab>());
+    },
+  );
+
+  test('two panes on an idle session mount from the pulled layout', () async {
+    addTearDown(control.close);
+    container.dispose();
+    control = _Control(initialLayout: _twoPanes);
+    container = ProviderContainer(
+      overrides: [
+        terminalSessionAdapterFactoryProvider.overrideWithValue(factory),
+        tmuxSettingsProvider.overrideWithValue(InMemoryTmuxSettings()),
+      ],
+    );
+    addTearDown(container.dispose);
+    await mount();
+    expect(
+      container.read(terminalTabsProvider).selectedTab!.panes,
+      hasLength(2),
+    );
+  });
+
+  test('a tmux without new-layouts still mounts its panes', () async {
+    // Older tmux does not know the flag, answers `%error`, and reports the
+    // legacy format 1 layout from both the pull and the event. The tab has to
+    // mirror it rather than staying empty.
+    addTearDown(control.close);
+    container.dispose();
+    control = _Control(
+      initialLayout:
+          '5525,80x24,0,0{5x24,0,0,0,4x24,6,0,13,'
+          '9x24,11,0,11,19x24,21,0,9,39x24,41,0,6}',
+      supportsNewLayouts: false,
+    );
+    container = ProviderContainer(
+      overrides: [
+        terminalSessionAdapterFactoryProvider.overrideWithValue(factory),
+        tmuxSettingsProvider.overrideWithValue(InMemoryTmuxSettings()),
+      ],
+    );
+    addTearDown(container.dispose);
+    await mount();
+    expect(
+      container.read(terminalTabsProvider).selectedTab!.panes,
+      hasLength(5),
+    );
+    expect(binding().paneIds, ['%0', '%13', '%11', '%9', '%6']);
+    // A later event in the same legacy format re-tiles the same way.
+    control.layout('bb11,80x24,0,0[40x12,0,0,3,39x11,0,13,4]');
+    await pumpEventQueue();
+    expect(binding().paneIds, ['%3', '%4']);
+  });
+
   test('%output reaches only its own pane emulator', () async {
     await mount(layout: _twoPanes);
     control.feed('%output %1 hello\n');
@@ -330,6 +475,35 @@ void main() {
     expect(control.written, contains('kill-session -t maidkit-build'));
   });
 
+  test(
+    'a dropped channel keeps the tab, its panes, and its scrollback',
+    () async {
+      // tmux never said the session ended: the channel under the client went away
+      // mid-task. The work is still running on the host, so closing the tab
+      // would claim it was over and throw away a session the user can still
+      // attach to.
+      await mount(layout: _onePane);
+      final tabId = container.read(terminalTabsProvider).selectedTab!.id;
+      final paneIds = container
+          .read(terminalTabsProvider)
+          .selectedTab!
+          .layout
+          .paneIds;
+      await control.close();
+      await pumpEventQueue();
+      final tab = container.read(terminalTabsProvider).tabById(tabId);
+      expect(tab, isNotNull, reason: 'the tab stays where it was');
+      expect(tab!.layout.paneIds, paneIds);
+      expect(
+        container
+            .read(terminalTabsProvider.notifier)
+            .tmuxForTab(tabId)!
+            .transportLost,
+        isTrue,
+      );
+    },
+  );
+
   test('a tmux exit drops the tab without a close guard', () async {
     await mount(layout: _onePane);
     final before = container.read(terminalTabsProvider).tabs.length;
@@ -344,6 +518,27 @@ void main() {
       isTrue,
       reason: 'only the tmux tab goes away',
     );
+  });
+
+  test('a tmux exit drops its transport instead of leaking it', () async {
+    // When tmux ends the session itself there is nothing left to detach, but
+    // the channel the client rode is still open. Leaving it to whoever closes
+    // the tab would hold a shell on the host for as long as the app runs.
+    await mount(layout: _onePane);
+    expect(control.closed, isFalse);
+    control.feed('%exit session destroyed\n');
+    await pumpEventQueue();
+    expect(control.closed, isTrue);
+  });
+
+  test('closing a tab closes the transport exactly once', () async {
+    // Detach and kill end the session differently but share one connection;
+    // the second path must not try to close a transport already dropped.
+    await mount(layout: _onePane);
+    final tabId = container.read(terminalTabsProvider).selectedTab!.id;
+    await container.read(terminalTabsProvider.notifier).closeTab(tabId);
+    await pumpEventQueue();
+    expect(control.closed, isTrue);
   });
 
   test('a tmux tab is found by its id and names its transport', () async {

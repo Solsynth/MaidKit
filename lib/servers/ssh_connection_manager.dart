@@ -5003,6 +5003,12 @@ uname -r
     for (final terminalId in _terminals.keys.toList()) {
       await closeTerminal(terminalId);
     }
+    // A tmux client is its own shell on its own client, so the terminal loop
+    // above never reaches it. Closing the manager has to take these too, or a
+    // tmux client keeps a shell open on the host after the app is done with it.
+    for (final sessionId in _tmuxSessions.keys.toList()) {
+      await _closeTmuxSession(sessionId);
+    }
     for (final serverId in _sessions.keys.toList()) {
       await disconnect(serverId);
     }

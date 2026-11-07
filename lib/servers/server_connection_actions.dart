@@ -410,8 +410,30 @@ String defaultTmuxSessionName(Server server) {
   return body.isEmpty ? 'maidkit-${server.id}' : 'maidkit-$body';
 }
 
+/// Whether a tmux terminal on [server] should attach through its MaidCafe
+/// daemon rather than over SSH.
+///
+/// The server's own transport decides, exactly as its plain terminal does:
+/// only a daemon server, a build with no raw sockets, or a caller that already
+/// picked the daemon ([preferDaemon]) goes that way. Merely *having* a stored
+/// daemon endpoint is not a reason: an SSH server keeps one so a browser can
+/// still reach it, and dialing it from a native client would aim at the
+/// loopback port its SSH forward owns, not at the daemon.
+bool shouldOpenTmuxViaDaemon(
+  Server server, {
+  required bool preferDaemon,
+  bool browserBuild = kIsWeb,
+}) =>
+    preferDaemon ||
+    browserBuild ||
+    server.connectionType == ServerConnectionType.maidcafe.name;
+
 /// Opens [server]'s terminal as a tmux client, returning false when the host
 /// cannot serve one.
+///
+/// Which transport carries the client is [shouldOpenTmuxViaDaemon]'s answer.
+/// [preferDaemon] and [relay] let a caller that has already chosen the daemon
+/// route (the context menu's *Open via MaidCafe* entries) say so.
 ///
 /// The caller falls back to a plain terminal on false: a host without tmux, or
 /// a control-mode handshake tmux refuses, must never cost the user their
@@ -424,19 +446,26 @@ Future<bool> openTmuxTerminal(
   String? sessionName,
   String? initialDirectory,
   VoidCallback? onBeforePrompt,
+  bool preferDaemon = false,
+  bool? relay,
+  String? relayDaemonId,
 }) async {
   if (server.connectionType == ServerConnectionType.serial.name) return false;
   final name = sessionName ?? defaultTmuxSessionName(server);
   try {
-    final repository = ref.read(serverRepositoryProvider);
-    final target = await repository.maidCafeTerminalTargetFor(server);
-    final bool viaDaemon =
-        server.connectionType == ServerConnectionType.maidcafe.name ||
-        target != null;
+    final viaDaemon = shouldOpenTmuxViaDaemon(
+      server,
+      preferDaemon: preferDaemon,
+    );
     if (viaDaemon) {
-      final resolution = target == null
-          ? await resolveMaidCafeTerminal(ref, server)
-          : (target: target, stop: null);
+      // Resolving through [resolveMaidCafeTerminal] is what opens the SSH
+      // forward a loopback endpoint needs; the target alone is a dead port.
+      final resolution = await resolveMaidCafeTerminal(
+        ref,
+        server,
+        relay: relay,
+        relayDaemonId: relayDaemonId,
+      );
       final resolved = resolution.target;
       if (resolved == null) return false;
       final control = await ref
@@ -469,6 +498,18 @@ Future<bool> openTmuxTerminal(
     );
     if (!context.mounted) return false;
     final manager = ref.read(connectionManagerProvider);
+    // A tmux client rides the server's SSH session, so it needs one. Opening it
+    // here is the same work the plain path would do next; skipping it would
+    // silently drop tmux for every server that is not connected yet.
+    if (manager.clientFor(server.id) == null) {
+      await _connectSingleServer(
+        context,
+        ref,
+        server,
+        onHostKeyPrompt: onBeforePrompt,
+      );
+      if (!context.mounted) return false;
+    }
     final tmuxPath =
         manager.tmuxPaths.cached(server.id) ??
         await manager.withClient(server.id, (client) => probeTmuxPath(client));
@@ -501,9 +542,12 @@ Future<bool> openTmuxTerminal(
         );
     return true;
   } on TmuxControlException catch (error) {
+    // A tmux attempt that fails does not lose the terminal: the caller opens a
+    // plain one next. Say so, and say why, instead of reporting a failure the
+    // user will not actually experience.
     if (context.mounted) {
       showStyledSnackBar(
-        message: error.message,
+        message: 'sessionsTmuxFallback'.tr(args: [error.message]),
         title: 'serverCannotOpenTerminal'.tr(),
         icon: Symbols.terminal,
         accentColor: Theme.of(context).colorScheme.error,
@@ -825,9 +869,23 @@ Future<bool> openMaidCafeTerminalSession(
   }
   if (!context.mounted) return false;
   // A tmux terminal on the daemon carries the session name in the handshake, so
-  // it survives the socket. A refusal falls through to today's plain session.
+  // it survives the socket. This entry has already chosen the daemon, so the
+  // decision is only which of its two routes to dial. A refusal falls through
+  // to today's plain session.
   if (ref.read(tmuxEnabledProvider)) {
-    if (await openTmuxTerminal(context, ref, server, paneId: paneId)) {
+    final relayIdentity = route == MaidCafeTerminalRoute.relay
+        ? await maidCafeRelayIdentity(ref, server)
+        : null;
+    if (!context.mounted) return false;
+    if (await openTmuxTerminal(
+      context,
+      ref,
+      server,
+      paneId: paneId,
+      preferDaemon: true,
+      relay: route == null ? null : relay,
+      relayDaemonId: relayIdentity?.daemonId,
+    )) {
       return true;
     }
     if (!context.mounted) return false;

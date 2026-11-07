@@ -805,7 +805,21 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         .firstOrNull;
     if (existing != null) {
       select(existing.key);
-      await releaseTmuxTransport(control, closeTransport);
+      // A tab whose channel dropped is still the same session with the same
+      // panes and scrollback, so the fresh client reattaches it rather than
+      // being thrown away: throwing it away would leave the user looking at a
+      // detached terminal that can never come back.
+      final previous = existing.value;
+      if (previous.transportLost) {
+        await previous.reattach(
+          control: control,
+          onEventStream: control.events,
+          closeTransport: closeTransport,
+          tabs: this,
+        );
+      } else {
+        await releaseTmuxTransport(control, closeTransport);
+      }
       return;
     }
     final binding = TmuxTabBinding(
@@ -841,7 +855,23 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       select(tab.id);
     }
     binding.listen(() => this);
-    await binding.initialize();
+    // A session that yields no pane leaves nothing to mirror, so the tab it
+    // opened is rolled back and the failure reported. The caller then falls
+    // back to a plain terminal: an empty pane with no explanation is never the
+    // outcome the user picked.
+    try {
+      await binding.initialize(this);
+      if (binding.projected == null) {
+        throw const TmuxControlException(
+          'tmux did not report a layout for this session',
+        );
+      }
+    } catch (_) {
+      _tmuxTabs.remove(tab.id);
+      if (ref.mounted) _removeTab(tab.id);
+      await binding.dispose();
+      rethrow;
+    }
   }
 
   /// Opens (or reattaches) [sessionName] on [server] without a UI context.
@@ -988,6 +1018,31 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         ? 'sessionsTmuxExited'.tr()
         : '${'sessionsTmuxExited'.tr()}: $reason';
     showStyledSnackBar(message: text, icon: Symbols.terminal);
+  }
+
+  /// Keeps a tmux tab whose channel dropped, and tells the panes about it.
+  ///
+  /// The session is still on the host with every process in it, so the tab
+  /// stays exactly where it is. Closing it here would claim the work ended and
+  /// would abandon a running task the user can still attach to.
+  void markTmuxTransportLost(TmuxTabBinding binding) {
+    if (!ref.mounted) return;
+    final tabId = binding.tabId;
+    if (tabId == null) return;
+    binding.markTransportLost();
+    final tab = state.tabById(tabId);
+    if (tab == null) return;
+    for (final content in tab.tabs.toList()) {
+      if (content is! TerminalTab || content.tmux != binding) continue;
+      content.terminal.replayHistory(
+        '\r\n${'sessionsTmuxTransportLost'.tr(args: [binding.sessionName])}\r\n',
+      );
+    }
+    showStyledSnackBar(
+      message: 'sessionsTmuxTransportLost'.tr(args: [binding.sessionName]),
+      title: 'sessionsTmuxStillRunning'.tr(),
+      icon: Symbols.link_off,
+    );
   }
 
   /// Drops a tmux transport a caller no longer needs: a second open of a

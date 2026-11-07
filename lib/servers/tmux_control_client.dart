@@ -130,19 +130,33 @@ class TmuxSessionChangedEvent extends TmuxEvent {
   int get hashCode => name.hashCode;
 }
 
-/// The client is gone: the transport closed, `detach-client` succeeded, or the
-/// session ended. [reason] is tmux's own `%exit` text when it reported one.
+/// The control client stopped.
+///
+/// Two very different things look the same on the wire: tmux reporting `%exit`
+/// means the session really ended, while the stream simply closing means the
+/// channel under it went away - a dropped SSH connection, a sleeping laptop.
+/// The session itself keeps running in the second case, so callers must not
+/// treat them alike. [transportLost] tells them apart.
 class TmuxExitEvent extends TmuxEvent {
-  const TmuxExitEvent([this.reason]);
+  const TmuxExitEvent([this.reason, this.transportLost = false]);
 
+  /// tmux's own `%exit` text, when it reported one.
   final String? reason;
+
+  /// Whether the channel closed without tmux saying the session ended.
+  final bool transportLost;
+
+  /// Whether tmux itself ended the session.
+  bool get sessionEnded => !transportLost;
 
   @override
   bool operator ==(Object other) =>
-      other is TmuxExitEvent && other.reason == reason;
+      other is TmuxExitEvent &&
+      other.reason == reason &&
+      other.transportLost == transportLost;
 
   @override
-  int get hashCode => reason.hashCode;
+  int get hashCode => Object.hash(reason, transportLost);
 }
 
 class TmuxSessionWindowChangedEvent extends TmuxEvent {
@@ -229,16 +243,37 @@ class TmuxControlClient {
   var _closed = false;
   String? _lastSessionReason;
 
+  /// Whether tmux has greeted us as a control-mode client.
+  ///
+  /// Commands typed into the pty before that point are silently discarded:
+  /// tmux initializes its own tty and flushes whatever the input queue holds
+  /// while doing so. An attach therefore has to wait for the greeting, or its
+  /// first commands - the window list and the layout pull - vanish and the
+  /// session projects no pane at all.
+  bool _ready = false;
+
+  /// Lines waiting for [_ready], in send order.
+  final _deferred = <String>[];
+
+  /// Whether the block being read is the attach's own greeting rather than an
+  /// answer to a command.
+  var _attachBlock = false;
+
   /// Every parsed event. Broadcast, so subscribers may attach and detach while
   /// a session runs.
   Stream<TmuxEvent> get events => _controller.stream;
 
   bool get isClosed => _closed;
 
+  /// Whether commands can reach tmux yet. Exposed for tests and diagnostics.
+  bool get isReady => _ready;
+
   /// Runs one control command, completing with its block.
   ///
   /// Control mode answers commands in order, so a completion is matched to the
-  /// command that is oldest in flight.
+  /// command that is oldest in flight. A command issued before tmux greets the
+  /// client is held back rather than written into a queue tmux is about to
+  /// flush.
   Future<TmuxBlockEvent> command(String line) {
     if (line.contains('\n')) {
       throw ArgumentError.value(
@@ -292,23 +327,41 @@ class TmuxControlClient {
 
   void _send(String line) {
     if (_closed) return;
-    _writeSink(utf8.encode('$line\n'));
+    // Anything written before the greeting lands in a tty tmux is still
+    // initializing, and it flushes that queue: the line would be accepted here
+    // and lost there. Every line goes through the queue, which [markReady]
+    // drains in one write.
+    _deferred.add(line);
+    if (_ready) _flushDeferred();
+  }
+
+  /// Writes every held line to tmux, in the order it was queued.
+  void _flushDeferred() {
+    if (_closed || _deferred.isEmpty) return;
+    _writeSink(utf8.encode('${_deferred.join('\n')}\n'));
+    _deferred.clear();
   }
 
   void _closeWith(String? reason) {
     if (_closed) return;
     _closed = true;
+    // A `%exit` is tmux saying the session is over. Anything else that stops
+    // the stream - a dropped connection, a closed channel - leaves the session
+    // running on the host, which is the opposite answer.
+    final sessionEnded = _lastSessionReason != null;
+    _deferred.clear();
     final pending = [..._queue];
     _queue.clear();
     _blockLines.clear();
     _openBlock = 0;
+    _attachBlock = false;
     for (final number in pending) {
       final completer = _completions.remove(number);
       if (completer == null || completer.isCompleted) continue;
       completer.completeError(StateError('tmux control client closed'));
     }
     if (!_controller.isClosed) {
-      _controller.add(TmuxExitEvent(reason));
+      _controller.add(TmuxExitEvent(reason, !sessionEnded));
     }
     _closedHandler(reason ?? '');
   }
@@ -341,23 +394,51 @@ class TmuxControlClient {
 
   void _handleLine(String line) {
     var text = line;
+    // Control-mode output opens with a DCS intro, and it does NOT necessarily
+    // start a line: a login banner and a shell-integration OSC sequence can
+    // precede it on the same line, which is exactly what an SSH shell on a
+    // real host does. The intro is therefore looked for anywhere in the line,
+    // and everything before it is discarded rather than treated as control
+    // data.
     if (!_framingStripped) {
-      if (text.isEmpty) return;
-      if (text.startsWith(_dcsIntro)) {
-        text = text.substring(_dcsIntro.length);
+      final intro = text.indexOf(_dcsIntro);
+      if (intro >= 0) {
+        text = text.substring(intro + _dcsIntro.length);
+        _framingStripped = true;
+        // tmux answers the attach itself with a block of its own, before any
+        // command exists, so that block must not be matched to a command.
+        _attachBlock = true;
+        // Reaching control mode is what makes commands deliverable: anything
+        // written earlier goes into a tty tmux is still initializing.
+        _markReady();
+      } else if (text.startsWith('%')) {
+        // A transport that hands over raw control output without the intro.
+        _framingStripped = true;
+        _markReady();
+      } else {
+        // Shell preamble, or a partial intro that still needs more bytes.
+        return;
       }
-      _framingStripped = true;
-      if (text.isEmpty) return;
     }
     if (!text.startsWith('%')) {
-      if (_openBlock == 0) return;
+      if (_openBlock == 0 || _attachBlock) return;
       _blockLines.add(text);
       return;
     }
+    // Any control line proves tmux is in control mode, whatever the framing
+    // looked like, so held commands are released here too.
+    _markReady();
     final event = _parseNotification(text);
     if (event == null) return;
     if (event is TmuxExitEvent) _lastSessionReason = event.reason;
     if (!_controller.isClosed) _controller.add(event);
+  }
+
+  /// Records that tmux is answering, and writes out everything held for it.
+  void _markReady() {
+    if (_ready || _closed) return;
+    _ready = true;
+    _flushDeferred();
   }
 
   TmuxEvent? _parseNotification(String line) {
@@ -430,12 +511,20 @@ class TmuxControlClient {
     if (fields.length < 2) return null;
     final reported = int.tryParse(fields[1]);
     if (reported == null) return null;
-    final number = _completions.containsKey(reported) || _queue.isEmpty
-        ? reported
-        : _queue.first;
+    final wasAttach = _attachBlock;
+    _attachBlock = false;
     final lines = List<String>.unmodifiable(_blockLines);
     _blockLines.clear();
     _openBlock = 0;
+    if (wasAttach) {
+      // The attach is complete: tmux is accepting commands from now on, so the
+      // ones held back can finally be written.
+      _markReady();
+      return null;
+    }
+    final number = _completions.containsKey(reported) || _queue.isEmpty
+        ? reported
+        : _queue.first;
     final completer = _completions.remove(number);
     _queue.remove(number);
     if (completer != null && !completer.isCompleted) {

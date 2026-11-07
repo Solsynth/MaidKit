@@ -85,13 +85,19 @@ class TmuxTabBinding {
     required this.serverId,
     required this.serverName,
     required this.transport,
-    required this.onEventStream,
+    required Stream<TmuxEvent> onEventStream,
   }) : _closeTransportHandle = closeTransport,
-       _adapterFactoryRef = adapterFactory;
+       _adapterFactoryRef = adapterFactory,
+       _eventStream = onEventStream;
 
   /// The tmux session this tab mirrors.
   final String sessionName;
-  final TmuxControlClient control;
+
+  /// The client currently riding this session.
+  ///
+  /// Replaced when a dropped channel is reattached: the panes and their
+  /// scrollback stay, and only the connection to tmux changes.
+  TmuxControlClient control;
   final int serverId;
   final String serverName;
 
@@ -100,10 +106,19 @@ class TmuxTabBinding {
 
   /// Where the transport's event stream comes from; the notifier subscribes it
   /// to [applyEvent] once the tab exists.
-  final Stream<TmuxEvent> onEventStream;
+  Stream<TmuxEvent> get onEventStream => _eventStream;
+  Stream<TmuxEvent> _eventStream;
 
-  final Future<void> Function() _closeTransportHandle;
+  Future<void> Function() _closeTransportHandle;
   final TerminalSessionAdapterFactory _adapterFactoryRef;
+
+  /// Whether the connection this session rides has been dropped already.
+  ///
+  /// A session ends through one of several paths - detaching, killing, or tmux
+  /// exiting on its own - and every one of them closes the same transport. The
+  /// first close wins so the second cannot tear down a connection that is
+  /// already gone.
+  var _transportClosed = false;
 
   /// The workspace tab this session is mounted as, once it is known.
   String? tabId;
@@ -130,6 +145,20 @@ class TmuxTabBinding {
   StreamSubscription<TmuxEvent>? _subscription;
   var _disposed = false;
 
+  /// Whether the channel dropped while the session kept running.
+  ///
+  /// The panes are detached, not dead: their emulators keep the scrollback, and
+  /// the session still holds whatever was running in them. Nothing may look up
+  /// a pane on tmux until a new client attaches.
+  var transportLost = false;
+
+  /// Records a dropped channel, leaving every pane in place.
+  void markTransportLost() {
+    transportLost = true;
+    _subscription?.cancel();
+    _subscription = null;
+  }
+
   /// Every mirrored pane's emulator, keyed by tmux pane id.
   Map<String, TerminalSessionAdapter> get adapters => {
     for (final entry in _panes.entries) entry.key: entry.value.adapter,
@@ -155,23 +184,67 @@ class TmuxTabBinding {
     control.resizeClient(columns, rows);
   }
 
-  /// Starts mirroring: enables the v2 JSON layout and learns the active window.
+  /// Starts mirroring: asks for the JSON layout, learns the active window and
+  /// projects that window's current layout.
   ///
-  /// `new-layouts` has to be set before tmux reports a layout, otherwise the
-  /// `%layout-change` payload is the legacy v1 string this client cannot read
-  /// structurally.
-  Future<void> initialize() async {
-    await control.command('refresh-client -f new-layouts');
+  /// The initial layout is *asked for* rather than awaited: tmux emits
+  /// `%layout-change` from events only (splitting, resizing, closing a pane),
+  /// so attaching to a session nobody has touched yet reports nothing and the
+  /// tab would stay empty forever.
+  ///
+  /// `new-layouts` is requested first so tmux reports the parseable v2 JSON
+  /// instead of the legacy format 1 string, but it is best-effort: only recent
+  /// tmux knows the flag, and an older build answers with `%error` while
+  /// continuing to emit format 1 from both the event and the request. Both
+  /// formats are accepted (see [tmuxLayoutToSessionLayout]), so a host that
+  /// refuses the flag still mirrors its panes rather than showing an empty tab.
+  ///
+  /// [tabs] is the workspace that owns the tab, so the initial projection
+  /// mounts the session's panes the same way a later event does.
+  Future<void> initialize(TerminalTabsNotifier tabs) async {
+    try {
+      await control.command('refresh-client -f new-layouts');
+    } catch (_) {
+      // An older tmux refuses the flag; format 1 is handled either way.
+    }
     await refreshWindows();
+    await refreshLayout(tabs);
+  }
+
+  /// Projects the active window's layout as tmux currently reports it.
+  ///
+  /// A window with no active pane yet reports an empty layout, which parses to
+  /// null and is ignored; the `%layout-change` that eventually arrives fills it.
+  Future<void> refreshLayout(TerminalTabsNotifier tabs) async {
+    if (_disposed) return;
+    final windowId = this.windowId;
+    if (windowId == null) return;
+    final TmuxBlockEvent block;
+    try {
+      block = await control.command(
+        "display-message -p -t $windowId '#{window_layout}'",
+      );
+    } catch (_) {
+      return;
+    }
+    final json = block.lines.isEmpty ? '' : block.lines.first.trim();
+    if (json.isEmpty) return;
+    projectLayout(json, windowId, tabs);
   }
 
   /// Re-reads the session's windows and follows the active one.
+  ///
+  /// The format string carries real tab characters, not `\t` escapes: tmux does
+  /// not expand `\t` inside a format, so a literal backslash-t arrives as its
+  /// own two characters. Splitting on that never yields four fields, the active
+  /// window stays unknown, and no layout is ever requested — an empty tab with
+  /// nothing to report.
   Future<void> refreshWindows() async {
     if (_disposed) return;
     final TmuxBlockEvent block;
     try {
       block = await control.command(
-        "list-windows -F '#{window_id}\\t#{window_index}\\t#{window_name}\\t#{window_active}'",
+        "list-windows -F '#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}'",
       );
     } catch (_) {
       return;
@@ -213,13 +286,7 @@ class TmuxTabBinding {
         _panes[event.paneId]?.write(event.bytes);
       case TmuxLayoutEvent():
         if (event.windowId != windowId) return;
-        final layout = tmuxLayoutToSessionLayout(
-          event.layout,
-          windowId: event.windowId,
-        );
-        if (layout == null) return;
-        projected = layout;
-        tabs.applyTmuxLayout(this, layout);
+        projectLayout(event.layout, event.windowId, tabs);
       case TmuxWindowPaneChangedEvent():
         if (event.windowId != windowId) return;
         focusedPaneId = event.paneId;
@@ -232,10 +299,32 @@ class TmuxTabBinding {
       case TmuxSessionChangedEvent():
         break;
       case TmuxExitEvent():
+        unawaited(closeTransport());
+        if (!event.sessionEnded) {
+          // The channel closed without tmux reporting an end: a dropped SSH
+          // connection, a sleeping laptop, a daemon socket dying. The session
+          // is still on the host with every process in it, so the tab stays
+          // and says so instead of disappearing as if the work were gone.
+          tabs.markTmuxTransportLost(this);
+          return;
+        }
         tabs.closeTmuxTab(this, reason: event.reason);
       case TmuxBlockEvent():
         break;
     }
+  }
+
+  /// Projects one v2 JSON layout onto the tab this binding owns.
+  ///
+  /// Both sources land here — the `%layout-change` event and the layout asked
+  /// for at attach — so an inline pull and a pushed event produce the same
+  /// result. The layout tree only updates when the parse succeeds, so a
+  /// malformed cell leaves the current tree alone.
+  void projectLayout(String json, String windowId, TerminalTabsNotifier tabs) {
+    final layout = tmuxLayoutToSessionLayout(json, windowId: windowId);
+    if (layout == null) return;
+    projected = layout;
+    tabs.applyTmuxLayout(this, layout);
   }
 
   /// The adapter for [paneId], building it on first use.
@@ -305,7 +394,7 @@ class TmuxTabBinding {
     } catch (_) {
       // The transport may already be gone; dropping it is the same outcome.
     }
-    await _closeTransportHandle();
+    await closeTransport();
   }
 
   /// Ends the tmux session on the host, every process in it.
@@ -315,6 +404,15 @@ class TmuxTabBinding {
     } catch (_) {
       // A session that already ended needs no kill.
     }
+    await closeTransport();
+  }
+
+  /// Drops the connection this session rides: the SSH channel or the daemon
+  /// socket. Idempotent, because a session ends through one of several paths
+  /// (detach, kill, or tmux exiting on its own) and the last one wins.
+  Future<void> closeTransport() async {
+    if (_transportClosed) return;
+    _transportClosed = true;
     await _closeTransportHandle();
   }
 
@@ -329,8 +427,36 @@ class TmuxTabBinding {
     });
   }
 
-  /// Releases every adapter and the event subscription. The transport is the
-  /// caller's to close, because detaching and killing end it differently.
+  /// Points this binding at a freshly attached client for the same session.
+  ///
+  /// The panes, their emulators and their scrollback are untouched: only the
+  /// connection to tmux changes, so a dropped channel costs no history. The new
+  /// stream is subscribed before the layout is pulled, or an event arriving
+  /// between the pull and the subscribe would be missed.
+  Future<void> reattach({
+    required TmuxControlClient control,
+    required Stream<TmuxEvent> onEventStream,
+    required Future<void> Function() closeTransport,
+    required TerminalTabsNotifier tabs,
+  }) async {
+    await _subscription?.cancel();
+    _subscription = null;
+    this.control = control;
+    _eventStream = onEventStream;
+    _closeTransportHandle = closeTransport;
+    _transportClosed = false;
+    transportLost = false;
+    listen(() => tabs);
+    await initialize(tabs);
+  }
+
+  /// Releases every adapter, the event subscription, and the transport.
+  ///
+  /// Closing here is the guarantee rather than the policy: detach and kill
+  /// choose what the host does and then close the same connection, and any
+  /// other way a binding is dropped - a failed attach rolled back, a workspace
+  /// torn down - must not leave a shell and a tmux client behind. The close is
+  /// idempotent, so a path that already ended the transport pays nothing.
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
@@ -341,6 +467,7 @@ class TmuxTabBinding {
     }
     _panes.clear();
     _contentIds.clear();
+    await closeTransport();
   }
 
   void _clearPanes() {

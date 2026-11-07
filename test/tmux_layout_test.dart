@@ -81,4 +81,49 @@ void main() {
   test('malformed json is rejected', () {
     expect(tmuxLayoutToSessionLayout('not json', windowId: '@7'), isNull);
   });
+
+  // The strings below are what a tmux without the `new-layouts` flag actually
+  // reports, for both `#{window_layout}` and `%layout-change`. They are format
+  // 1: a four-hex checksum, then nested cells.
+  test('a legacy one-pane window maps to its pane id', () {
+    expect(
+      tmuxLayoutToSessionLayout('b25d,80x24,0,0,0', windowId: '@8'),
+      const SessionLayoutLeaf('%0'),
+    );
+  });
+
+  test('a legacy row of panes becomes nested horizontal splits', () {
+    // id=%0 idx=0 w=5 | %13 w=4 | %11 w=9 | %9 w=19 | %6 w=39
+    final layout =
+        tmuxLayoutToSessionLayout(
+              '5525,80x24,0,0{5x24,0,0,0,4x24,6,0,13,9x24,11,0,11,'
+              '19x24,21,0,9,39x24,41,0,6}',
+              windowId: '@9',
+            )!
+            as SessionLayoutSplit;
+    expect(layout.axis, SessionSplitAxis.horizontal);
+    expect(layout.paneIds, ['%0', '%13', '%11', '%9', '%6']);
+    // The five cells are 5+4+9+19+39 = 76 wide, so the first side is 5/76 of
+    // the row. That is below the minimum a draggable gutter allows, so it
+    // clamps — the same bound every other layout respects.
+    expect(layout.ratio, closeTo(0.15, 0.001));
+    final second = layout.second as SessionLayoutSplit;
+    expect(second.axis, SessionSplitAxis.horizontal);
+  });
+
+  test('a legacy column becomes a vertical split', () {
+    final layout =
+        tmuxLayoutToSessionLayout(
+              'bb11,80x24,0,0[40x12,0,0,3,39x11,0,13,4]',
+              windowId: '@10',
+            )!
+            as SessionLayoutSplit;
+    expect(layout.axis, SessionSplitAxis.vertical);
+    expect(layout.paneIds, ['%3', '%4']);
+  });
+
+  test('a legacy layout with a bad checksum prefix is rejected', () {
+    expect(tmuxLayoutToSessionLayout('nope', windowId: '@11'), isNull);
+    expect(tmuxLayoutToSessionLayout('b25d,', windowId: '@11'), isNull);
+  });
 }

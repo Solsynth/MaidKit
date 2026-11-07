@@ -29,6 +29,15 @@ class _Control {
       write: _answer,
       onClosed: (_) {},
     );
+    // A real attach greets the client before accepting commands; without it
+    // the client holds everything back.
+    scheduleMicrotask(
+      () => _output.add(
+        Uint8List.fromList(
+          utf8.encode('\x1bP1000p%begin 1 312 0\n%end 1 312 0\n'),
+        ),
+      ),
+    );
   }
 
   final _output = StreamController<Uint8List>();
@@ -40,7 +49,16 @@ class _Control {
   void _answer(List<int> bytes) {
     final command = utf8.decode(bytes).trimRight();
     _block++;
-    final lines = command.startsWith('list-windows') ? '@1\t0\tbash\t1' : '';
+    // The session's one window and its single pane. The separator is a real
+    // tab, which is what the client asks for and what tmux returns.
+    final lines = switch (command) {
+      _ when command.startsWith('list-windows') => '@1\t0\tbash\t1',
+      // `openTmux` fails when the attach yields no pane, and the test needs the
+      // session to mount, so the layout pull has to answer.
+      _ when command.startsWith('display-message') =>
+        '{"V":2,"L":{"t":"p","w":80,"h":24,"x":0,"y":0,"I":"%0"}}',
+      _ => '',
+    };
     scheduleMicrotask(() {
       feed(
         '%begin 1 $_block 0\n${lines.isEmpty ? '' : '$lines\n'}%end 1 $_block 0\n',

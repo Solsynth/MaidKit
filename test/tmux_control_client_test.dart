@@ -29,6 +29,14 @@ class _Harness {
 
   String get written => writes.map((w) => utf8.decode(w)).join();
 
+  /// The greeting a real attach produces: tmux opens a block of its own before
+  /// the client asks anything, with the DCS intro glued to its front.
+  ///
+  /// The number is deliberately not 1: tmux uses its own counter for this
+  /// block, which is exactly what used to be misread as the first command's
+  /// answer.
+  void greeting() => feed('\x1bP1000p%begin 1 312 0\n%end 1 312 0\n');
+
   Future<void> end() => _output.close();
 
   Future<void> dispose() async {
@@ -42,21 +50,83 @@ void main() {
 
   test('a block answers the pending command', () async {
     final harness = _Harness();
+    // Before the greeting, tmux is not accepting commands, so the line waits.
     final pending = harness.client.command('list-sessions');
-    harness.feed('\x1bP1000p%begin 1 1 0\nhello\n%end 1 1 0\n');
+    expect(harness.written, isEmpty);
+    harness.greeting();
+    await pumpEventQueue();
+    expect(harness.written, 'list-sessions\n');
+    harness.feed('%begin 1 314 0\nhello\n%end 1 314 0\n');
     final block = await pending;
-    expect(block.number, 1);
+    // The answer is matched to the pending command even though tmux numbered
+    // the attach block first: that block is the attach's, not an answer.
+    expect(block.lines, ['hello']);
     expect(block.lines, ['hello']);
     expect(block.error, isFalse);
-    expect(harness.written, 'list-sessions\n');
     await harness.dispose();
   });
+
+  test('the attach block does not steal the first command\'s answer', () async {
+    // What a real attach looks like: tmux opens and closes a block of its own
+    // before any command exists, then answers the client's commands in order.
+    // Counting that first block shifted every completion by one, so the window
+    // list's answer landed on the layout pull and both were lost - an empty
+    // tab on every tmux version.
+    final harness = _Harness();
+    final windows = harness.client.command('list-windows');
+    final layout = harness.client.command('display-message');
+    harness.greeting();
+    harness.feed('%begin 1 314 0\n@0\t0\tzsh\t1\n%end 1 314 0\n');
+    harness.feed('%begin 1 315 0\nLAYOUT\n%end 1 315 0\n');
+    expect((await windows).lines, ['@0\t0\tzsh\t1']);
+    expect((await layout).lines, ['LAYOUT']);
+    await harness.dispose();
+  });
+
+  test('a login banner and OSC before the DCS intro are skipped', () async {
+    // What a real SSH shell produces: the host's motd, the echoed command, and
+    // a shell-integration OSC all precede the intro, and the intro does not
+    // start a line of its own. Treating that line as control data left the
+    // client waiting for a greeting it had already received, so nothing was
+    // ever sent and the tab stayed empty.
+    final harness = _Harness();
+    final windows = harness.client.command('list-windows');
+    expect(harness.written, isEmpty);
+    harness.feed('Welcome to Ubuntu 26.04.1 LTS\r\n');
+    harness.feed('\x1b]3008;start=abc;cwd=/home/user\x1b\\');
+    harness.feed('\x1bP1000p%begin 1 312 0\n%end 1 312 0\n');
+    await pumpEventQueue();
+    expect(harness.written, 'list-windows\n');
+    harness.feed('%begin 1 313 0\n@0\t0\tzsh\t1\n%end 1 313 0\n');
+    expect((await windows).lines, ['@0\t0\tzsh\t1']);
+    await harness.dispose();
+  });
+
+  test(
+    'a command waits for the intro instead of being written early',
+    () async {
+      // Everything sent before tmux reaches control mode can be flushed by the
+      // tty initialisation, so the client holds it rather than trusting the
+      // write. This is checked by asserting the sink saw nothing yet.
+      final harness = _Harness();
+      final pending = harness.client.command('list-windows');
+      await pumpEventQueue();
+      expect(harness.written, isEmpty);
+      harness.greeting();
+      await pumpEventQueue();
+      expect(harness.written, 'list-windows\n');
+      harness.feed('%begin 1 313 0\nok\n%end 1 313 0\n');
+      expect((await pending).lines, ['ok']);
+      await harness.dispose();
+    },
+  );
 
   test('the DCS framing is stripped once and at the end', () async {
     final harness = _Harness();
     final pending = harness.client.command('list-sessions');
-    harness.feed('\x1bP1000p%begin 1 2 0\n');
-    harness.feed('line\n%end 1 2 0\n\x1b');
+    harness.greeting();
+    harness.feed('%begin 1 315 0\n');
+    harness.feed('line\n%end 1 315 0\n\x1b');
     harness.feedBytes([0x5c]);
     final block = await pending;
     expect(block.lines, ['line']);
@@ -111,6 +181,8 @@ void main() {
 
   test('sendKeys hex-encodes and chunks the input', () async {
     final harness = _Harness();
+    harness.greeting();
+    await pumpEventQueue();
     harness.client.sendKeys('%0', [0x03]);
     expect(harness.written, 'send-keys -H -t %0 03\n');
     harness.writes.clear();
@@ -124,6 +196,8 @@ void main() {
 
   test('resizeClient reports the client size', () async {
     final harness = _Harness();
+    harness.greeting();
+    await pumpEventQueue();
     harness.client.resizeClient(120, 36);
     expect(harness.written, 'refresh-client -C 120x36\n');
     await harness.dispose();
@@ -133,6 +207,34 @@ void main() {
     final harness = _Harness();
     expect(() => harness.client.command('list\nsessions'), throwsArgumentError);
     await harness.dispose();
+  });
+
+  test('a stream that closes without %exit reports a lost transport', () async {
+    // A dropped SSH connection looks exactly like this: the channel closes and
+    // tmux never says the session ended. The session is still on the host, so
+    // the event must not claim it ended - that is what made a running task look
+    // finished and closed its tab.
+    final harness = _Harness();
+    harness.greeting();
+    await pumpEventQueue();
+    await harness.end();
+    await pumpEventQueue();
+    final exit = harness.events.whereType<TmuxExitEvent>().single;
+    expect(exit.transportLost, isTrue);
+    expect(exit.sessionEnded, isFalse);
+    await harness.eventsSubscription.cancel();
+  });
+
+  test('%exit before the stream closes reports an ended session', () async {
+    final harness = _Harness();
+    harness.greeting();
+    harness.feed('%exit session destroyed\n');
+    await pumpEventQueue();
+    await harness.end();
+    await pumpEventQueue();
+    final exits = harness.events.whereType<TmuxExitEvent>();
+    expect(exits.any((event) => event.sessionEnded), isTrue);
+    await harness.eventsSubscription.cancel();
   });
 
   test('closing the stream fails a pending command', () async {

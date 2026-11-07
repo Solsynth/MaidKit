@@ -170,8 +170,16 @@ and the daemon path runs `tmux -CC` inside the PTY it already allocates.
 `servers/tmux_terminal.dart` owns `TmuxTabBinding`: one binding per session,
 the adapter for every mirrored pane, and the tmux commands behind splitting,
 resizing, closing a pane and detaching. `servers/tmux_layout.dart` maps a tmux
-v2 JSON layout onto the workspace's binary `SessionLayout` tree, folding an
-n-ary container into nested splits.
+layout onto the workspace's binary `SessionLayout` tree, folding an n-ary
+container into nested splits.
+
+Both layout serializations are parsed, because tmux picks between them by
+version rather than by request: format 2 (`{"V":2,"L":…}`) appears only after
+the client sets `refresh-client -f new-layouts`, and a tmux that predates that
+flag — Ubuntu and Debian still ship 3.3a — answers `%error` and keeps emitting
+format 1 (`5525,80x24,0,0{…}`, a checksum followed by nested cells). The flag
+is requested but never required, and a host that refuses it mirrors its panes
+instead of showing an empty tab.
 
 tmux is the authority. Splitting, dragging a gutter and closing a pane all
 become tmux commands whose `%layout-change` reply is what re-tiles the screen,
@@ -182,6 +190,24 @@ one workspace tab per session, `applyTmuxLayout` applies a projected tree, and
 app-wide switch; `detachOnCloseProvider` chooses between detaching and killing
 when a tab closes, and the workspace snapshot records a terminal's session name
 so a restored workspace reattaches to it.
+
+Attaching pulls the layout instead of waiting for it. tmux only emits
+`%layout-change` from events — a split, a resize, a closed pane — so a session
+nobody is typing into reports nothing after the handshake, and a tab that
+waited for the event would stay the empty placeholder it opened as. So
+`TmuxTabBinding.initialize` asks for `#{window_layout}` with one
+`display-message`, projects it, and then follows events normally. The answer is
+in whichever format that tmux reports — v2 JSON where the flag was honoured,
+format 1 where it was not — and both parse. `openTmux` rolls the tab back if
+that handshake throws, so a failed attach never leaves an empty pane behind.
+
+Which transport carries the client follows the server's own connection type,
+not whether it has a daemon endpoint: an SSH server opens tmux over SSH, and a
+stored loopback endpoint is dialed only when the caller actually chose the
+daemon (`shouldOpenTmuxViaDaemon`). Reaching for the endpoint instead would aim
+at the port only a native client's own SSH forward serves, and the socket is
+refused. The SSH path also connects the server first, because tmux rides that
+session and an unconnected server would otherwise lose tmux silently.
 
 When changing pages:
 
