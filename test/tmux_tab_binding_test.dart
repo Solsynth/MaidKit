@@ -38,6 +38,9 @@ class _Control {
   /// a session that already has panes and is not about to emit an event.
   final String initialLayout;
 
+  /// What `capture-pane` reports above the visible screen.
+  String scrollback = '';
+
   final _output = StreamController<Uint8List>();
   final writes = <String>[];
   late final TmuxControlClient client;
@@ -69,6 +72,8 @@ class _Control {
         '1',
       ].join(_separatorIn(command)),
       _ when command.startsWith('list-panes') => '',
+      // tmux's scrollback above the visible screen, replayed on attach.
+      _ when command.startsWith('capture-pane') => scrollback,
       // The attach-time layout pull, which is the only way an idle session's
       // panes ever reach the workspace.
       _ when command.startsWith('display-message') => initialLayout,
@@ -145,8 +150,10 @@ class _RecordingAdapter implements TerminalSessionAdapter {
   @override
   String? dumpHistory({int maxLines = 4000}) => null;
 
+  final replayed = <String>[];
+
   @override
-  void replayHistory(String text) {}
+  void replayHistory(String text) => replayed.add(text);
 
   @override
   SudoPromptReason? get sudoAutofillReady => null;
@@ -473,6 +480,42 @@ void main() {
         .closeTab(container.read(terminalTabsProvider).selectedId!);
     await pumpEventQueue();
     expect(control.written, contains('kill-session -t maidkit-build'));
+  });
+
+  test('a fresh attach replays the scrollback tmux still holds', () async {
+    // Attaching paints the current screen only, so a session that has been
+    // running for a while opens as if its earlier output never happened. The
+    // output above the screen is still in tmux's own history and is replayed
+    // before any live output arrives.
+    control.scrollback = 'earlier line one\nearlier line two';
+    await mount(layout: _onePane);
+    await pumpEventQueue();
+    expect(
+      factory.adapters.single.replayed.join(),
+      contains('earlier line one'),
+    );
+    expect(
+      control.written,
+      contains('capture-pane -p -e -t %0'),
+      reason: 'the history comes from tmux, not from a second render',
+    );
+    expect(
+      control.written,
+      isNot(contains('-E -1')),
+      reason: 'the screen is captured too, or a reattach loses the prompt',
+    );
+  });
+
+  test('a reattach does not replay the history twice', () async {
+    control.scrollback = 'only once';
+    await mount(layout: _onePane);
+    await pumpEventQueue();
+    control.layout(_onePane);
+    await pumpEventQueue();
+    expect(
+      factory.adapters.single.replayed.where((t) => t.contains('only once')),
+      hasLength(1),
+    );
   });
 
   test(

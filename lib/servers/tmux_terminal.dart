@@ -209,6 +209,50 @@ class TmuxTabBinding {
     }
     await refreshWindows();
     await refreshLayout(tabs);
+    // A freshly attached client is painted the current screen and nothing
+    // more, so a session that has been running for a while would open looking
+    // as if its earlier output never existed. tmux keeps that output in its own
+    // scrollback, so each pane is seeded from there once its layout is known.
+    await _seedPaneHistories();
+  }
+
+  /// How many scrollback lines one pane is seeded with on attach.
+  ///
+  /// tmux's own history limit is far larger, but a tab only has to open with
+  /// the recent past in place: replaying thousands of lines through the
+  /// emulator costs more than the context is worth, and the live screen follows
+  /// immediately.
+  static const tmuxHistorySeedLines = 500;
+
+  /// Fills every projected pane's buffer with what tmux has above and on the
+  /// screen, so a session opens where it actually left off.
+  ///
+  /// The visible screen is captured along with the scrollback: a fresh client
+  /// is not repainted by tmux when it attaches to an idle session - only new
+  /// output draws - so screen-only history would leave the pane blank until
+  /// something printed. Capturing from the scrollback through the screen and
+  /// replaying it reproduces the terminal the user last saw, prompt included.
+  /// Panes that were already seeded keep their buffer, so a reattach costs no
+  /// history.
+  Future<void> _seedPaneHistories() async {
+    for (final paneId in projected?.paneIds ?? const <String>[]) {
+      if (_disposed) return;
+      final attachment = _panes[paneId];
+      if (attachment == null || attachment.seeded) continue;
+      final TmuxBlockEvent block;
+      try {
+        block = await control.command(
+          'capture-pane -p -e -t $paneId -S -$tmuxHistorySeedLines',
+        );
+      } catch (_) {
+        // An older tmux without `-e`, or a pane that closed meanwhile: the pane
+        // simply starts from its current screen.
+        continue;
+      }
+      attachment.seeded = true;
+      if (block.lines.isEmpty) continue;
+      attachment.adapter.replayHistory('${block.lines.join('\n')}\n');
+    }
   }
 
   /// Projects the active window's layout as tmux currently reports it.
@@ -510,6 +554,9 @@ class _TmuxPaneAttachment {
 
   final String paneId;
   final StreamController<Uint8List> _output;
+
+  /// Whether tmux's scrollback has already been replayed into this pane.
+  var seeded = false;
   late final TerminalSessionAdapter adapter;
   late final TerminalSessionBinding binding;
 
