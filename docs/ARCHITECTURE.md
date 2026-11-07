@@ -191,6 +191,27 @@ app-wide switch; `detachOnCloseProvider` chooses between detaching and killing
 when a tab closes, and the workspace snapshot records a terminal's session name
 so a restored workspace reattaches to it.
 
+A tmux tab restores by *reattaching*, never by replaying a saved layout. The
+session, its windows and its processes live on the host, so there is nothing to
+rebuild: `new-session -A -s <name>` reconnects to the session that is still
+running, and `initialize` then pulls its layout and seeds each pane's
+scrollback from tmux's own history. `detachOnClose` is what keeps that true
+across a close: the default detaches, so the session outlives the tab and the
+next open reattaches it.
+
+One attach per session, by two rules:
+
+* The snapshot names the session on *every* pane of a tmux tab, because each
+  pane is a real terminal. `resolveWorkspaceSnapshot` claims each
+  `(server, session)` once per tab and defers a single
+  `PendingTerminalRestore`; the other panes stay empty for the session's own
+  layout to fill in. A second attach would take the reservation over from the
+  first and leave the tab with two clients on one session.
+* When a caller reserved a pane (`openTmux(paneId: …)`), the tab owning that
+  pane *becomes* the tmux tab rather than a second tab opening beside it. That
+  is how a restored split tab keeps the file manager or editor it had next to
+  the terminal, with the session's panes mounting where they were.
+
 Attaching pulls the layout instead of waiting for it. tmux only emits
 `%layout-change` from events — a split, a resize, a closed pane — so a session
 nobody is typing into reports nothing after the handshake, and a tab that

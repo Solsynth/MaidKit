@@ -289,6 +289,70 @@ void main() {
     expect(binding().windows.single.name, 'bash');
   });
 
+  test('a restored split tab keeps its beside pane', () async {
+    // A restored workspace rebuilds a split tab with the terminal's pane empty
+    // and whatever sat beside it mounted, then reattaches the session into
+    // that pane. The session has to land in *that* tab: opening a second one
+    // would throw the reservation away and leave the beside pane alone.
+    final fileTab = FileManagementTab(
+      id: 'files-1',
+      serverId: _server().id,
+      serverName: _server().name,
+    );
+    final restored = WorkspaceTab(
+      id: 'restored-tab',
+      panes: {
+        'term-pane': const TabPane(id: 'term-pane'),
+        'files-pane': TabPane(id: 'files-pane', tab: fileTab),
+      },
+      layout: const SessionLayoutSplit(
+        id: 'restored-split',
+        axis: SessionSplitAxis.horizontal,
+        first: SessionLayoutLeaf('term-pane'),
+        second: SessionLayoutLeaf('files-pane'),
+      ),
+      focusedPaneId: 'files-pane',
+    );
+    container.read(terminalTabsProvider.notifier).state = TerminalTabsState(
+      tabs: [restored],
+      selectedTabId: 'restored-tab',
+    );
+
+    await container
+        .read(terminalTabsProvider.notifier)
+        .openTmux(
+          _server(),
+          sessionName: 'maidkit-build',
+          control: control.client,
+          transport: TerminalTransport.tmux,
+          closeTransport: control.close,
+          paneId: 'term-pane',
+        );
+    await pumpEventQueue();
+
+    final tabs = container.read(terminalTabsProvider).tabs;
+    expect(
+      tabs,
+      hasLength(1),
+      reason: 'the reservation is reused, not duplicated',
+    );
+    final tab = tabs.single;
+    expect(tab.panes['files-pane']?.tab, same(fileTab));
+    // Both tmux panes are mounted, and the file manager is still beside them.
+    // The session reports a single pane here, so the reserved one is filled by
+    // it and the placeholder never becomes a pane of its own.
+    expect(
+      tab.panes.values.map((pane) => pane.tab).whereType<TerminalTab>().length,
+      1,
+      reason: 'the session reattached into the pane the restore reserved',
+    );
+    expect(tab.panes.keys, containsAll(<String>['files-pane']));
+    expect(
+      container.read(terminalTabsProvider.notifier).tmuxForTab(tab.id),
+      isNotNull,
+    );
+  });
+
   test('attaching to an idle session pulls its layout', () async {
     // No `%layout-change` is ever fed: tmux only emits one from events, so an
     // untouched session reports nothing after the attach. The pull is what has

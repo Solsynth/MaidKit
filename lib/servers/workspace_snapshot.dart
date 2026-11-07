@@ -485,6 +485,8 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
 
   for (final spec in snapshot.tabs) {
     final panes = <String, TabPane>{};
+    // Sessions already reattaching for this tab; see the terminal branch.
+    final claimedTmuxSessions = <(int, String)>{};
     for (final paneId in spec.layout.paneIds) {
       final content = spec.panes[paneId];
       if (content == null) {
@@ -500,6 +502,17 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
         // The pane stays empty until the session connects; the terminal is
         // opened into it below, in snapshot order.
         panes[paneId] = TabPane(id: paneId);
+        final tmuxSession = content.tmuxSession;
+        // A tmux session is one client, not one per pane: every pane of the
+        // tab mirrors the same session, and attaching it twice would make the
+        // second client take the reservation over from the first. Only the
+        // first pane asks; the session's own layout fills the rest in.
+        final claim = tmuxSession == null
+            ? null
+            : (content.serverId, tmuxSession);
+        if (claim != null && !claimedTmuxSessions.add(claim)) {
+          continue;
+        }
         pendingTerminals.add(
           PendingTerminalRestore(
             paneId: paneId,
@@ -509,7 +522,7 @@ ResolvedWorkspace resolveWorkspaceSnapshot(
             connectionType: serverConnectionTypeFromName(
               server!.connectionType,
             ),
-            tmuxSession: content.tmuxSession,
+            tmuxSession: tmuxSession,
           ),
         );
         continue;

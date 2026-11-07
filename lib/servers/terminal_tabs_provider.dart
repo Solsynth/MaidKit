@@ -832,28 +832,33 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       transport: transport,
       onEventStream: control.events,
     );
-    final placeholderId = _uuid.v4();
-    final tab = WorkspaceTab(
-      id: placeholderId,
-      panes: {placeholderId: TabPane(id: placeholderId)},
-      layout: SessionLayoutLeaf(placeholderId),
-      focusedPaneId: placeholderId,
-    );
-    _tmuxTabs[tab.id] = binding..tabId = tab.id;
-    state = TerminalTabsState(
-      tabs: [...state.tabs, tab],
-      selectedTabId: paneId == null ? tab.id : state.selectedTabId,
-    );
-    if (paneId != null) {
-      // The caller reserved a pane for this session. A tmux tab owns its own
-      // panes, so the reserved one is dropped instead of staying empty beside
-      // the session it was meant to show.
-      final owner = _tabOwningPane(paneId);
-      if (owner != null && owner.panes[paneId]?.isEmpty == true) {
-        _removePane(owner, paneId);
-      }
-      select(tab.id);
+    // The caller may have reserved a pane for this session - a restored
+    // workspace rebuilds a split tab that way, with the terminal's pane and
+    // whatever sits beside it already in place. That tab *is* where the
+    // session belongs, so it becomes the tmux tab instead of a second tab
+    // being opened beside it and the reservation being thrown away.
+    final anchor = paneId == null ? null : _tabOwningPane(paneId);
+    final WorkspaceTab tab;
+    if (anchor != null && anchor.panes[paneId]?.isEmpty == true) {
+      // The tab the session was reserved in becomes its tab; nothing is added.
+      tab = anchor;
+    } else {
+      final placeholderId = _uuid.v4();
+      tab = WorkspaceTab(
+        id: placeholderId,
+        panes: {placeholderId: TabPane(id: placeholderId)},
+        layout: SessionLayoutLeaf(placeholderId),
+        focusedPaneId: placeholderId,
+      );
     }
+    _tmuxTabs[tab.id] = binding..tabId = tab.id;
+    final reserved = tab.id == anchor?.id;
+    state = TerminalTabsState(
+      tabs: reserved ? [...state.tabs] : [...state.tabs, tab],
+      // A session mounted into a restored tab leaves the workspace's selected
+      // tab alone: the restore picked one, and attaching is not a switch.
+      selectedTabId: reserved ? state.selectedTabId : tab.id,
+    );
     binding.listen(() => this);
     // A session that yields no pane leaves nothing to mirror, so the tab it
     // opened is rolled back and the failure reported. The caller then falls

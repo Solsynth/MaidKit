@@ -415,6 +415,89 @@ void main() {
       expect(detail.initialComposeProject, 'stack');
     });
 
+    test('a split tmux tab reattaches its session once, not once per pane', () {
+      // Every pane of a tmux tab mirrors one session. Attaching it twice makes
+      // the second client take over from the first, so the resolve step has to
+      // ask once and let the session's own layout fill the other panes.
+      const snapshot = WorkspaceSnapshot(
+        tabs: [
+          WorkspaceTabSnapshot(
+            id: 'tmux-tab',
+            layout: SessionLayoutSplit(
+              id: 'split-1',
+              axis: SessionSplitAxis.horizontal,
+              first: SessionLayoutLeaf('p1'),
+              second: SessionLayoutLeaf('p2'),
+            ),
+            focusedPaneId: 'p1',
+            panes: {
+              'p1': WorkspaceContentSnapshot(
+                id: 'tmux-1',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 1,
+                tmuxSession: 'maidkit-build',
+              ),
+              'p2': WorkspaceContentSnapshot(
+                id: 'tmux-2',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 1,
+                tmuxSession: 'maidkit-build',
+              ),
+            },
+          ),
+        ],
+        selectedTabId: 'tmux-tab',
+      );
+
+      final resolved = resolveWorkspaceSnapshot(snapshot, {1: _server()});
+      expect(resolved.pendingTerminals, hasLength(1));
+      expect(resolved.pendingTerminals.single.tmuxSession, 'maidkit-build');
+      // Both panes still exist, so the session's panes land where they were.
+      expect(
+        resolved.initialTabs.single.layout.paneIds,
+        containsAll(<String>['p1', 'p2']),
+      );
+    });
+
+    test('two different sessions are both reattached', () {
+      const snapshot = WorkspaceSnapshot(
+        tabs: [
+          WorkspaceTabSnapshot(
+            id: 'tab-a',
+            layout: SessionLayoutLeaf('a1'),
+            focusedPaneId: 'a1',
+            panes: {
+              'a1': WorkspaceContentSnapshot(
+                id: 't-a',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 1,
+                tmuxSession: 'session-a',
+              ),
+            },
+          ),
+          WorkspaceTabSnapshot(
+            id: 'tab-b',
+            layout: SessionLayoutLeaf('b1'),
+            focusedPaneId: 'b1',
+            panes: {
+              'b1': WorkspaceContentSnapshot(
+                id: 't-b',
+                kind: WorkspaceTabKind.terminal,
+                serverId: 1,
+                tmuxSession: 'session-b',
+              ),
+            },
+          ),
+        ],
+      );
+
+      final resolved = resolveWorkspaceSnapshot(snapshot, {1: _server()});
+      expect(resolved.pendingTerminals.map((pending) => pending.tmuxSession), [
+        'session-a',
+        'session-b',
+      ]);
+    });
+
     test('marks serial servers and drops content of deleted servers', () {
       const snapshot = WorkspaceSnapshot(
         tabs: [
