@@ -14,7 +14,6 @@ import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/shared/presentation/search_field_suffix.dart';
 import 'port_forward_sheet.dart';
 import 'port_forwarding_models.dart';
-import 'server_connection_actions.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'servers_page.dart';
@@ -152,8 +151,6 @@ class _TerminalCommandPalette extends StatefulWidget {
     required this.english,
     required this.extraActions,
     required this.onDismiss,
-    required this.onOpen,
-    required this.onOpenFiles,
     required this.onNewTab,
     required this.onSplitRight,
     required this.onSplitDown,
@@ -176,8 +173,6 @@ class _TerminalCommandPalette extends StatefulWidget {
   /// deploy log — on top of the shared destinations and server rows.
   final List<WorkspaceAction> extraActions;
   final VoidCallback onDismiss;
-  final Future<void> Function(Server server) onOpen;
-  final Future<void> Function()? onOpenFiles;
 
   /// Opens an empty workspace tab, the launcher pane included.
   final VoidCallback onNewTab;
@@ -289,24 +284,14 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
         shortcut: newTabShortcutLabel(),
       ),
       if (widget.ref.read(terminalTabsProvider).tabs.length > 1) ...[
-        _action(
-          'sessionsNextTab',
-          Symbols.keyboard_tab,
-          () {
-            widget.onDismiss();
-            widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(1);
-          },
-          shortcut: tabCycleShortcutLabel(),
-        ),
-        _action(
-          'sessionsPreviousTab',
-          Symbols.keyboard_tab,
-          () {
-            widget.onDismiss();
-            widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(-1);
-          },
-          shortcut: tabCycleShortcutLabel(backwards: true),
-        ),
+        _action('sessionsNextTab', Symbols.keyboard_tab, () {
+          widget.onDismiss();
+          widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(1);
+        }, shortcut: tabCycleShortcutLabel()),
+        _action('sessionsPreviousTab', Symbols.keyboard_tab, () {
+          widget.onDismiss();
+          widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(-1);
+        }, shortcut: tabCycleShortcutLabel(backwards: true)),
       ],
       if (widget.onSplitRight case final split?)
         _action(
@@ -349,15 +334,10 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             includeDetails: false,
             done: widget.onDismiss,
           ),
-      _action(
-        'serversAddServer',
-        Symbols.add,
-        () async {
-          widget.onDismiss();
-          await showAddServerSheet(widget.hostContext, widget.ref);
-        },
-        group: WorkspaceActionGroup.workspace,
-      ),
+      _action('serversAddServer', Symbols.add, () async {
+        widget.onDismiss();
+        await showAddServerSheet(widget.hostContext, widget.ref);
+      }, group: WorkspaceActionGroup.workspace),
       ...workspaceDestinationActions(
         ref: widget.ref,
         english: english,
@@ -429,9 +409,11 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
         icon: Symbols.inventory,
         group: WorkspaceActionGroup.servers,
         aliases: [
-          ?englishText(widget.english, 'sessionsTmuxBackground', args: [
-            server.name,
-          ]),
+          ?englishText(
+            widget.english,
+            'sessionsTmuxBackground',
+            args: [server.name],
+          ),
         ],
         run: () async {
           widget.onDismiss();
@@ -485,118 +467,117 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             },
           ),
         },
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  MaidKitSpace.md,
-                  MaidKitSpace.md,
-                  MaidKitSpace.sm,
-                  MaidKitSpace.sm,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Symbols.search,
-                      size: 20,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: MaidKitSpace.sm),
-                    Expanded(
-                      child: TextField(
-                        key: const ValueKey('command-palette-search'),
-                        controller: _searchController,
-                        focusNode: _searchFocusNode,
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          if (actions.isEmpty) return;
-                          actions[_highlighted.clamp(0, actions.length - 1)]
-                              .run
-                              ?.call();
-                        },
-                        // Enter runs the highlighted entry; ↑↓ move it. Both
-                        // are answered on this field's node, because the text
-                        // editing bindings below would keep the arrows.
-                        onChanged: _setQuery,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          // The sheet's own top band is the field: no pill,
-                          // fill or outline of its own inside it.
-                          filled: false,
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          hintText: 'sessionsSearchActions'.tr(),
-                          hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                    // One fixed slot: the clear button and the Escape keycap
-                    // are the same size, so the band does not jump when the
-                    // first character is typed.
-                    SearchFieldSuffix(
-                      visible: _query.isNotEmpty,
-                      keyHint: 'Esc',
-                      onClear: () {
-                        _searchController.clear();
-                        _setQuery('');
-                        _searchFocusNode.requestFocus();
-                      },
-                    ),
-                  ],
-                ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                MaidKitSpace.md,
+                MaidKitSpace.md,
+                MaidKitSpace.sm,
+                MaidKitSpace.sm,
               ),
-              Divider(height: 1, color: scheme.outlineVariant),
-              Flexible(
-                child: rows.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: MaidKitSpace.xl,
-                          vertical: MaidKitSpace.xxl,
-                        ),
-                        child: Text(
-                          'sessionsNoMatchingActions'.tr(),
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      )
-                    : ListView(
-                        padding: const EdgeInsets.fromLTRB(
-                          MaidKitSpace.sm,
-                          MaidKitSpace.sm,
-                          MaidKitSpace.sm,
-                          0,
-                        ),
-                        shrinkWrap: true,
-                        children: rows,
-                      ),
-              ),
-              Divider(height: 1, color: scheme.outlineVariant),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: MaidKitSpace.lg,
-                  vertical: MaidKitSpace.sm,
-                ),
-                child: Text(
-                  actions.isEmpty
-                      ? 'sessionsPaletteNoResultsHint'.tr()
-                      : 'sessionsPaletteFooterHint'.tr(),
-                  style: theme.textTheme.labelSmall?.copyWith(
+              child: Row(
+                children: [
+                  Icon(
+                    Symbols.search,
+                    size: 20,
                     color: scheme.onSurfaceVariant,
                   ),
+                  const SizedBox(width: MaidKitSpace.sm),
+                  Expanded(
+                    child: TextField(
+                      key: const ValueKey('command-palette-search'),
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) {
+                        if (actions.isEmpty) return;
+                        actions[_highlighted.clamp(0, actions.length - 1)].run
+                            ?.call();
+                      },
+                      // Enter runs the highlighted entry; ↑↓ move it. Both
+                      // are answered on this field's node, because the text
+                      // editing bindings below would keep the arrows.
+                      onChanged: _setQuery,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        // The sheet's own top band is the field: no pill,
+                        // fill or outline of its own inside it.
+                        filled: false,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                        hintText: 'sessionsSearchActions'.tr(),
+                        hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ),
+                  // One fixed slot: the clear button and the Escape keycap
+                  // are the same size, so the band does not jump when the
+                  // first character is typed.
+                  SearchFieldSuffix(
+                    visible: _query.isNotEmpty,
+                    keyHint: 'Esc',
+                    onClear: () {
+                      _searchController.clear();
+                      _setQuery('');
+                      _searchFocusNode.requestFocus();
+                    },
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: scheme.outlineVariant),
+            Flexible(
+              child: rows.isEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: MaidKitSpace.xl,
+                        vertical: MaidKitSpace.xxl,
+                      ),
+                      child: Text(
+                        'sessionsNoMatchingActions'.tr(),
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.fromLTRB(
+                        MaidKitSpace.sm,
+                        MaidKitSpace.sm,
+                        MaidKitSpace.sm,
+                        0,
+                      ),
+                      shrinkWrap: true,
+                      children: rows,
+                    ),
+            ),
+            Divider(height: 1, color: scheme.outlineVariant),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: MaidKitSpace.lg,
+                vertical: MaidKitSpace.sm,
+              ),
+              child: Text(
+                actions.isEmpty
+                    ? 'sessionsPaletteNoResultsHint'.tr()
+                    : 'sessionsPaletteFooterHint'.tr(),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
     );
   }
 }
@@ -764,4 +745,3 @@ List<WorkspaceAction> _paletteOnlyActions({
       ),
   ];
 }
-

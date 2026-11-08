@@ -39,7 +39,7 @@ Future<void> main(List<String> args) async {
   EasyLocalization.logger.enableBuildModes = [];
   // Searchable lists keep every entry's English name available in any locale,
   // so the English bundle is read before the first frame that could need it.
-  unawaited(EnglishLabels.load());
+  await EnglishLabels.load();
   // Firebase for MaidCafe cloud notifications and analytics (Android/iOS/
   // macOS only; firebase_core has no Linux/Windows/web support here). The
   // background handler must be registered before any message can be received

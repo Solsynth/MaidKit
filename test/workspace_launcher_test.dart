@@ -20,6 +20,7 @@ import 'package:maid_kit/servers/tabs_screen.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 import 'package:maid_kit/servers/terminal_tabs_provider.dart';
 import 'package:maid_kit/snippets/snippet_repository.dart';
+import 'package:maid_kit/shared/services/english_translations.dart';
 import 'package:maid_kit/theme.dart';
 
 class _RecordingConnectionManager extends SshConnectionManager {
@@ -40,7 +41,8 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
           return Directory.systemTemp.path;
         });
-    // Prime the singleton with real en-US translations so `.plural()` works.
+    // Prime the singleton with real en-US translations so `.plural()` works,
+    // and load the English bundle the surfaces search by name.
     final enMap =
         jsonDecode(File('assets/translations/en-US.json').readAsStringSync())
             as Map<String, dynamic>;
@@ -49,9 +51,24 @@ void main() {
       translations: ez_tr.Translations(enMap),
       ignorePluralRules: false,
     );
+    await EnglishLabels.load();
   });
 
-  Future<void> pumpWorkspace(WidgetTester tester) async {
+  Future<void> pumpWorkspace(
+    WidgetTester tester, {
+    Locale locale = const Locale('en', 'US'),
+  }) async {
+    // `.tr()` reads the singleton, which the app primes by loading the active
+    // locale's file; a zh test needs the same strings the app would show.
+    final file = locale == const Locale('zh', 'CN') ? 'zh-CN' : 'en-US';
+    ez.Localization.load(
+      locale,
+      translations: ez_tr.Translations(
+        jsonDecode(File('assets/translations/$file.json').readAsStringSync())
+            as Map<String, dynamic>,
+      ),
+      ignorePluralRules: false,
+    );
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -86,7 +103,7 @@ void main() {
           ],
           child: MaterialApp(
             theme: createMaidKitTheme(Brightness.light),
-            locale: const Locale('en', 'US'),
+            locale: locale,
             home: Overlay(
               key: overlayKey,
               initialEntries: [
@@ -249,5 +266,76 @@ void main() {
     final split = container.read(terminalTabsProvider).selectedTab!;
     expect(split.hasSplits, isTrue);
     expect(split.panes[split.focusedPaneId]!.isEmpty, isTrue);
+  });
+  testWidgets('the search band keeps its height when a clear button appears', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester);
+    await openPalette(tester);
+    final field = find.byKey(const ValueKey('command-palette-search'));
+    final before = tester.getSize(
+      find.ancestor(of: field, matching: find.byType(Padding)).first,
+    );
+
+    await tester.enterText(field, 'split');
+    await tester.pumpAndSettle();
+
+    // Typing swaps the Esc keycap for the clear button; the band must not grow.
+    expect(find.byTooltip('commonClearSearch'.tr()), findsOneWidget);
+    expect(
+      tester.getSize(
+        find.ancestor(of: field, matching: find.byType(Padding)).first,
+      ),
+      before,
+    );
+  });
+
+  testWidgets('arrow keys move the highlight and scroll it into view', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester);
+    await openPalette(tester);
+
+    final search = find.byKey(const ValueKey('command-palette-search'));
+    ScrollPosition position() => tester
+        .state<ScrollableState>(
+          find.descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          ),
+        )
+        .position;
+    expect(position().pixels, 0.0);
+
+    // Ten steps put the highlight past the bottom of the sheet, so the list
+    // has to follow it down; the field keeps the keyboard throughout.
+    for (var step = 0; step < 10; step++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+    }
+
+    expect(position().pixels, greaterThan(0));
+    // The field still owns the keyboard: the arrows are read there.
+    expect(search, findsOneWidget);
+    expect(tester.binding.focusManager.primaryFocus?.hasFocus, isTrue);
+  });
+
+  testWidgets('English names stay searchable in another locale', (
+    tester,
+  ) async {
+    await pumpWorkspace(tester, locale: const Locale('zh', 'CN'));
+    await openPalette(tester);
+    final search = find.byKey(const ValueKey('command-palette-search'));
+    final agent = find.widgetWithText(ListTile, 'tabAgent'.tr());
+
+    // The row reads in Chinese; the query is typed in English.
+    await tester.enterText(search, 'conversation');
+    await tester.pumpAndSettle();
+    expect(agent, findsOneWidget);
+    expect('tabAgent'.tr(), isNot('Agent'));
+
+    await tester.enterText(search, 'snippets');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(ListTile, 'tabSnippets'.tr()), findsOneWidget);
   });
 }

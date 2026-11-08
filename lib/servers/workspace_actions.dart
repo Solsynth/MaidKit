@@ -68,19 +68,6 @@ class WorkspaceAction {
     if (hint?.toLowerCase().contains(query) ?? false) return true;
     return aliases.any((alias) => alias.toLowerCase().contains(query));
   }
-
-  /// The same entry, filed under another section of the list.
-  WorkspaceAction inGroup(WorkspaceActionGroup group) {
-    return WorkspaceAction(
-      label: label,
-      icon: icon,
-      group: group,
-      run: run,
-      aliases: aliases,
-      hint: hint,
-      shortcut: shortcut,
-    );
-  }
 }
 
 /// The destinations every surface that opens workspace tabs offers.
@@ -128,8 +115,10 @@ List<WorkspaceAction> workspaceDestinationActions({
     destination(
       key: 'assetsCredentialsTitle',
       icon: Symbols.key,
-      open: () =>
-          notifier.openAssets(section: AssetsSection.credentials, paneId: paneId),
+      open: () => notifier.openAssets(
+        section: AssetsSection.credentials,
+        paneId: paneId,
+      ),
     ),
     destination(
       key: 'tabSnippets',
@@ -244,7 +233,8 @@ List<WorkspaceAction> serverActions({
         group: group,
         hint: address,
         aliases: [server.name, ?englishText(english, 'serversDetailedView')],
-        run: () => run(() => notifier.openServerDetails(server, paneId: paneId)),
+        run: () =>
+            run(() => notifier.openServerDetails(server, paneId: paneId)),
       ),
   ];
 }

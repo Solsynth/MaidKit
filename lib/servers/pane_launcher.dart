@@ -89,11 +89,11 @@ class _PaneLauncherState extends ConsumerState<PaneLauncher> {
     super.dispose();
   }
 
-  /// Built fresh on every use: the rows' closures read the current pane and
-  /// server list, and both can change under a mounted launcher.
+  /// The rows the last frame built, which the key handler indexes.
   List<WorkspaceAction> _entries = const [];
 
   void _highlight(int index) {
+    if (!mounted) return;
     setState(() => _highlighted = index);
     revealWorkspaceRow(_rowKeys[index]);
   }

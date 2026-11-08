@@ -244,17 +244,15 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
                 ),
               ),
               if (_lastRefreshed != null && showTimestamp) ...[
-                Flexible(
-                  child: Text(
-                    'maidCafeLastRefreshed'.tr(
-                      args: [DateFormat('HH:mm:ss').format(_lastRefreshed!)],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: textTheme.labelMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
+                Text(
+                  'maidCafeLastRefreshed'.tr(
+                    args: [DateFormat('HH:mm:ss').format(_lastRefreshed!)],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.labelMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
                 const SizedBox(width: 8),
