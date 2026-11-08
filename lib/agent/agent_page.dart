@@ -1986,6 +1986,9 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
     );
   }
 
+  /// The prompts waiting behind the running turn. The queue is a sequence, so
+  /// each row is numbered: the first row is what the chat answers next, and
+  /// steering one moves it to that place.
   Widget _buildQueuedPrompts(ColorScheme scheme) {
     return Material(
       color: scheme.surfaceContainerHighest,
@@ -1993,17 +1996,21 @@ class _AgentChatViewState extends ConsumerState<AgentChatView> {
         borderRadius: BorderRadius.circular(MaidKitRadius.md),
         side: BorderSide(color: scheme.outlineVariant),
       ),
+      clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 176),
-        child: ListView.separated(
+        constraints: const BoxConstraints(maxHeight: 196),
+        child: ListView.builder(
           shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(4),
           itemCount: _queuedPrompts.length,
-          separatorBuilder: (_, _) => const Divider(height: 1),
           itemBuilder: (context, index) {
             final queued = _queuedPrompts[index];
             final attached = queued.attachments.length;
             return _QueuedPromptTile(
+              // Keyed by the prompt itself, so removing one row does not
+              // re-run the entrance of the rows that stay.
+              key: ObjectKey(queued),
+              position: index + 1,
               text: queued.text.isEmpty
                   ? queued.attachments.firstOrNull?.name ??
                         'agentPastedText'.tr()
@@ -3520,15 +3527,24 @@ class _AgentEmptyState extends StatelessWidget {
   }
 }
 
-/// One queued prompt. It fades and rises into place as it is queued; taking it
-/// out again is left to the panel's own size animation, which closes the gap.
+/// One queued prompt, numbered by the place it holds in the queue.
+///
+/// The number is the one thing the panel adds to the text: it says which prompt
+/// the chat answers next, and steering a row rewrites it. The row's own height
+/// carries both the entrance and the exit, so taking one out closes the gap
+/// instead of snapping it shut.
 class _QueuedPromptTile extends StatefulWidget {
   const _QueuedPromptTile({
+    super.key,
+    required this.position,
     required this.text,
     required this.detail,
     required this.onSteer,
     required this.onRemove,
   });
+
+  /// Where in the queue this prompt sits: 1 is the one that runs next.
+  final int position;
 
   final String text;
 
@@ -3552,7 +3568,10 @@ class _QueuedPromptTileState extends State<_QueuedPromptTile>
     parent: _controller,
     curve: Curves.easeOutCubic,
   );
+
   bool _started = false;
+  bool _hovered = false;
+  bool _closing = false;
 
   @override
   void didChangeDependencies() {
@@ -3572,40 +3591,117 @@ class _QueuedPromptTileState extends State<_QueuedPromptTile>
     super.dispose();
   }
 
+  /// Collapses the row before it leaves the list, so the prompt below rises
+  /// into the empty slot rather than appearing there in one frame.
+  Future<void> _close(VoidCallback remove) async {
+    if (_closing) return;
+    setState(() => _closing = true);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = 0;
+    } else {
+      // A dispose mid-collapse cancels the ticker; the row is gone by then,
+      // and the queue has already been rewritten.
+      try {
+        await _controller.reverse().orCancel;
+      } on TickerCanceled {
+        return;
+      }
+    }
+    if (mounted) remove();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _entrance,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.12),
-          end: Offset.zero,
-        ).animate(_entrance),
-        child: ListTile(
-          dense: true,
-          leading: const Icon(Symbols.schedule, size: 20),
-          title: Text(
-            widget.text,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(widget.detail),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'agentSteerMessage'.tr(),
-                onPressed: widget.onSteer,
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Symbols.arrow_upward, size: 18),
-              ),
-              IconButton(
-                tooltip: 'agentRemoveQueuedMessage'.tr(),
-                onPressed: widget.onRemove,
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Symbols.close, size: 18),
-              ),
-            ],
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final next = widget.position == 1;
+    return SizeTransition(
+      sizeFactor: _entrance,
+      alignment: Alignment.topCenter,
+      child: FadeTransition(
+        opacity: _entrance,
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // The ordinal, in the mono face: a position is data, and it
+                // has to line up with the numbers below it.
+                SizedBox(
+                  width: 26,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8, right: 4),
+                    child: Text(
+                      '${widget.position}',
+                      textAlign: TextAlign.right,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontFamily: MaidKitFonts.mono,
+                        fontSize: 11,
+                        color: next ? scheme.primary : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.text,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontSize: 11,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Quiet at rest and plain on hover: the row is a draft, and its
+                // two controls should not compete with the text they act on.
+                AnimatedOpacity(
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 140),
+                  opacity: _hovered ? 1 : 0.55,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'agentSteerMessage'.tr(),
+                        onPressed: _closing ? null : widget.onSteer,
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Symbols.arrow_upward, size: 18),
+                      ),
+                      IconButton(
+                        tooltip: 'agentRemoveQueuedMessage'.tr(),
+                        onPressed: _closing
+                            ? null
+                            : () => _close(widget.onRemove),
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Symbols.close, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

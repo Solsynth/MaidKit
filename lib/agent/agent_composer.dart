@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -278,6 +280,12 @@ class _AgentComposerState extends State<AgentComposer> {
 
   @override
   Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final showingMenu =
+        widget.enabled &&
+        _mentionToken != null &&
+        _mentionToken != _mentionDismissed;
+    final matches = _mentionMatches;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Column(
@@ -309,39 +317,78 @@ class _AgentComposerState extends State<AgentComposer> {
             ),
             const SizedBox(height: 6),
           ],
-          if (widget.mentions.isNotEmpty) ...[
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final (index, mention) in widget.mentions.indexed)
-                  _AgentMentionChip(
-                    mention: mention,
-                    onRemove: () => widget.onMentionRemoved(index),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-          ],
-          if (widget.enabled &&
-              _mentionToken != null &&
-              _mentionToken != _mentionDismissed) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _mentionMatches.isEmpty
-                  ? Text(
-                      'agentMentionNone'.tr(),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    )
-                  : _AgentMentionMenu(
-                      matches: _mentionMatches,
-                      highlight: _mentionHighlight,
-                      onPick: _acceptMention,
+          // The strip keeps its slot while empty so the field never jumps;
+          // only the run of chips grows and shrinks.
+          AnimatedSize(
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topLeft,
+            child: widget.mentions.isEmpty
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final (index, mention) in widget.mentions.indexed)
+                          _AgentMentionChip(
+                            // Keyed by the resource, so a chip that shifts
+                            // along the row does not replay its entrance.
+                            key: ValueKey(mention),
+                            mention: mention,
+                            onRemove: () => widget.onMentionRemoved(index),
+                          ),
+                      ],
                     ),
-            ),
-          ],
+                  ),
+          ),
+          AnimatedSize(
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: !showingMenu
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(begin: 0, end: 1),
+                      duration: reduceMotion
+                          ? Duration.zero
+                          : const Duration(milliseconds: 160),
+                      curve: Curves.easeOut,
+                      builder: (context, progress, child) => Opacity(
+                        opacity: progress,
+                        child: Transform.translate(
+                          offset: Offset(0, 4 * (1 - progress)),
+                          child: child,
+                        ),
+                      ),
+                      child: matches.isEmpty
+                          ? Padding(
+                              padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
+                              child: Text(
+                                'agentMentionNone'.tr(),
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                            )
+                          : _AgentMentionMenu(
+                              matches: matches,
+                              highlight: _mentionHighlight,
+                              onPick: _acceptMention,
+                            ),
+                    ),
+                  ),
+          ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -455,59 +502,114 @@ class _AgentComposerState extends State<AgentComposer> {
 bool _isMentionSpace(String character) =>
     character == ' ' || character == '\n' || character == '\t';
 
-/// One resource the draft names, on the strip above the field: what it is,
-/// which row it points at, and the control that takes it out of the turn.
-class _AgentMentionChip extends StatelessWidget {
-  const _AgentMentionChip({required this.mention, required this.onRemove});
+/// One resource the draft names, on the strip above it: the same `@token` the
+/// sentence carries, the kind it is, and the control that takes it out.
+///
+/// The token wears the mono face because it is a literal the model will read
+/// verbatim, not prose: the field and the chip agree letter for letter.
+class _AgentMentionChip extends StatefulWidget {
+  const _AgentMentionChip({
+    super.key,
+    required this.mention,
+    required this.onRemove,
+  });
 
   final AgentMention mention;
   final VoidCallback onRemove;
 
   @override
+  State<_AgentMentionChip> createState() => _AgentMentionChipState();
+}
+
+class _AgentMentionChipState extends State<_AgentMentionChip>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+  late final Animation<double> _entrance = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutCubic,
+  );
+
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = 1;
+    } else {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Tooltip(
-      message: mention.referenceLine,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(8, 2, 2, 2),
-        decoration: BoxDecoration(
-          color: scheme.secondaryContainer,
-          borderRadius: BorderRadius.circular(MaidKitRadius.md),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              agentMentionIcon(mention.kind),
-              size: 14,
-              color: scheme.onSecondaryContainer,
+    return ScaleTransition(
+      scale: Tween<double>(begin: 0.94, end: 1).animate(_entrance),
+      alignment: Alignment.centerLeft,
+      child: FadeTransition(
+        opacity: _entrance,
+        child: Tooltip(
+          message: widget.mention.referenceLine,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(7, 1, 1, 1),
+            decoration: BoxDecoration(
+              color: scheme.secondaryContainer.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+              border: Border.all(color: scheme.outlineVariant),
             ),
-            const SizedBox(width: 6),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 200),
-              child: Text(
-                mention.token,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelMedium?.copyWith(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  agentMentionIcon(widget.mention.kind),
+                  size: 13,
                   color: scheme.onSecondaryContainer,
                 ),
-              ),
+                const SizedBox(width: 5),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 200),
+                  child: Text(
+                    widget.mention.token,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontFamily: MaidKitFonts.mono,
+                      fontSize: 11.5,
+                      height: 1.4,
+                      color: scheme.onSecondaryContainer,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 2),
+                IconButton(
+                  tooltip: 'agentMentionRemove'.tr(args: [widget.mention.name]),
+                  iconSize: 12,
+                  visualDensity: VisualDensity.compact,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(18, 18),
+                    padding: EdgeInsets.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: scheme.onSecondaryContainer,
+                  ),
+                  onPressed: widget.onRemove,
+                  icon: const Icon(Symbols.close),
+                ),
+              ],
             ),
-            IconButton(
-              tooltip: 'agentMentionRemove'.tr(args: [mention.name]),
-              iconSize: 12,
-              visualDensity: VisualDensity.compact,
-              style: IconButton.styleFrom(
-                minimumSize: const Size(20, 20),
-                padding: EdgeInsets.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              onPressed: onRemove,
-              icon: const Icon(Symbols.close),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -515,9 +617,13 @@ class _AgentMentionChip extends StatelessWidget {
 }
 
 /// The resources an open `@` lists: one row per candidate, naming the row it
-/// points at. A tap takes one exactly as Enter does, so the menu works by
-/// keyboard and by pointer.
-class _AgentMentionMenu extends StatelessWidget {
+/// points at and the exact token a pick will write into the field. A tap takes
+/// one exactly as Enter does, so the menu works by keyboard and by pointer.
+///
+/// The lit row follows the arrow keys and is scrolled into view, so a list
+/// longer than the menu never leaves the highlight somewhere the reader cannot
+/// see.
+class _AgentMentionMenu extends StatefulWidget {
   const _AgentMentionMenu({
     required this.matches,
     required this.highlight,
@@ -529,9 +635,52 @@ class _AgentMentionMenu extends StatelessWidget {
   final ValueChanged<AgentMention> onPick;
 
   @override
+  State<_AgentMentionMenu> createState() => _AgentMentionMenuState();
+}
+
+class _AgentMentionMenuState extends State<_AgentMentionMenu> {
+  static const _rowHeight = 44.0;
+  static const _padding = 4.0;
+  final _scroll = ScrollController();
+
+  @override
+  void didUpdateWidget(_AgentMentionMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.highlight != oldWidget.highlight) _revealHighlight();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _revealHighlight() {
+    if (!_scroll.hasClients) return;
+    final top = _padding + widget.highlight * _rowHeight;
+    final position = _scroll.position;
+    final viewport = position.viewportDimension;
+    final target = top < position.pixels + _padding
+        ? top - _padding
+        : top + _rowHeight > position.pixels + viewport - _padding
+        ? top + _rowHeight - viewport + _padding
+        : null;
+    if (target == null) return;
+    _scroll.animateTo(
+      math.max(0, target),
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final highlightDuration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 120);
     return Material(
       color: scheme.surfaceContainerHighest,
       shape: RoundedRectangleBorder(
@@ -540,52 +689,91 @@ class _AgentMentionMenu extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 216),
+        constraints: const BoxConstraints(
+          maxHeight: _rowHeight * 5 + _padding * 2,
+        ),
         child: ListView.builder(
+          controller: _scroll,
           shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          itemCount: matches.length,
+          padding: const EdgeInsets.symmetric(vertical: _padding),
+          itemExtent: _rowHeight,
+          itemCount: widget.matches.length,
           itemBuilder: (context, index) {
-            final mention = matches[index];
-            final lit = index == highlight;
+            final mention = widget.matches[index];
+            final lit = index == widget.highlight;
             return InkWell(
-              onTap: () => onPick(mention),
-              child: ColoredBox(
-                color: lit
-                    ? scheme.primaryContainer.withValues(alpha: 0.5)
-                    : Colors.transparent,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
+              onTap: () => widget.onPick(mention),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: AnimatedContainer(
+                  duration: highlightDuration,
+                  curve: Curves.easeOut,
+                  padding: const EdgeInsets.fromLTRB(6, 3, 10, 3),
+                  decoration: BoxDecoration(
+                    color: lit
+                        ? scheme.primaryContainer.withValues(alpha: 0.35)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
                   ),
                   child: Row(
                     children: [
+                      // A mark, not a second surface: the lit row is the one
+                      // the keyboard will take, and a 2px rule says so without
+                      // repainting the whole row.
+                      AnimatedContainer(
+                        duration: highlightDuration,
+                        curve: Curves.easeOut,
+                        width: 2,
+                        height: lit ? 18 : 0,
+                        decoration: BoxDecoration(
+                          color: lit ? scheme.primary : Colors.transparent,
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       Icon(
                         agentMentionIcon(mention.kind),
                         size: 16,
-                        color: scheme.onSurfaceVariant,
+                        color: lit ? scheme.primary : scheme.onSurfaceVariant,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               mention.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: lit
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                              ),
                             ),
                             Text(
                               agentMentionMenuDetail(mention),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelSmall?.copyWith(
+                                fontSize: 11,
                                 color: scheme.onSurfaceVariant,
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // What a pick actually writes: the literal the reader
+                      // would otherwise only learn after taking the row.
+                      Text(
+                        mention.token,
+                        maxLines: 1,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontFamily: MaidKitFonts.mono,
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
                         ),
                       ),
                     ],
