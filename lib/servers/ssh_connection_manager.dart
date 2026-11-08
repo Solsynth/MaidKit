@@ -2662,9 +2662,7 @@ echo '---MAIDKIT-DB-END---'
               adapterId: adapter.id,
               label: adapter.label,
               installed: true,
-              version: version.combined.trim().isEmpty
-                  ? null
-                  : version.combined.trim().split('\n').first,
+              version: _webServerVersion(version.combined),
               running: active.output.trim().toLowerCase() == 'active',
             ),
           );
@@ -5594,3 +5592,18 @@ Write-Output '--WINDOWS--'
 $os.Caption
 $os.Version
 ''');
+
+/// The bare version out of a web server's `--version` output.
+///
+/// `caddy version` prints `v2.11.7 h1:yj0Y4…` — the Go module build checksum
+/// is build provenance, not a version, and it has no place in a title. Nginx
+/// prints `nginx version: nginx/1.24.0`.
+String? _webServerVersion(String output) {
+  final text = output.trim();
+  if (text.isEmpty) return null;
+  final match = RegExp(
+    r'(?:nginx/|caddy\s+|^v?)(\d+\.\d+(?:\.\d+)?)',
+  ).firstMatch(text);
+  if (match != null) return match.group(1);
+  return text.split(RegExp(r'\s+')).first;
+}

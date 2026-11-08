@@ -15,14 +15,12 @@ import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/tab_navigator.dart';
 import 'package:maid_kit/shared/services/analytics_service.dart';
 import 'package:maid_kit/theme.dart';
-import 'package:styled_widget/styled_widget.dart';
 
 import 'cloud_sync_service.dart';
 import 'maidcafe_connect.dart';
 import 'maidcafe_daemon_detail_page.dart';
 import 'maidcafe_metoer.dart';
 import 'maidcafe_service.dart';
-import 'server_health_chip.dart';
 import 'server_providers.dart';
 import 'solarpass_device_code_dialog.dart';
 
@@ -134,29 +132,48 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
           _cloudStatusBar(context, cloudUser, effectiveWorkspaceId),
         ],
       ),
-      floatingActionButton: _fabForTab(effectiveWorkspaceId),
     );
   }
 
   // ----------------------------------------------------------------- layout
 
-  /// Tabbed main region: the fleet and its credentials.
+  /// Tabbed main region: the fleet and its credentials. The tabs sit
+  /// left-aligned on the strip and the create action rides its trailing edge,
+  /// the way a desktop console puts its toolbar together.
   Widget _cloudTabs(BuildContext context, String? workspaceId) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TabBar(
-          controller: _tabController,
-          tabs: [
-            IconLabelTab(
-              icon: const Icon(Symbols.dns, size: 18),
-              label: 'assetsConnections'.tr(),
-            ),
-            IconLabelTab(
-              icon: const Icon(Symbols.key, size: 18),
-              label: 'maidCafeCredentials'.tr(),
-            ),
-          ],
+        Container(
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+          ),
+          padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  dividerColor: Colors.transparent,
+                  tabs: [
+                    IconLabelTab(
+                      icon: const Icon(Symbols.dns, size: 18),
+                      label: 'assetsConnections'.tr(),
+                    ),
+                    IconLabelTab(
+                      icon: const Icon(Symbols.key, size: 18),
+                      label: 'maidCafeCredentials'.tr(),
+                    ),
+                  ],
+                ),
+              ),
+              ?_createButton(workspaceId),
+              const SizedBox(width: 8),
+            ],
+          ),
         ),
         Expanded(
           child: TabBarView(
@@ -171,27 +188,26 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     );
   }
 
-  /// The unified create action: one floating button that follows the active
-  /// tab.
-  Widget? _fabForTab(String? workspaceId) {
+  /// The create action for whichever tab is open, on the tab strip's trailing
+  /// edge: a desktop page registers things from its toolbar, not from a
+  /// floating button hovering over empty canvas.
+  Widget? _createButton(String? workspaceId) {
     if (workspaceId == null) return null;
     return switch (_tabController.index) {
-      0 => FloatingActionButton.extended(
-        heroTag: 'maidcafe-create-fab',
+      0 => FilledButton.tonalIcon(
         onPressed: _isBusy(_daemonsOp)
             ? null
             : () => _registerDaemon(context, workspaceId),
-        icon: const Icon(Symbols.add),
+        icon: const Icon(Symbols.add, size: 18),
         label: Text('maidCafeRegister'.tr()),
-      ).padding(bottom: 40),
-      _ => FloatingActionButton.extended(
-        heroTag: 'maidcafe-create-fab',
+      ),
+      _ => FilledButton.tonalIcon(
         onPressed: _isBusy(_credentialsOp)
             ? null
             : () => _createCredential(context),
-        icon: const Icon(Symbols.add),
+        icon: const Icon(Symbols.add, size: 18),
         label: Text('maidCafeCredentialCreate'.tr()),
-      ).padding(bottom: 40),
+      ),
     };
   }
 
@@ -224,7 +240,7 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
                   error: (_, _) => _statusSignIn(context),
                   data: (user) => user == null
                       ? _statusSignIn(context)
-                      : _statusAccount(context, user),
+                      : _statusAccount(context),
                 ),
               ),
               if (_lastRefreshed != null && showTimestamp) ...[
@@ -278,25 +294,11 @@ class _MaidCafeCloudPageState extends ConsumerState<MaidCafeCloudPage>
     );
   }
 
-  /// Compact account chip for the status bar: avatar, name, workspace
-  /// selector and sign-out.
-  Widget _statusAccount(BuildContext context, CloudUser user) {
-    final textTheme = Theme.of(context).textTheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        CircleAvatar(
-          radius: 10,
-          foregroundImage: user.avatarUrl == null
-              ? null
-              : NetworkImage(user.avatarUrl!),
-          child: Text(user.initials, style: textTheme.labelSmall),
-        ),
-        const SizedBox(width: 8),
-        _statusWorkspaceSelector(context),
-      ],
-    );
-  }
+  /// Workspace selector for the status bar. The signed-in account itself is
+  /// already on the window title bar — repeating the avatar here gave the
+  /// window two account controls in opposite corners.
+  Widget _statusAccount(BuildContext context) =>
+      _statusWorkspaceSelector(context);
 
   /// Compact workspace selector for the status bar.
   Widget _statusWorkspaceSelector(BuildContext context) {
@@ -898,7 +900,12 @@ class _QuotaValue extends StatelessWidget {
   }
 }
 
-class _DaemonGrid extends StatelessWidget {
+/// The fleet as a table: one row per daemon. A card grid made comparable
+/// fields impossible to compare — cards with metrics were twice as tall as
+/// cards without, and the metric plots pushed management controls off the top
+/// of the screen. A table aligns every reading against its header and leaves
+/// a single place for the row's actions.
+class _DaemonGrid extends StatefulWidget {
   const _DaemonGrid({
     required this.items,
     required this.isBusy,
@@ -910,7 +917,7 @@ class _DaemonGrid extends StatelessWidget {
 
   final List<MaidCafeDaemon> items;
 
-  /// Per-daemon busy state: only the card whose operation is running locks.
+  /// Per-daemon busy state: only the row whose operation is running locks.
   final bool Function(MaidCafeDaemon daemon) isBusy;
   final ValueChanged<MaidCafeDaemon> onRename;
   final ValueChanged<MaidCafeDaemon> onToggleEnabled;
@@ -918,44 +925,116 @@ class _DaemonGrid extends StatelessWidget {
   final ValueChanged<MaidCafeDaemon> onDisable;
 
   @override
+  State<_DaemonGrid> createState() => _DaemonGridState();
+}
+
+class _DaemonGridState extends State<_DaemonGrid> {
+  /// Daemons whose metric history is open. Each row gets its plot on demand,
+  /// so a table of equal rows keeps equal heights.
+  final Set<String> _expanded = {};
+
+  @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const gap = 16.0;
-        final columns = ((constraints.maxWidth + gap) / (380 + gap))
-            .floor()
-            .clamp(1, 4);
-        final cardWidth =
-            (constraints.maxWidth - gap * (columns - 1)) / columns;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final daemon in items)
-              SizedBox(
-                width: cardWidth,
-                child: _DaemonFleetCard(
-                  daemon: daemon,
-                  busy: isBusy(daemon),
-                  onRename: () => onRename(daemon),
-                  onToggleEnabled: () => onToggleEnabled(daemon),
-                  onRotateSecret: () => onRotateSecret(daemon),
-                  onDisable: () => onDisable(daemon),
-                ),
+    final scheme = Theme.of(context).colorScheme;
+    final items = widget.items;
+    // The table keeps four aligned columns; below that width it keeps the
+    // identity, the status and the menu, and drops the readings rather than
+    // squeezing every cell into an ellipsis.
+    final compact = MediaQuery.sizeOf(context).width < 860;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          _FleetHeaderRow(compact: compact),
+          Divider(height: 1, color: scheme.outlineVariant),
+          for (var i = 0; i < items.length; i++) ...[
+            _DaemonFleetRow(
+              daemon: items[i],
+              compact: compact,
+              busy: widget.isBusy(items[i]),
+              expanded: _expanded.contains(items[i].id),
+              onToggleExpanded: () => setState(() {
+                if (!_expanded.remove(items[i].id)) {
+                  _expanded.add(items[i].id);
+                }
+              }),
+              onRename: () => widget.onRename(items[i]),
+              onToggleEnabled: () => widget.onToggleEnabled(items[i]),
+              onRotateSecret: () => widget.onRotateSecret(items[i]),
+              onDisable: () => widget.onDisable(items[i]),
+            ),
+            if (i < items.length - 1)
+              Divider(
+                height: 1,
+                indent: 16,
+                endIndent: 16,
+                color: scheme.outlineVariant.withValues(alpha: 0.6),
               ),
           ],
-        );
-      },
+        ],
+      ),
     );
   }
 }
 
-/// One fleet card: status dot and name, the live metric strip, and daemon
-/// management controls.
-class _DaemonFleetCard extends ConsumerWidget {
-  const _DaemonFleetCard({
+/// Column labels for [_DaemonFleetRow]. The widths here are the contract the
+/// rows lay their cells out against.
+class _FleetHeaderRow extends StatelessWidget {
+  const _FleetHeaderRow({this.compact = false});
+
+  final bool compact;
+
+  static const double statusWidth = 132;
+  static const double metricsWidth = 200;
+  static const double seenWidth = 132;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final style = theme.textTheme.labelSmall?.copyWith(color: muted);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      child: Row(
+        children: [
+          Expanded(child: Text('maidCafeFleetDaemon'.tr(), style: style)),
+          SizedBox(
+            width: statusWidth,
+            child: Text('maidCafeFleetStatus'.tr(), style: style),
+          ),
+          if (!compact)
+            SizedBox(
+              width: metricsWidth,
+              child: Text('maidCafeFleetMetrics'.tr(), style: style),
+            ),
+          if (!compact)
+            SizedBox(
+              width: seenWidth,
+              child: Text(
+                'maidCafeFleetLastSeen'.tr(),
+                style: style,
+                textAlign: TextAlign.end,
+              ),
+            ),
+          const SizedBox(width: 44),
+        ],
+      ),
+    );
+  }
+}
+
+/// One daemon row: identity, a status pill, the newest readings, last-seen,
+/// and a menu for management. The row itself opens the daemon's detail page;
+/// its metric plot opens inline on demand, which keeps every closed row the
+/// same height.
+class _DaemonFleetRow extends ConsumerWidget {
+  const _DaemonFleetRow({
     required this.daemon,
+    required this.compact,
     required this.busy,
+    required this.expanded,
+    required this.onToggleExpanded,
     required this.onRename,
     required this.onToggleEnabled,
     required this.onRotateSecret,
@@ -963,7 +1042,10 @@ class _DaemonFleetCard extends ConsumerWidget {
   });
 
   final MaidCafeDaemon daemon;
+  final bool compact;
   final bool busy;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
   final VoidCallback onRename;
   final VoidCallback onToggleEnabled;
   final VoidCallback onRotateSecret;
@@ -976,11 +1058,8 @@ class _DaemonFleetCard extends ConsumerWidget {
     final textTheme = theme.textTheme;
     final metrics = ref.watch(maidCafeMetricsProvider(daemon.id));
     final history = metrics.asData?.value ?? const <MaidCafeMetric>[];
-    final reportedHealth = ref
-        .watch(maidCafeDaemonHealthProvider(daemon.id))
-        .asData
-        ?.value;
     // The API returns newest-first; the chart reads oldest → newest.
+    final newest = history.isEmpty ? null : history.first;
     final ordered = [...history]..sort((a, b) => a.sentAt.compareTo(b.sentAt));
     final samples = ordered.length > 24
         ? ordered.sublist(ordered.length - 24)
@@ -988,193 +1067,236 @@ class _DaemonFleetCard extends ConsumerWidget {
     final enabled = daemon.enabled;
     final disconnected = enabled && daemon.disconnectedAt != null;
     final lastSeen = daemon.lastSeenAt;
-    final uptime = samples.isEmpty ? null : samples.last.uptimeSeconds;
-    final uptimeLabel = uptime != null && uptime > 0
-        ? 'maidCafeUptime'.tr(args: [_formatUptime(uptime)])
-        : null;
+    final statusLabel = !enabled
+        ? 'maidCafeDisabled'.tr()
+        : disconnected
+        ? 'maidCafeOffline'.tr()
+        : 'maidCafeOnline'.tr();
+    final statusColor = !enabled
+        ? colors.outline
+        : disconnected
+        ? colors.error
+        : colors.primary;
+    final seenLabel = lastSeen == null
+        ? 'maidCafeNeverSeen'.tr()
+        : DateFormat('yyyy-MM-dd HH:mm').format(lastSeen.toLocal());
 
-    return Card(
-      margin: EdgeInsets.zero,
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: busy
+              ? null
+              : () => TabNavigator.of(
+                  context,
+                ).push(MaidCafeDaemonDetailPage(daemon: daemon)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+            child: Row(
               children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: disconnected
-                        ? colors.error
-                        : enabled
-                        ? colors.primary
-                        : colors.outline,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
                 Expanded(
-                  child: GestureDetector(
-                    onTap: () => TabNavigator.of(
-                      context,
-                    ).push(MaidCafeDaemonDetailPage(daemon: daemon)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          daemon.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: textTheme.titleMedium,
-                        ),
-                        Text(
-                          daemon.id,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: textTheme.labelSmall?.copyWith(
-                            color: colors.onSurfaceVariant,
-                            fontFamily: 'IBM Plex Mono',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'maidCafeCopyDaemonId'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Symbols.content_copy),
-                  onPressed: () =>
-                      Clipboard.setData(ClipboardData(text: daemon.id)),
-                ),
-                IconButton(
-                  tooltip: 'maidCafeRename'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Symbols.edit),
-                  onPressed: busy ? null : onRename,
-                ),
-                IconButton(
-                  tooltip: enabled
-                      ? 'maidCafeDisable'.tr()
-                      : 'maidCafeEnable'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(enabled ? Symbols.pause : Symbols.play_arrow),
-                  onPressed: busy ? null : onToggleEnabled,
-                ),
-                IconButton(
-                  tooltip: 'maidCafeRotateSecret'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Symbols.key),
-                  onPressed: busy ? null : onRotateSecret,
-                ),
-                IconButton(
-                  tooltip: 'maidCafeDisable'.tr(),
-                  visualDensity: VisualDensity.compact,
-                  icon: const Icon(Symbols.delete_outline),
-                  onPressed: busy ? null : onDisable,
-                ),
-              ],
-            ),
-            if (disconnected) ...[
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: colors.errorContainer,
-                    border: Border(
-                      left: BorderSide(color: colors.error, width: 3),
-                    ),
-                    borderRadius: BorderRadius.circular(MaidKitRadius.sm),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Symbols.cloud_off,
-                        size: 18,
-                        color: colors.onErrorContainer,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'maidCafeDisconnected'.tr(),
-                          style: textTheme.labelLarge?.copyWith(
-                            color: colors.onErrorContainer,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
                       Text(
-                        DateFormat(
-                          'yyyy-MM-dd HH:mm',
-                        ).format(daemon.disconnectedAt!.toLocal()),
+                        daemon.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _daemonReference(daemon),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: textTheme.labelSmall?.copyWith(
-                          color: colors.onErrorContainer,
-                          fontFeatures: const [FontFeature.tabularFigures()],
+                          color: colors.onSurfaceVariant,
+                          fontFamily: MaidKitFonts.mono,
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-            ] else
-              const SizedBox(height: 10),
-            if (disconnected) const SizedBox(height: 2),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: _MetricHistoryChart(
-                samples: samples,
-                unavailable: metrics.hasError,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Row(
-                children: [
-                  // The score the daemon embedded in its newest metric. A
-                  // disabled daemon has no live reading to report, and a stale
-                  // one is rendered in the neutral color by the chip itself.
-                  if (enabled && reportedHealth?.health != null) ...[
-                    ServerHealthChip(
-                      health: reportedHealth!.health,
-                      stale: reportedHealth.stale,
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  Expanded(
+                SizedBox(
+                  width: _FleetHeaderRow.statusWidth,
+                  child: Row(
+                    children: [
+                      _StatusPill(color: statusColor, label: statusLabel),
+                    ],
+                  ),
+                ),
+                if (!compact)
+                  SizedBox(
+                    width: _FleetHeaderRow.metricsWidth,
+                    child: newest == null
+                        ? Text(
+                            metrics.hasError || metrics.isLoading
+                                ? 'maidCafeHistoryUnavailable'.tr()
+                                : '—',
+                            style: textTheme.labelSmall?.copyWith(
+                              color: colors.onSurfaceVariant,
+                            ),
+                          )
+                        : Row(
+                            children: [
+                              _InlineMetric(
+                                label: 'CPU',
+                                value: '${newest.cpuPercent.round()}%',
+                              ),
+                              const SizedBox(width: 12),
+                              _InlineMetric(
+                                label: 'MEM',
+                                value: '${newest.memoryUsedPercent.round()}%',
+                              ),
+                            ],
+                          ),
+                  ),
+                if (!compact)
+                  SizedBox(
+                    width: _FleetHeaderRow.seenWidth,
                     child: Text(
-                      enabled
-                          ? [
-                              'maidCafeEnabled'.tr(),
-                              lastSeen == null
-                                  ? 'maidCafeNeverSeen'.tr()
-                                  : 'maidCafeLastSeen'.tr(
-                                      args: [
-                                        DateFormat(
-                                          'yyyy-MM-dd HH:mm',
-                                        ).format(lastSeen.toLocal()),
-                                      ],
-                                    ),
-                              ?uptimeLabel,
-                            ].join(' · ')
-                          : 'maidCafeDisabled'.tr(),
+                      seenLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
+                      textAlign: TextAlign.end,
+                      style: textTheme.labelSmall?.copyWith(
+                        color: disconnected
+                            ? colors.error
+                            : colors.onSurfaceVariant,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                   ),
-                ],
-              ),
+                SizedBox(width: 44, child: _rowMenu(enabled)),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: _MetricHistoryChart(
+              samples: samples,
+              unavailable: metrics.hasError,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// The identity line under the name: the machine the daemon reports at
+  /// install, falling back to the first eight characters of the daemon id.
+  /// A full UUID says nothing a reader can recognize, so it is never printed.
+  String _daemonReference(MaidCafeDaemon daemon) {
+    final hostId = daemon.hostId;
+    if (hostId != null && hostId.isNotEmpty) {
+      return 'host ${hostId.substring(0, hostId.length.clamp(0, 8))}';
+    }
+    final id = daemon.id;
+    return 'id ${id.substring(0, id.length.clamp(0, 8))}';
+  }
+
+  Widget _rowMenu(bool enabled) {
+    if (busy) {
+      return const Padding(
+        padding: EdgeInsets.only(left: 12),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return PopupMenuButton<_DaemonMenuAction>(
+      tooltip: 'commonMoreActions'.tr(),
+      icon: const Icon(Symbols.more_horiz, size: 18),
+      onSelected: (action) {
+        switch (action) {
+          case _DaemonMenuAction.history:
+            onToggleExpanded();
+          case _DaemonMenuAction.rename:
+            onRename();
+          case _DaemonMenuAction.toggleEnabled:
+            onToggleEnabled();
+          case _DaemonMenuAction.rotateSecret:
+            onRotateSecret();
+          case _DaemonMenuAction.copyId:
+            Clipboard.setData(ClipboardData(text: daemon.id));
+          case _DaemonMenuAction.disable:
+            onDisable();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: _DaemonMenuAction.history,
+          child: Text(
+            expanded ? 'maidCafeHideHistory'.tr() : 'maidCafeShowHistory'.tr(),
+          ),
+        ),
+        PopupMenuItem(
+          value: _DaemonMenuAction.rename,
+          child: Text('maidCafeRename'.tr()),
+        ),
+        PopupMenuItem(
+          value: _DaemonMenuAction.toggleEnabled,
+          child: Text(enabled ? 'maidCafeDisable'.tr() : 'maidCafeEnable'.tr()),
+        ),
+        PopupMenuItem(
+          value: _DaemonMenuAction.rotateSecret,
+          child: Text('maidCafeRotateSecret'.tr()),
+        ),
+        PopupMenuItem(
+          value: _DaemonMenuAction.copyId,
+          child: Text('maidCafeCopyDaemonId'.tr()),
+        ),
+        PopupMenuItem(
+          value: _DaemonMenuAction.disable,
+          child: Text('maidCafeForgetDaemon'.tr()),
+        ),
+      ],
+    );
+  }
+}
+
+enum _DaemonMenuAction {
+  history,
+  rename,
+  toggleEnabled,
+  rotateSecret,
+  copyId,
+  disable,
+}
+
+/// Status as a pill: a dot and one word. It carries the disconnected state
+/// without the full-width alarm banner that used to dominate every card.
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(MaidKitRadius.pill),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(color: color),
             ),
           ],
         ),
@@ -1183,9 +1305,33 @@ class _DaemonFleetCard extends ConsumerWidget {
   }
 }
 
-/// The fleet card's signature: a compact history plot for the daemon's four
-/// host signals. It uses the same fl_chart vocabulary as the server Activity
-/// tab, but keeps the series intentionally small enough for a fleet card.
+/// One reading inside the fleet row's metrics cell.
+class _InlineMetric extends StatelessWidget {
+  const _InlineMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: theme.textTheme.labelSmall?.copyWith(color: muted)),
+        const SizedBox(width: 4),
+        Text(
+          value,
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _MetricHistoryChart extends StatelessWidget {
   const _MetricHistoryChart({required this.samples, required this.unavailable});
 
@@ -1526,15 +1672,6 @@ class _MetricLatestValue extends StatelessWidget {
   }
 }
 
-String _formatUptime(int seconds) {
-  final days = seconds ~/ 86400;
-  final hours = (seconds % 86400) ~/ 3600;
-  final minutes = (seconds % 3600) ~/ 60;
-  if (days > 0) return '${days}d ${hours}h';
-  if (hours > 0) return '${hours}h ${minutes}m';
-  return '${minutes}m';
-}
-
 /// Empty fleet state: invite to register the first daemon.
 class _EmptyDaemons extends StatelessWidget {
   const _EmptyDaemons({required this.onRegister});
@@ -1608,72 +1745,53 @@ class _DaemonLoadingGrid extends StatelessWidget {
   const _DaemonLoadingGrid();
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      const gap = 16.0;
-      final columns = ((constraints.maxWidth + gap) / (380 + gap))
-          .floor()
-          .clamp(1, 4);
-      final cardWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
-      return Skeletonizer(
-        enabled: true,
-        child: Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (var i = 0; i < columns; i++)
-              SizedBox(width: cardWidth, child: const _DaemonLoadingCard()),
-          ],
-        ),
-      );
-    },
-  );
-}
-
-class _DaemonLoadingCard extends StatelessWidget {
-  const _DaemonLoadingCard();
-
-  @override
-  Widget build(BuildContext context) => Card(
-    margin: EdgeInsets.zero,
-    clipBehavior: Clip.antiAlias,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+  Widget build(BuildContext context) => Skeletonizer(
+    enabled: true,
+    child: Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              const CircleAvatar(radius: 4),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('MaidCafe daemon'),
-                    Text('maidkit-server-0000'),
-                  ],
-                ),
-              ),
-              for (var i = 0; i < 3; i++)
-                const Icon(Symbols.more_horiz, size: 20),
-            ],
-          ),
-          const SizedBox(height: 10),
-          // Skeletonizer paints the bone over this block; a themed fill keeps
-          // it neutral if the skeleton is ever disabled.
-          SizedBox(
-            height: 88,
-            child: ColoredBox(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            ),
-          ),
-          const SizedBox(height: 10),
-          const Text('Enabled · Last seen 2026-08-21 12:00'),
+          const _FleetHeaderRow(),
+          const Divider(height: 1),
+          for (var i = 0; i < 3; i++) const _DaemonLoadingRow(),
         ],
       ),
     ),
   );
+}
+
+/// One skeleton fleet row, sized like [_DaemonFleetRow] so the table does not
+/// jump when data lands.
+class _DaemonLoadingRow extends StatelessWidget {
+  const _DaemonLoadingRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(16, 14, 8, 14),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [Text('MaidCafe daemon'), Text('host maidkit-00')],
+            ),
+          ),
+          SizedBox(width: _FleetHeaderRow.statusWidth, child: Text('Online')),
+          SizedBox(
+            width: _FleetHeaderRow.metricsWidth,
+            child: Text('12% / 34%'),
+          ),
+          SizedBox(
+            width: _FleetHeaderRow.seenWidth,
+            child: Text('2026-08-21 12:00'),
+          ),
+          SizedBox(width: 44, child: Icon(Symbols.more_horiz, size: 18)),
+        ],
+      ),
+    );
+  }
 }
 
 class _CredentialsLoading extends StatelessWidget {

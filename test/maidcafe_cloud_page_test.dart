@@ -331,7 +331,7 @@ void main() {
     expect(find.text('Backup data'), findsNothing);
   });
 
-  testWidgets('fleet card surfaces a cloud heartbeat disconnect', (
+  testWidgets('fleet row surfaces a cloud heartbeat disconnect', (
     tester,
   ) async {
     await pumpPage(
@@ -339,7 +339,8 @@ void main() {
       daemon: _daemon(disconnectedAt: DateTime.utc(2026, 8, 17, 12, 0)),
     );
 
-    expect(find.text('maidCafeDisconnected'.tr()), findsOneWidget);
+    // The state is a pill now, not a full-width alarm banner.
+    expect(find.text('maidCafeOffline'.tr()), findsOneWidget);
   });
 
   testWidgets('fleet tab renders the workspace quota with daemon usage', (
@@ -361,7 +362,7 @@ void main() {
     expect(usageBar.value, closeTo(0.2, 0.001));
   });
 
-  testWidgets('daemon card surfaces load, disk and uptime from samples', (
+  testWidgets('daemon row surfaces live CPU and memory from samples', (
     tester,
   ) async {
     final now = DateTime.now();
@@ -392,25 +393,26 @@ void main() {
       ],
     );
 
-    expect(find.text('Load / CPU (1 min)'), findsOneWidget);
-    expect(find.textContaining('2.50'), findsOneWidget);
-    expect(find.text('Disk used'), findsOneWidget);
+    expect(find.text('30%'), findsOneWidget);
+    expect(find.text('40%'), findsOneWidget);
+
+    // The full plot is one menu action away, so equal rows stay equal height.
+    await tester.tap(find.byTooltip('commonMoreActions'.tr()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('maidCafeShowHistory'.tr()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('maidCafeMetricLoadPerCpu'.tr()), findsOneWidget);
+    expect(find.text('maidCafeMetricDiskUsed'.tr()), findsOneWidget);
     // (102400 - 25600) / 102400 = 75% used.
     expect(find.text('75%'), findsOneWidget);
-    expect(find.text('CPU usage'), findsOneWidget);
-    expect(find.text('30%'), findsOneWidget);
-    expect(
-      find.textContaining('maidCafeUptime'.tr(args: ['3d 4h'])),
-      findsOneWidget,
-    );
   });
-  testWidgets('daemon card offers a quick copy id action', (tester) async {
+  testWidgets('daemon row menu offers a copy id action', (tester) async {
     await pumpPage(tester);
 
-    final copyButton = find.byTooltip('maidCafeCopyDaemonId'.tr());
-    expect(copyButton, findsOneWidget);
-    await tester.tap(copyButton);
-    await tester.pump();
+    await tester.tap(find.byTooltip('commonMoreActions'.tr()));
+    await tester.pumpAndSettle();
+    expect(find.text('maidCafeCopyDaemonId'.tr()), findsOneWidget);
   });
 
   testWidgets('cloud page polls the cloud for fresh daemon metrics', (

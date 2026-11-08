@@ -14,7 +14,6 @@ import 'package:maid_kit/containers/container_management_tab.dart';
 import 'package:maid_kit/containers/image_management_tab.dart';
 import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/shared/presentation/empty_state.dart';
-import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
 import 'activity_tab.dart';
@@ -30,11 +29,11 @@ import 'port_forwarding_tab.dart';
 import 'privacy_preferences.dart';
 import 'runtime_monitoring_tab.dart';
 import 'server_connection_actions.dart';
-import 'server_health_chip.dart';
 import 'server_models.dart';
 import 'server_providers.dart';
 import 'session_lookup.dart';
 import 'systemd_tab.dart';
+import 'terminal_tabs_provider.dart';
 import 'web_server_tab.dart';
 
 class ServerDetailPage extends ConsumerStatefulWidget {
@@ -517,14 +516,13 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
     // Statistics come from the MaidCafe daemon whenever it answers: it costs
     // the host no exec, and it is the only statistics route a browser has.
     // The connected session still owns the connection itself; its readings
-    // are the fallback for a host whose daemon does not answer. The label
-    // names the route the numbers actually came from. With the app-wide
-    // switch off nothing is collected, so no reading is shown either.
+    // are the fallback for a host whose daemon does not answer. With the
+    // app-wide switch off nothing is collected, so no reading is shown.
     final metricsEnabled = ref.watch(serverMetricsEnabledProvider);
     final daemonStats = metricsEnabled
         ? ref.watch(maidCafeStatsProvider)[widget.server.id]
         : null;
-    final statsFromDaemon = daemonStats != null;
+
     final refreshInterval = ref.watch(focusedServerRefreshIntervalProvider);
 
     final workspace = _DetailWorkspace(
@@ -536,7 +534,7 @@ class _ServerDetailPageState extends ConsumerState<ServerDetailPage> {
           ? daemonStats?.stats ?? (connected ? session?.stats : null)
           : null,
       systemInfo: metricsEnabled ? session?.systemInfo : null,
-      statsSourceLabel: statsFromDaemon
+      statsSourceLabel: daemonStats != null
           ? 'serversStatsSourceDaemon'.tr()
           : null,
       processes: _processes,
@@ -665,6 +663,7 @@ class _DetailWorkspace extends StatelessWidget {
       stats: stats,
       systemInfo: systemInfo,
       statsSourceLabel: statsSourceLabel,
+      onConnect: onConnect,
     );
     final inspector = _InspectorTabs(
       connected: connected,
@@ -722,11 +721,15 @@ class _DetailWorkspace extends StatelessWidget {
   }
 }
 
+/// The left rail: what the host *is*, not what it is doing right now. Live
+/// readings live in the inspector's Activity tab, next to the charts that
+/// plot them, so one number is never printed twice on one screen.
 class _OverviewPanel extends StatelessWidget {
   const _OverviewPanel({
     required this.server,
     required this.session,
     required this.metricsEnabled,
+    required this.onConnect,
     this.stats,
     this.systemInfo,
     this.statsSourceLabel,
@@ -735,11 +738,14 @@ class _OverviewPanel extends StatelessWidget {
   final Server server;
   final SshSessionInfo? session;
 
-  /// Off hides both the specification row and the performance grid: those
-  /// numbers are not collected, so the panel says that instead.
+  /// Off hides the specification list: those figures are not collected, so
+  /// the panel says that instead.
   final bool metricsEnabled;
   final ServerStats? stats;
   final ServerSystemInfo? systemInfo;
+  final Future<void> Function() onConnect;
+
+  /// Names the transport behind [stats] when it is not the SSH default.
   final String? statsSourceLabel;
 
   @override
@@ -750,73 +756,68 @@ class _OverviewPanel extends StatelessWidget {
         const _SectionLabel('detailOverview'),
         const SizedBox(height: 12),
         _ServerIdentity(server: server, session: session),
-        const SizedBox(height: 16),
+        const SizedBox(height: 20),
         if (!metricsEnabled)
           MaidKitEmptyState(
             icon: Symbols.visibility_off,
             title: 'serversMetricsDisabled'.tr(),
             compact: true,
           )
-        else ...[
-          _ServerSpecifications(stats: stats, systemInfo: systemInfo),
-          const SizedBox(height: 24),
-          if (statsSourceLabel != null) ...[
-            Text(
-              statsSourceLabel!,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-          const _SectionLabel('detailPerformance'),
-          const SizedBox(height: 12),
-          _MetricGrid(stats: stats),
-        ],
+        else
+          _ServerSpecifications(
+            stats: stats,
+            systemInfo: systemInfo,
+            sourceLabel: statsSourceLabel,
+          ),
+        const SizedBox(height: 20),
+        _ServerQuickActions(
+          server: server,
+          connected: session?.status == SessionStatus.connected,
+          onConnect: onConnect,
+        ),
       ],
     );
   }
 }
 
+/// Static host specifications. Totals only; usage belongs to the charts.
 class _ServerSpecifications extends StatelessWidget {
-  const _ServerSpecifications({required this.stats, required this.systemInfo});
+  const _ServerSpecifications({
+    required this.stats,
+    required this.systemInfo,
+    this.sourceLabel,
+  });
 
   final ServerStats? stats;
   final ServerSystemInfo? systemInfo;
+
+  /// Where the totals came from, when that is not a plain SSH session.
+  final String? sourceLabel;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final specs = [
-      _SpecItem(
-        icon: Symbols.memory,
-        label: 'detailCpu',
-        value: stats?.cpuCount == null ? '—' : '${stats!.cpuCount} cores',
-      ),
-      _SpecItem(
-        icon: Symbols.developer_board,
-        label: 'detailMemory',
-        value: stats?.memoryTotalKb == null
-            ? '—'
-            : _formatKb(stats!.memoryTotalKb!),
-      ),
-      _SpecItem(
-        icon: Symbols.storage,
-        label: 'detailRootDisk',
-        value: stats?.diskTotalKb == null
-            ? '—'
-            : _formatKb(stats!.diskTotalKb!),
-      ),
-      _SpecItem(
-        icon: Symbols.terminal,
-        label: 'detailSystem',
-        value: [
-          systemInfo?.distribution,
-          systemInfo?.kernel,
-        ].whereType<String>().join(' · '),
-      ),
-    ];
+    final stats = this.stats;
+    final memoryTotalKb = stats?.memoryTotalKb;
+    // Root volume first, the collector's own ordering.
+    final rootDisks = (stats?.disks ?? const <DiskUsage>[]).where(
+      (disk) => disk.mount == '/',
+    );
+    final disk =
+        rootDisks.firstOrNull ??
+        (stats?.disks.isNotEmpty == true ? stats!.disks.first : null);
+    final diskTotalKb = disk?.totalKb ?? stats?.diskTotalKb;
+    final diskUsedKb =
+        disk?.usedKb ??
+        (stats?.diskTotalKb == null || stats?.diskAvailableKb == null
+            ? null
+            : stats!.diskTotalKb! - stats.diskAvailableKb!);
+    final diskRatio = _ratio(diskUsedKb, diskTotalKb);
+    final systemLabel = [
+      systemInfo?.distribution,
+      systemInfo?.kernel,
+    ].whereType<String>().where((part) => part.isNotEmpty).join(' · ');
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
@@ -827,16 +828,78 @@ class _ServerSpecifications extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'detailSpecifications',
-              style: theme.textTheme.labelLarge?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ).tr(),
+            Row(
+              children: [
+                Text(
+                  'detailSpecifications',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ).tr(),
+                if (sourceLabel != null) ...[
+                  const Spacer(),
+                  Flexible(
+                    child: Text(
+                      sourceLabel!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
             const SizedBox(height: 12),
-            for (final spec in specs) ...[
-              _SpecificationRow(spec: spec),
-              if (spec != specs.last) const SizedBox(height: 10),
+            _SpecificationRow(
+              icon: Symbols.memory,
+              label: 'detailCpu',
+              value: stats?.cpuCount == null
+                  ? '—'
+                  : 'detailCpuCount'.tr(args: ['${stats!.cpuCount}']),
+            ),
+            const SizedBox(height: 10),
+            _SpecificationRow(
+              icon: Symbols.developer_board,
+              label: 'detailMemory',
+              value: memoryTotalKb == null ? '—' : _formatKb(memoryTotalKb),
+            ),
+            const SizedBox(height: 10),
+            _SpecificationRow(
+              icon: Symbols.storage,
+              label: 'detailRootDisk',
+              value: diskTotalKb == null
+                  ? '—'
+                  : diskUsedKb == null
+                  ? _formatKb(diskTotalKb)
+                  : '${_formatKb(diskUsedKb)} / ${_formatKb(diskTotalKb)}',
+            ),
+            if (diskRatio != null) ...[
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(MaidKitRadius.xs),
+                child: LinearProgressIndicator(
+                  value: diskRatio,
+                  minHeight: 4,
+                  backgroundColor: scheme.surfaceContainerHighest,
+                  color: diskRatio >= 0.9
+                      ? scheme.error
+                      : diskRatio >= 0.75
+                      ? scheme.tertiary
+                      : scheme.primary,
+                ),
+              ),
+            ],
+            if (systemLabel.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _SpecificationRow(
+                icon: Symbols.terminal,
+                label: 'detailSystem',
+                value: systemLabel,
+                multiline: true,
+              ),
             ],
           ],
         ),
@@ -845,44 +908,87 @@ class _ServerSpecifications extends StatelessWidget {
   }
 }
 
-class _SpecItem {
-  const _SpecItem({
+/// The rail's actions: the two surfaces a server is actually used through.
+class _ServerQuickActions extends ConsumerWidget {
+  const _ServerQuickActions({
+    required this.server,
+    required this.connected,
+    required this.onConnect,
+  });
+
+  final Server server;
+  final bool connected;
+  final Future<void> Function() onConnect;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        FilledButton.tonalIcon(
+          onPressed: () => openTerminalFor(context, ref, server),
+          icon: const Icon(Symbols.terminal, size: 18),
+          label: Text('sessionsNewTerminal'.tr()),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => ref
+              .read(terminalTabsProvider.notifier)
+              .openFileManagement(server),
+          icon: const Icon(Symbols.folder_open, size: 18),
+          label: Text('serverFileManagementLabel'.tr()),
+        ),
+        if (!connected)
+          OutlinedButton.icon(
+            onPressed: onConnect,
+            icon: const Icon(Symbols.link, size: 18),
+            label: Text('commonConnect'.tr()),
+          ),
+      ],
+    );
+  }
+}
+
+class _SpecificationRow extends StatelessWidget {
+  const _SpecificationRow({
     required this.icon,
     required this.label,
     required this.value,
+    this.multiline = false,
   });
 
   final IconData icon;
   final String label;
   final String value;
-}
 
-class _SpecificationRow extends StatelessWidget {
-  const _SpecificationRow({required this.spec});
-
-  final _SpecItem spec;
+  /// Values like `distribution · kernel` are allowed to wrap: clipping them
+  /// would hide the version that identifies the host.
+  final bool multiline;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
     return Row(
+      crossAxisAlignment: multiline
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
       children: [
-        Icon(spec.icon, size: 18, color: theme.colorScheme.onSurfaceVariant),
+        Icon(icon, size: 18, color: muted),
         const SizedBox(width: 12),
         SizedBox(
           width: 72,
           child: Text(
-            spec.label.tr(),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            label.tr(),
+            style: theme.textTheme.bodySmall?.copyWith(color: muted),
           ),
         ),
         Expanded(
           child: Text(
-            spec.value.isEmpty ? '—' : spec.value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            value.isEmpty ? '—' : value,
+            maxLines: multiline ? 2 : 1,
+            overflow: multiline ? TextOverflow.fade : TextOverflow.ellipsis,
+            softWrap: multiline,
             textAlign: TextAlign.end,
             style: theme.textTheme.bodyMedium,
           ),
@@ -927,8 +1033,7 @@ class _InspectorTabs extends StatefulWidget {
   State<_InspectorTabs> createState() => _InspectorTabsState();
 }
 
-class _InspectorTabsState extends State<_InspectorTabs>
-    with SingleTickerProviderStateMixin {
+class _InspectorTabsState extends State<_InspectorTabs> {
   static const _tabCount = 13;
 
   /// Index of the MaidCafe daemon tab — the one surface whose daemon can be
@@ -940,118 +1045,156 @@ class _InspectorTabsState extends State<_InspectorTabs>
   /// is what a browser has (see `docs/WEB_SUPPORT.md`).
   static const _containersTabIndex = 6;
 
-  /// Tabs visible on this platform, in tab-bar order. Every other tab collects
-  /// its data over SSH, which a browser does not have.
+  /// Tabs visible on this platform. Every other tab collects its data over
+  /// SSH, which a browser does not have.
   static final List<int> _visibleTabIndices = kIsWeb
       ? const <int>[_containersTabIndex, _maidCafeTabIndex]
       : List<int>.generate(_tabCount, (index) => index);
 
-  late final TabController _tabController;
+  /// The tabs a host is watched through, kept on one quiet strip: metrics,
+  /// processes, runtimes and the services actually running there.
+  static const List<int> _primaryTabIndices = [0, 1, 2, 3, 4, 5, 6];
+
+  /// The occasional surfaces. They sit behind a single overflow control so
+  /// the strip stays put in a narrow pane instead of being scrolled sideways
+  /// out of sight.
+  static const List<int> _overflowTabIndices = [7, 8, 9, 10, 11, 12];
+
+  late int _activeTab;
+
+  /// Tabs that have been opened at least once. Each stays mounted afterwards,
+  /// so returning to a tab keeps its scrollback, its chart history, and its
+  /// already-fetched data instead of starting over.
+  late final Set<int> _mounted = {_activeTab};
 
   @override
   void initState() {
     super.initState();
-    final visible = _visibleTabIndices;
-    final requested = visible.indexOf(
-      widget.initialTab.clamp(0, _tabCount - 1),
-    );
-    _tabController = TabController(
-      length: visible.length,
-      vsync: this,
-      initialIndex: requested < 0 ? 0 : requested,
-    );
-    _tabController.addListener(_handleTabChange);
+    final requested = widget.initialTab.clamp(0, _tabCount - 1);
+    _activeTab = _visibleTabIndices.contains(requested)
+        ? requested
+        : _visibleTabIndices.first;
+    _mounted.add(_activeTab);
   }
 
-  @override
-  void dispose() {
-    _tabController
-      ..removeListener(_handleTabChange)
-      ..dispose();
-    super.dispose();
-  }
-
-  void _handleTabChange() {
-    if (_tabController.indexIsChanging) return;
-    widget.onTabChanged(_visibleTabIndices[_tabController.index]);
+  void _select(int index) {
+    if (index == _activeTab) return;
+    setState(() {
+      _mounted.add(index);
+      _activeTab = index;
+    });
+    widget.onTabChanged(index);
   }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          dividerColor: scheme.outlineVariant,
-          tabs: [for (final index in _visibleTabIndices) _tabLabel(index)],
-        ),
+        _tabStrip(context),
         Expanded(
-          child: TabBarView(
-            controller: _tabController,
-            children: [for (final index in _visibleTabIndices) _tabView(index)],
+          child: IndexedStack(
+            index: _visibleTabIndices.indexOf(_activeTab),
+            sizing: StackFit.expand,
+            children: [
+              for (final index in _visibleTabIndices)
+                _mounted.contains(index)
+                    ? _tabView(index)
+                    : const SizedBox.shrink(),
+            ],
           ),
         ),
       ],
     );
   }
 
-  IconLabelTab _tabLabel(int index) => switch (index) {
-    0 => IconLabelTab(
-      icon: const Icon(Symbols.monitoring, size: 18),
-      label: 'detailActivity'.tr(),
-    ),
-    1 => IconLabelTab(
-      icon: const Icon(Symbols.terminal, size: 18),
-      label: 'detailProcesses'.tr(),
-    ),
-    2 => IconLabelTab(
-      icon: const Icon(Symbols.code_blocks, size: 18),
-      label: 'detailRuntimes'.tr(),
-    ),
-    3 => IconLabelTab(
-      icon: const Icon(Symbols.settings_applications, size: 18),
-      label: 'detailServices'.tr(),
-    ),
-    4 => IconLabelTab(
-      icon: const Icon(Symbols.language, size: 18),
-      label: 'detailWebServers'.tr(),
-    ),
-    5 => IconLabelTab(
-      icon: const Icon(Symbols.database, size: 18),
-      label: 'detailDatabases'.tr(),
-    ),
-    6 => IconLabelTab(
-      icon: const Icon(Symbols.deployed_code, size: 18),
-      label: 'detailContainers'.tr(),
-    ),
-    7 => IconLabelTab(
-      icon: const Icon(Symbols.image, size: 18),
-      label: 'detailImages'.tr(),
-    ),
-    8 => IconLabelTab(
-      icon: const Icon(Symbols.schedule, size: 18),
-      label: 'detailCrontab'.tr(),
-    ),
-    9 => IconLabelTab(
-      icon: const Icon(Symbols.inventory_2, size: 18),
-      label: 'detailPackages'.tr(),
-    ),
-    10 => IconLabelTab(
-      icon: const Icon(Symbols.shield, size: 18),
-      label: 'detailFirewall'.tr(),
-    ),
-    11 => IconLabelTab(
-      icon: const Icon(Symbols.swap_horiz, size: 18),
-      label: 'detailPortForwarding'.tr(),
-    ),
-    _ => IconLabelTab(
-      icon: const Icon(Symbols.local_cafe, size: 18),
-      label: 'maidCafeTitle'.tr(),
-    ),
+  /// One left-aligned row: the primary tabs, the selected overflow tab when
+  /// one is open, and the overflow menu on the trailing edge.
+  Widget _tabStrip(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final primary = [
+      for (final index in _primaryTabIndices)
+        if (_visibleTabIndices.contains(index)) index,
+    ];
+    final overflow = [
+      for (final index in _overflowTabIndices)
+        if (_visibleTabIndices.contains(index)) index,
+    ];
+    final activeIsOverflow = overflow.contains(_activeTab);
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final index in primary)
+                    _InspectorTabButton(
+                      icon: _tabLabel(index).icon,
+                      label: _tabLabel(index).label,
+                      selected: _activeTab == index,
+                      onPressed: () => _select(index),
+                    ),
+                  if (activeIsOverflow)
+                    _InspectorTabButton(
+                      icon: _tabLabel(_activeTab).icon,
+                      label: _tabLabel(_activeTab).label,
+                      selected: true,
+                      onPressed: () => _select(_activeTab),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (overflow.isNotEmpty)
+            PopupMenuButton<int>(
+              tooltip: 'detailMoreSections'.tr(),
+              icon: const Icon(Symbols.more_horiz, size: 18),
+              onSelected: _select,
+              itemBuilder: (context) => [
+                for (final index in overflow)
+                  PopupMenuItem<int>(
+                    value: index,
+                    child: Row(
+                      children: [
+                        Icon(
+                          _tabLabel(index).icon,
+                          size: 18,
+                          color: _activeTab == index
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(_tabLabel(index).label),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+
+  ({IconData icon, String label}) _tabLabel(int index) => switch (index) {
+    0 => (icon: Symbols.monitoring, label: 'detailActivity'.tr()),
+    1 => (icon: Symbols.terminal, label: 'detailProcesses'.tr()),
+    2 => (icon: Symbols.code_blocks, label: 'detailRuntimes'.tr()),
+    3 => (icon: Symbols.settings_applications, label: 'detailServices'.tr()),
+    4 => (icon: Symbols.language, label: 'detailWebServers'.tr()),
+    5 => (icon: Symbols.database, label: 'detailDatabases'.tr()),
+    6 => (icon: Symbols.deployed_code, label: 'detailContainers'.tr()),
+    7 => (icon: Symbols.image, label: 'detailImages'.tr()),
+    8 => (icon: Symbols.schedule, label: 'detailCrontab'.tr()),
+    9 => (icon: Symbols.inventory_2, label: 'detailPackages'.tr()),
+    10 => (icon: Symbols.shield, label: 'detailFirewall'.tr()),
+    11 => (icon: Symbols.swap_horiz, label: 'detailPortForwarding'.tr()),
+    _ => (icon: Symbols.local_cafe, label: 'maidCafeTitle'.tr()),
   };
 
   Widget _tabView(int index) => switch (index) {
@@ -1143,6 +1286,60 @@ class _InspectorTabsState extends State<_InspectorTabs>
   };
 }
 
+/// One entry in the inspector strip. Selected entries take the primary color
+/// and a 2px rule, which is the whole affordance: no pills, no tab surfaces.
+class _InspectorTabButton extends StatelessWidget {
+  const _InspectorTabButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return InkWell(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected ? scheme.primary : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ServerIdentity extends ConsumerWidget {
   const _ServerIdentity({required this.server, required this.session});
 
@@ -1181,6 +1378,19 @@ class _ServerIdentity extends ConsumerWidget {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   _StatusChip(connected: connected, status: session?.status),
+                  if (session?.networkLatency case final latency?)
+                    if (connected)
+                      Text(
+                        '${latency.inMilliseconds} ms',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: latency.inMilliseconds >= 250
+                              ? scheme.error
+                              : latency.inMilliseconds >= 100
+                              ? scheme.tertiary
+                              : scheme.onSurfaceVariant,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
                   if (metricsEnabled && session?.stats?.updatedAt != null)
                     Text(
                       'detailUpdated'.tr(
@@ -1277,203 +1487,6 @@ class _ConnectionPrompt extends StatelessWidget {
       label: Text('detailConnectForMetrics'.tr()),
     ),
   );
-}
-
-class _MetricGrid extends StatelessWidget {
-  const _MetricGrid({required this.stats});
-
-  final ServerStats? stats;
-
-  @override
-  Widget build(BuildContext context) {
-    if (stats == null) {
-      return MaidKitEmptyState(
-        icon: Symbols.monitoring,
-        title: 'detailMetricsCollecting'.tr(),
-        compact: true,
-      );
-    }
-    final memoryUsed =
-        stats!.memoryTotalKb == null || stats!.memoryAvailableKb == null
-        ? null
-        : stats!.memoryTotalKb! - stats!.memoryAvailableKb!;
-    final diskUsed =
-        stats!.diskTotalKb == null || stats!.diskAvailableKb == null
-        ? null
-        : stats!.diskTotalKb! - stats!.diskAvailableKb!;
-    final swapUsed = stats!.swapTotalKb == null || stats!.swapFreeKb == null
-        ? null
-        : stats!.swapTotalKb! - stats!.swapFreeKb!;
-    final disks = stats!.disks;
-    final health = stats!.health;
-    return Column(
-      children: [
-        // The daemon's own verdict on the host, first in the grid: it is the
-        // one figure that already folds every dimension below it together.
-        if (health != null) ...[
-          _MetricCard(
-            icon: Symbols.monitor_heart,
-            label: 'detailHealth',
-            value: '${health.score}',
-            detail: serverHealthStatusLabel(health.status),
-            progress: health.score / 100,
-            progressColor: serverHealthStatusColor(
-              health.status,
-              Theme.of(context).colorScheme,
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-        _MetricCard(
-          icon: Symbols.speed,
-          label: 'detailLoadAverage',
-          value: _loadLabel(stats!),
-          detail: stats!.cpuCount == null
-              ? null
-              : 'detailCpuCount'.tr(args: ['${stats!.cpuCount}']),
-        ),
-        const SizedBox(height: 8),
-        for (final gpu in stats!.gpus) ...[
-          _MetricCard(
-            icon: Symbols.developer_board,
-            label: 'detailGpu',
-            value: gpu.utilizationPercent == null
-                ? '—'
-                : '${gpu.utilizationPercent!.toStringAsFixed(0)}%',
-            detail: [
-              gpu.name,
-              if (gpu.memoryUsedKb != null && gpu.memoryTotalKb != null)
-                '${_formatKb(gpu.memoryUsedKb!)} / ${_formatKb(gpu.memoryTotalKb!)}',
-              if (gpu.temperatureC != null)
-                '${gpu.temperatureC!.toStringAsFixed(0)}°C',
-            ].join(' · '),
-            progress: _ratio(gpu.memoryUsedKb, gpu.memoryTotalKb),
-          ),
-          const SizedBox(height: 8),
-        ],
-        _MetricCard(
-          icon: Symbols.memory,
-          label: 'detailMemory',
-          value: memoryUsed == null ? '—' : _formatKb(memoryUsed),
-          detail: stats!.memoryTotalKb == null
-              ? null
-              : 'detailOf'.tr(args: [_formatKb(stats!.memoryTotalKb!)]),
-          progress: _ratio(memoryUsed, stats!.memoryTotalKb),
-        ),
-        const SizedBox(height: 8),
-        if (disks.isEmpty) ...[
-          _MetricCard(
-            icon: Symbols.storage,
-            label: 'detailRootDisk',
-            value: diskUsed == null ? '—' : _formatKb(diskUsed),
-            detail: stats!.diskTotalKb == null
-                ? null
-                : 'detailOf'.tr(args: [_formatKb(stats!.diskTotalKb!)]),
-            progress: _ratio(diskUsed, stats!.diskTotalKb),
-          ),
-          const SizedBox(height: 8),
-        ] else
-          for (final disk in disks) ...[
-            _MetricCard(
-              icon: Symbols.storage,
-              label: disk.mount == '/' ? 'detailRootDisk' : disk.mount,
-              value: disk.usedKb == null ? '—' : _formatKb(disk.usedKb!),
-              detail: disk.totalKb == null
-                  ? null
-                  : '${'detailOf'.tr(args: [_formatKb(disk.totalKb!)])}'
-                        '${disk.percent == null ? '' : ' · ${disk.percent!.toStringAsFixed(0)}%'}',
-              progress: _ratio(disk.usedKb, disk.totalKb),
-            ),
-            const SizedBox(height: 8),
-          ],
-        _MetricCard(
-          icon: Symbols.timer,
-          label: 'detailUptime',
-          value: _formatUptime(stats!.uptime),
-          detail: swapUsed == null || stats!.swapTotalKb == null
-              ? null
-              : 'detailSwap'.tr(
-                  args: [_formatKb(swapUsed), _formatKb(stats!.swapTotalKb!)],
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.detail,
-    this.progress,
-    this.progressColor,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final String? detail;
-  final double? progress;
-
-  /// Tints the progress bar when the metric has a state worth naming (health).
-  final Color? progressColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 18, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    label.tr(),
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Text(value, style: theme.textTheme.titleSmall),
-              ],
-            ),
-            if (progress != null) ...[
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 4,
-                  color: progressColor,
-                ),
-              ),
-            ],
-            if (detail != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                detail!,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _ProcessTable extends StatelessWidget {
@@ -2026,17 +2039,6 @@ class _ProcessRow extends StatelessWidget {
   }
 }
 
-double? _ratio(int? value, int? total) =>
-    value == null || total == null || total == 0
-    ? null
-    : (value / total).clamp(0, 1);
-
-String _loadLabel(ServerStats stats) => [
-  stats.loadAverage,
-  stats.loadAverage5,
-  stats.loadAverage15,
-].map((value) => value?.toStringAsFixed(2) ?? '—').join(' · ');
-
 String _formatKb(int value) {
   const kbPerGb = 1024 * 1024;
   return value >= kbPerGb
@@ -2044,15 +2046,10 @@ String _formatKb(int value) {
       : '${(value / 1024).toStringAsFixed(0)} MB';
 }
 
-String _formatUptime(Duration? uptime) {
-  if (uptime == null || uptime.inSeconds == 0) return '—';
-  final days = uptime.inDays;
-  final hours = uptime.inHours.remainder(24);
-  final minutes = uptime.inMinutes.remainder(60);
-  if (days > 0) return '${days}d ${hours}h';
-  if (hours > 0) return '${hours}h ${minutes}m';
-  return '${minutes}m';
-}
+double? _ratio(int? value, int? total) =>
+    value == null || total == null || total == 0
+    ? null
+    : (value / total).clamp(0, 1);
 
 String _formatTimestamp(DateTime value) {
   final local = value.toLocal();

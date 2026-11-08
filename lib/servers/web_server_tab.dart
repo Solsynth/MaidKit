@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_code_editor/flutter_code_editor.dart';
 import 'package:highlight/highlight_core.dart' show Mode;
 import 'package:highlight/languages/bash.dart' as bash;
@@ -351,6 +352,21 @@ class _WebServerTabState extends ConsumerState<WebServerTab> {
     );
   }
 
+  /// Opens one site in the system browser — the check a reader actually
+  /// runs after editing a route.
+  Future<void> _openSite(WebServerSite site) async {
+    final host = site.primaryHost;
+    if (host == null) return;
+    final uri = Uri.parse('${site.https ? 'https' : 'http'}://$host');
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) {
+        showSnackBar('webServerOpenFailed'.tr(args: [uri.toString()]));
+      }
+    }
+  }
+
   Future<void> _addToDeploymentProject(WebServerStatus status) async {
     final projects =
         ref.read(deploymentProjectsProvider).asData?.value ??
@@ -461,101 +477,48 @@ class _WebServerTabState extends ConsumerState<WebServerTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Icon(Symbols.language, size: 20, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  DropdownButton<String>(
-                    isDense: true,
-                    value: adapterId,
-                    underline: const SizedBox.shrink(),
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: scheme.onSurface,
-                    ),
-                    items: [
-                      for (final item in installed)
-                        DropdownMenuItem(
-                          value: item.adapterId,
-                          child: Text(
-                            item.version == null
-                                ? item.label
-                                : '${item.label} · ${item.version}',
-                          ),
-                        ),
-                    ],
-                    onChanged: _busy
-                        ? null
-                        : (value) {
-                            if (value != null) _selectAdapter(value);
-                          },
-                  ),
-                  IconButton(
-                    tooltip: 'Add to deployment project',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _busy || statusAsync?.asData?.value == null
-                        ? null
-                        : () => _addToDeploymentProject(
-                            statusAsync!.asData!.value,
-                          ),
-                    icon: const Icon(Symbols.add_link),
-                  ),
-                  const Spacer(),
-                  if (_busy)
-                    const Padding(
-                      padding: EdgeInsets.only(right: 8),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                  IconButton(
-                    tooltip: 'commonRefresh'.tr(),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _busy ? null : _loadDetections,
-                    icon: const Icon(Symbols.refresh),
-                  ),
-                ],
-              ),
-              if (_lastResult != null) ...[
-                const SizedBox(height: 8),
-                _LastTaskBanner(
-                  result: _lastResult!,
-                  onDismiss: () => setState(() => _lastResult = null),
-                ),
-              ],
-              if (statusAsync != null)
-                statusAsync.when(
-                  loading: () => const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: LinearProgressIndicator(minHeight: 2),
-                  ),
-                  error: (error, _) => Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      'webServerLoadError'.tr(args: ['$error']),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.error,
-                      ),
-                    ),
-                  ),
-                  data: (status) => _StatusHeader(
-                    status: status,
-                    busy: _busy,
-                    onAction: _onAction,
-                    onValidate: _validate,
-                    onEditConfig: () => _editConfig(),
-                    onLogs: _showLogs,
-                  ),
-                ),
-            ],
+        if (_lastResult != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: _LastTaskBanner(
+              result: _lastResult!,
+              onDismiss: () => setState(() => _lastResult = null),
+            ),
           ),
-        ),
+        if (statusAsync == null)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: LinearProgressIndicator(minHeight: 2),
+          )
+        else
+          statusAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: LinearProgressIndicator(minHeight: 2),
+            ),
+            error: (error, _) => Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Text(
+                'webServerLoadError'.tr(args: ['$error']),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.error,
+                ),
+              ),
+            ),
+            data: (status) => _StatusHeader(
+              status: status,
+              adapters: installed,
+              adapterId: adapterId,
+              busy: _busy,
+              onSelectAdapter: _selectAdapter,
+              onAction: _onAction,
+              onValidate: _validate,
+              onEditConfig: () => _editConfig(),
+              onLogs: _showLogs,
+              onAddToProject: () => _addToDeploymentProject(status),
+              onRefresh: _loadDetections,
+            ),
+          ),
         Divider(height: 1, color: scheme.outlineVariant),
         Expanded(child: _sitesBody(context, statusAsync)),
       ],
@@ -590,22 +553,57 @@ class _WebServerTabState extends ConsumerState<WebServerTab> {
             onAction: () => _editConfig(),
           );
         }
-        return ListView.separated(
-          itemCount: status.sites.length,
-          separatorBuilder: (_, _) => Divider(
-            height: 1,
-            color: Theme.of(
-              context,
-            ).colorScheme.outlineVariant.withValues(alpha: 0.5),
-          ),
-          itemBuilder: (context, index) {
-            final site = status.sites[index];
-            return _SiteTile(
-              site: site,
-              busy: _busy,
-              onEdit: () => _editConfig(siteId: site.path, title: site.name),
-            );
-          },
+        final theme = Theme.of(context);
+        final scheme = theme.colorScheme;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+              child: Row(
+                children: [
+                  Text(
+                    'webServerSites'.tr(args: ['${status.sites.length}']),
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _busy ? null : () => _editConfig(),
+                    icon: const Icon(Symbols.edit_note, size: 18),
+                    label: Text('webServerEditConfig'.tr()),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.separated(
+                itemCount: status.sites.length,
+                separatorBuilder: (_, _) => Divider(
+                  height: 1,
+                  color: scheme.outlineVariant.withValues(alpha: 0.5),
+                ),
+                itemBuilder: (context, index) {
+                  final site = status.sites[index];
+                  return _SiteTile(
+                    site: site,
+                    busy: _busy,
+                    // The main config path is already in the service bar;
+                    // repeat it only when the row really is a separate file.
+                    showPath:
+                        site.kind != WebServerSiteKind.main &&
+                        site.path != status.configPath,
+                    onEdit: () =>
+                        _editConfig(siteId: site.path, title: site.name),
+                    onOpen: site.primaryHost == null
+                        ? null
+                        : () => _openSite(site),
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
     );
@@ -727,160 +725,202 @@ class _StepChip extends StatelessWidget {
   }
 }
 
+/// The service bar: adapter identity, state, boot and validity at a glance.
+///
+/// Actions are ranked by how often a reader uses them. Edit and logs stay
+/// visible, reload follows the running state; restart, boot state and the
+/// deployment hand-off live behind one overflow control; validate and refresh
+/// are compact icon buttons. Stop is the only destructive action, so it is the
+/// only one painted in the error color.
 class _StatusHeader extends StatelessWidget {
   const _StatusHeader({
     required this.status,
+    required this.adapters,
+    required this.adapterId,
     required this.busy,
+    required this.onSelectAdapter,
     required this.onAction,
     required this.onValidate,
     required this.onEditConfig,
     required this.onLogs,
+    required this.onAddToProject,
+    required this.onRefresh,
   });
 
   final WebServerStatus status;
+  final List<WebServerDetection> adapters;
+  final String adapterId;
   final bool busy;
+  final Future<void> Function(String adapterId) onSelectAdapter;
   final void Function(WebServerAction action) onAction;
   final VoidCallback onValidate;
   final VoidCallback onEditConfig;
   final VoidCallback onLogs;
+  final VoidCallback onAddToProject;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            _StateChip(running: status.running),
-            const SizedBox(width: 8),
-            Text(
-              status.enabled
-                  ? 'webServerEnabledOnBoot'.tr()
-                  : 'webServerDisabledOnBoot'.tr(),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            if (status.configValid != null) ...[
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 8, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Symbols.language, size: 20, color: scheme.primary),
               const SizedBox(width: 8),
-              Icon(
-                status.configValid! ? Symbols.check_circle : Symbols.error,
-                size: 16,
-                color: status.configValid! ? scheme.primary : scheme.error,
+              DropdownButton<String>(
+                isDense: true,
+                value: adapterId,
+                underline: const SizedBox.shrink(),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: scheme.onSurface,
+                ),
+                items: [
+                  for (final item in adapters)
+                    DropdownMenuItem(
+                      value: item.adapterId,
+                      // Version only: a Go build checksum is provenance, not
+                      // identity; it belongs in a tooltip, never the title.
+                      child: Text(
+                        item.version == null
+                            ? item.label
+                            : '${item.label} ${item.version}',
+                      ),
+                    ),
+                ],
+                onChanged: busy
+                    ? null
+                    : (value) {
+                        if (value != null) onSelectAdapter(value);
+                      },
               ),
-              const SizedBox(width: 4),
-              Text(
-                status.configValid!
-                    ? 'webServerConfigOk'.tr()
-                    : 'webServerConfigInvalid'.tr(),
+              const SizedBox(width: 12),
+              _StateChip(running: status.running),
+              if (status.configValid != null) ...[
+                const SizedBox(width: 8),
+                Tooltip(
+                  message: status.configMessage ?? '',
+                  child: Icon(
+                    status.configValid! ? Symbols.check_circle : Symbols.error,
+                    size: 16,
+                    color: status.configValid! ? scheme.primary : scheme.error,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              if (busy)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              IconButton(
+                tooltip: 'commonRefresh'.tr(),
+                visualDensity: VisualDensity.compact,
+                onPressed: busy ? null : onRefresh,
+                icon: const Icon(Symbols.refresh, size: 18),
+              ),
+            ],
+          ),
+          if (status.configPath != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 28, top: 2),
+              child: Text(
+                status.configPath!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.labelSmall?.copyWith(
-                  color: status.configValid! ? scheme.primary : scheme.error,
+                  color: scheme.onSurfaceVariant,
+                  fontFamily: MaidKitFonts.mono,
+                  fontSize: 11,
                 ),
               ),
-            ],
-          ],
-        ),
-        if (status.configPath != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            status.configPath!,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontFamily: MaidKitFonts.mono,
-              fontSize: 11,
             ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: busy ? null : onEditConfig,
+                icon: const Icon(Symbols.edit, size: 18),
+                label: Text('webServerEditConfig'.tr()),
+              ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : onLogs,
+                icon: const Icon(Symbols.terminal, size: 18),
+                label: Text('webServerLogs'.tr()),
+              ),
+              if (!status.running)
+                FilledButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => onAction(WebServerAction.start),
+                  icon: const Icon(Symbols.play_arrow, size: 18),
+                  label: Text('webServerStart'.tr()),
+                )
+              else
+                OutlinedButton.icon(
+                  onPressed: busy
+                      ? null
+                      : () => onAction(WebServerAction.reload),
+                  icon: const Icon(Symbols.sync, size: 18),
+                  label: Text('webServerReload'.tr()),
+                ),
+              if (status.running)
+                TextButton.icon(
+                  onPressed: busy ? null : () => onAction(WebServerAction.stop),
+                  icon: const Icon(Symbols.stop, size: 18),
+                  label: Text('webServerStop'.tr()),
+                  style: TextButton.styleFrom(foregroundColor: scheme.error),
+                ),
+              PopupMenuButton<WebServerAction>(
+                tooltip: 'webServerServiceActions'.tr(),
+                icon: const Icon(Symbols.more_horiz, size: 18),
+                enabled: !busy,
+                onSelected: onAction,
+                itemBuilder: (context) => [
+                  if (status.running)
+                    PopupMenuItem(
+                      value: WebServerAction.restart,
+                      child: Text('webServerRestart'.tr()),
+                    ),
+                  PopupMenuItem(
+                    value: status.enabled
+                        ? WebServerAction.disable
+                        : WebServerAction.enable,
+                    child: Text(
+                      status.enabled
+                          ? 'webServerDisable'.tr()
+                          : 'webServerEnable'.tr(),
+                    ),
+                  ),
+                ],
+              ),
+              IconButton(
+                tooltip: 'webServerValidate'.tr(),
+                visualDensity: VisualDensity.compact,
+                onPressed: busy ? null : onValidate,
+                icon: const Icon(Symbols.rule, size: 18),
+              ),
+              IconButton(
+                tooltip: 'webServerAddToProject'.tr(),
+                visualDensity: VisualDensity.compact,
+                onPressed: busy ? null : onAddToProject,
+                icon: const Icon(Symbols.add_link, size: 18),
+              ),
+            ],
           ),
         ],
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: [
-            if (!status.running)
-              _ActionChip(
-                icon: Symbols.play_arrow,
-                label: 'webServerStart'.tr(),
-                onPressed: busy ? null : () => onAction(WebServerAction.start),
-              ),
-            if (status.running) ...[
-              _ActionChip(
-                icon: Symbols.stop,
-                label: 'webServerStop'.tr(),
-                onPressed: busy ? null : () => onAction(WebServerAction.stop),
-              ),
-              _ActionChip(
-                icon: Symbols.restart_alt,
-                label: 'webServerRestart'.tr(),
-                onPressed: busy
-                    ? null
-                    : () => onAction(WebServerAction.restart),
-              ),
-              _ActionChip(
-                icon: Symbols.sync,
-                label: 'webServerReload'.tr(),
-                onPressed: busy ? null : () => onAction(WebServerAction.reload),
-              ),
-            ],
-            if (!status.enabled)
-              _ActionChip(
-                icon: Symbols.toggle_on,
-                label: 'webServerEnable'.tr(),
-                onPressed: busy ? null : () => onAction(WebServerAction.enable),
-              )
-            else
-              _ActionChip(
-                icon: Symbols.toggle_off,
-                label: 'webServerDisable'.tr(),
-                onPressed: busy
-                    ? null
-                    : () => onAction(WebServerAction.disable),
-              ),
-            _ActionChip(
-              icon: Symbols.rule,
-              label: 'webServerValidate'.tr(),
-              onPressed: busy ? null : onValidate,
-            ),
-            _ActionChip(
-              icon: Symbols.edit,
-              label: 'webServerEditConfig'.tr(),
-              onPressed: busy ? null : onEditConfig,
-            ),
-            _ActionChip(
-              icon: Symbols.terminal,
-              label: 'webServerLogs'.tr(),
-              onPressed: busy ? null : onLogs,
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _ActionChip extends StatelessWidget {
-  const _ActionChip({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return ActionChip(
-      avatar: Icon(icon, size: 16),
-      label: Text(label),
-      onPressed: onPressed,
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 }
@@ -913,16 +953,25 @@ class _StateChip extends StatelessWidget {
   }
 }
 
+/// One route row: the hostname, where it forwards to, and whether it
+/// terminates TLS. The config path only appears when the row is its own file,
+/// because a Caddyfile-backed host repeats the same path on every row.
 class _SiteTile extends StatelessWidget {
   const _SiteTile({
     required this.site,
     required this.busy,
+    required this.showPath,
     required this.onEdit,
+    this.onOpen,
   });
 
   final WebServerSite site;
   final bool busy;
+  final bool showPath;
   final VoidCallback onEdit;
+
+  /// Opens the site's first hostname in the system browser.
+  final VoidCallback? onOpen;
 
   Menu _menu() => Menu(
     children: [
@@ -931,6 +980,12 @@ class _SiteTile extends StatelessWidget {
         image: MenuImage.icon(Symbols.edit),
         callback: onEdit,
       ),
+      if (onOpen != null)
+        MenuAction(
+          title: 'webServerOpenSite'.tr(),
+          image: MenuImage.icon(Symbols.open_in_new),
+          callback: onOpen!,
+        ),
     ],
   );
 
@@ -938,43 +993,105 @@ class _SiteTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final subtitle = <String>[
-      if (site.listen.isNotEmpty) site.listen.join(', '),
-      site.path,
-    ].join(' · ');
-
+    final meta = [
+      if (site.upstream != null) '→ ${site.upstream}',
+      if (site.listen.isNotEmpty && site.upstream == null)
+        site.listen.join(', '),
+      if (site.kind != WebServerSiteKind.main && showPath) site.path,
+    ].nonNulls.join(' · ');
     return ContextMenuWidget(
       desktopMenuWidgetBuilder: maidKitDesktopMenuWidgetBuilder,
       menuProvider: (_) => _menu(),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        contentPadding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
         leading: Icon(
           site.kind == WebServerSiteKind.main
               ? Symbols.settings
               : Symbols.public,
           color: site.enabled ? scheme.primary : scheme.onSurfaceVariant,
         ),
-        title: Text(
-          site.displayNames,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                site.displayNames,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (site.https) ...[
+              const SizedBox(width: 8),
+              _TlsBadge(secure: true),
+            ] else if (site.kind == WebServerSiteKind.site) ...[
+              const SizedBox(width: 8),
+              _TlsBadge(secure: false),
+            ],
+          ],
         ),
-        subtitle: Text(
-          subtitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-            fontFamily: MaidKitFonts.mono,
-            fontSize: 11,
-          ),
-        ),
-        trailing: IconButton(
-          tooltip: 'webServerEditConfig'.tr(),
-          onPressed: busy ? null : onEdit,
-          icon: const Icon(Symbols.edit, size: 20),
+        subtitle: meta.isEmpty
+            ? null
+            : Text(
+                meta,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontFamily: MaidKitFonts.mono,
+                  fontSize: 11,
+                ),
+              ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (onOpen != null)
+              IconButton(
+                tooltip: 'webServerOpenSite'.tr(),
+                visualDensity: VisualDensity.compact,
+                onPressed: busy ? null : onOpen,
+                icon: const Icon(Symbols.open_in_new, size: 18),
+              ),
+            IconButton(
+              tooltip: 'webServerEditConfig'.tr(),
+              visualDensity: VisualDensity.compact,
+              onPressed: busy ? null : onEdit,
+              icon: const Icon(Symbols.edit, size: 18),
+            ),
+          ],
         ),
         onTap: busy ? null : onEdit,
+      ),
+    );
+  }
+}
+
+/// TLS state for one route. Auto HTTPS reads as a quiet confirmation; a
+/// plaintext route is called out rather than silently unmarked.
+class _TlsBadge extends StatelessWidget {
+  const _TlsBadge({required this.secure});
+
+  final bool secure;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final color = secure ? scheme.primary : scheme.tertiary;
+    return Tooltip(
+      message: (secure ? 'webServerTlsSecure' : 'webServerTlsPlain').tr(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            secure ? Symbols.lock : Symbols.lock_open,
+            size: 13,
+            color: color,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            (secure ? 'webServerTlsOn' : 'webServerTlsOff').tr(),
+            style: theme.textTheme.labelSmall?.copyWith(color: color),
+          ),
+        ],
       ),
     );
   }

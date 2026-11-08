@@ -212,6 +212,9 @@ for d in $dirs; do
     real=$(readlink -f "$f" 2>/dev/null || echo "$f")
     names=$(grep -E "^[[:space:]]*server_name[[:space:]]" "$f" 2>/dev/null | head -n 8 | sed -E "s/^[[:space:]]*server_name[[:space:]]+//; s/;[[:space:]]*$//" | tr "\n" " " | sed "s/[[:space:]]\+/ /g")
     listens=$(grep -E "^[[:space:]]*listen[[:space:]]" "$f" 2>/dev/null | head -n 8 | sed -E "s/^[[:space:]]*listen[[:space:]]+//; s/;[[:space:]]*$//" | tr "\n" " " | sed "s/[[:space:]]\+/ /g")
+    upstream=$(grep -E "^[[:space:]]*proxy_pass[[:space:]]" "$f" 2>/dev/null | head -n 1 | sed -E "s/^[[:space:]]*proxy_pass[[:space:]]+//; s/;[[:space:]]*$//" | tr -d "\\r\\n")
+    tls=no
+    case "$listens" in *ssl*) tls=yes ;; esac
     base=$(basename "$f")
     enabled=yes
     if [ -d /etc/nginx/sites-available ] && [ -d /etc/nginx/sites-enabled ]; then
@@ -220,7 +223,7 @@ for d in $dirs; do
         *) enabled=yes ;;
       esac
     fi
-    printf "FILE\t%s\t%s\t%s\t%s\t%s\n" "$base" "$real" "$enabled" "$names" "$listens"
+    printf "FILE\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$base" "$real" "$enabled" "$names" "$listens" "$upstream" "$tls"
   done
 done
 '
@@ -262,6 +265,10 @@ List<WebServerSite> parseNginxSiteListing(String text) {
         ? _splitTokens(parts[4])
         : const <String>[];
     final listen = parts.length > 5 ? _splitTokens(parts[5]) : const <String>[];
+    final upstream = parts.length > 6 && parts[6].trim().isNotEmpty
+        ? parts[6].trim()
+        : null;
+    final https = parts.length > 7 && parts[7].trim().toLowerCase() == 'yes';
     sites.add(
       WebServerSite(
         id: path,
@@ -270,6 +277,8 @@ List<WebServerSite> parseNginxSiteListing(String text) {
         enabled: enabled,
         serverNames: serverNames,
         listen: listen,
+        upstream: upstream,
+        https: https,
       ),
     );
   }

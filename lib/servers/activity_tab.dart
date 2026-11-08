@@ -12,7 +12,6 @@ import 'package:maid_kit/shared/presentation/empty_state.dart';
 import 'package:maid_kit/theme.dart';
 import 'activity_models.dart';
 import 'server_providers.dart';
-import 'server_models.dart';
 import 'maidcafe_stream.dart';
 import 'maidcafe_session_registry.dart';
 
@@ -399,50 +398,37 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
           child: Row(
             children: [
-              Text(
-                'activityLiveActivity'.tr(),
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (latest.uptime != null)
+              if (_source != null) _SourceBadge(source: _source!),
+              if (latest.uptime != null) ...[
+                const SizedBox(width: 8),
                 Text(
                   'activityUptime'.tr(args: [_formatUptime(latest.uptime!)]),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
+              ],
               const Spacer(),
               IconButton(
                 tooltip: 'activityRefreshNow'.tr(),
                 visualDensity: VisualDensity.compact,
                 onPressed: _refreshNow,
-                icon: const Icon(Symbols.refresh),
+                icon: const Icon(Symbols.refresh, size: 18),
               ),
             ],
           ),
         ),
-        if (_source != null) _ActivitySourceBanner(source: _source!),
         Divider(height: 1, color: scheme.outlineVariant),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
             children: [
-              _SummaryRow(sample: latest),
-              const SizedBox(height: 12),
               _ChartCard(
                 title: 'detailCpu'.tr(),
-                subtitle: latest.cpuPercent == null
-                    ? (latest.cpuCount == null
-                          ? '—'
-                          : '${latest.cpuCount} cores · load ${latest.load1?.toStringAsFixed(2) ?? '—'}')
-                    : '${latest.cpuPercent!.toStringAsFixed(1)}% · '
-                          'load ${latest.load1?.toStringAsFixed(2) ?? '—'} '
-                          '(${latest.cpuCount ?? '—'} cores)',
+                subtitle: _cpuSubtitle(latest),
                 color: scheme.primary,
                 child: _PercentLineChart(
                   history: _history,
@@ -465,10 +451,13 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
                 ),
               ),
               const SizedBox(height: 8),
+              // Disk is capacity, not a rate, so it is a gauge in the rail
+              // rather than a fourth empty plot.
               _ChartCard(
                 title: 'activityNetwork'.tr(),
-                // Cool teal for RX vs warm amber for TX — primary/secondary from
-                // the seed are too close in hue to read as separate series.
+                // Cool teal for RX vs warm amber for TX — primary/secondary
+                // from the seed are too close in hue to read as separate
+                // series.
                 color: _netRxColor(scheme),
                 subtitleWidget: _NetSubtitle(
                   sample: latest,
@@ -481,8 +470,6 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
                   txColor: _netTxColor(scheme),
                 ),
               ),
-              const SizedBox(height: 8),
-              _DiskCard(sample: latest),
             ],
           ),
         ),
@@ -493,6 +480,14 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   bool _hasSwap(ActivitySample s) =>
       s.swapTotalKb != null && s.swapTotalKb! > 0;
 
+  /// One line per chart header: the current reading, the same figure the
+  /// plot's last point carries, plus the context the plot cannot show.
+  String _cpuSubtitle(ActivitySample s) => [
+    if (s.cpuPercent != null) '${s.cpuPercent!.toStringAsFixed(1)}%',
+    if (s.load1 != null) 'load ${s.load1!.toStringAsFixed(2)}',
+    if (s.cpuCount != null) 'detailCpuCount'.tr(args: ['${s.cpuCount}']),
+  ].join(' · ');
+
   String _memSubtitle(ActivitySample s) {
     if (s.memoryUsedKb == null || s.memoryTotalKb == null) return '—';
     return '${_formatKb(s.memoryUsedKb!)} / ${_formatKb(s.memoryTotalKb!)}'
@@ -500,38 +495,44 @@ class _ActivityTabState extends ConsumerState<ActivityTab> {
   }
 }
 
-class _ActivitySourceBanner extends StatelessWidget {
-  const _ActivitySourceBanner({required this.source});
+/// The transport the numbers came from, as a chip rather than a banner: one
+/// label next to the uptime says the same thing without a ribbon strip.
+class _SourceBadge extends StatelessWidget {
+  const _SourceBadge({required this.source});
 
   final _ActivityMetricSource source;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final maidCafe = source == _ActivityMetricSource.maidCafe;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(color: scheme.secondaryContainer),
-      child: Row(
-        children: [
-          Icon(
-            maidCafe ? Symbols.local_cafe : Symbols.terminal,
-            size: 18,
-            color: scheme.onSecondaryContainer,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              (maidCafe
-                      ? 'activityDataSourceMaidCafe'
-                      : 'activityDataSourceSsh')
-                  .tr(),
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: scheme.onSecondaryContainer,
-              ),
+    final color = maidCafe ? scheme.primary : scheme.onSurfaceVariant;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              maidCafe ? Symbols.local_cafe : Symbols.terminal,
+              size: 14,
+              color: color,
             ),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Text(
+              (maidCafe
+                      ? 'activityDataSourceMaidCafeShort'
+                      : 'activityDataSourceSshShort')
+                  .tr(),
+              style: theme.textTheme.labelSmall?.copyWith(color: color),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -590,122 +591,6 @@ class _NetSubtitle extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       textAlign: TextAlign.end,
-    );
-  }
-}
-
-class _SummaryRow extends StatelessWidget {
-  const _SummaryRow({required this.sample});
-
-  final ActivitySample sample;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 520;
-        final tiles = [
-          _StatTile(
-            label: 'detailCpu'.tr(),
-            value: sample.cpuPercent == null
-                ? '—'
-                : '${sample.cpuPercent!.toStringAsFixed(0)}%',
-            detail: sample.load1 == null
-                ? null
-                : 'load ${sample.load1!.toStringAsFixed(2)}',
-          ),
-          _StatTile(
-            label: 'detailMemory'.tr(),
-            value: sample.memoryPercent == null
-                ? '—'
-                : '${sample.memoryPercent!.toStringAsFixed(0)}%',
-            detail: sample.memoryUsedKb == null
-                ? null
-                : _formatKb(sample.memoryUsedKb!),
-          ),
-          _StatTile(
-            label: 'detailRootDisk'.tr(),
-            value: sample.diskPercent == null
-                ? '—'
-                : '${sample.diskPercent!.toStringAsFixed(0)}%',
-            detail: sample.diskUsedKb == null
-                ? null
-                : _formatKb(sample.diskUsedKb!),
-          ),
-          _StatTile(
-            label: 'activityNetworkDown'.tr(),
-            value: _formatBps(sample.netRxBps),
-            detail: sample.netTxBps == null
-                ? null
-                : '↑ ${_formatBps(sample.netTxBps)}',
-          ),
-        ];
-        if (wide) {
-          return Row(
-            children: [
-              for (var i = 0; i < tiles.length; i++) ...[
-                if (i > 0) const SizedBox(width: 8),
-                Expanded(child: tiles[i]),
-              ],
-            ],
-          );
-        }
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final tile in tiles)
-              SizedBox(width: (constraints.maxWidth - 8) / 2, child: tile),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _StatTile extends StatelessWidget {
-  const _StatTile({required this.label, required this.value, this.detail});
-
-  final String label;
-  final String value;
-  final String? detail;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(value, style: theme.textTheme.titleMedium),
-            if (detail != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                detail!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 }
@@ -777,159 +662,6 @@ class _ChartCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Compact disk usage — not a time-series chart, so no empty chart area.
-/// Shows every mounted filesystem when the collector reports them, falling
-/// back to the root/boot volume for legacy single-disk sources.
-class _DiskCard extends StatelessWidget {
-  const _DiskCard({required this.sample});
-
-  final ActivitySample sample;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    final disks = sample.disks;
-    final showAll = disks.length > 1;
-    final progress = ((sample.diskPercent ?? 0) / 100).clamp(0.0, 1.0);
-    final subtitle = sample.diskUsedKb == null || sample.diskTotalKb == null
-        ? '—'
-        : '${_formatKb(sample.diskUsedKb!)} / ${_formatKb(sample.diskTotalKb!)}'
-              '${sample.diskPercent == null ? '' : ' · ${sample.diskPercent!.toStringAsFixed(0)}%'}';
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(MaidKitRadius.sm),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: scheme.outline,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  showAll ? 'detailDisks'.tr() : 'detailRootDisk'.tr(),
-                  style: theme.textTheme.titleSmall,
-                ),
-                const Spacer(),
-                if (!showAll)
-                  Flexible(
-                    child: Text(
-                      subtitle,
-                      textAlign: TextAlign.end,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            if (showAll)
-              for (final disk in disks) ...[
-                _DiskUsageRow(disk: disk),
-                if (disk != disks.last) const SizedBox(height: 10),
-              ]
-            else
-              ClipRRect(
-                borderRadius: BorderRadius.circular(MaidKitRadius.xs),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 8,
-                  backgroundColor: scheme.surfaceContainerHighest,
-                  color: progress >= 0.9
-                      ? scheme.error
-                      : progress >= 0.75
-                      ? scheme.tertiary
-                      : scheme.primary,
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// One mounted filesystem's usage row in the multi-disk card.
-class _DiskUsageRow extends StatelessWidget {
-  const _DiskUsageRow({required this.disk});
-
-  final DiskUsage disk;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final percent = disk.percent;
-    final progress = ((percent ?? 0) / 100).clamp(0.0, 1.0);
-    final used = disk.usedKb;
-    final total = disk.totalKb;
-    final label = disk.mount == '/' ? 'detailRootDisk'.tr() : disk.mount;
-    final subtitle = used == null || total == null
-        ? '—'
-        : '${_formatKb(used)} / ${_formatKb(total)}'
-              '${percent == null ? '' : ' · ${percent.toStringAsFixed(0)}%'}';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelMedium,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(MaidKitRadius.xs),
-          child: LinearProgressIndicator(
-            value: progress,
-            minHeight: 6,
-            backgroundColor: scheme.surfaceContainerHighest,
-            color: progress >= 0.9
-                ? scheme.error
-                : progress >= 0.75
-                ? scheme.tertiary
-                : scheme.primary,
-          ),
-        ),
-      ],
     );
   }
 }

@@ -192,8 +192,8 @@ class CaddyWebServerAdapter
     if (configPath == null) return const [];
     try {
       final content = await readFile(remote, configPath);
-      final addresses = parseCaddyfileSiteAddresses(content);
-      if (addresses.isEmpty) {
+      final blocks = parseCaddyfileSiteBlocks(content);
+      if (blocks.isEmpty) {
         return [
           WebServerSite(
             id: configPath,
@@ -204,13 +204,15 @@ class CaddyWebServerAdapter
         ];
       }
       return [
-        for (final address in addresses)
+        for (final block in blocks)
           WebServerSite(
             id: configPath,
-            name: address,
+            name: block.address,
             path: configPath,
-            serverNames: [address],
+            serverNames: [block.address],
             kind: WebServerSiteKind.site,
+            upstream: block.upstream,
+            https: caddySiteUsesHttps(block.address),
           ),
       ];
     } catch (_) {
@@ -241,55 +243,141 @@ class CaddyWebServerAdapter
 ///
 /// Skips global options blocks (`{ ... }` at column 0) and snippet definitions
 /// (`(snippet) { ... }`).
-List<String> parseCaddyfileSiteAddresses(String content) {
-  final addresses = <String>[];
+List<String> parseCaddyfileSiteAddresses(String content) => [
+  for (final block in parseCaddyfileSiteBlocks(content)) block.address,
+];
+
+/// One top-level site block: its address and the upstream it forwards to.
+class CaddySiteBlock {
+  const CaddySiteBlock({required this.address, this.upstream});
+
+  final String address;
+  final String? upstream;
+}
+
+/// Every top-level site block in a Caddyfile, with the first
+/// `reverse_proxy` target declared inside each. Site blocks with no proxy
+/// directive still appear, with no upstream.
+List<CaddySiteBlock> parseCaddyfileSiteBlocks(String content) {
+  final blocks = <CaddySiteBlock>[];
   final seen = <String>{};
   final lines = content.split('\n');
+  // Brace depth of the line currently being read.
   var depth = 0;
+  // Depth that enclosed the open site body, or -1 when no site is open.
+  var siteDepth = -1;
+  var siteAddresses = <String>[];
+  // Depth of an open nested `reverse_proxy { … }` block, or -1.
+  var proxyBlockDepth = -1;
+  String? upstream;
 
   for (final raw in lines) {
     final line = raw.trim();
+    final open = '{'.allMatches(raw).length;
+    final close = '}'.allMatches(raw).length;
+    final nextDepth = depth + open - close;
     if (line.isEmpty || line.startsWith('#') || line.startsWith('//')) {
-      depth += '{'.allMatches(raw).length - '}'.allMatches(raw).length;
-      if (depth < 0) depth = 0;
+      depth = nextDepth < 0 ? 0 : nextDepth;
       continue;
     }
 
-    // Track brace depth using the raw line so nested blocks are skipped.
-    final open = '{'.allMatches(raw).length;
-    final close = '}'.allMatches(raw).length;
-
-    if (depth == 0) {
-      // Global options: a lone `{` or `{ key ...`.
-      if (line == '{' || line.startsWith('{')) {
-        depth += open - close;
-        if (depth < 0) depth = 0;
-        continue;
+    if (siteDepth >= 0) {
+      // Inside a site body: the first proxy directive names its upstream.
+      // Both forms count — `reverse_proxy host:port`, and a nested
+      // `reverse_proxy { to host:port }` block.
+      if (proxyBlockDepth >= 0 &&
+          nextDepth >= proxyBlockDepth &&
+          nextDepth > siteDepth) {
+        if (upstream == null && line.startsWith('to ')) {
+          upstream = line.split(RegExp(r'\s+')).last;
+        }
+      } else if (upstream == null && nextDepth > siteDepth) {
+        final target = _reverseProxyTarget(line);
+        if (target != null) {
+          upstream = target;
+        } else if (line.endsWith('{') && line.startsWith('reverse_proxy')) {
+          proxyBlockDepth = nextDepth;
+        }
       }
-      // Named snippet: (foo) {
-      if (line.startsWith('(')) {
-        depth += open - close;
-        if (depth < 0) depth = 0;
-        continue;
+      if (nextDepth < proxyBlockDepth) proxyBlockDepth = -1;
+      if (nextDepth <= siteDepth) {
+        for (final address in siteAddresses) {
+          blocks.add(CaddySiteBlock(address: address, upstream: upstream));
+        }
+        siteDepth = -1;
+        siteAddresses = const [];
+        proxyBlockDepth = -1;
+        upstream = null;
       }
 
-      final siteLine = line.contains('{')
-          ? line.substring(0, line.indexOf('{')).trim()
-          : line;
-      if (siteLine.isNotEmpty && _looksLikeSiteAddress(siteLine)) {
-        for (final part in siteLine.split(',')) {
-          final address = part.trim();
-          if (address.isEmpty) continue;
-          if (seen.add(address)) addresses.add(address);
+      depth = nextDepth < 0 ? 0 : nextDepth;
+      continue;
+    }
+
+    if (depth != 0) {
+      depth = nextDepth < 0 ? 0 : nextDepth;
+      continue;
+    }
+
+    // Global options: a lone `{` or `{ key ...`.
+    if (line == '{' || line.startsWith('{')) {
+      depth = nextDepth < 0 ? 0 : nextDepth;
+      continue;
+    }
+    // Named snippet: (foo) {
+    if (line.startsWith('(')) {
+      depth = nextDepth < 0 ? 0 : nextDepth;
+      continue;
+    }
+
+    final siteLine = line.contains('{')
+        ? line.substring(0, line.indexOf('{')).trim()
+        : line;
+    if (siteLine.isNotEmpty && _looksLikeSiteAddress(siteLine)) {
+      // A multi-host block becomes one row per host: a route table reads by
+      // hostname, not by brace group.
+      final addresses = <String>[];
+      for (final part in siteLine.split(',')) {
+        final address = part.trim();
+        if (address.isNotEmpty && seen.add(address)) addresses.add(address);
+      }
+      if (addresses.isNotEmpty) {
+        if (nextDepth > 0) {
+          siteDepth = depth;
+          siteAddresses = addresses;
+          upstream = null;
+        } else {
+          for (final address in addresses) {
+            blocks.add(CaddySiteBlock(address: address));
+          }
         }
       }
     }
-
-    depth += open - close;
-    if (depth < 0) depth = 0;
+    depth = nextDepth < 0 ? 0 : nextDepth;
   }
+  for (final address in siteAddresses) {
+    blocks.add(CaddySiteBlock(address: address, upstream: upstream));
+  }
+  return blocks;
+}
 
-  return addresses;
+/// A `reverse_proxy host:port` target on [line], or null.
+String? _reverseProxyTarget(String line) {
+  final match = RegExp(r'^reverse_proxy\s+(?:@\S+\s+)?(\S+)').firstMatch(line);
+  if (match == null) return null;
+  final target = match.group(1)!.trim();
+  if (target.isEmpty || target.startsWith('{')) return null;
+  return target;
+}
+
+/// Whether Caddy terminates TLS for [address]. Automatic HTTPS applies to
+/// bare hostnames; `http://` and port-only listeners serve plaintext.
+bool caddySiteUsesHttps(String address) {
+  final value = address.trim().toLowerCase();
+  if (value.startsWith('http://')) return false;
+  if (value.startsWith('https://')) return true;
+  if (value.startsWith(':')) return false;
+  return value.contains('.');
 }
 
 bool _looksLikeSiteAddress(String text) {

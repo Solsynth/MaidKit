@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/theme.dart';
 import 'package:maid_kit/shared/presentation/app_scaffold.dart';
+import 'package:maid_kit/shared/presentation/icon_label_tab.dart';
 import 'maidcafe_service.dart';
 import 'server_providers.dart';
 
@@ -34,11 +35,27 @@ class MaidCafeDaemonDetailPage extends ConsumerWidget {
             overflow: TextOverflow.ellipsis,
           ),
           bottom: TabBar(
+            // Left-aligned and scrollable: a four-tab strip spread across a
+            // wide window reads as table headers, not as navigation.
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
             tabs: [
-              Tab(text: 'daemonDetailContainers'.tr()),
-              Tab(text: 'daemonDetailOperations'.tr()),
-              Tab(text: 'daemonDetailLogs'.tr()),
-              Tab(text: 'daemonDetailActions'.tr()),
+              IconLabelTab(
+                icon: const Icon(Symbols.inventory_2, size: 18),
+                label: 'daemonDetailContainers'.tr(),
+              ),
+              IconLabelTab(
+                icon: const Icon(Symbols.bolt, size: 18),
+                label: 'daemonDetailOperations'.tr(),
+              ),
+              IconLabelTab(
+                icon: const Icon(Symbols.description, size: 18),
+                label: 'daemonDetailLogs'.tr(),
+              ),
+              IconLabelTab(
+                icon: const Icon(Symbols.list_alt, size: 18),
+                label: 'daemonDetailActions'.tr(),
+              ),
             ],
           ),
         ),
@@ -423,6 +440,124 @@ class _ActionsTabState extends ConsumerState<_ActionsTab> {
     return const [];
   }
 
+  /// Rows for the daemon's own reported actions: a plain list, one verb each.
+  List<Widget> _actionRows(
+    BuildContext context,
+    List<MaidCafeCloudAction> actions,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    return [
+      for (final action in actions)
+        ListTile(
+          leading: Icon(
+            Symbols.bolt,
+            color: action.enabled ? colors.primary : colors.outline,
+          ),
+          title: Text(action.label),
+          subtitle: Text(
+            [
+              action.name,
+              if (action.timeout.isNotEmpty) action.timeout,
+              if (action.user.isNotEmpty) action.user,
+            ].join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: FilledButton.tonal(
+            onPressed: _busy || !action.enabled
+                ? null
+                : () => _invokeCloudAction(action),
+            child: Text('maidCafeNativeOpRun'.tr()),
+          ),
+        ),
+    ];
+  }
+
+  /// Native operations grouped by the thing they operate on, with each verb
+  /// named in plain language instead of the RPC slug. Destructive verbs are
+  /// marked and tinted; operations that need parameters say so before they
+  /// are run, never after.
+  List<Widget> _nativeGroups(
+    BuildContext context,
+    List<MaidCafeCloudAction> actions,
+  ) {
+    final composeOps = <MaidCafeCloudAction>[];
+    final containerOps = <MaidCafeCloudAction>[];
+    final systemOps = <MaidCafeCloudAction>[];
+    final otherOps = <MaidCafeCloudAction>[];
+    for (final action in actions) {
+      if (action.name.startsWith('compose.')) {
+        composeOps.add(action);
+      } else if (action.name.startsWith('container.')) {
+        containerOps.add(action);
+      } else if (action.name.startsWith('systemd.') ||
+          action.name == 'process.kill') {
+        systemOps.add(action);
+      } else {
+        otherOps.add(action);
+      }
+    }
+    return [
+      if (composeOps.isNotEmpty)
+        ..._group(
+          context,
+          'daemonOpGroupCompose',
+          composeOps,
+          Symbols.folder_copy,
+        ),
+      if (containerOps.isNotEmpty)
+        ..._group(
+          context,
+          'daemonOpGroupContainers',
+          containerOps,
+          Symbols.inventory_2,
+        ),
+      if (systemOps.isNotEmpty)
+        ..._group(
+          context,
+          'daemonOpGroupServices',
+          systemOps,
+          Symbols.settings_applications,
+        ),
+      if (otherOps.isNotEmpty)
+        ..._group(context, 'daemonOpGroupOther', otherOps, Symbols.bolt),
+    ];
+  }
+
+  List<Widget> _group(
+    BuildContext context,
+    String titleKey,
+    List<MaidCafeCloudAction> actions,
+    IconData icon,
+  ) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: colors.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Text(
+              titleKey.tr(),
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+      for (final action in actions)
+        _NativeOpRow(
+          action: action,
+          busy: _busy,
+          needsParams: _nativeOpParamFields(action.name).isNotEmpty,
+          onRun: () => _invokeCloudAction(action),
+        ),
+    ];
+  }
+
   Widget _requestButton() => Padding(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
     child: Align(
@@ -453,11 +588,13 @@ class _ActionsTabState extends ConsumerState<_ActionsTab> {
                 (action) => _isNativeOperation(action) == widget.nativeOnly,
               )
               .toList(growable: false);
-          final colors = Theme.of(context).colorScheme;
           return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
               if (!widget.nativeOnly) _requestButton(),
               if (actions.isEmpty)
+                // Inline rather than the shared empty view: that one scrolls
+                // its own list, and a scroll view cannot nest inside this one.
                 Padding(
                   padding: const EdgeInsets.only(top: 48),
                   child: Column(
@@ -481,30 +618,10 @@ class _ActionsTabState extends ConsumerState<_ActionsTab> {
                     ],
                   ),
                 )
+              else if (widget.nativeOnly)
+                ..._nativeGroups(context, actions)
               else
-                for (final action in actions)
-                  ListTile(
-                    leading: Icon(
-                      Symbols.bolt,
-                      color: action.enabled ? colors.primary : colors.outline,
-                    ),
-                    title: Text(action.label),
-                    subtitle: Text(
-                      [
-                        action.name,
-                        if (action.timeout.isNotEmpty) action.timeout,
-                        if (action.user.isNotEmpty) action.user,
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: FilledButton.tonal(
-                      onPressed: _busy || !action.enabled
-                          ? null
-                          : () => _invokeCloudAction(action),
-                      child: Text('maidCafeNativeOpRun'.tr()),
-                    ),
-                  ),
+                ..._actionRows(context, actions),
             ],
           );
         },
@@ -512,6 +629,146 @@ class _ActionsTabState extends ConsumerState<_ActionsTab> {
     );
   }
 }
+
+/// One native operation: what it does, whether it is destructive, and
+/// whether it needs parameters before it can run.
+class _NativeOpRow extends StatelessWidget {
+  const _NativeOpRow({
+    required this.action,
+    required this.busy,
+    required this.needsParams,
+    required this.onRun,
+  });
+
+  final MaidCafeCloudAction action;
+  final bool busy;
+  final bool needsParams;
+  final VoidCallback onRun;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final label = nativeOpLabel(action);
+    final destructive = nativeOpIsDestructive(action.name);
+    final enabled = action.enabled && !busy;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      leading: Icon(
+        nativeOpIcon(action.name),
+        size: 18,
+        color: !action.enabled
+            ? colors.outline
+            : destructive
+            ? colors.error
+            : colors.onSurfaceVariant,
+      ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: action.enabled ? null : colors.outline,
+              ),
+            ),
+          ),
+          if (destructive) ...[
+            const SizedBox(width: 8),
+            Tooltip(
+              message: 'daemonOpDestructiveHint'.tr(),
+              child: Icon(Symbols.warning, size: 14, color: colors.error),
+            ),
+          ],
+        ],
+      ),
+      subtitle: Text(
+        [
+          action.name,
+          if (action.timeout.isNotEmpty) action.timeout,
+          if (action.user.isNotEmpty) action.user,
+        ].join(' · '),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: colors.onSurfaceVariant,
+          fontFamily: MaidKitFonts.mono,
+        ),
+      ),
+      trailing: needsParams
+          ? OutlinedButton.icon(
+              onPressed: enabled ? onRun : null,
+              icon: const Icon(Symbols.tune, size: 16),
+              label: Text('daemonOpConfigureAndRun'.tr()),
+            )
+          : destructive
+          ? OutlinedButton(
+              onPressed: enabled ? onRun : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.error,
+                side: BorderSide(color: colors.error.withValues(alpha: 0.5)),
+              ),
+              child: Text('maidCafeNativeOpRun'.tr()),
+            )
+          : FilledButton.tonal(
+              onPressed: enabled ? onRun : null,
+              child: Text('maidCafeNativeOpRun'.tr()),
+            ),
+    );
+  }
+}
+
+/// A native operation's name in the reader's words, not the RPC slug.
+String nativeOpLabel(MaidCafeCloudAction action) {
+  final named = action.name;
+  final key = switch (named) {
+    'container.start' => 'daemonOpContainerStart',
+    'container.stop' => 'daemonOpContainerStop',
+    'container.restart' => 'daemonOpContainerRestart',
+    'container.pause' => 'daemonOpContainerPause',
+    'container.unpause' => 'daemonOpContainerResume',
+    'container.kill' => 'daemonOpContainerKill',
+    'container.remove' => 'daemonOpContainerRemove',
+    'container.pull' => 'daemonOpContainerPull',
+    'compose.up' => 'daemonOpComposeUp',
+    'compose.stop' => 'daemonOpComposeStop',
+    'compose.restart' => 'daemonOpComposeRestart',
+    'compose.pull' => 'daemonOpComposePull',
+    'compose.recreate' => 'daemonOpComposeRecreate',
+    'process.kill' => 'daemonOpProcessKill',
+    _ => null,
+  };
+  if (key != null) return key.tr();
+  if (named.startsWith('systemd.')) {
+    final verb = named.substring('systemd.'.length);
+    return 'daemonOpSystemdVerb'.tr(args: [verb]);
+  }
+  return action.label;
+}
+
+/// Verbs that interrupt or destroy a running workload.
+bool nativeOpIsDestructive(String name) => switch (name) {
+  'container.kill' ||
+  'container.remove' ||
+  'container.stop' ||
+  'compose.stop' ||
+  'process.kill' => true,
+  _ => name.startsWith('systemd.') && name.endsWith('stop'),
+};
+
+IconData nativeOpIcon(String name) => switch (name) {
+  'container.pull' || 'compose.pull' => Symbols.download,
+  'container.restart' ||
+  'compose.restart' ||
+  'compose.recreate' => Symbols.restart_alt,
+  'container.remove' => Symbols.delete_outline,
+  'container.start' || 'compose.up' => Symbols.play_arrow,
+  'container.stop' || 'compose.stop' || 'process.kill' => Symbols.stop,
+  'container.pause' => Symbols.pause,
+  _ => Symbols.bolt,
+};
 
 bool _isNativeOperation(MaidCafeCloudAction action) {
   final name = action.name;

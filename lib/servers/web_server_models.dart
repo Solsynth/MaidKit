@@ -53,6 +53,8 @@ class WebServerSite {
     this.serverNames = const [],
     this.listen = const [],
     this.kind = WebServerSiteKind.site,
+    this.upstream,
+    this.https = false,
   });
 
   /// Adapter-stable id (usually the absolute config path).
@@ -66,10 +68,33 @@ class WebServerSite {
   final List<String> listen;
   final WebServerSiteKind kind;
 
+  /// Where the site forwards to (`reverse_proxy` / `proxy_pass` target), when
+  /// the config declares one. What a reader scanning routes cares about.
+  final String? upstream;
+
+  /// Whether the site terminates TLS. A bare hostname in a Caddyfile does;
+  /// a plain `:80` listener or a non-ssl nginx site does not.
+  final bool https;
+
   String get displayNames {
     if (serverNames.isNotEmpty) return serverNames.join(' ');
     if (listen.isNotEmpty) return listen.join(' ');
     return name;
+  }
+
+  /// The first hostname the site answers on, for opening it in a browser.
+  String? get primaryHost {
+    for (final name in serverNames) {
+      if (name.contains('{')) continue;
+      final host = name
+          .replaceFirst(RegExp(r'^https?://'), '')
+          .split(',')
+          .first
+          .trim();
+      if (host.isEmpty || host.startsWith(':')) continue;
+      if (host.contains('.') || host.contains(':')) return host;
+    }
+    return null;
   }
 }
 
