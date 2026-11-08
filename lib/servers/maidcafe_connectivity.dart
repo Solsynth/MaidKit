@@ -7,6 +7,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/services/user_agent.dart';
 
 import 'maidcafe_debug.dart';
 import 'maidcafe_service.dart';
@@ -215,16 +216,18 @@ Future<MaidCafeDaemonHealth> probeMaidCafeHealth(
   String baseUrl,
   String? secret,
 ) async {
-  final dio = Dio(
-    BaseOptions(
-      baseUrl: baseUrl,
-      headers: secret == null || secret.isEmpty
-          ? null
-          : <String, String>{'Authorization': 'Bearer $secret'},
-      connectTimeout: const Duration(seconds: 4),
-      receiveTimeout: const Duration(seconds: 4),
-      validateStatus: (status) =>
-          status != null && status >= 200 && status < 300,
+  final dio = maidKitDio(
+    Dio(
+      BaseOptions(
+        baseUrl: baseUrl,
+        headers: secret == null || secret.isEmpty
+            ? null
+            : <String, String>{'Authorization': 'Bearer $secret'},
+        connectTimeout: const Duration(seconds: 4),
+        receiveTimeout: const Duration(seconds: 4),
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 300,
+      ),
     ),
   );
   maidCafeLog(

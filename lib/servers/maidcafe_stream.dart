@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:http/http.dart' as http;
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/services/user_agent.dart';
 import 'package:maid_kit/servers/port_forwarding_models.dart';
 import 'package:maid_kit/servers/ssh_connection_manager.dart';
 
@@ -1293,16 +1294,18 @@ class MaidCafeStreamSession {
     );
   }
 
-  static Dio _newDio(String baseUrl, String? apiSecret) => Dio(
-    BaseOptions(
-      baseUrl: baseUrl,
-      headers: apiSecret == null
-          ? null
-          : <String, String>{'Authorization': 'Bearer $apiSecret'},
-      validateStatus: _acceptHttpStatus,
-      connectTimeout: const Duration(seconds: 3),
-      sendTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
+  static Dio _newDio(String baseUrl, String? apiSecret) => maidKitDio(
+    Dio(
+      BaseOptions(
+        baseUrl: baseUrl,
+        headers: apiSecret == null
+            ? null
+            : <String, String>{'Authorization': 'Bearer $apiSecret'},
+        validateStatus: _acceptHttpStatus,
+        connectTimeout: const Duration(seconds: 3),
+        sendTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
     ),
   );
 
@@ -1669,6 +1672,7 @@ class MaidCafeStreamSession {
     var cancelled = false;
 
     Future<void> connect() async {
+      request.headers.addAll(await maidKitUserAgentHeader());
       try {
         final client = _streamClient ??= http.Client();
         // Guard only the header phase: an SSE body never completes.

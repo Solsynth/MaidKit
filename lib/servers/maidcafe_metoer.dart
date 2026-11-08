@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import '../shared/services/user_agent.dart';
 
 /// App id the MaidCafe cloud publishes notifications under
 /// (`MaidCafe/internal/ring/client.go`); matches the MaidKit bundle id
@@ -178,7 +179,7 @@ class MaidCafeMetoerClient {
     required this.baseUrl,
     required this._accessToken,
     Dio? dio,
-  }) : _dio = dio ?? Dio()
+  }) : _dio = maidKitDio(dio)
          ..options.connectTimeout = const Duration(seconds: 10)
          ..options.sendTimeout = const Duration(seconds: 10)
          ..options.receiveTimeout = const Duration(seconds: 15);

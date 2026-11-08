@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import '../shared/services/user_agent.dart';
 
 class PersonalityAgent {
   const PersonalityAgent({
@@ -40,7 +41,10 @@ class PersonalityService {
       final root = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
       final response = await requestClient.get(
         Uri.parse('$root/agents'),
-        headers: {'Authorization': 'Bearer ${accessToken.trim()}'},
+        headers: {
+          'Authorization': 'Bearer ${accessToken.trim()}',
+          ...await maidKitUserAgentHeader(),
+        },
       );
       final Object? body;
       try {

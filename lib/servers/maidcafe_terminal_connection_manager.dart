@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:maid_kit/data/local/app_database.dart';
+import 'package:maid_kit/shared/services/user_agent.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'maidcafe_debug.dart';
@@ -183,13 +184,15 @@ Future<MaidCafeTerminalHandshakeFailure?> diagnoseMaidCafeTerminalHandshake(
   // probe meets too.
   final socket = target.sessionEndpoint();
   final uri = socket.replace(scheme: socket.scheme == 'wss' ? 'https' : 'http');
-  final dio = Dio(
-    BaseOptions(
-      headers: <String, String>{'Authorization': 'Bearer $secret'},
-      connectTimeout: const Duration(seconds: 4),
-      receiveTimeout: const Duration(seconds: 4),
-      // The refusal *is* the answer, so every status is a success here.
-      validateStatus: (_) => true,
+  final dio = maidKitDio(
+    Dio(
+      BaseOptions(
+        headers: <String, String>{'Authorization': 'Bearer $secret'},
+        connectTimeout: const Duration(seconds: 4),
+        receiveTimeout: const Duration(seconds: 4),
+        // The refusal *is* the answer, so every status is a success here.
+        validateStatus: (_) => true,
+      ),
     ),
   );
   try {

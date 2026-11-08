@@ -9,6 +9,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:uuid/uuid.dart';
 
 import '../shared/presentation/maidkit_alert.dart';
+import '../shared/services/user_agent.dart';
 
 /// Configuration is deliberately opt-in and scoped to one local vault.
 class CloudSyncConfiguration {
@@ -292,7 +293,7 @@ class CloudSyncService {
     bool? isWeb,
   }) : _vaultKey = base64UrlEncode(utf8.encode(vaultId)),
        _storage = secureStorage ?? const FlutterSecureStorage(),
-       _dio = dio ?? Dio(),
+       _dio = maidKitDio(dio),
        _isWeb = isWeb ?? kIsWeb;
 
   static const apiBase = 'https://api.solian.app';

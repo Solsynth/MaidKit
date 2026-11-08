@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import '../shared/services/user_agent.dart';
 
 import 'personality_service.dart';
 
@@ -80,7 +81,10 @@ class PersonalityBillingService {
     try {
       final response = await requestClient.get(
         _endpoint(baseUrl, 'billing/me'),
-        headers: {'Authorization': 'Bearer ${accessToken.trim()}'},
+        headers: {
+          'Authorization': 'Bearer ${accessToken.trim()}',
+          ...await maidKitUserAgentHeader(),
+        },
       );
       final Object? body;
       try {
@@ -110,7 +114,10 @@ class PersonalityBillingService {
     try {
       final response = await requestClient.post(
         _endpoint(baseUrl, 'billing/me/settle'),
-        headers: {'Authorization': 'Bearer ${accessToken.trim()}'},
+        headers: {
+          'Authorization': 'Bearer ${accessToken.trim()}',
+          ...await maidKitUserAgentHeader(),
+        },
       );
       Object? body;
       try {

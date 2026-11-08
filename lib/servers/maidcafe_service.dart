@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../containers/container_list_tile.dart';
 import '../containers/container_models.dart';
+import '../shared/services/user_agent.dart';
 import 'cloud_sync_service.dart';
 import 'database_models.dart';
 import 'server_models.dart';
@@ -703,7 +704,7 @@ class MaidCafeService {
     FlutterSecureStorage? secureStorage,
     this._accessToken,
   }) : baseUrl = normalizeMaidCafeUrl(baseUrl),
-       _dio = dio ?? Dio(),
+       _dio = maidKitDio(dio),
        _secureStorage = secureStorage ?? const FlutterSecureStorage() {
     _dio.options.connectTimeout ??= const Duration(seconds: 10);
     _dio.options.sendTimeout ??= const Duration(seconds: 10);
