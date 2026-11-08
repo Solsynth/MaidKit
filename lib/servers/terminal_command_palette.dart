@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
@@ -7,8 +8,10 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import 'package:maid_kit/data/local/app_database.dart';
 import 'package:maid_kit/shared/presentation/deploy_terminal.dart';
+import 'package:maid_kit/shared/services/english_translations.dart';
 import 'package:maid_kit/shared/presentation/maidkit_alert.dart';
 import 'package:maid_kit/theme.dart';
+import 'package:maid_kit/shared/presentation/search_field_suffix.dart';
 import 'port_forward_sheet.dart';
 import 'port_forwarding_models.dart';
 import 'server_connection_actions.dart';
@@ -19,8 +22,12 @@ import 'terminal_tabs_provider.dart';
 import 'tmux_sessions_sheet.dart';
 import 'tmux_terminal.dart';
 import 'workspace_shortcuts.dart';
+import 'workspace_actions.dart';
 
-Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
+Future<void> showTerminalCommandPalette(
+  BuildContext context,
+  WidgetRef ref,
+) async {
   // The palette renders in an overlay entry that is removed when it closes, so
   // anything that must outlive it (a status sheet, a deploy terminal) opens on
   // this context instead of the palette's own.
@@ -35,10 +42,10 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
             server.connectionType == ServerConnectionType.maidcafe.name,
       )
       .toList();
+  // Every entry keeps its English name searchable in any locale; the bundle is
+  // read at startup, so this is a map lookup rather than a wait.
+  final english = EnglishLabels.labels;
   final activeTab = tabs.selectedTabContent;
-  final activeServer = activeTab == null
-      ? null
-      : servers.where((server) => server.id == activeTab.serverId).firstOrNull;
   final canSplit = canSplitTab(tabs.selectedTab);
   final portForwards = ref.read(portForwardsProvider).asData?.value ?? const [];
   final hiddenDeploys = ref
@@ -51,11 +58,12 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
     builder: (context, close) => _TerminalCommandPalette(
       activeTab: activeTab,
       servers: servers,
+      english: english,
       tmuxForTab: (tabId) =>
           ref.read(terminalTabsProvider.notifier).tmuxForTab(tabId),
       hostContext: hostContext,
       ref: ref,
-      destinationActions: _destinationActions(
+      extraActions: _paletteOnlyActions(
         hostContext: hostContext,
         ref: ref,
         close: close,
@@ -63,23 +71,6 @@ Future<void> showTerminalCommandPalette(BuildContext context, WidgetRef ref) {
         deploySessionId: deploySessionId,
       ),
       onDismiss: () => close(null),
-      onOpen: (server) async {
-        await openTerminalFor(context, ref, server);
-        close(null);
-      },
-      onOpenFiles: kIsWeb || activeServer == null
-          ? null
-          : () async {
-              final manager = ref.read(connectionManagerProvider);
-              if (manager.clientFor(activeServer.id) == null &&
-                  !await connectForStatistics(context, ref, activeServer)) {
-                return;
-              }
-              ref
-                  .read(terminalTabsProvider.notifier)
-                  .openFileManagement(activeServer);
-              close(null);
-            },
       // The palette restores the keyboard as it closes; the new tab's launcher
       // claims it on the frame that builds it, which lands after that restore.
       onNewTab: () {
@@ -154,13 +145,12 @@ void _splitAfterClose(
 /// The sections give the unfiltered palette a shape: what acts on the tab you
 /// are looking at, what opens a server, and the workspace-wide destinations.
 /// A typed query drops the headings so the matches read as one ranked list.
-enum _PaletteGroup { tab, servers, workspace }
-
 class _TerminalCommandPalette extends StatefulWidget {
   const _TerminalCommandPalette({
     required this.activeTab,
     required this.servers,
-    required this.destinationActions,
+    required this.english,
+    required this.extraActions,
     required this.onDismiss,
     required this.onOpen,
     required this.onOpenFiles,
@@ -178,9 +168,13 @@ class _TerminalCommandPalette extends StatefulWidget {
   final SessionTab? activeTab;
   final List<Server> servers;
 
-  /// Destination tabs and workspace-wide surfaces, offered alongside the
-  /// terminal actions.
-  final List<_TerminalAction> destinationActions;
+  /// The English bundle, so every entry keeps its English name searchable in
+  /// any locale.
+  final Map<String, String> english;
+
+  /// Surfaces only the palette offers — the port-forward sheet and a hidden
+  /// deploy log — on top of the shared destinations and server rows.
+  final List<WorkspaceAction> extraActions;
   final VoidCallback onDismiss;
   final Future<void> Function(Server server) onOpen;
   final Future<void> Function()? onOpenFiles;
@@ -211,7 +205,7 @@ class _TerminalCommandPalette extends StatefulWidget {
 
 class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
   final _searchController = TextEditingController();
-  final _searchFocusNode = FocusNode();
+  final _searchFocusNode = FocusNode(debugLabel: 'Command palette search');
 
   /// Global keys for the rows, so the highlighted one can be scrolled into
   /// view after a keyboard move.
@@ -220,9 +214,22 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
   var _query = '';
   var _highlighted = 0;
 
+  /// The rows built by the last frame, which the key handler indexes.
+  var _built = const <WorkspaceAction>[];
+
   @override
   void initState() {
     super.initState();
+    // The arrow keys are answered on the field's own node. A text field's node
+    // is the first stop of the key event walk, ahead of every ancestor
+    // Shortcuts and of the text editing bindings that would otherwise read
+    // them as caret moves and keep them.
+    _searchFocusNode.onKeyEvent = workspaceActionKeyHandler(
+      count: () => _built.length,
+      highlighted: () => _highlighted,
+      highlight: _highlight,
+      run: (index) => _built[index].run?.call(),
+    );
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _searchFocusNode.requestFocus(),
     );
@@ -242,173 +249,173 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
     });
   }
 
-  void _moveHighlight(int delta, int count) {
-    if (count == 0) return;
-    setState(() => _highlighted = (_highlighted + delta) % count);
-    final key = _rowKeys[_highlighted];
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final context = key?.currentContext;
-      if (context != null && context.mounted) {
-        Scrollable.ensureVisible(
-          context,
-          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+  void _highlight(int index) {
+    if (!mounted) return;
+    setState(() => _highlighted = index);
+    revealWorkspaceRow(_rowKeys[index]);
   }
 
-  List<_TerminalAction> _actions() {
+  /// Everything the palette offers right now, in section order.
+  /// The destinations and the per-server rows come from the shared catalog the
+  /// empty-pane launcher uses too, so both surfaces name the same thing the
+  /// same way. The active tab's server is skipped: its terminal and files are
+  /// already the first two entries here, and listing them twice only made the
+  /// list longer to read.
+  List<WorkspaceAction> _actions() {
     final activeTab = widget.activeTab;
     final activeServer = activeTab == null
         ? null
         : widget.servers
               .where((server) => server.id == activeTab.serverId)
               .firstOrNull;
+    final english = widget.english;
+    final hideAddresses = widget.ref.read(hideServerAddressesProvider);
     return [
       if (activeServer != null)
-        _TerminalAction(
-          label: 'sessionsNewTerminalOn'.tr(args: [activeTab!.serverName]),
-          icon: Symbols.add,
-          group: _PaletteGroup.tab,
-          onSelect: () => widget.onOpen(activeServer),
+        ...serverActions(
+          context: widget.hostContext,
+          ref: widget.ref,
+          english: english,
+          server: activeServer,
+          hideAddresses: hideAddresses,
+          group: WorkspaceActionGroup.tab,
+          includeDetails: false,
+          done: widget.onDismiss,
         ),
-      if (widget.onOpenFiles != null)
-        _TerminalAction(
-          label: 'sessionsOpenFileTransfer'.tr(args: [activeTab!.serverName]),
-          icon: Symbols.folder,
-          group: _PaletteGroup.tab,
-          onSelect: widget.onOpenFiles!,
-        ),
-      _TerminalAction(
-        label: 'sessionsNewTab'.tr(),
-        icon: Symbols.tab,
-        group: _PaletteGroup.tab,
+      _action(
+        'sessionsNewTab',
+        Symbols.tab,
+        widget.onNewTab,
         shortcut: newTabShortcutLabel(),
-        onSelect: () async => widget.onNewTab(),
       ),
       if (widget.ref.read(terminalTabsProvider).tabs.length > 1) ...[
-        _TerminalAction(
-          label: 'sessionsNextTab'.tr(),
-          icon: Symbols.keyboard_tab,
-          group: _PaletteGroup.tab,
-          shortcut: tabCycleShortcutLabel(),
-          onSelect: () async {
+        _action(
+          'sessionsNextTab',
+          Symbols.keyboard_tab,
+          () {
             widget.onDismiss();
             widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(1);
           },
+          shortcut: tabCycleShortcutLabel(),
         ),
-        _TerminalAction(
-          label: 'sessionsPreviousTab'.tr(),
-          icon: Symbols.keyboard_tab,
-          group: _PaletteGroup.tab,
-          shortcut: tabCycleShortcutLabel(backwards: true),
-          onSelect: () async {
+        _action(
+          'sessionsPreviousTab',
+          Symbols.keyboard_tab,
+          () {
             widget.onDismiss();
             widget.ref.read(terminalTabsProvider.notifier).cycleSelectedTab(-1);
           },
+          shortcut: tabCycleShortcutLabel(backwards: true),
         ),
       ],
-      if (widget.onSplitRight != null)
-        _TerminalAction(
-          label: 'sessionsSplitRight'.tr(),
-          icon: Symbols.vertical_split,
-          group: _PaletteGroup.tab,
+      if (widget.onSplitRight case final split?)
+        _action(
+          'sessionsSplitRight',
+          Symbols.vertical_split,
+          split,
           shortcut: splitShortcutLabel(SessionSplitAxis.horizontal),
-          onSelect: () async => widget.onSplitRight!(),
         ),
-      if (widget.onSplitDown != null)
-        _TerminalAction(
-          label: 'sessionsSplitDown'.tr(),
-          icon: Symbols.horizontal_split,
-          group: _PaletteGroup.tab,
+      if (widget.onSplitDown case final split?)
+        _action(
+          'sessionsSplitDown',
+          Symbols.horizontal_split,
+          split,
           shortcut: splitShortcutLabel(SessionSplitAxis.vertical),
-          onSelect: () async => widget.onSplitDown!(),
         ),
-      if (widget.onClosePane != null)
-        _TerminalAction(
-          label: 'sessionsClosePane'.tr(),
-          icon: Symbols.tab_close,
-          group: _PaletteGroup.tab,
-          onSelect: widget.onClosePane!,
-        ),
-      if (widget.onClose != null)
-        _TerminalAction(
-          label: 'sessionsCloseThisTab'.tr(),
-          icon: Symbols.close,
-          group: _PaletteGroup.tab,
-          onSelect: widget.onClose!,
-        ),
-      if (widget.onDisconnect != null)
-        _TerminalAction(
-          label: 'sessionsCloseAllTabs'.tr(args: [activeTab!.serverName]),
-          icon: Symbols.link_off,
-          group: _PaletteGroup.tab,
-          onSelect: widget.onDisconnect!,
+      if (widget.onClosePane case final close?)
+        _action('sessionsClosePane', Symbols.tab_close, close),
+      if (widget.onClose case final close?)
+        _action('sessionsCloseThisTab', Symbols.close, close),
+      if (widget.onDisconnect case final close?)
+        _action(
+          'sessionsCloseAllTabs',
+          Symbols.link_off,
+          close,
+          args: [activeTab!.serverName],
         ),
       ..._tmuxActions(activeTab, activeServer),
+      // One terminal row per other server. Its files and page are their own
+      // tabs, and repeating all three per host made the list three times as long
+      // for a choice the server's page already offers.
       for (final server in widget.servers)
         if (server.id != activeTab?.serverId)
-          _TerminalAction(
-            label: 'sessionsNewTerminalOn'.tr(args: [server.name]),
-            icon: Symbols.terminal,
-            group: _PaletteGroup.servers,
-            hint: server.host,
-            onSelect: () => widget.onOpen(server),
+          ...serverActions(
+            context: widget.hostContext,
+            ref: widget.ref,
+            english: english,
+            server: server,
+            hideAddresses: hideAddresses,
+            includeFiles: false,
+            includeDetails: false,
+            done: widget.onDismiss,
           ),
-      _TerminalAction(
-        label: 'serversAddServer'.tr(),
-        icon: Symbols.add,
-        group: _PaletteGroup.workspace,
-        onSelect: () async {
+      _action(
+        'serversAddServer',
+        Symbols.add,
+        () async {
           widget.onDismiss();
           await showAddServerSheet(widget.hostContext, widget.ref);
         },
+        group: WorkspaceActionGroup.workspace,
       ),
-      ...widget.destinationActions,
-    ].where((action) => action.label.toLowerCase().contains(_query)).toList();
+      ...workspaceDestinationActions(
+        ref: widget.ref,
+        english: english,
+        done: widget.onDismiss,
+      ),
+      ...widget.extraActions,
+    ].where((action) => action.run != null && action.matches(_query)).toList();
+  }
+
+  /// A labeled action whose name comes from the current locale, with the
+  /// English text kept as a search alias.
+  WorkspaceAction _action(
+    String key,
+    IconData icon,
+    FutureOr<void> Function() run, {
+    WorkspaceActionGroup group = WorkspaceActionGroup.tab,
+    List<String> args = const [],
+    String? shortcut,
+  }) {
+    return WorkspaceAction(
+      label: key.tr(args: args),
+      icon: icon,
+      group: group,
+      shortcut: shortcut,
+      aliases: [?englishText(widget.english, key, args: args)],
+      run: () async => run(),
+    );
   }
 
   /// The tmux entries, offered only while the selected tab mirrors a session.
-  List<_TerminalAction> _tmuxActions(SessionTab? activeTab, Server? server) {
+  List<WorkspaceAction> _tmuxActions(SessionTab? activeTab, Server? server) {
     if (activeTab is! TerminalTab) return const [];
     final binding = widget.tmuxForTab(activeTab.id);
     if (binding == null || server == null) return const [];
     return [
-      _TerminalAction(
-        label: 'sessionsTmuxDetach'.tr(),
-        icon: Symbols.logout,
-        group: _PaletteGroup.tab,
-        onSelect: () async {
-          widget.onDismiss();
-          await binding.detach();
-        },
-      ),
-      _TerminalAction(
-        label: 'sessionsTmuxKill'.tr(),
-        icon: Symbols.power_settings_new,
-        group: _PaletteGroup.tab,
-        onSelect: () async {
-          widget.onDismiss();
-          final confirmed = await showMaidKitConfirmAlert(
-            'sessionsTmuxKillConfirm'.tr(args: [binding.sessionName]),
-            'sessionsTmuxKill'.tr(),
-            isDanger: true,
-          );
-          if (!confirmed) return;
-          await binding.killSession();
-        },
-      ),
+      _action('sessionsTmuxDetach', Symbols.logout, () async {
+        widget.onDismiss();
+        await binding.detach();
+      }),
+      _action('sessionsTmuxKill', Symbols.power_settings_new, () async {
+        widget.onDismiss();
+        final confirmed = await showMaidKitConfirmAlert(
+          'sessionsTmuxKillConfirm'.tr(args: [binding.sessionName]),
+          'sessionsTmuxKill'.tr(),
+          isDanger: true,
+        );
+        if (!confirmed) return;
+        await binding.killSession();
+      }),
       for (final window in binding.windows)
-        _TerminalAction(
+        WorkspaceAction(
           label:
               '${'sessionsTmuxSwitchWindow'.tr()} '
               '${'sessionsTmuxWindow'.tr(args: ['${window.index}'])}',
           icon: Symbols.tab_recent,
-          group: _PaletteGroup.tab,
+          group: WorkspaceActionGroup.tab,
           hint: window.name,
-          onSelect: () async {
+          run: () async {
             widget.onDismiss();
             try {
               await binding.control.command('select-window -t ${window.index}');
@@ -417,11 +424,16 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             }
           },
         ),
-      _TerminalAction(
+      WorkspaceAction(
         label: 'sessionsTmuxBackground'.tr(args: [server.name]),
         icon: Symbols.inventory,
-        group: _PaletteGroup.servers,
-        onSelect: () async {
+        group: WorkspaceActionGroup.servers,
+        aliases: [
+          ?englishText(widget.english, 'sessionsTmuxBackground', args: [
+            server.name,
+          ]),
+        ],
+        run: () async {
           widget.onDismiss();
           await showTmuxSessionsSheet(widget.hostContext, widget.ref, server);
         },
@@ -429,42 +441,20 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
     ];
   }
 
-  KeyEventResult _onKey(
-    FocusNode node,
-    KeyEvent event,
-    List<_TerminalAction> actions,
-  ) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-      return KeyEventResult.ignored;
-    }
-    switch (event.logicalKey) {
-      case LogicalKeyboardKey.arrowDown:
-        _moveHighlight(1, actions.length);
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowUp:
-        _moveHighlight(-1, actions.length);
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.enter || LogicalKeyboardKey.numpadEnter
-          when actions.isNotEmpty:
-        actions[_highlighted.clamp(0, actions.length - 1)].onSelect();
-        return KeyEventResult.handled;
-      default:
-        return KeyEventResult.ignored;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final actions = _actions();
+    _built = actions;
     if (_highlighted >= actions.length) _highlighted = 0;
+    _rowKeys.removeWhere((index, _) => index >= actions.length);
 
     // Rows read as one ranked list while searching, and as titled sections —
     // this tab, servers, workspace — when the query is still empty.
     final showSections = _query.isEmpty;
     final rows = <Widget>[];
-    _PaletteGroup? previous;
+    WorkspaceActionGroup? previous;
     for (var index = 0; index < actions.length; index++) {
       final action = actions[index];
       if (showSections && action.group != previous) {
@@ -476,7 +466,7 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
           key: _rowKeys[index] ??= GlobalKey(),
           action: action,
           highlighted: index == _highlighted,
-          onTap: () => action.onSelect(),
+          onTap: () => action.run?.call(),
           onHover: () => setState(() => _highlighted = index),
         ),
       );
@@ -495,8 +485,6 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             },
           ),
         },
-        child: Focus(
-          onKeyEvent: (node, event) => _onKey(node, event, actions),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -522,14 +510,16 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
                         controller: _searchController,
                         focusNode: _searchFocusNode,
                         textInputAction: TextInputAction.done,
-                        onChanged: _setQuery,
-                        // Enter runs the highlighted entry even when the field
-                        // has taken focus back from the list.
                         onSubmitted: (_) {
                           if (actions.isEmpty) return;
                           actions[_highlighted.clamp(0, actions.length - 1)]
-                              .onSelect();
+                              .run
+                              ?.call();
                         },
+                        // Enter runs the highlighted entry; ↑↓ move it. Both
+                        // are answered on this field's node, because the text
+                        // editing bindings below would keep the arrows.
+                        onChanged: _setQuery,
                         decoration: InputDecoration(
                           isDense: true,
                           // The sheet's own top band is the field: no pill,
@@ -547,19 +537,18 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
                         style: theme.textTheme.bodyMedium,
                       ),
                     ),
-                    if (_query.isNotEmpty)
-                      IconButton(
-                        tooltip: 'commonClearSearch'.tr(),
-                        visualDensity: VisualDensity.compact,
-                        icon: const Icon(Symbols.close, size: 18),
-                        onPressed: () {
-                          _searchController.clear();
-                          _setQuery('');
-                          _searchFocusNode.requestFocus();
-                        },
-                      )
-                    else
-                      const _Keycap(label: 'Esc'),
+                    // One fixed slot: the clear button and the Escape keycap
+                    // are the same size, so the band does not jump when the
+                    // first character is typed.
+                    SearchFieldSuffix(
+                      visible: _query.isNotEmpty,
+                      keyHint: 'Esc',
+                      onClear: () {
+                        _searchController.clear();
+                        _setQuery('');
+                        _searchFocusNode.requestFocus();
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -608,7 +597,6 @@ class _TerminalCommandPaletteState extends State<_TerminalCommandPalette> {
             ],
           ),
         ),
-      ),
     );
   }
 }
@@ -627,7 +615,7 @@ class _ActionRow extends StatelessWidget {
     required this.onHover,
   });
 
-  final _TerminalAction action;
+  final WorkspaceAction action;
   final bool highlighted;
   final VoidCallback onTap;
   final VoidCallback onHover;
@@ -685,7 +673,7 @@ class _ActionRow extends StatelessWidget {
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.group});
 
-  final _PaletteGroup group;
+  final WorkspaceActionGroup group;
 
   @override
   Widget build(BuildContext context) {
@@ -699,9 +687,10 @@ class _SectionLabel extends StatelessWidget {
       ),
       child: Text(
         switch (group) {
-          _PaletteGroup.tab => 'sessionsPaletteGroupTab'.tr(),
-          _PaletteGroup.servers => 'sessionsPaletteGroupServers'.tr(),
-          _PaletteGroup.workspace => 'sessionsPaletteGroupWorkspace'.tr(),
+          WorkspaceActionGroup.tab => 'sessionsPaletteGroupTab'.tr(),
+          WorkspaceActionGroup.servers => 'sessionsPaletteGroupServers'.tr(),
+          WorkspaceActionGroup.workspace =>
+            'sessionsPaletteGroupWorkspace'.tr(),
         },
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
@@ -742,107 +731,37 @@ class _Keycap extends StatelessWidget {
   }
 }
 
-class _TerminalAction {
-  const _TerminalAction({
-    required this.label,
-    required this.icon,
-    required this.onSelect,
-    this.group = _PaletteGroup.workspace,
-    this.hint,
-    this.shortcut,
-  });
-
-  final String label;
-  final IconData icon;
-
-  /// Where the entry sits in the unfiltered list.
-  final _PaletteGroup group;
-
-  /// A second line naming the target, e.g. a server's address.
-  final String? hint;
-
-  /// The chord that runs this action, printed on the row. Null for actions
-  /// that only exist as palette entries.
-  final String? shortcut;
-  final Future<void> Function() onSelect;
-}
-
-/// Destination tabs plus the port-forward and deploy surfaces that used to sit
-/// on the navigation rail. Every action closes the palette first.
-List<_TerminalAction> _destinationActions({
+/// The surfaces only the palette offers: the port-forward sheet and a deploy
+/// log hidden behind a closed terminal. Both close the palette first, then open
+/// on the host context so they outlive the overlay entry.
+List<WorkspaceAction> _paletteOnlyActions({
   required BuildContext hostContext,
   required WidgetRef ref,
   required void Function(void) close,
   required List<ActivePortForward> portForwards,
   required String? deploySessionId,
 }) {
-  final notifier = ref.read(terminalTabsProvider.notifier);
-
-  void open(void Function() action) {
-    action();
-    close(null);
-  }
-
   return [
-    _TerminalAction(
-      label: 'tabDashboard'.tr(),
-      icon: Symbols.dashboard,
-      onSelect: () async => open(notifier.openDashboard),
-    ),
-    _TerminalAction(
-      label: 'assetsConnections'.tr(),
-      icon: Symbols.dns,
-      onSelect: () async => open(notifier.openAssets),
-    ),
-    _TerminalAction(
-      label: 'assetsCredentialsTitle'.tr(),
-      icon: Symbols.key,
-      onSelect: () async =>
-          open(() => notifier.openAssets(section: AssetsSection.credentials)),
-    ),
-    _TerminalAction(
-      label: 'tabSnippets'.tr(),
-      icon: Symbols.code,
-      onSelect: () async =>
-          open(() => notifier.openAssets(section: AssetsSection.snippets)),
-    ),
-    _TerminalAction(
-      label: 'tabProjects'.tr(),
-      icon: Symbols.deployed_code,
-      onSelect: () async => open(notifier.openProjects),
-    ),
-    _TerminalAction(
-      label: 'agentNewConversation'.tr(),
-      icon: Symbols.smart_toy,
-      onSelect: () async => open(notifier.openAgentChat),
-    ),
-    _TerminalAction(
-      label: 'maidCafeCloudTitle'.tr(),
-      icon: Symbols.cloud,
-      onSelect: () async => open(notifier.openMaidCafeCloud),
-    ),
-    _TerminalAction(
-      label: 'tabSettings'.tr(),
-      icon: Symbols.settings,
-      onSelect: () async => open(notifier.openSettings),
-    ),
     if (portForwards.isNotEmpty)
-      _TerminalAction(
+      WorkspaceAction(
         label: 'activePortForwards'.plural(portForwards.length),
         icon: Symbols.swap_horiz,
-        onSelect: () async {
+        group: WorkspaceActionGroup.workspace,
+        run: () async {
           close(null);
           await showPortForwardSheet(hostContext, portForwards);
         },
       ),
     if (deploySessionId != null)
-      _TerminalAction(
+      WorkspaceAction(
         label: 'deployLogLabel'.tr(),
         icon: Symbols.terminal,
-        onSelect: () async {
+        group: WorkspaceActionGroup.workspace,
+        run: () async {
           close(null);
           showDeployTerminal(ref, deploySessionId);
         },
       ),
   ];
 }
+

@@ -14,6 +14,7 @@ import 'servers/window_state_preferences.dart';
 import 'servers/window_placement.dart';
 import 'shared/presentation/app_scaffold.dart';
 import 'shared/presentation/window_chrome.dart';
+import 'shared/services/english_translations.dart';
 import 'servers/server_providers.dart';
 import 'servers/app_theme_preferences.dart';
 import 'servers/metrics_refresh_preferences.dart';
@@ -36,6 +37,9 @@ Future<void> main(List<String> args) async {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
   await EasyLocalization.ensureInitialized();
   EasyLocalization.logger.enableBuildModes = [];
+  // Searchable lists keep every entry's English name available in any locale,
+  // so the English bundle is read before the first frame that could need it.
+  unawaited(EnglishLabels.load());
   // Firebase for MaidCafe cloud notifications and analytics (Android/iOS/
   // macOS only; firebase_core has no Linux/Windows/web support here). The
   // background handler must be registered before any message can be received
