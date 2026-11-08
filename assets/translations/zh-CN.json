@@ -2159,6 +2159,7 @@
   "terminalSshPing": "SSH 命令往返延迟",
   "title": "MaidKit",
   "updateAvailable": "发现新版本",
+  "whatsNew": "新功能",
   "updateComplete": "更新完成",
   "updateDownloadingAppImage": "正在下载 AppImage...",
   "updateDownloadingInstaller": "正在下载安装程序…",

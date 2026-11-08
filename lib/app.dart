@@ -64,12 +64,34 @@ class _MaidKitAppState extends ConsumerState<MaidKitApp> {
       );
       final updateChannel = await ref.read(maidKitUpdateChannelProvider.future);
       if (!mounted || !ctx.mounted) return;
-      await UpdateService(
+      final updateService = UpdateService(
         apiBaseUrl: kMaidKitDistributionApiBaseUrl,
         channel: updateChannel,
         productId: kMaidKitDistributionProductId,
         enabled: updateChecksEnabled,
-      ).checkForUpdates(ctx);
+      );
+
+      final upgrade = await updateService.checkVersionUpgrade();
+      if (upgrade.isUpgrade) {
+        final release = await updateService.fetchReleaseForVersion(
+          upgrade.currentVersion,
+        );
+        if (release != null && ctx.mounted) {
+          await updateService.showWhatsNewSheet(
+            ctx,
+            release,
+            previousVersion: upgrade.previousVersion,
+          );
+        }
+        await updateService.saveCurrentVersion();
+        return;
+      } else if (upgrade.isFirstRun) {
+        await updateService.saveCurrentVersion();
+      }
+
+      if (ctx.mounted) {
+        await updateService.checkForUpdates(ctx);
+      }
       return;
     }
     if (retry >= 120) return;

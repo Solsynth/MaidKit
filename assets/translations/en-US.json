@@ -2159,6 +2159,7 @@
   "terminalSshPing": "SSH command round-trip time",
   "title": "MaidKit",
   "updateAvailable": "Update available",
+  "whatsNew": "What's New",
   "updateComplete": "Update complete",
   "updateDownloadingAppImage": "Downloading AppImage...",
   "updateDownloadingInstaller": "Downloading installer…",
