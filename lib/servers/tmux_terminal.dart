@@ -309,6 +309,12 @@ class TmuxTabBinding {
       if (_disposed) return;
       final attachment = _panes[paneId];
       if (attachment == null || attachment.seeded) continue;
+      // A pane that has already painted live output needs no snapshot: its
+      // screen is newer than anything a capture taken now could hold.
+      if (attachment.sawOutput) {
+        attachment.seeded = true;
+        continue;
+      }
       final TmuxBlockEvent flags;
       try {
         // A pane running a full-screen program keeps that program on the
@@ -344,6 +350,12 @@ class TmuxTabBinding {
         continue;
       }
       attachment.seeded = true;
+      // The capture was asked for before its answer arrived, and on a slow
+      // link the shell's first paint wins that race. Replaying the older
+      // snapshot here writes it at the live cursor, which pushes the real
+      // prompt off-screen under a wall of stale rows - the pane looks blank
+      // until the next keypress prints something new.
+      if (attachment.sawOutput) continue;
       final lines = [...block.lines];
       while (lines.isNotEmpty && lines.last.trim().isEmpty) {
         lines.removeLast();
@@ -353,7 +365,12 @@ class TmuxTabBinding {
         // be the very whitespace this trims.
         continue;
       }
-      attachment.adapter.replayHistory(lines.join('\n'));
+      // A captured line is one row of a screen, not a text paragraph: it has to
+      // start at column zero. Joining with a bare LF leaves the emulator's
+      // column where the previous row ended, so every row indents a little
+      // further and long captures wrap into extra rows - a session opens
+      // stair-stepped, or scrolled past the prompt it was supposed to restore.
+      attachment.adapter.replayHistory(lines.join('\r\n'));
     }
   }
 
@@ -669,6 +686,13 @@ class _TmuxPaneAttachment {
   /// Whether tmux's scrollback has already been replayed into this pane.
   var seeded = false;
 
+  /// Whether this pane has already drawn any live output.
+  ///
+  /// tmux paints a freshly attached client with the screen it missed, and that
+  /// paint can beat the scrollback seed's answer. A pane that has already drawn
+  /// something must not then be handed a snapshot of what came before it.
+  var sawOutput = false;
+
   /// The grid this pane's own viewport currently shows.
   ///
   /// A mirrored pane is drawn at its own size, not at the session's, so this is
@@ -680,6 +704,7 @@ class _TmuxPaneAttachment {
 
   void write(List<int> bytes) {
     if (_output.isClosed || bytes.isEmpty) return;
+    sawOutput = true;
     _output.add(Uint8List.fromList(bytes));
   }
 

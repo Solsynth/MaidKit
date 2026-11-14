@@ -300,16 +300,32 @@ Future<bool> openTerminalSession(
   // A tmux terminal is the same transport with a session that outlives it.
   // Its own failure path reports the reason and returns false, so a host that
   // cannot serve one still gets a plain terminal below.
+  //
+  // Attaching is the slow half: listing the host's sessions, probing for tmux,
+  // opening the control client and pulling the layout all happen before a pane
+  // exists, and the tab it opens holds an empty pane until then - which reads
+  // as a fresh new-tab page, not as a terminal being opened. The spinner says
+  // what is actually going on, and it is released before any picker or prompt
+  // so those are never hidden behind it.
   if (ref.read(tmuxEnabledProvider)) {
-    if (await openTmuxTerminal(
+    final loading = showMaidKitLoadingModal(
       context,
-      ref,
-      server,
-      paneId: paneId,
-      initialDirectory: initialDirectory,
-    )) {
-      return true;
+      message: 'serverOpeningTerminal'.tr(args: [server.name]),
+    );
+    var opened = false;
+    try {
+      opened = await openTmuxTerminal(
+        context,
+        ref,
+        server,
+        paneId: paneId,
+        initialDirectory: initialDirectory,
+        onBeforePrompt: loading.dismiss,
+      );
+    } finally {
+      loading.dismiss();
     }
+    if (opened) return true;
     if (!context.mounted) return false;
   }
   HostKeyPrompt? approvedHostKey;
@@ -425,13 +441,17 @@ String defaultTmuxSessionName(Server server) {
 ///   (see [nextTmuxSessionName]): "open another terminal" has to give another
 ///   terminal.
 ///
+/// [onBeforePrompt] releases whatever blocking overlay the caller put up, so a
+/// picker is never offered underneath one.
+///
 /// A listing that fails is not a reason to refuse the terminal: the bare
 /// default name is used and the open proceeds as it always has.
 Future<String?> _resolveTmuxSessionName(
   BuildContext context,
   WidgetRef ref,
-  Server server,
-) async {
+  Server server, {
+  VoidCallback? onBeforePrompt,
+}) async {
   final defaultName = defaultTmuxSessionName(server);
   final TmuxSessionListing listing;
   try {
@@ -445,14 +465,19 @@ Future<String?> _resolveTmuxSessionName(
     listing.sessions,
     defaultName: defaultName,
   );
-  final chosen = existing.isEmpty
-      ? ''
-      : await showTmuxAttachPicker(
-          context,
-          server,
-          defaultName: defaultName,
-          sessions: existing,
-        );
+  if (existing.isEmpty) {
+    // A fresh terminal: its name still has to avoid a session that is on
+    // screen, and nothing needs asking.
+    return nextTmuxSessionName(base: defaultName, existing: listing.sessions);
+  }
+  onBeforePrompt?.call();
+  if (!context.mounted) return null;
+  final chosen = await showTmuxAttachPicker(
+    context,
+    server,
+    defaultName: defaultName,
+    sessions: existing,
+  );
   if (chosen == null) return null;
   if (chosen.isNotEmpty) return chosen;
   // A fresh terminal: its name still has to avoid a session that is on screen.
@@ -519,7 +544,12 @@ Future<bool> openTmuxTerminal(
       if (resolved == null) return false;
       if (sessionName == null) {
         if (!context.mounted) return false;
-        final choice = await _resolveTmuxSessionName(context, ref, server);
+        final choice = await _resolveTmuxSessionName(
+          context,
+          ref,
+          server,
+          onBeforePrompt: onBeforePrompt,
+        );
         if (!context.mounted) return false;
         if (choice == null) return false;
         name = choice;
@@ -576,7 +606,12 @@ Future<bool> openTmuxTerminal(
     // the user started is offered first, and a name that is already attached is
     // not reused (see [_resolveTmuxSessionName]).
     if (sessionName == null) {
-      final choice = await _resolveTmuxSessionName(context, ref, server);
+      final choice = await _resolveTmuxSessionName(
+        context,
+        ref,
+        server,
+        onBeforePrompt: onBeforePrompt,
+      );
       if (!context.mounted) return false;
       if (choice == null) return false;
       name = choice;
@@ -948,17 +983,28 @@ Future<bool> openMaidCafeTerminalSession(
         ? await maidCafeRelayIdentity(ref, server)
         : null;
     if (!context.mounted) return false;
-    if (await openTmuxTerminal(
+    // The same spinner the SSH path puts up: an attach is several round trips
+    // before a pane exists, and the tab it opens is an empty pane until then.
+    final loading = showMaidKitLoadingModal(
       context,
-      ref,
-      server,
-      paneId: paneId,
-      preferDaemon: true,
-      relay: route == null ? null : relay,
-      relayDaemonId: relayIdentity?.daemonId,
-    )) {
-      return true;
+      message: 'serverOpeningMaidCafeTerminal'.tr(args: [server.name]),
+    );
+    var opened = false;
+    try {
+      opened = await openTmuxTerminal(
+        context,
+        ref,
+        server,
+        paneId: paneId,
+        preferDaemon: true,
+        onBeforePrompt: loading.dismiss,
+        relay: route == null ? null : relay,
+        relayDaemonId: relayIdentity?.daemonId,
+      );
+    } finally {
+      loading.dismiss();
     }
+    if (opened) return true;
     if (!context.mounted) return false;
   }
   // The spinner goes up before anything slow. Resolving the route can open an

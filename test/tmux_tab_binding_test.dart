@@ -693,6 +693,13 @@ void main() {
       factory.adapters.single.replayed.join(),
       contains('earlier line one'),
     );
+    // Each captured line is a screen row, so the replay has to return the
+    // cursor to column zero; a bare LF would leave it where the previous row
+    // ended and the session would open stair-stepped.
+    expect(
+      factory.adapters.single.replayed.single,
+      'earlier line one\r\nearlier line two',
+    );
     expect(
       control.written,
       contains('capture-pane -p -e -t %0'),
