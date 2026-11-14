@@ -552,26 +552,96 @@ class TmuxTabBinding {
     );
   }
 
-  /// Asks tmux to move the split [splitId] to [ratio] of the client's extent.
+  /// Asks tmux to move the split [splitId] to [ratio] of its own region.
   ///
-  /// tmux resizes by absolute cell counts, so a drag is quantized to whole
-  /// columns or rows. The `%layout-change` that follows replaces the local
-  /// ratio, which is why a refused resize snaps back instead of drifting.
+  /// tmux resizes by an absolute cell count on one pane, so the ratio has to be
+  /// turned into the width the first side should end up with. [ratio] is a
+  /// fraction of the split's *region*, which is the client extent only for the
+  /// outermost split: a nested split owns just the part of the window its parent
+  /// gave it. Measuring the region from the projected tree keeps the drag
+  /// honest at any depth - scaling the client extent instead used to hand a
+  /// nested split a width taken from the whole window, which shoved the
+  /// dividers across the window and collapsed the panes beyond them.
+  ///
+  /// The `%layout-change` that follows replaces the local ratio, which is why a
+  /// refused resize snaps back instead of drifting.
   void applySplitRatio(String splitId, double ratio) {
     final layout = projected;
     if (layout == null) return;
     final split = _findSplit(layout, splitId);
     if (split == null) return;
-    final firstSide = split.first.paneIds.toList();
-    final target = firstSide.lastOrNull;
+    final target = split.first.paneIds.lastOrNull;
     if (target == null) return;
-    if (split.axis == SessionSplitAxis.horizontal) {
-      final columns = ((clientColumns * ratio).floor() - 1).clamp(2, 1 << 20);
-      unawaited(control.command('resize-pane -t $target -x $columns'));
-      return;
+    final horizontal = split.axis == SessionSplitAxis.horizontal;
+    final extent = _regionExtent(layout, splitId, horizontal: horizontal);
+    if (extent == null) return;
+    // The divider is one cell of the region, so the first side gets everything
+    // up to the boundary the ratio names.
+    final boundary = (extent.$1 + ratio * (extent.$2 - 1)).round();
+    final width = boundary - extent.$1;
+    final command = horizontal ? '-x' : '-y';
+    unawaited(
+      control.command(
+        'resize-pane -t $target $command ${width.clamp(1, 1 << 20)}',
+      ),
+    );
+  }
+
+  /// Where the split [splitId] starts and how much room it owns, in cells.
+  ///
+  /// Walks the projected tree accumulating each split's share of its parent, so
+  /// the answer is the split's own region rather than the whole window. The
+  /// start is the client cell coordinate of the region's leading edge; the
+  /// extent counts the cells the split distributes, divider included. Null when
+  /// the split is not found or the pane sizes have not been laid out yet.
+  (int, int)? _regionExtent(
+    SessionLayout layout,
+    String splitId, {
+    required bool horizontal,
+  }) {
+    final total = horizontal ? clientColumns : clientRows;
+    if (total <= 0) return null;
+    return _locate(layout, splitId, 0, total, horizontal);
+  }
+
+  /// [_regionExtent]'s walk over [node], which occupies [start] plus [extent].
+  (int, int)? _locate(
+    SessionLayout node,
+    String splitId,
+    int start,
+    int extent,
+    bool horizontal,
+  ) {
+    switch (node) {
+      case SessionLayoutLeaf():
+        return null;
+      case SessionLayoutSplit(
+        :final id,
+        :final axis,
+        :final ratio,
+        :final first,
+        :final second,
+      ):
+        if (id == splitId) return (start, extent);
+        // The divider is one cell, so the two sides share what is left over.
+        final available = extent - 1;
+        if (available <= 0) return null;
+        final firstExtent = (available * ratio).round().clamp(1, available);
+        final sameAxis = (axis == SessionSplitAxis.horizontal) == horizontal;
+        if (!sameAxis) {
+          // This split runs the other way, so both sides keep [extent].
+          return _locate(first, splitId, start, extent, horizontal) ??
+              _locate(second, splitId, start, extent, horizontal);
+        }
+        return _locate(first, splitId, start, firstExtent, horizontal) ??
+            _locate(
+              second,
+              splitId,
+              start + firstExtent + 1,
+              available - firstExtent,
+              horizontal,
+            );
     }
-    final rows = ((clientRows * ratio).floor() - 1).clamp(2, 1 << 20);
-    unawaited(control.command('resize-pane -t $target -y $rows'));
   }
 
   /// Ends the tmux pane [paneId] and the processes in it.

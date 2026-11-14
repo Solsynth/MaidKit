@@ -244,6 +244,14 @@ const _twoPanes =
     '"c":[{"t":"p","w":80,"h":24,"x":0,"y":0,"I":"%0"},'
     '{"t":"p","w":80,"h":24,"x":80,"y":0,"I":"%1"}]}}';
 
+/// Three panes across: two right-splits, so the second split is nested inside
+/// the first and owns only the columns after the first divider.
+const _threePanes =
+    '{"V":2,"L":{"t":"h","w":160,"h":24,"x":0,"y":0,'
+    '"c":[{"t":"p","w":80,"h":24,"x":0,"y":0,"I":"%0"},'
+    '{"t":"p","w":39,"h":24,"x":81,"y":0,"I":"%1"},'
+    '{"t":"p","w":39,"h":24,"x":121,"y":0,"I":"%2"}]}}';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -799,5 +807,43 @@ void main() {
     );
     final content = tab.tabs.first as TerminalTab;
     expect(content.transport.labelKey, 'terminalTransportTmux');
+  });
+
+  test('dragging the outer split asks tmux for a width of that split', () async {
+    await mount(layout: _twoPanes);
+    // The panes have to have been laid out before a drag can be measured.
+    factory.adapters[0].emitResize(80, 24);
+    factory.adapters[1].emitResize(80, 24);
+    await pumpEventQueue();
+    control.writes.clear();
+    // A 160-column client split in half: the first side keeps the columns up to
+    // the divider, so the pane beside it has to become 80 wide.
+    binding().applySplitRatio('tmux-@1-0', 0.5);
+    await pumpEventQueue();
+    expect(control.written, contains('resize-pane -t %0 -x 80'));
+  });
+
+  test('dragging a nested split measures that split, not the window', () async {
+    // Two right-splits: the window is 160 columns, the inner split owns just the
+    // 79 columns after the first divider. Asking for half of it must resize by
+    // that region - scaling the whole window instead shoves the divider across
+    // the window and collapses the pane beyond it.
+    await mount(layout: _threePanes);
+    factory.adapters[0].emitResize(80, 24);
+    factory.adapters[1].emitResize(39, 24);
+    factory.adapters[2].emitResize(39, 24);
+    await pumpEventQueue();
+    control.writes.clear();
+    binding().applySplitRatio('tmux-@1-0', 0.5);
+    await pumpEventQueue();
+    // The inner region is [81..159]; bisecting it puts the divider at 120, which
+    // leaves the pane beside it 39 columns. The shipped formula would have said
+    // 79 here - half the window - and collapsed the pane beyond the divider.
+    expect(control.written, contains('resize-pane -t %1 -x 39'));
+    expect(
+      control.written,
+      isNot(contains('resize-pane -t %1 -x 79')),
+      reason: 'the inner split does not own the whole client extent',
+    );
   });
 }
