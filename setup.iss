@@ -20,6 +20,8 @@ DefaultDirName={commonpf}\MaidKit
 ; Reuse the directory of an existing installation so unattended updates
 ; (/SILENT) replace the same files the running build came from.
 UsePreviousAppDir=yes
+; Keep this set: a blank DefaultGroupName makes the compiler store the literal
+; string "(Default)" and every shortcut lands in Start Menu\Programs\(Default).
 DefaultGroupName=MaidKit
 
 OutputDir=.\Installer
@@ -36,6 +38,17 @@ PrivilegesRequired=admin
 
 [Files]
 Source: ".\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+; Builds up to 3.0.0+48 shipped no DefaultGroupName, so their shortcuts went
+; into that literal "(Default)" folder. Setting DefaultGroupName moves the group
+; back to MaidKit for them too (Inno Setup treats a recorded "(Default)" as
+; unset), but nothing deletes the links the old install created, and the Start
+; menu would list MaidKit twice. Remove this app's two links, and drop the
+; placeholder folder only after every other app in it is gone as well.
+Type: files; Name: "{commonprograms}\(Default)\MaidKit.lnk"
+Type: files; Name: "{commonprograms}\(Default)\{cm:UninstallProgram,MaidKit}.lnk"
+Type: dirifempty; Name: "{commonprograms}\(Default)"
 
 [Icons]
 Name: "{group}\MaidKit"; Filename: "{app}\maid_kit.exe"; IconFilename: "{app}\maid_kit.exe"
