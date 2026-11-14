@@ -281,6 +281,14 @@ work when the tab closes. Throwing `TaskSkipped` settles a task quietly (no
 success callback); throwing `TaskCancelled` — normally from
 `TaskControl.throwIfCancelled` — settles it as cancelled.
 
+`servers/upload_tree.dart` describes a drag-and-drop upload and writes it. A
+dropped folder becomes one `UploadNode` tree — walked from disk on desktop,
+taken from the drop's `children` in a browser, with symbolic links skipped —
+so the whole tree is one `AppTaskRequest` reporting one running total, instead
+of one queue entry per file. The destination conflict is settled once for the
+top-level name (`removeExisting` then replaces a directory outright), and each
+directory is created before its children are written.
+
 A queued task cannot hold the queue hostage. `TaskControl.cancelled` completes
 the moment the user cancels, and `_execute` settles the task on it instead of
 waiting for the action to unwind — an action parked on I/O that never returns

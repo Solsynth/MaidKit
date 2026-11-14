@@ -767,7 +767,7 @@
   "fileManagerDownloaded": "Downloaded",
   "fileManagerDownloading": "Downloading {}",
   "fileManagerDropFailed": "Drop failed",
-  "fileManagerDropToUpload": "Drop files to upload to {}",
+  "fileManagerDropToUpload": "Drop files or folders to upload to {}",
   "fileManagerEdit": "Edit",
   "fileManagerEditing": "Edit {}",
   "fileManagerExtractZip": "Extract ZIP here",

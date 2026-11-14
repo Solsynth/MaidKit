@@ -767,7 +767,7 @@
   "fileManagerDownloaded": "已下载",
   "fileManagerDownloading": "正在下载 {}",
   "fileManagerDropFailed": "拖放失败",
-  "fileManagerDropToUpload": "拖放文件上传到 {}",
+  "fileManagerDropToUpload": "拖放文件或文件夹上传到 {}",
   "fileManagerEdit": "编辑",
   "fileManagerEditing": "编辑 {}",
   "fileManagerExtractZip": "在此解压 ZIP",

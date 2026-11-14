@@ -34,6 +34,7 @@ import 'server_models.dart';
 import 'server_providers.dart';
 import 'terminal_tabs_provider.dart';
 import 'transfer_conflict_preferences.dart';
+import 'upload_tree.dart';
 
 enum _FileSide { left, remote }
 
@@ -55,10 +56,7 @@ IconButton _paneIconButton({
   onPressed: onPressed,
   visualDensity: VisualDensity.compact,
   padding: EdgeInsets.zero,
-  constraints: const BoxConstraints(
-    minWidth: 32,
-    minHeight: 32,
-  ),
+  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
   icon: Icon(icon, size: 18),
 );
 
@@ -1767,154 +1765,80 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
   }
 
   Future<void> _uploadDroppedFiles(List<DropItem> items) async {
-    for (final item in items.whereType<DropItemFile>()) {
+    for (final item in items) {
       // macOS hands a security-scoped bookmark alongside the path, which must
-      // be held open until the streamed read finishes; a browser hands over
-      // bytes and no usable path.
+      // be held open until the last streamed read finishes — a dropped
+      // folder's whole tree needs it. A browser hands over bytes and no
+      // usable path.
       final bookmark = item.extraAppleBookmark;
       final hasSecurityScopedAccess =
           bookmark != null &&
           await DesktopDrop.instance.startAccessingSecurityScopedResource(
             bookmark: bookmark,
           );
-      if (kIsWeb) {
-        await _uploadBytes(
-          await item.readAsBytes(),
-          item.name.isEmpty ? 'upload.bin' : item.name,
-          conflictMode: _kDropConflictMode,
+      Future<void> releaseAccess() async {
+        if (!hasSecurityScopedAccess) return;
+        await DesktopDrop.instance.stopAccessingSecurityScopedResource(
+          bookmark: bookmark,
         );
-        continue;
       }
-      final name = item.name.isEmpty ? _fileNameOf(item.path) : item.name;
-      await _uploadFile(
-        File(item.path),
-        name,
-        conflictMode: _kDropConflictMode,
-        onFinish: hasSecurityScopedAccess
-            ? () => DesktopDrop.instance.stopAccessingSecurityScopedResource(
-                bookmark: bookmark,
-              )
-            : null,
-      );
+
+      try {
+        _uploadDropTree(await describeDropItem(item), onFinish: releaseAccess);
+      } catch (error) {
+        await releaseAccess();
+        if (!mounted) return;
+        showStyledSnackBar(
+          message: error.toString(),
+          title: 'fileManagerDropFailed'.tr(),
+          icon: Symbols.error,
+          accentColor: Theme.of(context).colorScheme.error,
+        );
+      }
     }
   }
 
-  /// Uploads one local file, streaming it from disk so a large drop never has
-  /// to fit in memory.
-  Future<void> _uploadFile(
-    File file,
-    String name, {
-    bool notify = true,
-    TransferConflictMode? conflictMode,
-    Future<void> Function()? onSuccess,
-    Future<void> Function()? onFinish,
-  }) async {
-    final totalBytes = await file.length();
+  /// Queues [node] as one transfer task under the current remote directory.
+  ///
+  /// A folder is one task, not one per file: the tree is written depth-first
+  /// and every file reports into the same progress, so a dropped tree shows its
+  /// own size, speed and cancel control instead of flooding the queue with
+  /// hundreds of entries.
+  void _uploadDropTree(UploadNode node, {Future<void> Function()? onFinish}) {
     _runTransfer(
-      title: 'fileManagerUploading'.tr(args: [name]),
-      totalBytes: totalBytes,
-      notify: notify,
+      title: 'fileManagerUploading'.tr(args: [node.name]),
+      // An empty folder has nothing to measure, and a zero total would read as
+      // a finished transfer.
+      totalBytes: node.totalBytes > 0 ? node.totalBytes : null,
+      onFinish: onFinish,
       action: (controller, reportProgress) async {
         final files = await _files();
-        final remotePath = await _resolveRemoteDestination(
+        final target = await _resolveRemoteDestination(
           files,
           _remotePath,
-          name,
-          conflictMode: conflictMode,
+          node.name,
+          conflictMode: _kDropConflictMode,
         );
-        if (remotePath == null) throw const TaskSkipped();
-        final remoteFile = await files.open(
-          remotePath,
-          mode:
-              SftpFileOpenMode.write |
-              SftpFileOpenMode.create |
-              SftpFileOpenMode.truncate,
-        );
+        if (target == null) throw const TaskSkipped();
+        var transferredBytes = 0;
         try {
-          var transferredBytes = 0;
-          await for (final chunk in file.openRead().map(Uint8List.fromList)) {
-            await controller.waitIfPaused();
-            await remoteFile.writeBytes(chunk, offset: transferredBytes);
-            transferredBytes += chunk.length;
-            reportProgress(transferredBytes);
-          }
+          await uploadNode(
+            files,
+            node,
+            target,
+            control: controller,
+            onBytes: (bytes) => reportProgress(transferredBytes += bytes),
+            removeExisting: (path) => _removeRemoteEntry(files, path),
+          );
         } finally {
-          await remoteFile.close();
           if (controller.isCancelled) {
             try {
-              await files.remove(remotePath);
+              await _removeRemoteEntry(files, target);
             } catch (_) {}
           }
         }
         await _refreshRemote();
       },
-      onSuccess: onSuccess,
-      onFinish: onFinish,
-    );
-  }
-
-  /// Last path segment of a local path, without pulling in the filesystem
-  /// entity types the rest of this file no longer uses.
-  static String _fileNameOf(String path) => Uri.file(
-    path,
-  ).pathSegments.lastWhere((segment) => segment.isNotEmpty, orElse: () => '');
-
-  /// Uploads bytes the caller already holds, which is what a browser drop
-  /// produces: the chunks are written through the transport's write handle, so
-  /// the daemon's whole-file semantics are handled in one place.
-  Future<void> _uploadBytes(
-    Uint8List bytes,
-    String name, {
-    bool notify = true,
-    TransferConflictMode? conflictMode,
-    Future<void> Function()? onSuccess,
-    Future<void> Function()? onFinish,
-  }) async {
-    _runTransfer(
-      title: 'fileManagerUploading'.tr(args: [name]),
-      totalBytes: bytes.length,
-      notify: notify,
-      action: (controller, reportProgress) async {
-        final files = await _files();
-        final remotePath = await _resolveRemoteDestination(
-          files,
-          _remotePath,
-          name,
-          conflictMode: conflictMode,
-        );
-        if (remotePath == null) throw const TaskSkipped();
-        final remoteFile = await files.open(
-          remotePath,
-          mode:
-              SftpFileOpenMode.write |
-              SftpFileOpenMode.create |
-              SftpFileOpenMode.truncate,
-        );
-        try {
-          const chunkSize = 256 * 1024;
-          var offset = 0;
-          while (offset < bytes.length) {
-            await controller.waitIfPaused();
-            final end = math.min(offset + chunkSize, bytes.length);
-            await remoteFile.writeBytes(
-              bytes.sublist(offset, end),
-              offset: offset,
-            );
-            offset = end;
-            reportProgress(offset);
-          }
-        } finally {
-          await remoteFile.close();
-          if (controller.isCancelled) {
-            try {
-              await files.remove(remotePath);
-            } catch (_) {}
-          }
-        }
-        await _refreshRemote();
-      },
-      onSuccess: onSuccess,
-      onFinish: onFinish,
     );
   }
 
@@ -3373,7 +3297,7 @@ class _FileManagementTabViewState extends ConsumerState<FileManagementTabView> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Drop files to upload to $_remotePath',
+                          'fileManagerDropToUpload'.tr(args: [_remotePath]),
                           style: Theme.of(context).textTheme.titleSmall,
                         ),
                       ],
@@ -3922,9 +3846,7 @@ class _FilePane extends StatelessWidget {
         args: ['$selectedCount', _formatBytes(selectedBytes)],
       );
     } else {
-      statusSummary = 'fileManagerTotalItems'.tr(
-        args: ['$totalItems'],
-      );
+      statusSummary = 'fileManagerTotalItems'.tr(args: ['$totalItems']);
     }
 
     return Listener(
@@ -3979,7 +3901,8 @@ class _FilePane extends StatelessWidget {
                           ),
                           const SizedBox(width: MaidKitSpace.xs),
                           Expanded(
-                            child: pathInput ??
+                            child:
+                                pathInput ??
                                 Text(
                                   path,
                                   maxLines: 1,
