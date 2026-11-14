@@ -134,6 +134,9 @@ class _RecordingAdapter implements TerminalSessionAdapter {
     TerminalResize(columns: columns, rows: rows, pixelWidth: 0, pixelHeight: 0),
   );
 
+  /// Presses keys in this pane, the way the renderer forwards them.
+  void emitInput(List<int> bytes) => _input.add(Uint8List.fromList(bytes));
+
   @override
   Stream<Uint8List> get outgoingBytes => _input.stream;
 
@@ -167,11 +170,18 @@ class _RecordingAdapter implements TerminalSessionAdapter {
   @override
   void replayHistory(String text) => replayed.add(text);
 
-  @override
-  SudoPromptReason? get sudoAutofillReady => null;
+  /// Every reason the pane's wiring posted, for the hint at the cursor.
+  final sudoReasons = <SudoPromptReason?>[];
+  StreamSubscription<SudoPromptReason?>? _sudoSub;
 
   @override
-  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {}
+  SudoPromptReason? get sudoAutofillReady => sudoReasons.lastOrNull;
+
+  @override
+  void bindSudoAutofill(Stream<SudoPromptReason?> reasons) {
+    _sudoSub?.cancel();
+    _sudoSub = reasons.listen(sudoReasons.add);
+  }
 
   @override
   void write(Uint8List bytes) => _written.addAll(bytes);
@@ -209,7 +219,11 @@ class _RecordingAdapter implements TerminalSessionAdapter {
   void findClear() {}
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    await _sudoSub?.cancel();
+    await _input.close();
+    await _resize.close();
+  }
 }
 
 Server _server() => const Server(
@@ -251,13 +265,14 @@ void main() {
   });
 
   /// Mounts the session and reports [layout] for its active window.
-  Future<void> mount({String? layout}) async {
+  Future<void> mount({String? layout, String? autoFillSecret}) async {
     await container
         .read(terminalTabsProvider.notifier)
         .openTmux(
           _server(),
           sessionName: 'maidkit-build',
           control: control.client,
+          autoFillSecret: autoFillSecret,
           transport: TerminalTransport.tmux,
           closeTransport: control.close,
         );
@@ -477,6 +492,40 @@ void main() {
     expect(factory.adapters[0].writtenText, isEmpty);
     expect(factory.adapters[1].writtenText, 'hello');
   });
+
+  test('a sudo prompt in a pane autofills the saved password', () async {
+    // Each pane is a real shell behind tmux, so it needs the same
+    // interception a plain SSH terminal has. A pane that never has a secret
+    // forwarded must not receive one, and pressing Enter anywhere else is
+    // left alone.
+    await mount(layout: _onePane, autoFillSecret: 'hunter2');
+    final adapter = factory.adapters.single;
+    control.feed('%output %0 [sudo] password for deploy: \n');
+    await pumpEventQueue();
+    // The hint follows the same watcher, so it is up before Enter is pressed.
+    expect(adapter.sudoReasons, [SudoPromptReason.prompt]);
+    control.writes.clear();
+    adapter.emitInput([0x0d]);
+    await pumpEventQueue();
+    expect(control.written, 'send-keys -H -t %0 68 75 6E 74 65 72 32 0D');
+  });
+
+  test(
+    'a tmux pane without a saved password forwards keys untouched',
+    () async {
+      await mount(layout: _onePane);
+      final adapter = factory.adapters.single;
+      control.feed('%output %0 [sudo] password for deploy: \n');
+      await pumpEventQueue();
+      // Every output chunk posts the pane's current reason, which stays null
+      // when there is no secret to fill.
+      expect(adapter.sudoReasons, everyElement(isNull));
+      control.writes.clear();
+      adapter.emitInput([0x0d]);
+      await pumpEventQueue();
+      expect(control.written, 'send-keys -H -t %0 0D');
+    },
+  );
 
   test('a resize reports the client size to tmux', () async {
     // One pane fills the session, so its own viewport *is* the client extent.

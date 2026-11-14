@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:super_context_menu/super_context_menu.dart';
 
+import 'server_models.dart';
 import 'terminal_color_scheme.dart';
 
 Menu terminalContextMenu({
@@ -671,6 +672,19 @@ class SudoPromptAutofill {
     return Uint8List.fromList(utf8.encode('${secret!}\r'));
   }
 }
+
+/// The SSH password a terminal on [credential] may autofill at a `sudo`
+/// prompt, or null when the connection has no password to offer or the user
+/// switched autofill off.
+///
+/// Password-type credentials double as the secret; key-based connections have
+/// none to give.
+String? sudoAutofillSecretFor(
+  ServerCredential credential, {
+  required bool enabled,
+}) => enabled && credential.type == CredentialType.password
+    ? credential.password
+    : null;
 
 /// Wires a terminal adapter to one shell's byte streams without coupling the
 /// adapter contract to a specific SSH implementation.

@@ -788,12 +788,17 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
   /// so nothing is guessed here. Every pane mounts a [TerminalTab] whose
   /// adapter receives that tmux pane's output, and the binding owns the
   /// control client they all write through.
+  ///
+  /// [autoFillSecret] is the connection's own password: every mirrored pane
+  /// autofills it at a genuine `sudo` prompt, exactly as a plain SSH terminal
+  /// does. It is null for a transport with no password to offer.
   Future<void> openTmux(
     Server server, {
     required String sessionName,
     required TmuxControlClient control,
     required Future<void> Function() closeTransport,
     required TerminalTransport transport,
+    String? autoFillSecret,
     String? paneId,
   }) async {
     final existing = _tmuxTabs.entries
@@ -831,6 +836,7 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       serverName: server.name,
       transport: transport,
       onEventStream: control.events,
+      autoFillSecret: autoFillSecret,
     );
     // The caller may have reserved a pane for this session - a restored
     // workspace rebuilds a split tab that way, with the terminal's pane and
@@ -901,6 +907,10 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
         control: control.control,
         transport: maidCafeTerminalTransport(target),
         closeTransport: control.close,
+        // The daemon runs the shell as its own account (or one its allowlist
+        // names), which is not necessarily the account the SSH credential
+        // belongs to, so the stored SSH password is not offered there.
+        autoFillSecret: null,
         paneId: paneId,
       );
       return;
@@ -931,6 +941,10 @@ class TerminalTabsNotifier extends Notifier<TerminalTabsState> {
       control: session.control,
       transport: TerminalTransport.tmux,
       closeTransport: session.close,
+      autoFillSecret: sudoAutofillSecretFor(
+        credential,
+        enabled: ref.read(sudoAutofillEnabledProvider),
+      ),
       paneId: paneId,
     );
   }

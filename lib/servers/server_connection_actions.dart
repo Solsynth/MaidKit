@@ -22,6 +22,7 @@ import 'server_models.dart';
 import 'server_providers.dart';
 import 'server_repository.dart';
 import 'ssh_connection_manager.dart';
+import 'terminal_session_adapter.dart';
 import 'terminal_tabs_provider.dart';
 import 'tmux_control_client.dart';
 import 'tmux_sessions.dart';
@@ -602,6 +603,12 @@ Future<bool> openTmuxTerminal(
           control: session.control,
           transport: TerminalTransport.tmux,
           closeTransport: session.close,
+          // A password connection gives its tmux panes the same sudo
+          // autofill a plain SSH terminal has; a key has no secret to offer.
+          autoFillSecret: sudoAutofillSecretFor(
+            route.credential,
+            enabled: ref.read(sudoAutofillEnabledProvider),
+          ),
           paneId: paneId,
         );
     return true;

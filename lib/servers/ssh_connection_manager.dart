@@ -391,10 +391,10 @@ class SshConnectionManager {
       // interactive shell; key-based connections have no secret to send. The
       // toggle in Settings lets users opt out so the stored credential is
       // never written to the shell.
-      autoFillSecret:
-          _sudoAutofillEnabled() && credential.type == CredentialType.password
-          ? credential.password
-          : null,
+      autoFillSecret: sudoAutofillSecretFor(
+        credential,
+        enabled: _sudoAutofillEnabled(),
+      ),
     );
     // Surface the sudo autofill reason to the terminal UI so it can hint
     // "press Enter to fill the saved password" at the cursor.
@@ -825,11 +825,10 @@ class SshConnectionManager {
           event.pixelWidth,
           event.pixelHeight,
         ),
-        autoFillSecret:
-            _sudoAutofillEnabled() &&
-                reconnect.credential.type == CredentialType.password
-            ? reconnect.credential.password
-            : null,
+        autoFillSecret: sudoAutofillSecretFor(
+          reconnect.credential,
+          enabled: _sudoAutofillEnabled(),
+        ),
       );
       adapter.bindSudoAutofill(binding.autofillReady);
       connection.client = client;

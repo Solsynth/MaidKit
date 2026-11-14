@@ -206,6 +206,15 @@ app-wide switch; `detachOnCloseProvider` chooses between detaching and killing
 when a tab closes, and the workspace snapshot records a terminal's session name
 so a restored workspace reattaches to it.
 
+Every mirrored pane is a real shell, so it gets the same `sudo` autofill a
+plain SSH terminal has: the binding carries the connection's password
+(`openTmux(autoFillSecret: …)`, sourced from the same credential and Settings
+switch as the plain path), each pane's `TerminalSessionBinding` owns its own
+`SudoPromptAutofill`, and a bare Enter at a genuine prompt is replaced with it.
+The secret is per pane because the prompt appears in one pane, never in all of
+them. A daemon tmux session offers none: the daemon runs its shell as its own
+account, which the stored SSH credential need not belong to.
+
 A tmux tab restores by *reattaching*, never by replaying a saved layout. The
 session, its windows and its processes live on the host, so there is nothing to
 rebuild: `new-session -A -s <name>` reconnects to the session that is still

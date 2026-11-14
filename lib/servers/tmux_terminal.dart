@@ -86,9 +86,17 @@ class TmuxTabBinding {
     required this.serverName,
     required this.transport,
     required Stream<TmuxEvent> onEventStream,
+    this.autoFillSecret,
   }) : _closeTransportHandle = closeTransport,
        _adapterFactoryRef = adapterFactory,
        _eventStream = onEventStream;
+
+  /// The SSH password each mirrored pane may autofill at a `sudo` prompt.
+  ///
+  /// A tmux pane is a real shell, so it needs the same interception the plain
+  /// SSH terminal gets: Enter at a genuine password prompt becomes the stored
+  /// secret. Panes built later from a layout change use this too.
+  final String? autoFillSecret;
 
   /// The tmux session this tab mirrors.
   final String sessionName;
@@ -477,6 +485,7 @@ class TmuxTabBinding {
       adapterFactory: _adapterFactoryRef,
       send: (bytes) => control.sendKeys(paneId, bytes),
       resize: (event) => reportPaneSize(paneId, event.columns, event.rows),
+      autoFillSecret: autoFillSecret,
     );
     _panes[paneId] = attachment;
     return attachment.adapter;
@@ -638,6 +647,7 @@ class _TmuxPaneAttachment {
     required TerminalSessionAdapterFactory adapterFactory,
     required void Function(Uint8List bytes) send,
     required void Function(TerminalResize resize) resize,
+    String? autoFillSecret,
   }) : _output = StreamController<Uint8List>.broadcast() {
     adapter = adapterFactory.create();
     binding = TerminalSessionBinding(
@@ -646,7 +656,11 @@ class _TmuxPaneAttachment {
       stderr: const Stream.empty(),
       send: send,
       resize: resize,
+      autoFillSecret: autoFillSecret,
     );
+    // The hint above the cursor follows the same watcher the interception
+    // uses, per pane, so it shows only where that pane's own prompt is up.
+    adapter.bindSudoAutofill(binding.autofillReady);
   }
 
   final String paneId;
