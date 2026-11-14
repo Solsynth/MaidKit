@@ -218,16 +218,35 @@ class TmuxTabBinding {
     if (layout == null) return;
     final size = _composeSize(layout);
     if (size == null) return;
-    if (size.$1 == clientColumns && size.$2 == clientRows) return;
+    final firstPaint = _pendingAttachPaint;
+    _pendingAttachPaint = false;
+    if (size.$1 == clientColumns && size.$2 == clientRows && !firstPaint) {
+      return;
+    }
     clientColumns = size.$1;
     clientRows = size.$2;
+    if (firstPaint) {
+      // tmux repaints a control-mode client only when its extent actually
+      // changes, and a reattach onto a session that already has this extent
+      // answers with a `%layout-change` but no pane output: the tab opens
+      // blank until a keypress. One cell off and back is a real change, so
+      // tmux redraws every pane - alternate-screen programs included, which
+      // the scrollback seed deliberately never touches. When the extent
+      // genuinely differs this is a harmless second paint.
+      control.resizeClient(clientColumns, clientRows - 1);
+    }
     control.resizeClient(clientColumns, clientRows);
   }
+
+  /// Whether the first composed client extent must repaint the session.
+  ///
+  /// Set on attach, cleared by the first [_recomposeClientSize] that has a
+  /// full layout to compose.
+  var _pendingAttachPaint = false;
 
   /// The client extent [layout] needs, given what each pane's viewport shows.
   ///
   /// Returns null until every pane in the tree has reported a size, so a
-  /// half-known layout never sends tmux a wrong extent.
   (int, int)? _composeSize(SessionLayout layout) {
     switch (layout) {
       case SessionLayoutLeaf(paneId: final paneId):
@@ -284,6 +303,12 @@ class TmuxTabBinding {
     // as if its earlier output never existed. tmux keeps that output in its own
     // scrollback, so each pane is seeded from there once its layout is known.
     await _seedPaneHistories();
+    // The first composed client extent forces a repaint even when it matches
+    // the session's: a reattach onto an unchanged geometry answers with a
+    // `%layout-change` but no pane output, so the tab would open blank until
+    // a keypress. Panes report their sizes after this, which is what triggers
+    // the compose.
+    _pendingAttachPaint = true;
   }
 
   /// How many scrollback lines one pane is seeded with on attach.
