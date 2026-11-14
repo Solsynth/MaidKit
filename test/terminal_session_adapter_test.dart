@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
@@ -883,6 +884,105 @@ void main() {
       );
     }),
   );
+
+  testWidgets('select-to-copy writes the clipboard once, on release', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied.add(
+              (call.arguments as Map<Object?, Object?>)['text']! as String,
+            );
+          }
+          return null;
+        },
+      );
+
+      final adapter = MaidTermSessionAdapter(selectToCopyEnabled: true);
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      adapter.write(Uint8List.fromList(utf8.encode('hello world\r\n')));
+      await tester.pump();
+
+      // Drag across the line the way a user selects text: nothing reaches
+      // clipboard managers while the pointer is still held. The drag needs a
+      // mouse pointer, since touch drags scroll instead of selecting.
+      final view = find.byType(maidterm.TerminalView);
+      final origin = tester.getTopLeft(view) + const Offset(10, 12);
+      final gesture = await tester.startGesture(
+        origin,
+        kind: PointerDeviceKind.mouse,
+      );
+      for (var step = 1; step <= 6; step++) {
+        await gesture.moveTo(origin + Offset(step * 12.0, 0));
+        await tester.pump();
+      }
+      expect(copied, isEmpty, reason: 'a live drag must not copy');
+
+      await gesture.up();
+      // The release settles MaidTerm's selection inside its own gesture
+      // handling, so the adapter copies on the next timer turn.
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(copied, hasLength(1), reason: 'the release copies once');
+      expect(copied.single, isNotEmpty);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('select-to-copy copies a programmatic selection once', (
+    tester,
+  ) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add(
+            (call.arguments as Map<Object?, Object?>)['text']! as String,
+          );
+        }
+        return null;
+      },
+    );
+
+    final adapter = MaidTermSessionAdapter(selectToCopyEnabled: true);
+    addTearDown(adapter.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 800,
+          height: 600,
+          child: adapter.buildView(readOnly: true, showCursor: false),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    adapter.write(Uint8List.fromList(utf8.encode('hello world\r\n')));
+    await tester.pump();
+    expect(adapter.find('hello world'), 1);
+    await tester.pump();
+
+    expect(copied, ['hello world']);
+  });
 }
 
 /// Runs [body] with the Android terminal path selected.

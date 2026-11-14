@@ -92,6 +92,16 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   late final TerminalClipboardBridge _clipboard;
   final _terminalViewKey = GlobalKey<maidterm.TerminalViewState>();
 
+  /// Tracks pointer presses over the terminal so select-to-copy copies once
+  /// per completed selection rather than on every drag update.
+  Widget _withSelectionPointerGate(Widget child) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerDown: (event) => _selectionPointers.add(event.pointer),
+    onPointerUp: _handleSelectionPointerEnd,
+    onPointerCancel: _handleSelectionPointerEnd,
+    child: child,
+  );
+
   /// The focus node the renderer's view is attached to.
   ///
   /// The adapter owns it so the toolbar can hand the keyboard back without
@@ -108,9 +118,18 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   final _activity = TerminalActivityTracker();
   StreamSubscription<SudoPromptReason?>? _sudoSub;
 
-  /// Tracks the last auto-copied selection text so we only write to the
-  /// clipboard when the selection actually changes.
+  /// Tracks the last text written to the clipboard by select-to-copy so a
+  /// settled selection is written only once.
   String? _lastAutoCopiedSelection;
+
+  /// Pointers currently down on the terminal surface. While any is held,
+  /// select-to-copy waits for the release instead of streaming every
+  /// intermediate drag selection into the clipboard.
+  final _selectionPointers = <int>{};
+
+  /// Pending copy scheduled after the last pointer lifts, so a release that
+  /// leaves the selection unchanged still reaches the clipboard.
+  Timer? _autoCopyFlush;
 
   var _disposed = false;
   var _lastColumns = 80;
@@ -378,6 +397,11 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
           : const maidterm.LinkSettings(detectFilePaths: false),
       theme: theme,
     );
+    // Both live and read-only surfaces get the gate: a read-only log viewer
+    // with select-to-copy floods clipboard managers exactly the same way.
+    if (_selectToCopyEnabled) {
+      terminal = _withSelectionPointerGate(terminal);
+    }
     if (readOnly) {
       terminal = _ReadOnlyLogSurface(
         onCopy: _copySelectionToClipboard,
@@ -503,20 +527,51 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
 
   /// Auto-copies the active selection to the clipboard (select-to-copy).
   ///
-  /// The controller fires this on every state change, so we diff against the
-  /// last copied text and only write when it actually changes.
+  /// The controller fires this on every state change, including every cell
+  /// a drag passes over, so writing eagerly floods clipboard managers with
+  /// intermediate selections. A held pointer defers the copy to its release;
+  /// the settled selection is then written once, and unchanged text is never
+  /// rewritten.
   void _onSelectionMaybeChanged() {
     if (_disposed || !_selectToCopyEnabled) return;
     if (!_controller.hasSelection) {
       _lastAutoCopiedSelection = null;
+      _autoCopyFlush?.cancel();
       return;
     }
     final text = _controller.selectedText();
     if (text.isEmpty) {
       _lastAutoCopiedSelection = null;
+      _autoCopyFlush?.cancel();
       return;
     }
     if (text == _lastAutoCopiedSelection) return;
+    // The pointer release settles the selection and flushes it; copying mid-
+    // drag would push a partial selection the user never finished making.
+    if (_selectionPointers.isNotEmpty) return;
+    _commitAutoCopy(text);
+  }
+
+  void _handleSelectionPointerEnd(PointerEvent event) {
+    if (!_selectionPointers.remove(event.pointer)) return;
+    if (_selectionPointers.isNotEmpty) return;
+    // Deferred to the next turn: the controller reports the final selection
+    // after the gesture arena resolves the release, later in this dispatch.
+    _autoCopyFlush?.cancel();
+    _autoCopyFlush = Timer(Duration.zero, _flushAutoCopy);
+  }
+
+  /// Copies the released selection, or drops the schedule when the release
+  /// already cleared or rewrote it.
+  void _flushAutoCopy() {
+    _autoCopyFlush = null;
+    if (_disposed || !_selectToCopyEnabled || !_controller.hasSelection) return;
+    final text = _controller.selectedText();
+    if (text.isEmpty || text == _lastAutoCopiedSelection) return;
+    _commitAutoCopy(text);
+  }
+
+  void _commitAutoCopy(String text) {
     _lastAutoCopiedSelection = text;
     unawaited(Clipboard.setData(ClipboardData(text: text)));
   }
@@ -600,6 +655,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     if (_selectToCopyEnabled) {
       _controller.removeListener(_onSelectionMaybeChanged);
     }
+    _autoCopyFlush?.cancel();
     await _sudoSub?.cancel();
     _clipboard.dispose();
     _matches.clear();
