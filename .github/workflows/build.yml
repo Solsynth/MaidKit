@@ -211,7 +211,10 @@ jobs:
             sleep 10
           done
       - run: dart run build_runner build --delete-conflicting-outputs
-      - run: flutter build apk --release --split-per-abi --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
+      # Gradle stays on 8.14 (see android/settings.gradle.kts: CargoKit still
+      # calls Project.exec(), removed in Gradle 9) — skip Flutter's minimum
+      # Gradle version check.
+      - run: flutter build apk --release --split-per-abi --android-skip-build-dependency-validation --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Archive Android artifacts
         uses: actions/upload-artifact@v4
         with:
