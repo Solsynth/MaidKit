@@ -35,7 +35,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: 3.47.9
           cache: true
       # Retry + HTTP/1.1: git deps clone from src.solsynth.dev behind
       # Cloudflare, which intermittently resets large pack transfers (curl 56).
@@ -102,7 +102,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: 3.47.9
           cache: true
       # libghostty's native-assets hook compiles the pinned Ghostty source with
       # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon). v1 requested the
@@ -175,7 +175,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: 3.47.9
           cache: true
       # libghostty's native-assets hook compiles the pinned Ghostty source with
       # Zig (needs >= 0.16.0 per Ghostty 1.3.x build.zig.zon). v1 requested the
@@ -211,10 +211,7 @@ jobs:
             sleep 10
           done
       - run: dart run build_runner build --delete-conflicting-outputs
-      # Gradle stays on 8.14 (see android/settings.gradle.kts: CargoKit still
-      # calls Project.exec(), removed in Gradle 9) — skip Flutter's minimum
-      # Gradle version check.
-      - run: flutter build apk --release --split-per-abi --android-skip-build-dependency-validation --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
+      - run: flutter build apk --release --split-per-abi --dart-define=DISTRIBUTION_API_BASE_URL="${{ vars.DISTRIBUTION_API_BASE_URL }}" --dart-define=DISTRIBUTION_PRODUCT_ID="${{ vars.DISTRIBUTION_PRODUCT_ID }}"
       - name: Archive Android artifacts
         uses: actions/upload-artifact@v4
         with:

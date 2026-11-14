@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: 3.47.9
           cache: true
       # Retry + HTTP/1.1: git deps clone from src.solsynth.dev behind
       # Cloudflare, which intermittently resets large pack transfers (curl 56).
