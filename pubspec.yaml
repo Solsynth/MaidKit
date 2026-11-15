@@ -114,7 +114,7 @@ dependencies:
   # 23.0.0 requires compileSdk 37 and AGP 9.1.0; this project is pinned to
   # AGP 8.12.1 until super_native_extensions leaves CargoKit (its Gradle
   # plugin calls Project.exec, removed in Gradle 9).
-  flutter_local_notifications: ^23.0.2
+  flutter_local_notifications: ^22.3.3
   firebase_analytics: ^13.0.1
   xterm3: ^6.4.0
   crypto: ^3.0.8
