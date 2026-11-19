@@ -50,6 +50,7 @@ import 'terminal_tabs_provider.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
+import 'terminal_shortcut_mode.dart';
 import 'startup_connection_preferences.dart';
 import 'tmux_preferences.dart';
 import 'transfer_conflict_preferences.dart';
@@ -1255,6 +1256,22 @@ class ShiftInsertPasteEnabledNotifier extends Notifier<bool> {
   }
 }
 
+final terminalShortcutModeProvider =
+    NotifierProvider<TerminalShortcutModeNotifier, TerminalShortcutMode>(
+      TerminalShortcutModeNotifier.new,
+    );
+
+class TerminalShortcutModeNotifier extends Notifier<TerminalShortcutMode> {
+  @override
+  TerminalShortcutMode build() =>
+      ref.read(terminalAdapterPreferencesProvider).shortcutMode;
+
+  Future<void> setMode(TerminalShortcutMode mode) async {
+    await ref.read(terminalAdapterPreferencesProvider).saveShortcutMode(mode);
+    state = mode;
+  }
+}
+
 final keywordHighlightEnabledProvider =
     NotifierProvider<KeywordHighlightEnabledNotifier, bool>(
       KeywordHighlightEnabledNotifier.new,
@@ -1455,6 +1472,7 @@ final terminalSessionAdapterFactoryProvider =
       final shiftInsertPasteEnabled = ref.watch(
         shiftInsertPasteEnabledProvider,
       );
+      final shortcutMode = ref.watch(terminalShortcutModeProvider);
       final keywordHighlightEnabled = ref.watch(
         keywordHighlightEnabledProvider,
       );
@@ -1465,6 +1483,7 @@ final terminalSessionAdapterFactoryProvider =
         fontFamily: terminalFontFamily,
         selectToCopyEnabled: selectToCopyEnabled,
         shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+        shortcutMode: shortcutMode,
         keywordHighlightEnabled: keywordHighlightEnabled,
       );
     });

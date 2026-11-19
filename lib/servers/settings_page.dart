@@ -45,6 +45,7 @@ import 'solarpass_device_code_dialog.dart';
 import 'tailscale_settings_section.dart';
 import 'terminal_adapter_preferences.dart';
 import 'terminal_color_scheme.dart';
+import 'terminal_shortcut_mode.dart';
 import 'transfer_conflict_preferences.dart';
 import 'vault_service.dart';
 import 'vault_file_storage.dart';
@@ -112,6 +113,7 @@ class SettingsPage extends HookConsumerWidget {
     );
     final selectToCopyEnabled = ref.watch(selectToCopyEnabledProvider);
     final shiftInsertPasteEnabled = ref.watch(shiftInsertPasteEnabledProvider);
+    final shortcutMode = ref.watch(terminalShortcutModeProvider);
     final keywordHighlightEnabled = ref.watch(keywordHighlightEnabledProvider);
     final sudoAutofillEnabled = ref.watch(sudoAutofillEnabledProvider);
     final tmuxEnabled = ref.watch(tmuxEnabledProvider);
@@ -505,6 +507,8 @@ class SettingsPage extends HookConsumerWidget {
                                 .read(shiftInsertPasteEnabledProvider.notifier)
                                 .setEnabled(enabled),
                           ),
+                          const SizedBox(height: 8),
+                          _TerminalShortcutModeTile(mode: shortcutMode),
                           const SizedBox(height: 8),
                           SwitchListTile(
                             contentPadding: _sectionTilePadding,
@@ -5150,6 +5154,55 @@ class _AppIconSheet extends HookConsumerWidget {
               asset: AppIconService.cuiteIconAsset,
               label: 'settingsAppIconCuite'.tr(),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Switches the terminal's clipboard chords between each renderer's
+/// platform defaults and Ctrl+Shift+C/V/A, which leaves the plain Ctrl
+/// chords to the remote shell.
+class _TerminalShortcutModeTile extends ConsumerWidget {
+  const _TerminalShortcutModeTile({required this.mode});
+
+  final TerminalShortcutMode mode;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'settingsTerminalShortcutMode',
+            style: theme.textTheme.titleSmall,
+          ).tr(),
+          const SizedBox(height: 4),
+          Text(
+            'settingsTerminalShortcutModeHint',
+            style: theme.textTheme.bodyMedium,
+          ).tr(),
+          const SizedBox(height: 12),
+          SegmentedButton<TerminalShortcutMode>(
+            showSelectedIcon: false,
+            segments: [
+              ButtonSegment(
+                value: TerminalShortcutMode.plain,
+                label: Text('settingsTerminalShortcutModePlain'.tr()),
+              ),
+              ButtonSegment(
+                value: TerminalShortcutMode.shifted,
+                label: Text('settingsTerminalShortcutModeShifted'.tr()),
+              ),
+            ],
+            selected: {mode},
+            onSelectionChanged: (selection) => ref
+                .read(terminalShortcutModeProvider.notifier)
+                .setMode(selection.first),
           ),
         ],
       ),

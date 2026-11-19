@@ -1,20 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
+import 'package:maid_kit/servers/terminal_shortcut_mode.dart';
 import 'package:maid_kit/servers/xterm3_session_adapter.dart';
 
 void main() {
   Xterm3SessionAdapter createAdapter({
     bool cursorAnimationEnabled = true,
     bool keywordHighlightEnabled = true,
+    TerminalShortcutMode shortcutMode = TerminalShortcutMode.plain,
   }) {
     final adapter = Xterm3SessionAdapter(
       cursorAnimationEnabled: cursorAnimationEnabled,
       keywordHighlightEnabled: keywordHighlightEnabled,
+      shortcutMode: shortcutMode,
     );
     addTearDown(adapter.dispose);
     return adapter;
@@ -72,6 +76,69 @@ void main() {
     expect(adapter.dumpHistory(), contains('previous output'));
     expect(adapter.isTaskRunning, isFalse);
     expect(outgoing, isEmpty);
+  });
+
+  testWidgets('shifted mode pastes with Ctrl+Shift+V and sends Ctrl+V', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.getData') {
+            return <String, Object?>{'text': 'pasted'};
+          }
+          return null;
+        },
+      );
+
+      final adapter = createAdapter(shortcutMode: TerminalShortcutMode.shifted);
+      final outgoing = <Uint8List>[];
+      final subscription = adapter.outgoingBytes.listen(outgoing.add);
+      addTearDown(subscription.cancel);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 900,
+                height: 500,
+                child: adapter.buildView(autofocus: true),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(outgoing.map(utf8.decode), ['pasted']);
+      outgoing.clear();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(outgoing.map(utf8.decode), ['\u0016']);
+      await tester.pumpAndSettle();
+    } finally {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   test(

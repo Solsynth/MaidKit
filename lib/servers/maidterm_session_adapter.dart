@@ -14,6 +14,7 @@ import 'maidcafe_push.dart';
 import 'terminal_color_scheme.dart';
 import 'terminal_session_adapter.dart';
 import 'terminal_keyword_highlight.dart';
+import 'terminal_shortcut_mode.dart';
 
 /// Terminal renderer for native platforms, backed by MaidTerm's
 /// libghostty-vt renderer.
@@ -28,6 +29,7 @@ class TerminalRendererFactory implements TerminalSessionAdapterFactory {
     this.fontFamily = MaidKitFonts.mono,
     this.selectToCopyEnabled = false,
     this.shiftInsertPasteEnabled = true,
+    this.shortcutMode = TerminalShortcutMode.plain,
     this.keywordHighlightEnabled = true,
   });
 
@@ -37,6 +39,7 @@ class TerminalRendererFactory implements TerminalSessionAdapterFactory {
   final String fontFamily;
   final bool selectToCopyEnabled;
   final bool shiftInsertPasteEnabled;
+  final TerminalShortcutMode shortcutMode;
   final bool keywordHighlightEnabled;
 
   @override
@@ -47,6 +50,7 @@ class TerminalRendererFactory implements TerminalSessionAdapterFactory {
     fontFamily: fontFamily,
     selectToCopyEnabled: selectToCopyEnabled,
     shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+    shortcutMode: shortcutMode,
     keywordHighlightEnabled: keywordHighlightEnabled,
   );
 }
@@ -58,6 +62,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     this.transparentBackground = false,
     this.fontFamily = MaidKitFonts.mono,
     bool selectToCopyEnabled = false,
+    this.shortcutMode = TerminalShortcutMode.plain,
     this._shiftInsertPasteEnabled = true,
     this._keywordHighlightEnabled = true,
   }) : _selectToCopyEnabled = selectToCopyEnabled,
@@ -79,6 +84,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     if (selectToCopyEnabled) {
       _controller.addListener(_onSelectionMaybeChanged);
     }
+    if (_releasesPlainChords) {
+      HardwareKeyboard.instance.addHandler(_handleReleasedChord);
+    }
   }
 
   final bool cursorAnimationEnabled;
@@ -86,6 +94,7 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
   final bool transparentBackground;
   final String fontFamily;
   final bool _selectToCopyEnabled;
+  final TerminalShortcutMode shortcutMode;
   final bool _shiftInsertPasteEnabled;
   final bool _keywordHighlightEnabled;
   final maidterm.TerminalController _controller;
@@ -350,9 +359,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
       _controller.modeSet(maidterm.TerminalMode.cursorVisible(), value: false);
     }
 
-    final effectiveKeyEvent = !readOnly && _shiftInsertPasteEnabled
-        ? _wrapKeyEventForShiftInsert(onKeyEvent)
-        : onKeyEvent;
+    final effectiveKeyEvent = readOnly
+        ? onKeyEvent
+        : _wrapKeyEventForClipboard(onKeyEvent);
 
     final theme = maidterm.TerminalTheme(
       palette: maidterm.ColorPalette(
@@ -495,14 +504,68 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     }
   }
 
-  FocusOnKeyEventCallback _wrapKeyEventForShiftInsert(
+  /// Whether shifted mode has to take the plain chords back from the
+  /// renderer: only platforms whose defaults bind Ctrl+C/V/A as clipboard
+  /// actions have anything to release.
+  bool get _releasesPlainChords =>
+      shortcutMode == TerminalShortcutMode.shifted &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.android);
+
+  static final Map<LogicalKeyboardKey, maidterm.Key> _plainChordKeys = {
+    LogicalKeyboardKey.keyC: maidterm.Key.c,
+    LogicalKeyboardKey.keyV: maidterm.Key.v,
+    LogicalKeyboardKey.keyA: maidterm.Key.a,
+  };
+
+  /// Encodes shifted mode's plain Ctrl+C/V/A chords for the remote shell.
+  ///
+  /// The renderer's shortcut scope runs ahead of its encoder and would claim
+  /// these chords for clipboard actions, so they are answered from the global
+  /// handler instead: [HardwareKeyboard] dispatches to registered handlers
+  /// before focus, which is the only point ahead of that scope.
+  bool _handleReleasedChord(KeyEvent event) {
+    if (_disposed || !_focusNode.hasFocus) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    final keyboard = HardwareKeyboard.instance;
+    if (!keyboard.isControlPressed ||
+        keyboard.isShiftPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed) {
+      return false;
+    }
+    final key = _plainChordKeys[event.logicalKey];
+    if (key == null) return false;
+    _controller.sendKey(key, mods: const maidterm.Mods.ctrl());
+    return true;
+  }
+
+  /// Answers the clipboard chords before the renderer's own shortcut scope
+  /// sees them: Ctrl+Shift+C/V/A copy, paste and select all in shifted mode,
+  /// and Shift+Insert pastes when enabled.
+  FocusOnKeyEventCallback _wrapKeyEventForClipboard(
     FocusOnKeyEventCallback? delegate,
   ) => (node, event) {
-    if (event is KeyDownEvent &&
+    if (_shiftInsertPasteEnabled &&
+        event is KeyDownEvent &&
         event.logicalKey == LogicalKeyboardKey.insert &&
         HardwareKeyboard.instance.isShiftPressed) {
       unawaited(_pasteForShiftInsert());
       return KeyEventResult.handled;
+    }
+    if (shortcutMode == TerminalShortcutMode.shifted) {
+      final chord = shiftedClipboardChord(event);
+      if (chord != null) {
+        switch (chord) {
+          case TerminalClipboardChord.copy:
+            _copySelectionToClipboard();
+          case TerminalClipboardChord.paste:
+            unawaited(_pasteFromClipboard());
+          case TerminalClipboardChord.selectAll:
+            _controller.selectAll();
+        }
+        return KeyEventResult.handled;
+      }
     }
     return delegate?.call(node, event) ?? KeyEventResult.ignored;
   };
@@ -654,6 +717,9 @@ class MaidTermSessionAdapter implements TerminalSessionAdapter {
     _disposed = true;
     if (_selectToCopyEnabled) {
       _controller.removeListener(_onSelectionMaybeChanged);
+    }
+    if (_releasesPlainChords) {
+      HardwareKeyboard.instance.removeHandler(_handleReleasedChord);
     }
     _autoCopyFlush?.cancel();
     await _sudoSub?.cancel();

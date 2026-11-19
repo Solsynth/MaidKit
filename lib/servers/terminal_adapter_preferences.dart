@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'terminal_color_scheme.dart';
+import 'terminal_shortcut_mode.dart';
 
 class TerminalFontOption {
   const TerminalFontOption({required this.label, required this.family});
@@ -129,6 +130,13 @@ abstract interface class TerminalAdapterSettings {
   /// Shift+Insert, matching traditional terminal paste.
   bool get shiftInsertPasteEnabled;
 
+  /// Which chords the terminal binds to copy / paste / select all.
+  ///
+  /// Default [TerminalShortcutMode.plain]: each platform's customary chords.
+  /// [TerminalShortcutMode.shifted] moves them to Ctrl+Shift+C/V/A so the
+  /// plain Ctrl chords reach the remote shell.
+  TerminalShortcutMode get shortcutMode;
+
   /// Color keywords (errors, warnings, IPs, links) in terminal output,
   /// MobaXterm-style, without overriding server ANSI colors.
   bool get keywordHighlightEnabled;
@@ -148,6 +156,7 @@ abstract interface class TerminalAdapterSettings {
   Future<void> saveDarkTheme(TerminalColorScheme theme);
   Future<void> saveSelectToCopyEnabled(bool enabled);
   Future<void> saveShiftInsertPasteEnabled(bool enabled);
+  Future<void> saveShortcutMode(TerminalShortcutMode mode);
   Future<void> saveKeywordHighlightEnabled(bool enabled);
   Future<void> saveSudoAutofillEnabled(bool enabled);
 }
@@ -162,6 +171,7 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
     this.darkTheme,
     this.selectToCopyEnabled,
     this.shiftInsertPasteEnabled,
+    this.shortcutMode,
     this.keywordHighlightEnabled,
     this.sudoAutofillEnabled,
   );
@@ -175,6 +185,7 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   static const _selectToCopyEnabledKey = 'terminal_select_to_copy_enabled';
   static const _shiftInsertPasteEnabledKey =
       'terminal_shift_insert_paste_enabled';
+  static const _shortcutModeKey = 'terminal_shortcut_mode';
   static const _keywordHighlightEnabledKey =
       'terminal_keyword_highlight_enabled';
   static const _sudoAutofillEnabledKey = 'terminal_sudo_autofill_enabled';
@@ -194,6 +205,8 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
   final bool selectToCopyEnabled;
   @override
   final bool shiftInsertPasteEnabled;
+  @override
+  final TerminalShortcutMode shortcutMode;
   @override
   final bool keywordHighlightEnabled;
   @override
@@ -217,6 +230,7 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
           TerminalColorSchemes.defaultScheme,
       await store.getBool(_selectToCopyEnabledKey) ?? false,
       await store.getBool(_shiftInsertPasteEnabledKey) ?? true,
+      _decodeShortcutMode(await store.getString(_shortcutModeKey)),
       await store.getBool(_keywordHighlightEnabledKey) ?? true,
       await store.getBool(_sudoAutofillEnabledKey) ?? true,
     );
@@ -251,6 +265,10 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
       _preferences.setBool(_shiftInsertPasteEnabledKey, enabled);
 
   @override
+  Future<void> saveShortcutMode(TerminalShortcutMode mode) =>
+      _preferences.setString(_shortcutModeKey, mode.name);
+
+  @override
   Future<void> saveKeywordHighlightEnabled(bool enabled) =>
       _preferences.setBool(_keywordHighlightEnabledKey, enabled);
 
@@ -267,6 +285,13 @@ class TerminalAdapterPreferences implements TerminalAdapterSettings {
     'selection': theme.selection.toARGB32(),
     'ansi': theme.ansiColors.map((color) => color.toARGB32()).toList(),
   });
+
+  static TerminalShortcutMode _decodeShortcutMode(String? name) {
+    for (final mode in TerminalShortcutMode.values) {
+      if (mode.name == name) return mode;
+    }
+    return TerminalShortcutMode.plain;
+  }
 
   static TerminalColorScheme? _decodeTheme(String? encoded) {
     if (encoded == null) return null;
@@ -299,6 +324,7 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
     this.darkTheme = TerminalColorSchemes.defaultScheme,
     this.selectToCopyEnabled = false,
     this.shiftInsertPasteEnabled = true,
+    this.shortcutMode = TerminalShortcutMode.plain,
     this.keywordHighlightEnabled = true,
     this.sudoAutofillEnabled = true,
   });
@@ -317,6 +343,8 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   bool selectToCopyEnabled;
   @override
   bool shiftInsertPasteEnabled;
+  @override
+  TerminalShortcutMode shortcutMode;
   @override
   bool keywordHighlightEnabled;
   @override
@@ -355,6 +383,11 @@ class InMemoryTerminalAdapterSettings implements TerminalAdapterSettings {
   @override
   Future<void> saveShiftInsertPasteEnabled(bool enabled) async {
     shiftInsertPasteEnabled = enabled;
+  }
+
+  @override
+  Future<void> saveShortcutMode(TerminalShortcutMode mode) async {
+    shortcutMode = mode;
   }
 
   @override

@@ -14,6 +14,7 @@ import 'package:maid_kit/servers/server_providers.dart';
 import 'package:maid_kit/servers/terminal_adapter_preferences.dart';
 import 'package:maid_kit/servers/terminal_color_scheme.dart';
 import 'package:super_context_menu/super_context_menu.dart';
+import 'package:maid_kit/servers/terminal_shortcut_mode.dart';
 import 'package:maid_kit/servers/terminal_session_adapter.dart';
 
 void main() {
@@ -95,6 +96,175 @@ void main() {
 
     expect(container.read(sudoAutofillEnabledProvider), isFalse);
     expect(settings.sudoAutofillEnabled, isFalse);
+  });
+
+  test('persists the terminal shortcut mode', () async {
+    final settings = InMemoryTerminalAdapterSettings();
+    final container = ProviderContainer(
+      overrides: [
+        terminalAdapterPreferencesProvider.overrideWithValue(settings),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    expect(
+      container.read(terminalShortcutModeProvider),
+      TerminalShortcutMode.plain,
+    );
+
+    await container
+        .read(terminalShortcutModeProvider.notifier)
+        .setMode(TerminalShortcutMode.shifted);
+
+    expect(
+      container.read(terminalShortcutModeProvider),
+      TerminalShortcutMode.shifted,
+    );
+    expect(settings.shortcutMode, TerminalShortcutMode.shifted);
+  });
+
+  testWidgets('shifted mode sends Ctrl+A to the shell on Windows', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final adapter = MaidTermSessionAdapter(
+        shortcutMode: TerminalShortcutMode.shifted,
+      );
+      final output = <String>[];
+      final subscription = adapter.outgoingBytes.listen(
+        (bytes) => output.add(utf8.decode(bytes)),
+      );
+      addTearDown(subscription.cancel);
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(output, ['\u0001']);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('plain mode keeps Ctrl+A as select all on Windows', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final adapter = MaidTermSessionAdapter();
+      final output = <String>[];
+      final subscription = adapter.outgoingBytes.listen(
+        (bytes) => output.add(utf8.decode(bytes)),
+      );
+      addTearDown(subscription.cancel);
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(output, isEmpty);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('shifted mode copies with Ctrl+Shift+C and leaves Ctrl+C alone', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied.add(
+              (call.arguments as Map<Object?, Object?>)['text']! as String,
+            );
+          }
+          return null;
+        },
+      );
+
+      final adapter = MaidTermSessionAdapter(
+        shortcutMode: TerminalShortcutMode.shifted,
+      );
+      final output = <String>[];
+      final subscription = adapter.outgoingBytes.listen(
+        (bytes) => output.add(utf8.decode(bytes)),
+      );
+      addTearDown(subscription.cancel);
+      addTearDown(adapter.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: adapter.buildView(autofocus: true),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      adapter.write(Uint8List.fromList(utf8.encode('hello world\r\n')));
+      expect(adapter.find('hello world'), 1);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(copied, ['hello world']);
+      expect(output, isEmpty);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(output, ['\u0003']);
+    } finally {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   test('persists the terminal font family', () async {

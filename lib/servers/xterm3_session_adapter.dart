@@ -11,6 +11,7 @@ import 'package:maid_kit/shared/presentation/app_context_menu.dart';
 import 'package:maid_kit/theme.dart';
 import 'terminal_color_scheme.dart';
 import 'terminal_keyword_highlight.dart';
+import 'terminal_shortcut_mode.dart';
 import 'terminal_session_adapter.dart';
 
 /// The web platform's terminal renderer, backed by package `xterm3`.
@@ -35,6 +36,7 @@ class TerminalRendererFactory implements TerminalSessionAdapterFactory {
     this.fontFamily = MaidKitFonts.mono,
     this.selectToCopyEnabled = false,
     this.shiftInsertPasteEnabled = true,
+    this.shortcutMode = TerminalShortcutMode.plain,
     this.keywordHighlightEnabled = true,
   });
 
@@ -44,6 +46,7 @@ class TerminalRendererFactory implements TerminalSessionAdapterFactory {
   final String fontFamily;
   final bool selectToCopyEnabled;
   final bool shiftInsertPasteEnabled;
+  final TerminalShortcutMode shortcutMode;
   final bool keywordHighlightEnabled;
 
   @override
@@ -54,6 +57,7 @@ class TerminalRendererFactory implements TerminalSessionAdapterFactory {
     fontFamily: fontFamily,
     selectToCopyEnabled: selectToCopyEnabled,
     shiftInsertPasteEnabled: shiftInsertPasteEnabled,
+    shortcutMode: shortcutMode,
     keywordHighlightEnabled: keywordHighlightEnabled,
   );
 }
@@ -66,6 +70,7 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
     this.fontFamily = MaidKitFonts.mono,
     this.selectToCopyEnabled = false,
     this.shiftInsertPasteEnabled = true,
+    this.shortcutMode = TerminalShortcutMode.plain,
     this.keywordHighlightEnabled = true,
   }) : _controller = xterm.TerminalController(),
        _terminal = xterm.Terminal(
@@ -100,6 +105,7 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
   final String fontFamily;
   final bool selectToCopyEnabled;
   final bool shiftInsertPasteEnabled;
+  final TerminalShortcutMode shortcutMode;
   final bool keywordHighlightEnabled;
 
   final xterm.Terminal _terminal;
@@ -266,8 +272,8 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
       backgroundOpacity: (transparentBackground ?? this.transparentBackground)
           ? 0
           : 1,
-      onKeyEvent: !readOnly && shiftInsertPasteEnabled
-          ? _wrapKeyEventForShiftInsert(onKeyEvent)
+      onKeyEvent: !readOnly
+          ? _wrapKeyEventForClipboard(onKeyEvent)
           : onKeyEvent,
       onHyperlinkTap: _openLink,
     );
@@ -475,17 +481,52 @@ class Xterm3SessionAdapter implements TerminalSessionAdapter {
     }
   }
 
-  FocusOnKeyEventCallback _wrapKeyEventForShiftInsert(
+  /// Answers the clipboard chords before the renderer's own shortcut map
+  /// sees them, and re-sends the plain Ctrl+C/V/A chords the map would claim
+  /// in shifted mode.
+  FocusOnKeyEventCallback _wrapKeyEventForClipboard(
     FocusOnKeyEventCallback? delegate,
   ) => (node, event) {
-    if (event is KeyDownEvent &&
+    if (shiftInsertPasteEnabled &&
+        event is KeyDownEvent &&
         event.logicalKey == LogicalKeyboardKey.insert &&
         HardwareKeyboard.instance.isShiftPressed) {
       unawaited(_pasteFromClipboard());
       return KeyEventResult.handled;
     }
+    if (shortcutMode == TerminalShortcutMode.shifted) {
+      final chord = shiftedClipboardChord(event);
+      if (chord != null) {
+        switch (chord) {
+          case TerminalClipboardChord.copy:
+            _copySelectionToClipboard();
+          case TerminalClipboardChord.paste:
+            unawaited(_pasteFromClipboard());
+          case TerminalClipboardChord.selectAll:
+            _selectAll();
+        }
+        return KeyEventResult.handled;
+      }
+      // The default map binds Ctrl+C/V/A on Windows and Android. In shifted
+      // mode they belong to the remote shell, so they are encoded here and
+      // the renderer never gets to invoke its clipboard actions.
+      if (isPlainClipboardChord(event)) {
+        _sendPlainChord(event.logicalKey);
+        return KeyEventResult.handled;
+      }
+    }
     return delegate?.call(node, event) ?? KeyEventResult.ignored;
   };
+
+  /// Encodes one of shifted mode's released plain chords for the shell.
+  void _sendPlainChord(LogicalKeyboardKey key) {
+    final terminalKey = switch (key) {
+      LogicalKeyboardKey.keyC => xterm.TerminalKey.keyC,
+      LogicalKeyboardKey.keyV => xterm.TerminalKey.keyV,
+      _ => xterm.TerminalKey.keyA,
+    };
+    _terminal.keyInput(terminalKey, ctrl: true);
+  }
 
   String? _selectedText() {
     final range = _controller.selectionFor(_terminal.buffer);
