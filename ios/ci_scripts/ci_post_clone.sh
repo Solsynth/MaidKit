@@ -5,11 +5,19 @@ set -eu
 : "${CI_PRIMARY_REPOSITORY_PATH:?CI_PRIMARY_REPOSITORY_PATH is required}"
 cd "$CI_PRIMARY_REPOSITORY_PATH"
 
-FLUTTER_ROOT="${FLUTTER_ROOT:-$HOME/flutter}"
+# Pin the SDK instead of tracking the stable channel: newer stable releases ship
+# Dart 3.14, and liquid_glass_renderer 1.0.0-dev.2 (via island_ui_foundation)
+# only allows Dart >=3.13.0 <3.14.0, which makes `flutter pub get` unsolvable.
+# Keep this in sync with .github/workflows/*.yml until liquid_glass_renderer
+# ships a Dart 3.14-compatible release.
+FLUTTER_VERSION="3.47.9"
+FLUTTER_ROOT="${FLUTTER_ROOT:-$HOME/flutter-$FLUTTER_VERSION}"
 
-echo "=== Installing Flutter SDK ==="
+echo "=== Installing Flutter SDK $FLUTTER_VERSION ==="
+# The versioned install path keeps a cached SDK from a different release out of
+# the build.
 if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
-  git clone https://github.com/flutter/flutter.git --depth 1 -b stable "$FLUTTER_ROOT"
+  git clone https://github.com/flutter/flutter.git --depth 1 -b "$FLUTTER_VERSION" "$FLUTTER_ROOT"
 fi
 export PATH="$FLUTTER_ROOT/bin:$PATH"
 flutter --version
